@@ -4,8 +4,13 @@ import { runDecathlonAwbBackfill } from "@/lib/decathlonAwbBackfill";
 import { runGalaxusAwbBackfill } from "@/lib/galaxusAwbBackfill";
 import { runGalaxusStockxAutoLinkSweep } from "@/galaxus/orders/autoLinkSweep";
 import { runAwbBackfill } from "@/lib/stockxAwbBackfill";
-import { refreshStockxToken } from "@/lib/stockxSessionRefresh";
-import { readServerStockxToken } from "@/lib/stockxServerToken";
+import { canRefreshStockxAccount, refreshStockxToken } from "@/lib/stockxSessionRefresh";
+import { notifyStockxAuthBroken } from "@/lib/stockxAuthAlert";
+import { readServerStockxToken, stockxTokenExpiresAt } from "@/lib/stockxServerToken";
+import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
+import { listStockxAccountTokens } from "@/lib/stockxToken";
+
+const GALAXUS_EXPIRY_WARN_MS = 2 * 60 * 60 * 1000;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,15 +40,47 @@ export async function POST(req: NextRequest) {
     const limit = Number(body?.limit ?? 60);
     const dryRun = Boolean(body?.dryRun ?? false);
 
-    const runAutoLinkSweep = () =>
+    const runAutoLinkSweepRaw = () =>
       dryRun || body?.skipGalaxusAutoLink === true
         ? Promise.resolve(null)
         : runGalaxusStockxAutoLinkSweep({
             days: Number(body?.galaxusAutoLinkDays ?? 30),
             budgetMs: Math.max(30_000, 600_000 - (Date.now() - startedAt)),
           }).catch((err: any) => ({ ok: false, error: String(err?.message ?? err) }));
+    const runAutoLinkSweep = async () => {
+      const res: any = await runAutoLinkSweepRaw();
+      if (res && res.ok === false && res.error === "no_stockx_token" && Number(res.candidateOrders ?? 0) > 0) {
+        await notifyStockxAuthBroken({
+          account: "all",
+          error: "Galaxus auto-link sweep found no valid StockX token",
+          pendingGalaxusOrders: Number(res.candidateOrders ?? 0),
+        }).catch(() => undefined);
+      }
+      return res;
+    };
 
+    // Sequential: both accounts drive a headed Chromium on the same Xvfb display.
     const refresh = await refreshStockxToken({ force: forceRefresh });
+    const galaxusRefresh = (await canRefreshStockxAccount("galaxus"))
+      ? await refreshStockxToken({ force: forceRefresh, account: "galaxus" })
+      : null;
+    if (!refresh.ok) {
+      await notifyStockxAuthBroken({ account: "default", error: refresh.error }).catch(() => undefined);
+    }
+    const galaxusToken = galaxusRefresh?.token ?? (await readGalaxusStockxToken());
+    const galaxusExpiresAt = galaxusToken ? stockxTokenExpiresAt(galaxusToken) : null;
+    const galaxusExpiringSoon =
+      !galaxusExpiresAt || galaxusExpiresAt.getTime() - Date.now() < GALAXUS_EXPIRY_WARN_MS;
+    if ((galaxusRefresh && !galaxusRefresh.ok) || (!galaxusRefresh && galaxusExpiringSoon)) {
+      await notifyStockxAuthBroken({
+        account: "galaxus",
+        error:
+          galaxusRefresh?.error ??
+          (galaxusExpiresAt
+            ? `token expires ${galaxusExpiresAt.toISOString()}; no profile/credentials for auto-refresh`
+            : "token missing or expired; no profile/credentials for auto-refresh"),
+      }).catch(() => undefined);
+    }
     const token = refresh.token ?? (await readServerStockxToken())?.token ?? null;
 
     if (!token) {
@@ -63,7 +100,11 @@ export async function POST(req: NextRequest) {
 
     const shared = { token, days, limit, dryRun, includeFulfilled: false as const };
     const shopify = await runAwbBackfill(shared);
-    const galaxus = await runGalaxusAwbBackfill(shared);
+    // Galaxus buys live on a separate StockX account; without its bearer their AWBs never fill.
+    const extraTokens = (await listStockxAccountTokens())
+      .map((account) => account.token)
+      .filter((t) => t !== token);
+    const galaxus = await runGalaxusAwbBackfill({ ...shared, extraTokens });
     const decathlon = await runDecathlonAwbBackfill(shared);
 
     const galaxusAutoLink = await runAutoLinkSweep();
@@ -80,6 +121,14 @@ export async function POST(req: NextRequest) {
         needsManualLogin: refresh.needsManualLogin,
         error: refresh.error,
       },
+      galaxusRefresh: galaxusRefresh
+        ? {
+            ok: galaxusRefresh.ok,
+            reused: galaxusRefresh.reused,
+            expiresAt: galaxusRefresh.expiresAt?.toISOString() ?? null,
+            error: galaxusRefresh.error,
+          }
+        : null,
       shopify,
       galaxus,
       decathlon,

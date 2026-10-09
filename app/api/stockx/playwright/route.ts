@@ -522,7 +522,9 @@ export async function POST(req: NextRequest) {
     let autoLoginNeedsOtp = false;
     let autoLoginError: string | null = null;
     if (autoLogin && !capturedToken) {
-      const creds = stockxCredentialsFromEnv();
+      const creds = stockxCredentialsFromEnv(
+        body?.credentialsAccount === "galaxus" ? "galaxus" : "default"
+      );
       if (creds) {
         console.log("[STOCKX-PW] Attempting credential auto-login");
         const result = await tryStockxCredentialLogin(page, creds);

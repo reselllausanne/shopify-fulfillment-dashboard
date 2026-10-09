@@ -98,6 +98,19 @@ export async function tryStockxCredentialLogin(
       'button:has-text("Next")',
       '[data-testid*="login" i]',
     ];
+    const passwordMethodSelectors = [
+      'button:has-text("Use password")',
+      'a:has-text("Use password")',
+      'button:has-text("Log in with password")',
+      'a:has-text("Log in with password")',
+      'button:has-text("Continue with password")',
+      'button:has-text("Use your password")',
+      'a:has-text("Use your password")',
+      'button:has-text("Try another method")',
+      'a:has-text("Try another method")',
+      'button:has-text("Other options")',
+      'button:has-text("Mot de passe")',
+    ];
 
     const findVisible = async (selectors: string[]) => {
       for (const sel of selectors) {
@@ -130,9 +143,24 @@ export async function tryStockxCredentialLogin(
       const cont = await findVisible(continueSelectors);
       if (cont) {
         await cont.click().catch(() => undefined);
-        await page.waitForTimeout(1500);
       }
-      passwordInput = await findVisible(passwordSelectors);
+      // After "Continue" StockX spins for several seconds, then may offer a passkey
+      // prompt or a method picker before the password field appears.
+      const deadline = Date.now() + 25000;
+      while (!passwordInput && Date.now() < deadline) {
+        await page.waitForTimeout(1000);
+        passwordInput = await findVisible(passwordSelectors);
+        if (passwordInput) break;
+        const alt = await findVisible(passwordMethodSelectors);
+        if (alt) {
+          await alt.click().catch(() => undefined);
+          continue;
+        }
+        const text = (await page.locator("body").innerText().catch(() => "")) || "";
+        if (/enter (the )?code|we sent (you )?a code|check your email|verification code/i.test(text)) {
+          return { attempted: true, needsOtp: true, error: "StockX asked for an email code" };
+        }
+      }
     }
 
     if (!passwordInput) {
@@ -168,9 +196,12 @@ export async function tryStockxCredentialLogin(
   }
 }
 
-export function stockxCredentialsFromEnv(): { email: string; password: string } | null {
-  const email = String(process.env.STOCKX_EMAIL ?? "").trim();
-  const password = String(process.env.STOCKX_PASSWORD ?? "");
+export function stockxCredentialsFromEnv(
+  account: "default" | "galaxus" = "default"
+): { email: string; password: string } | null {
+  const prefix = account === "galaxus" ? "STOCKX_GALAXUS" : "STOCKX";
+  const email = String(process.env[`${prefix}_EMAIL`] ?? "").trim();
+  const password = String(process.env[`${prefix}_PASSWORD`] ?? "");
   if (!email || !password) return null;
   return { email, password };
 }
