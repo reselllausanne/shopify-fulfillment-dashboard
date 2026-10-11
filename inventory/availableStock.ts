@@ -140,6 +140,36 @@ export async function loadInventoryDeltasBySupplierVariantId(
   }
 }
 
+/**
+ * A scrape observes the supplier's real stock, so sales booked before it are
+ * already reflected. Only ledger events after the last scrape still apply —
+ * otherwise a scraped item that sold once stays at 0 forever.
+ */
+export async function loadDeltasSinceLastSync(
+  lastSyncById: Map<string, Date | null>
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  const prismaAny = prisma as any;
+  const ids = [...lastSyncById.entries()].filter(([, at]) => at instanceof Date).map(([id]) => id);
+  if (ids.length === 0 || !prismaAny.inventoryEvent?.findMany) return map;
+  for (let offset = 0; offset < ids.length; offset += INVENTORY_DELTA_CHUNK_SIZE) {
+    const chunk = ids.slice(offset, offset + INVENTORY_DELTA_CHUNK_SIZE);
+    const rows = await prismaAny.inventoryEvent.findMany({
+      where: { supplierVariantId: { in: chunk } },
+      select: { supplierVariantId: true, quantityDelta: true, createdAt: true },
+    });
+    for (const id of chunk) map.set(id, 0);
+    for (const row of rows ?? []) {
+      const id = String(row?.supplierVariantId ?? "").trim();
+      const since = lastSyncById.get(id);
+      if (!since || !row?.createdAt || new Date(row.createdAt).getTime() <= since.getTime()) continue;
+      const delta = Number(row?.quantityDelta ?? 0);
+      if (Number.isFinite(delta)) map.set(id, (map.get(id) ?? 0) + Math.trunc(delta));
+    }
+  }
+  return map;
+}
+
 export async function attachAvailableStock<T extends SupplierVariantLike>(
   variants: T[]
 ): Promise<Map<string, number>> {
@@ -151,14 +181,18 @@ export async function attachAvailableStock<T extends SupplierVariantLike>(
 
   const maxAgeDays = supplierStockMaxAgeDays();
   const now = new Date();
-  let lastSyncById = new Map<string, Date | null>();
-  if (maxAgeDays > 0) {
-    lastSyncById = await loadLastSyncAtBySupplierVariantId(
-      variants
-        .filter((variant) => !variant?.manualLock)
-        .map((variant) => String(variant?.supplierVariantId ?? "").trim())
-        .filter(isScrapedSupplierVariantId)
-    );
+  const lastSyncById = await loadLastSyncAtBySupplierVariantId(
+    variants
+      .filter((variant) => !variant?.manualLock)
+      .map((variant) => String(variant?.supplierVariantId ?? "").trim())
+      .filter(isScrapedSupplierVariantId)
+      .filter((id) => (deltas.get(id) ?? 0) !== 0 || maxAgeDays > 0)
+  );
+  const scrapedWithLedger = new Map(
+    [...lastSyncById.entries()].filter(([id]) => (deltas.get(id) ?? 0) !== 0)
+  );
+  for (const [id, delta] of await loadDeltasSinceLastSync(scrapedWithLedger)) {
+    deltas.set(id, delta);
   }
   let staleZeroed = 0;
 

@@ -47,6 +47,11 @@ export function getScraperPool(): Pool {
       connectionTimeoutMillis: 8_000,
       ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
     });
+    // Without a listener, an idle client dropped by the server (ETIMEDOUT)
+    // is an unhandled 'error' event and kills a multi-hour scrape.
+    globalForScraper.scraperPgPool.on("error", (err) => {
+      console.warn("[scraperDb] idle pg client error (ignored):", err?.message || err);
+    });
   }
   return globalForScraper.scraperPgPool;
 }

@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { groupBy, findMany } = vi.hoisted(() => ({
+const { groupBy, findMany, eventFindMany } = vi.hoisted(() => ({
   groupBy: vi.fn(),
   findMany: vi.fn(),
+  eventFindMany: vi.fn(),
 }));
 
 vi.mock("@/app/lib/prisma", () => ({
   prisma: {
-    inventoryEvent: { groupBy },
+    inventoryEvent: { groupBy, findMany: eventFindMany },
     supplierVariant: { findMany },
   },
 }));
@@ -83,5 +84,41 @@ describe("attachAvailableStock stale cutoff", () => {
 
     const queried = findMany.mock.calls.flatMap((c) => c[0].where.supplierVariantId.in);
     expect(queried).toEqual(["rei_fresh", "rei_old", "wel_never"]);
+  });
+});
+
+describe("attachAvailableStock ledger for scraped suppliers", () => {
+  beforeEach(() => {
+    groupBy.mockReset();
+    findMany.mockReset();
+    eventFindMany.mockReset();
+    delete process.env.SUPPLIER_STOCK_MAX_AGE_DAYS;
+  });
+
+  it("ignores sales booked before the last scrape, keeps later ones and non-scraped ledgers", async () => {
+    const lastScrape = new Date(Date.now() - 3_600_000);
+    groupBy.mockResolvedValue([
+      { supplierVariantId: "rei_sold_before", _sum: { quantityDelta: -1 } },
+      { supplierVariantId: "rei_sold_after", _sum: { quantityDelta: -1 } },
+      { supplierVariantId: "stx_1", _sum: { quantityDelta: -1 } },
+    ]);
+    findMany.mockResolvedValue([
+      { supplierVariantId: "rei_sold_before", lastSyncAt: lastScrape },
+      { supplierVariantId: "rei_sold_after", lastSyncAt: lastScrape },
+    ]);
+    eventFindMany.mockResolvedValue([
+      { supplierVariantId: "rei_sold_before", quantityDelta: -1, createdAt: new Date(Date.now() - 2 * DAY) },
+      { supplierVariantId: "rei_sold_after", quantityDelta: -1, createdAt: new Date() },
+    ]);
+
+    const map = await attachAvailableStock([
+      { supplierVariantId: "rei_sold_before", stock: 1 },
+      { supplierVariantId: "rei_sold_after", stock: 1 },
+      { supplierVariantId: "stx_1", stock: 2 },
+    ]);
+
+    expect(map.get("rei_sold_before")).toBe(1);
+    expect(map.get("rei_sold_after")).toBe(0);
+    expect(map.get("stx_1")).toBe(1);
   });
 });
