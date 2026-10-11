@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
 import { getStockxLoginStatus, startInteractiveStockxLogin } from "@/lib/stockxLoginSession";
-import { refreshStockxToken } from "@/lib/stockxSessionRefresh";
+import { parseStockxRefreshAccount, refreshStockxToken } from "@/lib/stockxSessionRefresh";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +15,8 @@ export async function GET(req: NextRequest) {
   if (!(await requireAdmin(req))) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
-  return NextResponse.json({ ok: true, ...(await getStockxLoginStatus()) });
+  const account = parseStockxRefreshAccount(req.nextUrl.searchParams.get("account"));
+  return NextResponse.json({ ok: true, ...(await getStockxLoginStatus(account)) });
 }
 
 export async function POST(req: NextRequest) {
@@ -25,9 +26,10 @@ export async function POST(req: NextRequest) {
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const action = String(body?.action ?? "start");
+  const account = parseStockxRefreshAccount(body?.account);
 
   if (action === "refresh") {
-    const result = await refreshStockxToken({ force: true });
+    const result = await refreshStockxToken({ force: true, account });
     return NextResponse.json({
       ok: result.ok,
       reused: result.reused,
@@ -37,6 +39,6 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const login = startInteractiveStockxLogin({ reset: Boolean(body?.reset) });
+  const login = startInteractiveStockxLogin({ reset: Boolean(body?.reset), account });
   return NextResponse.json({ ok: true, login });
 }

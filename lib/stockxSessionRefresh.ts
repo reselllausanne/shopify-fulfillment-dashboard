@@ -37,6 +37,14 @@ const ACCOUNT_FILES: Record<StockxRefreshAccount, AccountFiles> = {
   },
 };
 
+export function stockxAccountFiles(account: StockxRefreshAccount): AccountFiles {
+  return ACCOUNT_FILES[account];
+}
+
+export function parseStockxRefreshAccount(raw: unknown): StockxRefreshAccount {
+  return raw === "galaxus" ? "galaxus" : "default";
+}
+
 /** StockX bearers live ~12h, so a headless mint well before expiry keeps jobs from ever seeing 401. */
 const REFRESH_WHEN_LESS_THAN_MS = 3 * 60 * 60 * 1000;
 

@@ -1,7 +1,12 @@
 import { NextRequest } from "next/server";
 import { POST as stockxPlaywright } from "@/app/api/stockx/playwright/route";
-import { hasStockxProfile } from "@/lib/stockxSessionRefresh";
-import { readServerStockxToken } from "@/lib/stockxServerToken";
+import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
+import {
+  hasStockxProfile,
+  stockxAccountFiles,
+  type StockxRefreshAccount,
+} from "@/lib/stockxSessionRefresh";
+import { stockxTokenExpiresAt } from "@/lib/stockxServerToken";
 
 const LOGIN_WINDOW_MS = 900000;
 
@@ -14,13 +19,20 @@ export type StockxLoginState = {
   profileReset: boolean;
 };
 
-const state: StockxLoginState = {
-  running: false,
-  startedAt: null,
-  finishedAt: null,
-  ok: null,
-  error: null,
-  profileReset: false,
+function idleState(): StockxLoginState {
+  return {
+    running: false,
+    startedAt: null,
+    finishedAt: null,
+    ok: null,
+    error: null,
+    profileReset: false,
+  };
+}
+
+const states: Record<StockxRefreshAccount, StockxLoginState> = {
+  default: idleState(),
+  galaxus: idleState(),
 };
 
 /**
@@ -28,15 +40,16 @@ const state: StockxLoginState = {
  * noVNC. Returns as soon as the browser is up: the operator needs the request to finish long
  * before they have typed their password and 2FA code.
  */
-export function startInteractiveStockxLogin(options: { reset?: boolean } = {}): StockxLoginState {
-  if (state.running) return { ...state };
+export function startInteractiveStockxLogin(
+  options: { reset?: boolean; account?: StockxRefreshAccount } = {}
+): StockxLoginState {
+  const account = options.account ?? "default";
+  const state = states[account];
+  // One server display: never run two login browsers at once.
+  if (states.default.running || states.galaxus.running) return { ...state };
 
-  state.running = true;
-  state.startedAt = new Date().toISOString();
-  state.finishedAt = null;
-  state.ok = null;
-  state.error = null;
-  state.profileReset = false;
+  Object.assign(state, idleState(), { running: true, startedAt: new Date().toISOString() });
+  const files = stockxAccountFiles(account);
 
   const request = new NextRequest("http://internal/api/stockx/playwright", {
     method: "POST",
@@ -51,6 +64,11 @@ export function startInteractiveStockxLogin(options: { reset?: boolean } = {}): 
       startUrl: "https://stockx.com/login",
       waitForUserClose: false,
       maxWaitMs: LOGIN_WINDOW_MS,
+      sessionFile: files.sessionFile,
+      sessionMetaFile: files.sessionMetaFile,
+      tokenFile: files.tokenFile,
+      userDataDir: files.profileDir,
+      credentialsAccount: account,
     }),
   });
 
@@ -73,13 +91,17 @@ export function startInteractiveStockxLogin(options: { reset?: boolean } = {}): 
   return { ...state };
 }
 
-export async function getStockxLoginStatus() {
-  const [stored, profile] = await Promise.all([readServerStockxToken(), hasStockxProfile()]);
+export async function getStockxLoginStatus(account: StockxRefreshAccount = "default") {
+  const [token, profile] = await Promise.all([
+    readGalaxusStockxToken(stockxAccountFiles(account).tokenFile),
+    hasStockxProfile(account),
+  ]);
+  const expiresAt = token ? stockxTokenExpiresAt(token) : null;
   return {
-    login: { ...state },
+    account,
+    login: { ...states[account] },
+    otherAccountRunning: states[account === "default" ? "galaxus" : "default"].running,
     hasProfile: profile,
-    token: stored
-      ? { source: stored.source, expiresAt: stored.expiresAt?.toISOString() ?? null }
-      : null,
+    token: token ? { source: account, expiresAt: expiresAt?.toISOString() ?? null } : null,
   };
 }

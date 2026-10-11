@@ -20,6 +20,15 @@ function shouldSend(key: string): boolean {
   return true;
 }
 
+function loginPageBaseUrl(): string {
+  const raw =
+    process.env.STOCKX_ALERT_BASE_URL?.trim() ||
+    process.env.RETURNS_PUBLIC_BASE_URL?.trim() ||
+    process.env.SHOPIFY_APP_URL?.trim() ||
+    "https://solution.resell-lausanne.ch";
+  return raw.replace(/\/+$/, "");
+}
+
 async function postSlack(text: string): Promise<boolean> {
   const webhook =
     process.env.STOCKX_ALERT_SLACK_WEBHOOK_URL?.trim() ||
@@ -86,8 +95,8 @@ export async function notifyStockxAuthBroken(params: {
       : null,
     "",
     "Until fixed: no Galaxus auto-link, no AWB on scan, parcels show NOT_FOUND.",
-    "Fix: paste a fresh StockX token for this account in the dashboard (StockX tools),",
-    "or set STOCKX_GALAXUS_EMAIL/STOCKX_GALAXUS_PASSWORD (galaxus) / STOCKX_EMAIL/STOCKX_PASSWORD (default) on the VPS.",
+    "Fix from your phone (log in once, then hourly refresh reuses the session):",
+    `${loginPageBaseUrl()}/admin/stockx-login${params.account === "galaxus" ? "?account=galaxus" : ""}`,
     `At: ${new Date().toISOString()}`,
   ]
     .filter((line) => line !== null)

@@ -16,6 +16,7 @@ type LoginStatus = {
   };
   hasProfile: boolean;
   token: { source: string; expiresAt: string | null } | null;
+  otherAccountRunning: boolean;
 };
 
 function formatRemaining(expiresAt: string | null): string {
@@ -27,21 +28,50 @@ function formatRemaining(expiresAt: string | null): string {
   return hours > 0 ? `${hours}h ${minutes}m left` : `${minutes}m left`;
 }
 
+type Account = "default" | "galaxus";
+
+const ACCOUNT_LABELS: Record<Account, string> = {
+  default: "Shopify (resell)",
+  galaxus: "Galaxus (contact@)",
+};
+
 export default function StockxLoginPage() {
+  const [account, setAccount] = useState<Account>("default");
   const [status, setStatus] = useState<LoginStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [showScreen, setShowScreen] = useState(false);
 
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("account");
+    if (fromUrl === "galaxus") setAccount("galaxus");
+  }, []);
+
+  const selectAccount = (next: Account) => {
+    setAccount(next);
+    setStatus(null);
+    setMessage(null);
+    const url = new URL(window.location.href);
+    url.searchParams.set("account", next);
+    window.history.replaceState(null, "", url.toString());
+  };
+
   const loadStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/stockx-login");
+      const res = await fetch(`/api/admin/stockx-login?account=${account}`);
       const data = await res.json();
-      if (data?.ok) setStatus({ login: data.login, hasProfile: data.hasProfile, token: data.token });
+      if (data?.ok) {
+        setStatus({
+          login: data.login,
+          hasProfile: data.hasProfile,
+          token: data.token,
+          otherAccountRunning: Boolean(data.otherAccountRunning),
+        });
+      }
     } catch {
       // keep last known status
     }
-  }, []);
+  }, [account]);
 
   useEffect(() => {
     void loadStatus();
@@ -56,7 +86,7 @@ export default function StockxLoginPage() {
       const res = await fetch("/api/admin/stockx-login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, account }),
       });
       const data = await res.json();
       setMessage(data?.ok ? note : `${data?.error ?? "Failed"}`);
@@ -70,7 +100,7 @@ export default function StockxLoginPage() {
   };
 
   const token = status?.token;
-  const running = status?.login.running ?? false;
+  const running = (status?.login.running ?? false) || (status?.otherAccountRunning ?? false);
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
@@ -81,6 +111,20 @@ export default function StockxLoginPage() {
             Logs in inside the server browser, so the bearer is stored on the VPS and the hourly AWB
             sync keeps working. Usable from a phone.
           </p>
+        </div>
+
+        <div className="flex gap-2">
+          {(Object.keys(ACCOUNT_LABELS) as Account[]).map((key) => (
+            <button
+              key={key}
+              onClick={() => selectAccount(key)}
+              className={`rounded px-4 py-2 text-sm ${
+                account === key ? "bg-gray-900 text-white" : "border bg-white text-gray-700"
+              }`}
+            >
+              {ACCOUNT_LABELS[key]}
+            </button>
+          ))}
         </div>
 
         <div className="rounded-lg border bg-white p-4 text-sm">
@@ -102,7 +146,14 @@ export default function StockxLoginPage() {
               </strong>
             </span>
             <span>
-              Login browser: <strong>{running ? "running — log in below" : "idle"}</strong>
+              Login browser:{" "}
+              <strong>
+                {status?.otherAccountRunning
+                  ? "busy with the other account"
+                  : running
+                    ? "running — log in below"
+                    : "idle"}
+              </strong>
             </span>
           </div>
           {status?.login.error && !running && (
