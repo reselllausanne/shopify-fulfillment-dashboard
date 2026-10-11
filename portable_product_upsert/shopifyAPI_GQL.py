@@ -412,12 +412,12 @@ def calc_touch_price(stockx_raw_price, product_category="sneakers", product_hand
 
 def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, product_handle="", brand=""):
     """
-    LOCKED Shopify sell formula (v2026-10-11-profit-15-per-pair) — manual constants only.
+    LOCKED Shopify sell formula (v2026-10-11-profit-15-plus-3pct) — manual constants only.
     Must stay in sync with shopify/pricing/calcShopifySellPrice.ts.
 
     shopifySellPrice =
       (sourceCostChf + fixedFulfillmentAndShippingChf + adsPerOrderChf + targetProfitPerOrderChf)
-      / (1 - blendedPaymentCostRate - VATFlatRate - discountLeakageRate - paidAdsRate)
+      / (1 - blendedPaymentCostRate - VATFlatRate - discountLeakageRate - paidAdsRate - targetCM2Rate)
     then ceil to whole CHF (WeTheNew-style; never below floor).
 
     Do not silently update from Shopify plan data or payment-method mix.
@@ -438,8 +438,11 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     ADS_PER_ORDER_CHF = 18.0
     PAID_ADS_RATE = 0.07
     TARGET_PROFIT_PER_ORDER_CHF = 15.0
+    TARGET_CM2_RATE = 0.03
     STX_LIST_MULTIPLIER = 1.0 + 23.11 / 217.0
-    DENOM = 1.0 - (BLENDED_PAYMENT_COST_RATE + VAT_FLAT_RATE + DISCOUNT_LEAKAGE_RATE + PAID_ADS_RATE)
+    DENOM = 1.0 - (
+        BLENDED_PAYMENT_COST_RATE + VAT_FLAT_RATE + DISCOUNT_LEAKAGE_RATE + PAID_ADS_RATE + TARGET_CM2_RATE
+    )
 
     is_lego = "lego" in str(product_category or "").lower() or "lego" in str(product_handle or "").lower()
 

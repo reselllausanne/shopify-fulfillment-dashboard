@@ -21,11 +21,11 @@ import {
   stxSourceCostChfFromRaw,
 } from "@/shopify/pricing/calcShopifySellPrice";
 
-/** Locked floor: raw 100 → C=130.65 → (130.65+14.5+18+15)/0.85 → ceil whole CHF. */
-const EXPECTED_SELL_RAW_100 = 210;
-const EXPECTED_SELL_RAW_108_45 = 221;
-const EXPECTED_SELL_RAW_126 = 244;
-const EXPECTED_SELL_RAW_170 = 301;
+/** Locked floor: raw 100 → C=130.65 → (130.65+14.5+18+15)/0.82 → ceil whole CHF. */
+const EXPECTED_SELL_RAW_100 = 218;
+const EXPECTED_SELL_RAW_108_45 = 229;
+const EXPECTED_SELL_RAW_126 = 253;
+const EXPECTED_SELL_RAW_170 = 312;
 const BUY_CHF_140 = 140;
 const EXPECTED_RAW_FROM_BUY_140 = 108.45;
 
@@ -61,18 +61,18 @@ describe("calcShopifySellPrice locked formula", () => {
     expect(SHOPIFY_PAID_ADS_RATE).toBe(0.07);
     expect(SHOPIFY_ADS_PER_ORDER_CHF).toBe(18);
     expect(SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF).toBe(15);
-    expect(SHOPIFY_TARGET_CM2_RATE).toBe(0);
-    expect(shopifyLockedDenom()).toBeCloseTo(0.85, 6);
+    expect(SHOPIFY_TARGET_CM2_RATE).toBe(0.03);
+    expect(shopifyLockedDenom()).toBeCloseTo(0.82, 6);
   });
 
   it("source cost is the real StockX checkout (217 list → 260.11)", () => {
     expect(stxSourceCostChfFromRaw(217)).toBeCloseTo(260.11, 2);
   });
 
-  it("ads 18 CHF + 7% and 15 CHF profit per pair", () => {
-    expect(calcShopifySellPrice({ stockxRaw: 60, productCategory: "sneakers" })).toBe(158);
-    expect(calcShopifySellPrice({ stockxRaw: 147, productCategory: "sneakers" })).toBe(271);
-    expect(calcShopifySellPrice({ stockxRaw: 300, productCategory: "sneakers" })).toBe(470);
+  it("ads 18 CHF + 7%, profit 15 CHF + 3% per pair", () => {
+    expect(calcShopifySellPrice({ stockxRaw: 60, productCategory: "sneakers" })).toBe(164);
+    expect(calcShopifySellPrice({ stockxRaw: 147, productCategory: "sneakers" })).toBe(281);
+    expect(calcShopifySellPrice({ stockxRaw: 300, productCategory: "sneakers" })).toBe(488);
   });
 
   it("ceilToCentime never rounds down", () => {
@@ -86,8 +86,8 @@ describe("calcShopifySellPrice locked formula", () => {
     expect(ceilToWholeFranc(286.36)).toBe(287);
   });
 
-  it("sourceCost 180.08 → 268 (whole CHF)", () => {
-    expect(calcShopifySellFromSourceCost(180.08)).toBe(268);
+  it("sourceCost 180.08 → 278 (whole CHF)", () => {
+    expect(calcShopifySellFromSourceCost(180.08)).toBe(278);
   });
 
   it("prices brands the same", () => {

@@ -35,7 +35,7 @@ export const SHOPIFY_CPA_CAP_HALF = 24.0;
 // sourceCostChf = real StockX checkout cost: raw × 1.1065 + 20.
 // No …9/…5 psych bump.
 // ---------------------------------------------------------------------------
-export const SHOPIFY_PRICING_LOCK_VERSION = "2026-10-11-profit-15-per-pair";
+export const SHOPIFY_PRICING_LOCK_VERSION = "2026-10-11-profit-15-plus-3pct";
 /** Measured Sep 2026 per order: fulfilment 6.2 + postage 4.7 + apps 3.2 + fixed 0.4. */
 export const SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5;
 /** Shopify payouts Jan–Sep 2026 = 97.1% of net sales (fees + refunds). No +0.30. */
@@ -56,8 +56,8 @@ export const SHOPIFY_ADS_PER_ORDER_CHF = 18;
 export const SHOPIFY_PAID_ADS_RATE = 0.07;
 /** Profit per StockX pair after every cost (owner target: 15 CHF). */
 export const SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF = 15;
-/** Margin now carried as CHF per pair (SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF). */
-export const SHOPIFY_TARGET_CM2_RATE = 0;
+/** Extra profit share on top of the fixed 15 CHF: pays for capital, return and fraud risk on expensive pairs. */
+export const SHOPIFY_TARGET_CM2_RATE = 0.03;
 
 /** Exact floor before storefront publish (centime). */
 export function ceilToCentime(value: number): number {
