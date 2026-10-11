@@ -3,7 +3,11 @@ import { prisma } from "@/app/lib/prisma";
 import { digestProductFields, pickPersistedKickdbSizes, pickString } from "@/galaxus/kickdb/extract";
 import { pickPersistedKickdbBarcodes } from "@/galaxus/kickdb/client";
 import { mergeKickdbRawJson } from "@/galaxus/kickdb/rawJsonMerge";
-import { ingestStxFromRawPayload, zeroStxStockForKickdbProduct } from "@/galaxus/jobs/stxSync";
+import {
+  ingestStxFromRawPayload,
+  stxOfferedSizesChanged,
+  zeroStxStockForKickdbProduct,
+} from "@/galaxus/jobs/stxSync";
 
 export type KickdbUpsertBody = {
   data?: unknown;
@@ -79,20 +83,23 @@ export async function upsertKickdbProductPayload(body: KickdbUpsertBody): Promis
     existingRaw = existing[0]?.rawJson ?? null;
   }
   const persistRaw = mergeKickdbRawJson(existingRaw, data, priceOnly);
+  // Skinny ticks keep rawFetchedAt (sweeper still owes a full refresh), so the Shopify
+  // consumer only sees them through stockChangedAt — set it when buyable sizes flip.
+  const stockChanged = priceOnly && stxOfferedSizesChanged(existingRaw, persistRaw, kickdbProductId);
 
   const product = await prisma.$queryRaw<Array<{ id: string }>>`
     INSERT INTO "public"."KickDBProduct" (
       "id", "kickdbProductId", "urlKey", "styleId", "name", "brand", "imageUrl",
       "traitsJson", "description", "gender", "colorway", "countryOfManufacture",
       "releaseDate", "retailPrice", "lastFetchedAt", "notFound",
-      "rawJson", "rawFetchedAt", "createdAt", "updatedAt"
+      "rawJson", "rawFetchedAt", "stockChangedAt", "createdAt", "updatedAt"
     ) VALUES (
       gen_random_uuid(), ${kickdbProductId}, ${digest.urlKey}, ${digest.styleId},
       ${digest.name}, ${digest.brand}, ${digest.imageUrl},
       ${digest.traitsJson === null ? null : JSON.stringify(digest.traitsJson)}::jsonb,
       ${digest.description}, ${digest.gender}, ${digest.colorway}, ${digest.countryOfManufacture},
       ${digest.releaseDate}, ${digest.retailPrice}, ${now}, false,
-      ${JSON.stringify(persistRaw)}::jsonb, ${now}, ${now}, ${now}
+      ${JSON.stringify(persistRaw)}::jsonb, ${now}, NULL, ${now}, ${now}
     )
     ON CONFLICT ("kickdbProductId") DO UPDATE SET
       "urlKey"               = COALESCE(EXCLUDED."urlKey", "KickDBProduct"."urlKey"),
@@ -113,6 +120,10 @@ export async function upsertKickdbProductPayload(body: KickdbUpsertBody): Promis
       "rawFetchedAt"         = CASE
         WHEN ${priceOnly} THEN "KickDBProduct"."rawFetchedAt"
         ELSE EXCLUDED."rawFetchedAt"
+      END,
+      "stockChangedAt"       = CASE
+        WHEN ${stockChanged} THEN ${now}
+        ELSE "KickDBProduct"."stockChangedAt"
       END,
       "updatedAt"            = EXCLUDED."updatedAt"
     RETURNING "id"

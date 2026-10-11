@@ -1365,6 +1365,9 @@ model KickDBProduct {
   rawJson      Json?
   /// When rawJson was fetched from KicksDB (SSE listener, sweeper, or bootstrap).
   rawFetchedAt DateTime?
+  /// Last skinny (priceOnly) SSE tick that changed which STX sizes are buyable.
+  /// Queues the product for the Shopify consumer without faking a full rawJson fetch.
+  stockChangedAt DateTime?
 
   variants    KickDBVariant[]
   shopifySync ShopifySyncState?

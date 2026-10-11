@@ -108,10 +108,15 @@ export async function queryKickdbFreshProducts(params: {
           CASE
             WHEN ${status} = 'create_candidate' THEN s."syncStatus" = 'create_candidate'
             ELSE s."syncStatus" IN ('pending', 'synced', 'error')
-              AND (s."shopifySyncedAt" IS NULL OR p."rawFetchedAt" > s."shopifySyncedAt")
+              AND (
+                s."shopifySyncedAt" IS NULL
+                OR p."rawFetchedAt" > s."shopifySyncedAt"
+                OR p."stockChangedAt" > s."shopifySyncedAt"
+              )
           END
         )
-      ORDER BY s."priorityScore" DESC, p."rawFetchedAt" DESC
+      ORDER BY s."priorityScore" DESC,
+        GREATEST(p."rawFetchedAt", COALESCE(p."stockChangedAt", p."rawFetchedAt")) DESC
       LIMIT ${limit}
     `;
   }
