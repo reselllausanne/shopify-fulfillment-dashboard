@@ -390,6 +390,20 @@ export async function recoverOrphanedRuns(): Promise<number> {
   }
 }
 
+/** Caller guarantees no process is scraping this shop (e.g. its dedicated container is not running). */
+export async function recoverOrphanedRunsForShop(shopKey: string): Promise<number> {
+  const rows = await scraperQuery<{ id: string }>(
+    `UPDATE scraper.scrape_runs
+       SET status = CASE WHEN COALESCE(variants_upserted, 0) > 0 THEN 'interrupted' ELSE 'error' END,
+           finished_at = NOW(),
+           message = COALESCE(message, '') || ' [auto-recovered: process gone]'
+     WHERE shop_id = $1 AND status = 'running'
+     RETURNING id::text`,
+    [shopKey]
+  );
+  return rows.length;
+}
+
 export async function hasRunningRun(shopKey: string): Promise<boolean> {
   const rows = await scraperQuery<{ n: string }>(
     `SELECT COUNT(*)::text AS n FROM scraper.scrape_runs WHERE shop_id = $1 AND status = 'running'`,

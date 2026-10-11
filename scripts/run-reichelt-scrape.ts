@@ -4,12 +4,18 @@
  */
 import "dotenv/config";
 import { runScraperJob } from "@/app/lib/scraperRunner";
+import { recoverOrphanedRunsForShop } from "@/app/lib/shopifyScrape";
 import { prisma } from "@/app/lib/prisma";
 
 const maxArg = process.argv.find((a) => a.startsWith("--max="));
 const maxProducts = maxArg ? Math.max(1, Number(maxArg.split("=")[1] || 0)) : undefined;
 
 async function main() {
+  // Set only by run-reichelt-detached.sh after it checked the rei container is not running.
+  if (process.env.SCRAPER_REI_RECOVER_ORPHANS === "1") {
+    const recovered = await recoverOrphanedRunsForShop("rei");
+    if (recovered > 0) console.log(`[SCRAPER] rei: closed ${recovered} orphaned running run(s)`);
+  }
   const result = await runScraperJob({
     shopKey: "rei",
     maxProducts,
