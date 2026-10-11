@@ -15,15 +15,17 @@ import {
   SHOPIFY_PAID_ADS_RATE,
   SHOPIFY_ADS_PER_ORDER_CHF,
   SHOPIFY_TARGET_CM2_RATE,
+  SHOPIFY_DISCOUNT_LEAKAGE_RATE,
+  SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF,
   shopifyLockedDenom,
   stxSourceCostChfFromRaw,
 } from "@/shopify/pricing/calcShopifySellPrice";
 
-/** Locked floor: raw 100 → C=130.65 → (130.65+14.5+30)/0.90 → ceil whole CHF. */
-const EXPECTED_SELL_RAW_100 = 195;
-const EXPECTED_SELL_RAW_108_45 = 205;
-const EXPECTED_SELL_RAW_126 = 227;
-const EXPECTED_SELL_RAW_170 = 281;
+/** Locked floor: raw 100 → C=130.65 → (130.65+14.5+18+15)/0.85 → ceil whole CHF. */
+const EXPECTED_SELL_RAW_100 = 210;
+const EXPECTED_SELL_RAW_108_45 = 221;
+const EXPECTED_SELL_RAW_126 = 244;
+const EXPECTED_SELL_RAW_170 = 301;
 const BUY_CHF_140 = 140;
 const EXPECTED_RAW_FROM_BUY_140 = 108.45;
 
@@ -55,20 +57,22 @@ describe("calcShopifySellPrice locked formula", () => {
     expect(SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF).toBe(14.5);
     expect(SHOPIFY_BLENDED_PAYMENT_COST_RATE).toBe(0.029);
     expect(SHOPIFY_VAT_FLAT_RATE).toBe(0.021);
-    expect(SHOPIFY_PAID_ADS_RATE).toBe(0);
-    expect(SHOPIFY_ADS_PER_ORDER_CHF).toBe(30);
-    expect(SHOPIFY_TARGET_CM2_RATE).toBe(0.05);
-    expect(shopifyLockedDenom()).toBeCloseTo(0.9, 6);
+    expect(SHOPIFY_DISCOUNT_LEAKAGE_RATE).toBe(0.03);
+    expect(SHOPIFY_PAID_ADS_RATE).toBe(0.07);
+    expect(SHOPIFY_ADS_PER_ORDER_CHF).toBe(18);
+    expect(SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF).toBe(15);
+    expect(SHOPIFY_TARGET_CM2_RATE).toBe(0);
+    expect(shopifyLockedDenom()).toBeCloseTo(0.85, 6);
   });
 
   it("source cost is the real StockX checkout (217 list → 260.11)", () => {
     expect(stxSourceCostChfFromRaw(217)).toBeCloseTo(260.11, 2);
   });
 
-  it("ads per order: cheap pairs carry the same ad cost, expensive pairs get cheaper", () => {
-    expect(calcShopifySellPrice({ stockxRaw: 60, productCategory: "sneakers" })).toBe(146);
-    expect(calcShopifySellPrice({ stockxRaw: 147, productCategory: "sneakers" })).toBe(253);
-    expect(calcShopifySellPrice({ stockxRaw: 300, productCategory: "sneakers" })).toBe(441);
+  it("ads 18 CHF + 7% and 15 CHF profit per pair", () => {
+    expect(calcShopifySellPrice({ stockxRaw: 60, productCategory: "sneakers" })).toBe(158);
+    expect(calcShopifySellPrice({ stockxRaw: 147, productCategory: "sneakers" })).toBe(271);
+    expect(calcShopifySellPrice({ stockxRaw: 300, productCategory: "sneakers" })).toBe(470);
   });
 
   it("ceilToCentime never rounds down", () => {
@@ -82,8 +86,8 @@ describe("calcShopifySellPrice locked formula", () => {
     expect(ceilToWholeFranc(286.36)).toBe(287);
   });
 
-  it("sourceCost 180.08 → 250 (whole CHF)", () => {
-    expect(calcShopifySellFromSourceCost(180.08)).toBe(250);
+  it("sourceCost 180.08 → 268 (whole CHF)", () => {
+    expect(calcShopifySellFromSourceCost(180.08)).toBe(268);
   });
 
   it("prices brands the same", () => {

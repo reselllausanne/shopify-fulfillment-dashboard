@@ -26,16 +26,16 @@ export type ShopifyPricingRule = "half" | "lego" | "manual_override";
 export const SHOPIFY_CPA_CAP_HALF = 24.0;
 
 // ---------------------------------------------------------------------------
-// LOCKED Shopify sell formula (v2026-10-08) — manual constants only.
+// LOCKED Shopify sell formula (v2026-10-11) — manual constants only.
 // Do not silently update from Shopify plan data or payment-method mix.
 // shopifySellPrice =
-//   (sourceCostChf + fixedFulfillmentAndShippingChf + adsPerOrderChf)
-//   / (1 - blendedPaymentCostRate - VATFlatRate - targetCM2Rate)
+//   (sourceCostChf + fixedFulfillmentAndShippingChf + adsPerOrderChf + targetProfitPerOrderChf)
+//   / (1 - blendedPaymentCostRate - VATFlatRate - discountLeakageRate - paidAdsRate - targetCM2Rate)
 // then ceil to whole CHF (WeTheNew-style clean francs; never below floor).
 // sourceCostChf = real StockX checkout cost: raw × 1.1065 + 20.
 // No …9/…5 psych bump.
 // ---------------------------------------------------------------------------
-export const SHOPIFY_PRICING_LOCK_VERSION = "2026-10-08-ads-per-order";
+export const SHOPIFY_PRICING_LOCK_VERSION = "2026-10-11-profit-15-per-pair";
 /** Measured Sep 2026 per order: fulfilment 6.2 + postage 4.7 + apps 3.2 + fixed 0.4. */
 export const SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5;
 /** Shopify payouts Jan–Sep 2026 = 97.1% of net sales (fees + refunds). No +0.30. */
@@ -43,15 +43,21 @@ export const SHOPIFY_BLENDED_PAYMENT_COST_RATE = 0.029;
 /** Saldo VAT rate. */
 export const SHOPIFY_VAT_FLAT_RATE = 0.021;
 /**
- * Ads are a per-order cost, not a share of price: 84% of 90-day spend goes to
- * offers that never convert, and a 100 CHF pair needs the same ad spend as a
- * 300 CHF pair. Real cost was 35/order (90 days) and 43.5 in Sep 2026; 30 is
- * the target once non-converting spend is cut.
+ * Discount codes used at checkout: 2.96% of website sales over the 90 days to Oct 2026.
+ * Comes off the paid price after the formula, so the formula must carry it.
  */
-export const SHOPIFY_ADS_PER_ORDER_CHF = 30;
-/** @deprecated Ads moved to SHOPIFY_ADS_PER_ORDER_CHF; kept at 0 for audit call sites. */
-export const SHOPIFY_PAID_ADS_RATE = 0;
-export const SHOPIFY_TARGET_CM2_RATE = 0.05;
+export const SHOPIFY_DISCOUNT_LEAKAGE_RATE = 0.03;
+/**
+ * Ads per order = fixed part + share of price. Blended Google spend per order
+ * (90 days to Oct 2026) rises with price but not proportionally: ~21 CHF under
+ * 100, ~41 at 150–400, ~60 above 400. 18 + 7% of price fits that curve.
+ */
+export const SHOPIFY_ADS_PER_ORDER_CHF = 18;
+export const SHOPIFY_PAID_ADS_RATE = 0.07;
+/** Profit per StockX pair after every cost (owner target: 15 CHF). */
+export const SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF = 15;
+/** Margin now carried as CHF per pair (SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF). */
+export const SHOPIFY_TARGET_CM2_RATE = 0;
 
 /** Exact floor before storefront publish (centime). */
 export function ceilToCentime(value: number): number {
@@ -73,6 +79,7 @@ export function shopifyLockedDenom(): number {
     1 -
     SHOPIFY_BLENDED_PAYMENT_COST_RATE -
     SHOPIFY_VAT_FLAT_RATE -
+    SHOPIFY_DISCOUNT_LEAKAGE_RATE -
     SHOPIFY_PAID_ADS_RATE -
     SHOPIFY_TARGET_CM2_RATE
   );
@@ -93,7 +100,11 @@ export function calcShopifySellFromSourceCost(sourceCostChf: number): number | n
   const denom = shopifyLockedDenom();
   if (!(denom > 0)) return null;
   return ceilToWholeFranc(
-    (C + SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF + SHOPIFY_ADS_PER_ORDER_CHF) / denom
+    (C +
+      SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF +
+      SHOPIFY_ADS_PER_ORDER_CHF +
+      SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF) /
+      denom
   );
 }
 
