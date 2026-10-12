@@ -57,7 +57,7 @@ chmod +x scripts/setup-github-deploy-secrets.sh
 gh workflow run "Deploy VPS"
 ```
 
-On every push to `main`: validate compose/Dockerfile → SSH → deploy **exact** `github.sha` via `scripts/vps-deploy-from-github.sh` (flock, detach checkout, cleanup stale compose rename leftovers, `compose up -d --no-deps web`). No `git pull`. Migrations only if explicitly requested.
+On every push to `main`: validate compose/Dockerfile → SSH → deploy **exact** `github.sha` via `scripts/vps-deploy-from-github.sh` (flock, detach checkout, cleanup stale compose rename leftovers, `compose up -d --no-deps web`, then build + recreate every other compose worker so none keeps old code). No `git pull`. Migrations only if explicitly requested.
 
 Manual deploy / rollback: see [`VPS-DEPLOY-RUNBOOK.md`](VPS-DEPLOY-RUNBOOK.md).
 

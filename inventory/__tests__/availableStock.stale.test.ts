@@ -95,7 +95,7 @@ describe("attachAvailableStock ledger for scraped suppliers", () => {
     delete process.env.SUPPLIER_STOCK_MAX_AGE_DAYS;
   });
 
-  it("ignores sales booked before the last scrape, keeps later ones and non-scraped ledgers", async () => {
+  it("ignores sales booked before the last scrape, keeps later ones", async () => {
     const lastScrape = new Date(Date.now() - 3_600_000);
     groupBy.mockResolvedValue([
       { supplierVariantId: "rei_sold_before", _sum: { quantityDelta: -1 } },
@@ -109,6 +109,7 @@ describe("attachAvailableStock ledger for scraped suppliers", () => {
     eventFindMany.mockResolvedValue([
       { supplierVariantId: "rei_sold_before", quantityDelta: -1, createdAt: new Date(Date.now() - 2 * DAY) },
       { supplierVariantId: "rei_sold_after", quantityDelta: -1, createdAt: new Date() },
+      { supplierVariantId: "stx_1", quantityDelta: -1, createdAt: new Date() },
     ]);
 
     const map = await attachAvailableStock([
@@ -120,5 +121,56 @@ describe("attachAvailableStock ledger for scraped suppliers", () => {
     expect(map.get("rei_sold_before")).toBe(1);
     expect(map.get("rei_sold_after")).toBe(0);
     expect(map.get("stx_1")).toBe(1);
+  });
+});
+
+describe("attachAvailableStock ledger window for feed suppliers", () => {
+  const prev = process.env.SUPPLIER_LEDGER_WINDOW_HOURS;
+  beforeEach(() => {
+    groupBy.mockReset();
+    findMany.mockReset().mockResolvedValue([]);
+    eventFindMany.mockReset();
+    delete process.env.SUPPLIER_STOCK_MAX_AGE_DAYS;
+    delete process.env.SUPPLIER_LEDGER_WINDOW_HOURS;
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.SUPPLIER_LEDGER_WINDOW_HOURS;
+    else process.env.SUPPLIER_LEDGER_WINDOW_HOURS = prev;
+  });
+
+  it("drops NER/STX sales older than the window, keeps recent ones and own stock", async () => {
+    groupBy.mockResolvedValue([
+      { supplierVariantId: "ner:OLD-42", _sum: { quantityDelta: -1 } },
+      { supplierVariantId: "ner:NEW-42", _sum: { quantityDelta: -1 } },
+      { supplierVariantId: "stx_old", _sum: { quantityDelta: -2 } },
+      { supplierVariantId: "golden_1", _sum: { quantityDelta: -1 } },
+    ]);
+    eventFindMany.mockResolvedValue([
+      { supplierVariantId: "ner:OLD-42", quantityDelta: -1, createdAt: new Date(Date.now() - 5 * DAY) },
+      { supplierVariantId: "ner:NEW-42", quantityDelta: -1, createdAt: new Date(Date.now() - 3_600_000) },
+      { supplierVariantId: "stx_old", quantityDelta: -2, createdAt: new Date(Date.now() - 3 * DAY) },
+    ]);
+
+    const map = await attachAvailableStock([
+      { supplierVariantId: "ner:OLD-42", stock: 1 },
+      { supplierVariantId: "ner:NEW-42", stock: 1 },
+      { supplierVariantId: "stx_old", stock: 2 },
+      { supplierVariantId: "golden_1", stock: 1 },
+    ]);
+
+    expect(map.get("ner:OLD-42")).toBe(1);
+    expect(map.get("ner:NEW-42")).toBe(0);
+    expect(map.get("stx_old")).toBe(2);
+    expect(map.get("golden_1")).toBe(0);
+  });
+
+  it("applies the full ledger when the window is 0", async () => {
+    process.env.SUPPLIER_LEDGER_WINDOW_HOURS = "0";
+    groupBy.mockResolvedValue([{ supplierVariantId: "ner:OLD-42", _sum: { quantityDelta: -1 } }]);
+
+    const map = await attachAvailableStock([{ supplierVariantId: "ner:OLD-42", stock: 1 }]);
+
+    expect(map.get("ner:OLD-42")).toBe(0);
+    expect(eventFindMany).not.toHaveBeenCalled();
   });
 });
