@@ -412,12 +412,12 @@ def calc_touch_price(stockx_raw_price, product_category="sneakers", product_hand
 
 def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, product_handle="", brand=""):
     """
-    LOCKED Shopify sell formula (v2026-10-08-ads-per-order) — manual constants only.
+    LOCKED Shopify sell formula (v2026-10-11-profit-15-plus-3pct) — manual constants only.
     Must stay in sync with shopify/pricing/calcShopifySellPrice.ts.
 
     shopifySellPrice =
-      (sourceCostChf + fixedFulfillmentAndShippingChf + adsPerOrderChf)
-      / (1 - blendedPaymentCostRate - VATFlatRate - targetCM2Rate)
+      (sourceCostChf + fixedFulfillmentAndShippingChf + adsPerOrderChf + targetProfitPerOrderChf)
+      / (1 - blendedPaymentCostRate - VATFlatRate - discountLeakageRate - paidAdsRate - targetCM2Rate)
     then ceil to whole CHF (WeTheNew-style; never below floor).
 
     Do not silently update from Shopify plan data or payment-method mix.
@@ -434,10 +434,15 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5
     BLENDED_PAYMENT_COST_RATE = 0.029
     VAT_FLAT_RATE = 0.021
-    ADS_PER_ORDER_CHF = 30.0
-    TARGET_CM2_RATE = 0.05
+    DISCOUNT_LEAKAGE_RATE = 0.03
+    ADS_PER_ORDER_CHF = 18.0
+    PAID_ADS_RATE = 0.07
+    TARGET_PROFIT_PER_ORDER_CHF = 15.0
+    TARGET_CM2_RATE = 0.03
     STX_LIST_MULTIPLIER = 1.0 + 23.11 / 217.0
-    DENOM = 1.0 - (BLENDED_PAYMENT_COST_RATE + VAT_FLAT_RATE + TARGET_CM2_RATE)
+    DENOM = 1.0 - (
+        BLENDED_PAYMENT_COST_RATE + VAT_FLAT_RATE + DISCOUNT_LEAKAGE_RATE + PAID_ADS_RATE + TARGET_CM2_RATE
+    )
 
     is_lego = "lego" in str(product_category or "").lower() or "lego" in str(product_handle or "").lower()
 
@@ -453,10 +458,13 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
         return final_price
 
     C = stockx_raw * STX_LIST_MULTIPLIER + 20.0
-    final_price_raw = (C + FIXED_FULFILLMENT_AND_SHIPPING_CHF + ADS_PER_ORDER_CHF) / DENOM
+    final_price_raw = (
+        C + FIXED_FULFILLMENT_AND_SHIPPING_CHF + ADS_PER_ORDER_CHF + TARGET_PROFIT_PER_ORDER_CHF
+    ) / DENOM
     final_price = _ceil_to_whole_franc(final_price_raw)
     print(
-        f"[PRICE DEBUG] Locked: (C={C:.2f} + {FIXED_FULFILLMENT_AND_SHIPPING_CHF} + ads {ADS_PER_ORDER_CHF}) "
+        f"[PRICE DEBUG] Locked: (C={C:.2f} + {FIXED_FULFILLMENT_AND_SHIPPING_CHF} + ads {ADS_PER_ORDER_CHF} "
+        f"+ profit {TARGET_PROFIT_PER_ORDER_CHF}) "
         f"/ {DENOM:.4f} = {final_price_raw:.4f} → ceil franc {final_price}"
     )
     print(f"[PRICE DEBUG] calc_sell_price OUTPUT: {final_price} CHF")
