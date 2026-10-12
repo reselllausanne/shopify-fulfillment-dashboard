@@ -28,6 +28,7 @@ import { resolveKickdbSlugForGtin } from "@/shopify/restock/resolveKickdbSlugFor
 import { ensureManualSizeVariant, isManualPriceRequiredError } from "@/shopify/restock/createManualVariant";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { prisma } from "@/app/lib/prisma";
+import { releasePhysicalLiquidationLocksBeforeDetach } from "@/shopify/inventory/staleLiquidationLocks";
 import { isManualOnlyGtin } from "@/shopify/inventory/manualOnlyGtins";
 import { convergeVariant } from "@/shopify/inventory/convergence";
 import { isLiquidationPhysicalLocation } from "@/shopify/inventory/locationConfig";
@@ -167,12 +168,14 @@ async function ensureStxSupplierForGtin(
             const { buildProviderKey } = await import("@/galaxus/supplier/providerKey");
             const newProviderKey = buildProviderKey(gtin, targetSvId);
             if (newProviderKey) {
+              const detachWhere = {
+                providerKey: newProviderKey,
+                gtin,
+                NOT: { supplierVariantId: targetSvId },
+              };
+              await releasePhysicalLiquidationLocksBeforeDetach(detachWhere);
               await prisma.supplierVariant.updateMany({
-                where: {
-                  providerKey: newProviderKey,
-                  gtin,
-                  NOT: { supplierVariantId: targetSvId },
-                },
+                where: detachWhere,
                 data: { gtin: null, providerKey: null },
               });
             }
