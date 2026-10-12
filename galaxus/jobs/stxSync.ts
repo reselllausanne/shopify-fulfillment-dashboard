@@ -180,6 +180,22 @@ function extractRowsFromPayload(payload: any, productId: string) {
 }
 
 /**
+ * Rows a price/stock refresh keeps alive: GTIN rows plus offered no-GTIN (PENDING_GTIN) rows.
+ * No-GTIN sizes are still sold on Shopify; leaving them out of the eligible set made the zero
+ * pass treat every offered no-GTIN size as a lost offer.
+ */
+async function parseStxRefreshRows(
+  payload: any,
+  productId: string
+): Promise<{ rows: ParsedStxRow[]; remapped: number }> {
+  const offeredNoGtin = extractOfferedRowsKeepNoGtin(payload, productId).filter((r) => !r.gtin);
+  return remapRowsToExistingProviderKeyGtin<ParsedStxRow>([
+    ...extractRowsFromPayload(payload, productId),
+    ...offeredNoGtin,
+  ]);
+}
+
+/**
  * Supplier STX rows linked to this KickDB product (via VariantMapping → KickDBVariant).
  */
 async function listStxSupplierVariantIdsForKickdbProductId(kickdbProductId: string): Promise<string[]> {
@@ -736,8 +752,7 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
         } catch {
           return { processedProducts: 0, processedVariants: 0, rows: [], stockZeroed: 0, remapped: 0 };
         }
-        const extracted = extractRowsFromPayload(payload, dbProductId);
-        const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
+        const remappedResult = await parseStxRefreshRows(payload, dbProductId);
         const rows = remappedResult.rows;
         const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
         const skipZeroStock = allowsStxStandardImport(
@@ -868,8 +883,7 @@ export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSync
     };
   }
 
-  const extracted = extractRowsFromPayload(payload, dbProductId || slug);
-  const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
+  const remappedResult = await parseStxRefreshRows(payload, dbProductId || slug);
   const rows = remappedResult.rows;
   const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
   const skipZeroStock = allowsStxStandardImport(
@@ -974,8 +988,7 @@ export async function refreshStxProductsByKickdbProductIds(
         } catch {
           return { processedProducts: 0, processedVariants: 0, rows: [], stockZeroed: 0, remapped: 0 };
         }
-        const extracted = extractRowsFromPayload(payload, cleanId);
-        const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
+        const remappedResult = await parseStxRefreshRows(payload, cleanId);
         const rows = remappedResult.rows;
         const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
         const skipZeroStock = allowsStxStandardImport(
