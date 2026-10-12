@@ -27,6 +27,7 @@ import {
   withSftp,
 } from "@/galaxus/edi/sftpClient";
 import { runGalaxusExportGET } from "@/galaxus/ops/internalExportGet";
+import { releaseStaleLiquidationLocks } from "@/shopify/inventory/staleLiquidationLocks";
 import { streamCsvToFile } from "@/galaxus/exports/csv";
 import { buildMasterSpecsFeedExport } from "@/galaxus/exports/masterSpecsFeed";
 import { countCriticalGtinIssues, collectCriticalGtinProviderKeys, filterCsvByProviderKeys } from "@/galaxus/exports/feedValidation";
@@ -201,6 +202,9 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       return { ok: false, status: 403, error: "Feed uploads are manual-only" };
     }
     assertSftpConfig();
+    await releaseStaleLiquidationLocks().catch((err) => {
+      console.error("[GALAXUS][FEED] stale liquidation sweep failed", err);
+    });
     const supplier = input.supplier ?? null;
     const rawType = (input.type ?? "all").toLowerCase();
     const type = rawType === "price" ? "offer" : rawType;

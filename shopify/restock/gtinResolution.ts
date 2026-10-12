@@ -9,6 +9,7 @@ import {
   listShopifyVariantsByGtinDetailed,
   setVariantBarcode,
 } from "@/shopify/restock/shopifyRestockInventory";
+import { releasePhysicalLiquidationLocksBeforeDetach } from "@/shopify/inventory/staleLiquidationLocks";
 
 function cleanGtin(value: string): string {
   return String(value ?? "").replace(/\D/g, "").trim();
@@ -95,9 +96,15 @@ export async function assignGtinToVariantExclusive(input: {
       for (const row of dupRows) {
         if (isPartnerCatalogSupplierVariantId(row.supplierVariantId)) continue;
         const key = String(row.providerKey ?? "").trim();
+        // STX rows are keyed by GTIN (STX_<gtin>), never by Shopify SKU.
+        const isGtinKeyedStxOwner = key === `STX_${gtin}`;
         const matchesChosen =
-          key === chosenSku || key.endsWith(`-${chosenSku}`) || chosenSku.endsWith(key);
+          isGtinKeyedStxOwner ||
+          key === chosenSku ||
+          key.endsWith(`-${chosenSku}`) ||
+          chosenSku.endsWith(key);
         if (!matchesChosen) {
+          await releasePhysicalLiquidationLocksBeforeDetach({ id: row.id });
           await prisma.supplierVariant.update({
             where: { id: row.id },
             data: { gtin: null },

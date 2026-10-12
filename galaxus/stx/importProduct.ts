@@ -31,6 +31,7 @@ import {
 } from "@/galaxus/stx/physicalImport";
 import { type StxDeliveryType } from "@/galaxus/stx/offerSelection";
 import { STX_MIN_ASKS_FOR_LISTING, isStxListingEligibleAsks } from "@/galaxus/stx/stockPublish";
+import { releasePhysicalLiquidationLocksBeforeDetach } from "@/shopify/inventory/staleLiquidationLocks";
 
 type ImportPreviewVariant = {
   supplierVariantId: string;
@@ -673,12 +674,14 @@ export async function importStxProductByInput(
   if (attachGtinUsed && attachGtinTargetSvId && attachGtin) {
     try {
       // Detach exact scanned gtin from any other stx_ row (unique providerKey+gtin).
+      const exactDetachWhere = {
+        gtin: attachGtin,
+        supplierVariantId: { startsWith: "stx_" },
+        NOT: { supplierVariantId: attachGtinTargetSvId },
+      };
+      await releasePhysicalLiquidationLocksBeforeDetach(exactDetachWhere);
       await prisma.supplierVariant.updateMany({
-        where: {
-          gtin: attachGtin,
-          supplierVariantId: { startsWith: "stx_" },
-          NOT: { supplierVariantId: attachGtinTargetSvId },
-        },
+        where: exactDetachWhere,
         data: { gtin: null, providerKey: null, updatedAt: now },
       });
       // Detach digit-equal short UPC orphans (KickDB 196… vs scanned 00196…).
@@ -694,6 +697,7 @@ export async function importStxProductByInput(
         .filter((row) => row.gtin && gtinDigitsEqual(row.gtin, attachGtin) && row.gtin !== attachGtin)
         .map((row) => row.supplierVariantId);
       if (orphanIds.length > 0) {
+        await releasePhysicalLiquidationLocksBeforeDetach({ supplierVariantId: { in: orphanIds } });
         await prisma.supplierVariant.updateMany({
           where: { supplierVariantId: { in: orphanIds } },
           data: { gtin: null, providerKey: null, updatedAt: now },

@@ -15,6 +15,11 @@ import { resolveInStockFixedPrice } from "@/shopify/inventory/inStockFixedPrice"
 import { syncPhysicalExpressAvailability } from "@/shopify/inventory/syncPhysicalExpressAvailability";
 import { syncProductSoldes48hMetafield } from "@/shopify/inventory/productSoldes48hMetafield";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
+import {
+  buildLiquidationReleaseData,
+  releaseStaleLiquidationLocks,
+  type StaleLiquidationSweepResult,
+} from "@/shopify/inventory/staleLiquidationLocks";
 
 /**
  * Phase 4 — convergence engine.
@@ -356,6 +361,7 @@ export async function convergeVariant(
       manualPrice: true,
       manualStock: true,
       manualNote: true,
+      lastSyncAt: true,
     },
   });
 
@@ -781,17 +787,19 @@ export async function convergeVariant(
       !preserveManualLock &&
       (hadDbLiquidation || stxRow.manualPrice !== null || stxRow.manualStock !== null)
     ) {
+      const releaseData = buildLiquidationReleaseData({
+        lastSyncAt: stxRow.lastSyncAt ?? null,
+        note: "phase4:dropship (bussigny=0)",
+      });
       await prisma.supplierVariant.update({
         where: { id: stxRow.id },
-        data: {
-          manualLock: false,
-          manualPrice: null,
-          manualStock: null,
-          manualUpdatedAt: new Date(),
-          manualNote: "phase4:dropship (bussigny=0)",
-        },
+        data: releaseData,
       });
-      changes.push("DB manualLock=false, cleared manual overrides");
+      changes.push(
+        "stock" in releaseData
+          ? "DB manualLock=false, cleared manual overrides, stock=0 (STX data stale until next sync)"
+          : "DB manualLock=false, cleared manual overrides"
+      );
     } else if (stxRow && preserveGalaxusLiquidation) {
       warnings.push(`preserved Galaxus liquidation lock (${note || "named"})`);
     } else if (stxRow && preserveJmoneyLock) {
@@ -996,6 +1004,7 @@ export type ConvergeAllResult = {
   errors: number;
   ms: number;
   sample: ConvergeVariantResult[];
+  staleLiquidationSweep?: StaleLiquidationSweepResult | { error: string };
 };
 
 /**
@@ -1008,6 +1017,14 @@ export type ConvergeAllResult = {
 export async function convergeAll(options: { sampleSize?: number } = {}): Promise<ConvergeAllResult> {
   const startedAt = Date.now();
   const sampleSize = Math.min(Math.max(options.sampleSize ?? 25, 0), 500);
+
+  let staleLiquidationSweep: ConvergeAllResult["staleLiquidationSweep"];
+  try {
+    staleLiquidationSweep = await releaseStaleLiquidationLocks();
+  } catch (err: any) {
+    staleLiquidationSweep = { error: err?.message ?? String(err) };
+    console.error("[convergeAll] stale liquidation sweep failed", err);
+  }
 
   const liqRows = await prisma.$queryRaw<Array<{ gtin: string }>>`
     SELECT DISTINCT s."gtin"
@@ -1027,7 +1044,10 @@ export async function convergeAll(options: { sampleSize?: number } = {}): Promis
       AND (
         (
           sv."manualLock" = true
-          AND sv."manualNote" LIKE 'phase4:liquidation%'
+          AND (
+            sv."manualNote" LIKE 'phase4:liquidation%'
+            OR sv."manualNote" LIKE 'restock:liquidation%'
+          )
         )
         OR (
           sv."manualLock" = false
@@ -1084,5 +1104,6 @@ export async function convergeAll(options: { sampleSize?: number } = {}): Promis
     errors,
     ms: Date.now() - startedAt,
     sample,
+    staleLiquidationSweep,
   };
 }
