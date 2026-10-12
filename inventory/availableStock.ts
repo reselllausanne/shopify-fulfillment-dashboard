@@ -77,6 +77,28 @@ function isScrapedSupplierVariantId(supplierVariantId: string): boolean {
   return Boolean(key && SCRAPER_SUPPLIER_KEYS.has(key));
 }
 
+/** Own stock: SupplierVariant.stock is never re-reported by a supplier, so the full ledger applies. */
+const OWN_STOCK_SUPPLIER_KEYS = new Set(["the", "golden", "gld"]);
+
+/**
+ * Feed suppliers (STX asks, NER / partner imports) re-report stock that already
+ * includes our sales, but only bump lastSyncAt when a value changes. A sale
+ * therefore only counts while the supplier may not have caught up yet.
+ * SUPPLIER_LEDGER_WINDOW_HOURS=0 restores the full ledger.
+ */
+export function supplierLedgerWindowHours(): number {
+  const raw = String(process.env.SUPPLIER_LEDGER_WINDOW_HOURS ?? "").trim();
+  if (raw === "") return 48;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 48;
+}
+
+function isWindowedLedgerSupplierVariantId(supplierVariantId: string): boolean {
+  const key = String(supplierVariantId ?? "").trim().toLowerCase().split(/[_:]/)[0] ?? "";
+  if (!key || OWN_STOCK_SUPPLIER_KEYS.has(key)) return false;
+  return !SCRAPER_SUPPLIER_KEYS.has(key);
+}
+
 export async function loadLastSyncAtBySupplierVariantId(
   supplierVariantIds: string[]
 ): Promise<Map<string, Date | null>> {
@@ -193,6 +215,18 @@ export async function attachAvailableStock<T extends SupplierVariantLike>(
   );
   for (const [id, delta] of await loadDeltasSinceLastSync(scrapedWithLedger)) {
     deltas.set(id, delta);
+  }
+  const ledgerWindowHours = supplierLedgerWindowHours();
+  if (ledgerWindowHours > 0) {
+    const windowStart = new Date(now.getTime() - ledgerWindowHours * 3_600_000);
+    const windowed = new Map<string, Date | null>(
+      [...deltas.entries()]
+        .filter(([id, delta]) => delta !== 0 && isWindowedLedgerSupplierVariantId(id))
+        .map(([id]) => [id, windowStart])
+    );
+    for (const [id, delta] of await loadDeltasSinceLastSync(windowed)) {
+      deltas.set(id, delta);
+    }
   }
   let staleZeroed = 0;
 

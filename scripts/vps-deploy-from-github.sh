@@ -16,9 +16,10 @@ REPO="${REPO:-/opt/resell}"
 REMOTE="${REMOTE:-origin}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-resell}"
 DEPLOY_SERVICE="${DEPLOY_SERVICE:-web}"
-# Workers that compute Shopify sell prices: they bake code into their own image,
-# so they must be rebuilt with web or they keep pushing the previous formula.
-DEPLOY_PRICE_WORKERS="${DEPLOY_PRICE_WORKERS-worker-shopify-stx-price-sync worker-shopify-fast-reprice}"
+# Every compose worker is `build: .` and bakes the code into its own image, so a
+# worker that is not rebuilt keeps running old code next to the new web
+# (Galaxus feed ran Sep 16 code until Oct 11). Empty = every compose service except web.
+DEPLOY_WORKERS="${DEPLOY_WORKERS-${DEPLOY_PRICE_WORKERS-}}"
 EXPECTED_SHA="${EXPECTED_SHA:-}"
 DRY_RUN=0
 VALIDATE_CONFIG=0
@@ -318,6 +319,14 @@ verify_web_deployment() {
   echo "== POST_DEPLOY_VERIFY ok service=$DEPLOY_SERVICE cid=$cid sha=$want_sha"
 }
 
+resolve_deploy_workers() {
+  if [ -n "$DEPLOY_WORKERS" ]; then
+    echo "$DEPLOY_WORKERS"
+    return 0
+  fi
+  docker compose config --services | grep -vx "$DEPLOY_SERVICE" | tr '\n' ' '
+}
+
 parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -418,7 +427,7 @@ main() {
       echo "   docker compose up -d --no-deps $DEPLOY_SERVICE"
     fi
     echo "   verify web running + labels (+ image when available)"
-    for svc in $DEPLOY_PRICE_WORKERS; do
+    for svc in $(resolve_deploy_workers); do
       echo "   docker compose build $svc && docker compose up -d --no-deps $svc"
     done
     validate_deploy_config "$REPO"
@@ -459,10 +468,13 @@ main() {
 
   verify_web_deployment "$WANT"
 
-  for svc in $DEPLOY_PRICE_WORKERS; do
-    echo "== build + up price worker $svc"
+  local workers
+  workers="$(resolve_deploy_workers)"
+  echo "== workers: $workers"
+  for svc in $workers; do
+    echo "== build + up worker $svc"
     if ! docker compose build "$svc" || ! docker compose up -d --no-deps "$svc"; then
-      echo "FATAL: price worker $svc not redeployed (web is live on $WANT)"
+      echo "FATAL: worker $svc not redeployed (web is live on $WANT)"
       exit 16
     fi
   done
