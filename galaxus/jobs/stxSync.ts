@@ -13,7 +13,7 @@ import {
   syncShopifyStxPricesForGtins,
   syncShopifyStxPricesForSupplierVariantIds,
 } from "@/shopify/stx/syncShopifyStxPrices";
-import { zeroShopifySoldoutForKickdbProduct } from "@/shopify/stx/zeroSoldoutShopify";
+import { syncShopifyStxStockForKickdbProduct } from "@/shopify/stx/stxStockShopify";
 import {
   bulkInsertSupplierVariants,
   bulkUpdateSupplierVariants,
@@ -36,6 +36,8 @@ type StxSyncResult = {
   stockZeroed?: number;
   /** Shopify Website-stock sizes zeroed because StockX shows 0 asks live. */
   shopifySoldoutZeroed?: number;
+  /** Shopify Website-stock sizes set back to 1 because StockX has asks again. */
+  shopifyStockRestored?: number;
   durationMs: number;
 };
 
@@ -196,6 +198,30 @@ async function parseStxRefreshRows(
     ...extractRowsFromPayload(payload, productId),
     ...offeredNoGtin,
   ]);
+}
+
+/**
+ * Shopify Website stock follows the live payload whenever a size sold out (zero pass) or is
+ * offered again while the DB still has it at 0. Must run before the bulk DB update.
+ */
+async function syncShopifyStockAfterRefresh(
+  kickdbProductId: string,
+  payload: unknown,
+  rows: ParsedStxRow[],
+  stockZeroed: number
+): Promise<{ zeroed: number; restored: number }> {
+  if (!kickdbProductId) return { zeroed: 0, restored: 0 };
+  if (stockZeroed === 0) {
+    const offeredIds = rows.filter((r) => r.stock > 0).map((r) => r.supplierVariantId);
+    const backInStock =
+      offeredIds.length === 0
+        ? 0
+        : await prisma.supplierVariant.count({
+            where: { supplierVariantId: { in: offeredIds }, stock: { lte: 0 } },
+          });
+    if (backInStock === 0) return { zeroed: 0, restored: 0 };
+  }
+  return syncShopifyStxStockForKickdbProduct(kickdbProductId, payload);
 }
 
 /**
@@ -764,9 +790,18 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
         rows: ParsedStxRow[];
         stockZeroed: number;
         shopifySoldoutZeroed: number;
+        shopifyStockRestored: number;
         remapped: number;
       }> => {
-        const empty = { processedProducts: 0, processedVariants: 0, rows: [], stockZeroed: 0, shopifySoldoutZeroed: 0, remapped: 0 };
+        const empty = {
+          processedProducts: 0,
+          processedVariants: 0,
+          rows: [],
+          stockZeroed: 0,
+          shopifySoldoutZeroed: 0,
+          shopifyStockRestored: 0,
+          remapped: 0,
+        };
         const dbProductId = String(row?.kickdbProductId ?? "").trim();
         const fetchId = kickdbStockxFetchId(row);
         if (!dbProductId || !fetchId) return empty;
@@ -790,14 +825,14 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
           now,
           { skip: skipZeroStock }
         );
-        const shopifySoldoutZeroed =
-          stockZeroed > 0 ? await zeroShopifySoldoutForKickdbProduct(dbProductId, payload) : 0;
+        const shopify = await syncShopifyStockAfterRefresh(dbProductId, payload, rows, stockZeroed);
         return {
           processedProducts: 1,
           processedVariants: rows.length,
           rows,
           stockZeroed,
-          shopifySoldoutZeroed,
+          shopifySoldoutZeroed: shopify.zeroed,
+          shopifyStockRestored: shopify.restored,
           remapped: remappedResult.remapped,
         };
       })
@@ -808,12 +843,14 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
   let processedVariants = 0;
   let stockZeroed = 0;
   let shopifySoldoutZeroed = 0;
+  let shopifyStockRestored = 0;
   let remappedToCanonical = 0;
   for (const c of chunks) {
     processedProducts += c.processedProducts;
     processedVariants += c.processedVariants;
     stockZeroed += c.stockZeroed;
     shopifySoldoutZeroed += c.shopifySoldoutZeroed;
+    shopifyStockRestored += c.shopifyStockRestored;
     remappedToCanonical += c.remapped;
     parsedRows.push(...c.rows);
   }
@@ -847,6 +884,7 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
     removedMissingOrIneligible: 0,
     stockZeroed,
     shopifySoldoutZeroed,
+    shopifyStockRestored,
     remappedToCanonical,
     durationMs,
   });
@@ -861,6 +899,7 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
     removedMissingOrIneligible: 0,
     stockZeroed,
     shopifySoldoutZeroed,
+    shopifyStockRestored,
     durationMs,
   };
 }
@@ -928,8 +967,12 @@ export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSync
           skip: skipZeroStock,
         })
       : 0;
-  const shopifySoldoutZeroed =
-    stockZeroed > 0 ? await zeroShopifySoldoutForKickdbProduct(dbProductId, payload) : 0;
+  const { zeroed: shopifySoldoutZeroed, restored: shopifyStockRestored } = await syncShopifyStockAfterRefresh(
+    dbProductId,
+    payload,
+    rows,
+    stockZeroed
+  );
 
   let updated = 0;
   for (const batch of chunkArray(rows, 500)) {
@@ -959,6 +1002,7 @@ export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSync
     updated,
     stockZeroed,
     shopifySoldoutZeroed,
+    shopifyStockRestored,
     remappedToCanonical: remappedResult.remapped,
     durationMs,
   });
@@ -973,6 +1017,7 @@ export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSync
     removedMissingOrIneligible: 0,
     stockZeroed,
     shopifySoldoutZeroed,
+    shopifyStockRestored,
     durationMs,
   };
 }
@@ -1010,9 +1055,18 @@ export async function refreshStxProductsByKickdbProductIds(
         rows: ParsedStxRow[];
         stockZeroed: number;
         shopifySoldoutZeroed: number;
+        shopifyStockRestored: number;
         remapped: number;
       }> => {
-        const empty = { processedProducts: 0, processedVariants: 0, rows: [], stockZeroed: 0, shopifySoldoutZeroed: 0, remapped: 0 };
+        const empty = {
+          processedProducts: 0,
+          processedVariants: 0,
+          rows: [],
+          stockZeroed: 0,
+          shopifySoldoutZeroed: 0,
+          shopifyStockRestored: 0,
+          remapped: 0,
+        };
         const cleanId = String(productId ?? "").trim();
         if (!cleanId) return empty;
         const kickRow = kickRowByExternalId.get(cleanId);
@@ -1037,14 +1091,14 @@ export async function refreshStxProductsByKickdbProductIds(
           now,
           { skip: skipZeroStock }
         );
-        const shopifySoldoutZeroed =
-          stockZeroed > 0 ? await zeroShopifySoldoutForKickdbProduct(cleanId, payload) : 0;
+        const shopify = await syncShopifyStockAfterRefresh(cleanId, payload, rows, stockZeroed);
         return {
           processedProducts: 1,
           processedVariants: rows.length,
           rows,
           stockZeroed,
-          shopifySoldoutZeroed,
+          shopifySoldoutZeroed: shopify.zeroed,
+          shopifyStockRestored: shopify.restored,
           remapped: remappedResult.remapped,
         };
       })
@@ -1055,12 +1109,14 @@ export async function refreshStxProductsByKickdbProductIds(
   let processedVariants = 0;
   let stockZeroed = 0;
   let shopifySoldoutZeroed = 0;
+  let shopifyStockRestored = 0;
   let remappedToCanonical = 0;
   for (const c of chunks) {
     processedProducts += c.processedProducts;
     processedVariants += c.processedVariants;
     stockZeroed += c.stockZeroed;
     shopifySoldoutZeroed += c.shopifySoldoutZeroed;
+    shopifyStockRestored += c.shopifyStockRestored;
     remappedToCanonical += c.remapped ?? 0;
     parsedRows.push(...c.rows);
   }
@@ -1089,6 +1145,7 @@ export async function refreshStxProductsByKickdbProductIds(
     updated,
     stockZeroed,
     shopifySoldoutZeroed,
+    shopifyStockRestored,
     remappedToCanonical,
     durationMs,
   });
@@ -1103,6 +1160,7 @@ export async function refreshStxProductsByKickdbProductIds(
     removedMissingOrIneligible: 0,
     stockZeroed,
     shopifySoldoutZeroed,
+    shopifyStockRestored,
     durationMs,
   };
 }

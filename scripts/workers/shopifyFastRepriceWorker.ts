@@ -18,6 +18,9 @@
  *   SHOPIFY_FAST_REPRICE_DRIFT_PAUSE_MS    default 300000 (drift loop: sizes whose StockX buy
  *                                          changed since the last Shopify write; 0 disables)
  *   SHOPIFY_FAST_REPRICE_DRIFT_MAX_PRODUCTS default 1500 (products per drift pass)
+ *   SHOPIFY_STX_STOCK_RECONCILE_PAUSE_MS   default 21600000 (rest between Website-stock
+ *                                          reconcile passes, `scripts/reconcile-shopify-stx-stock.ts`;
+ *                                          0 disables)
  *
  * A full pass takes ~7.5h; without the drift loop a StockX price rise stays
  * under cost on Shopify until the shard comes back around.
@@ -32,6 +35,10 @@ const INITIAL_DELAY_MS = Math.max(0, Number(process.env.SHOPIFY_FAST_REPRICE_INI
 const FAILURE_RETRY_MS = Math.max(0, Number(process.env.SHOPIFY_FAST_REPRICE_FAILURE_RETRY_MS ?? 60_000));
 const DRIFT_PAUSE_MS = Math.max(0, Number(process.env.SHOPIFY_FAST_REPRICE_DRIFT_PAUSE_MS ?? 5 * 60 * 1000));
 const DRIFT_MAX_PRODUCTS = Math.max(1, Number(process.env.SHOPIFY_FAST_REPRICE_DRIFT_MAX_PRODUCTS ?? 1500));
+const STOCK_RECONCILE_PAUSE_MS = Math.max(
+  0,
+  Number(process.env.SHOPIFY_STX_STOCK_RECONCILE_PAUSE_MS ?? 6 * 60 * 60 * 1000)
+);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -58,8 +65,12 @@ function runDriftPass(): Promise<number> {
 }
 
 function runReprice(tag: string, args: string[]): Promise<number> {
+  return runScript(tag, "scripts/reprice-shopify-fast.ts", args);
+}
+
+function runScript(tag: string, script: string, args: string[]): Promise<number> {
   return new Promise((resolve) => {
-    const child = spawn("npx", ["tsx", "scripts/reprice-shopify-fast.ts", "--apply", ...args], {
+    const child = spawn("npx", ["tsx", script, "--apply", ...args], {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     });
@@ -116,3 +127,17 @@ async function driftLoop(): Promise<never> {
   }
 }
 if (DRIFT_PAUSE_MS > 0) void driftLoop();
+
+async function stockReconcileLoop(): Promise<never> {
+  await sleep(INITIAL_DELAY_MS * 2);
+  while (true) {
+    const startedAt = Date.now();
+    const code = await runScript("stock", "scripts/reconcile-shopify-stx-stock.ts", ["--progress-every=500"]);
+    console.info("[WORKER][SHOPIFY_FAST_REPRICE][stock] pass done", {
+      exitCode: code,
+      durationMs: Date.now() - startedAt,
+    });
+    await sleep(code === 0 ? STOCK_RECONCILE_PAUSE_MS : FAILURE_RETRY_MS * 10);
+  }
+}
+if (STOCK_RECONCILE_PAUSE_MS > 0) void stockReconcileLoop();
