@@ -56,6 +56,7 @@ const PROGRESS_EVERY = Math.max(1, Math.floor(num("progress-every", 200)));
  */
 const ONLY_DRIFTED = process.argv.includes("--only-drifted");
 const MAX_PRODUCTS = Math.max(1, Math.floor(num("max-products", 1_000_000)));
+const DRIFT_WINDOW_HOURS = Math.max(1, num("drift-window-hours", 12));
 
 const VARIANTS_QUERY = /* GraphQL */ `
 query FastRepriceProduct($id: ID!, $first: Int!) {
@@ -199,12 +200,19 @@ async function main() {
     ? `AND (cls."lastSyncedAt" IS NULL OR cls."lastSyncedAt" < NOW() - INTERVAL '${Math.round(SKIP_FRESH_HOURS)} hours')`
     : "";
   const onlyUnpricedClause = ONLY_UNPRICED ? `AND cls."lastPushedPrice" IS NULL` : "";
+  // Window keeps the drift scan on the SupplierVariant.updatedAt index; older drift is
+  // covered by the full shard passes (~7.5h cycle).
   const onlyDriftedClause = ONLY_DRIFTED
-    ? `AND (cls."lastSyncedAt" IS NULL OR sv."updatedAt" > cls."lastSyncedAt")`
+    ? `AND sv."updatedAt" > NOW() - INTERVAL '${Math.round(DRIFT_WINDOW_HOURS)} hours'
+       AND (cls."lastSyncedAt" IS NULL OR sv."updatedAt" > cls."lastSyncedAt")`
     : "";
   const orderBy = ONLY_DRIFTED ? `sv."updatedAt" DESC` : `sss."shopifyProductId"`;
 
-  const rows = await prisma.$queryRawUnsafe<Row[]>(`
+  // Pooled 2min statement_timeout cancels the catalogue join when the DB is busy.
+  const rows = await prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '300s'`);
+      return tx.$queryRawUnsafe<Row[]>(`
     SELECT sv."supplierVariantId",
            sv."providerKey",
            sv."gtin",
@@ -243,6 +251,9 @@ async function main() {
     ORDER BY ${orderBy}
     LIMIT ${Math.max(1, Math.floor(LIMIT))}
   `);
+    },
+    { timeout: 330_000, maxWait: 30_000 }
+  );
   const loaded = ONLY_DRIFTED ? rows.filter(isPriceDrifted) : rows;
 
   // Group rows by Shopify product. Barcode map for primary match; full list for
