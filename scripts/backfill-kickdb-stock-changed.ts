@@ -62,7 +62,11 @@ async function main() {
   );
   if (!write || summary.behind === 0) return;
 
-  const picked = await prisma.$queryRaw<Array<{ id: string }>>`
+  // Ordering the whole backlog by EXISTS(zeroed size) exceeds the pooled 2min timeout.
+  const picked = await prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '600s'`);
+      return tx.$queryRaw<Array<{ id: string }>>`
     WITH behind AS (
       SELECT p."id", s."shopifySyncedAt", p."lastFetchedAt"
       FROM "public"."ShopifySyncState" s
@@ -91,6 +95,9 @@ async function main() {
         behind."lastFetchedAt" DESC
     LIMIT ${limit}
   `;
+    },
+    { timeout: 630_000, maxWait: 30_000 }
+  );
 
   // Pick and update in separate statements: one UPDATE ... ORDER BY EXISTS over the
   // whole backlog exceeds the pooler statement timeout.
