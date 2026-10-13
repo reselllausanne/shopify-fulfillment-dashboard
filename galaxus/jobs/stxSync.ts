@@ -340,6 +340,28 @@ function extractOfferedRowsKeepNoGtin(payload: any, productId: string): IngestPa
   return rows;
 }
 
+/** `stx_{variantId}` ids buyable (stock > 0) in a KicksDB product payload. */
+export function listOfferedStxSupplierVariantIds(payload: any, productId: string): Set<string> {
+  return new Set(
+    extractOfferedRowsKeepNoGtin(payload, productId)
+      .filter((row) => Number(row.stock) > 0)
+      .map((row) => row.supplierVariantId)
+  );
+}
+
+/**
+ * True when the set of buyable STX sizes differs between two payloads of the same product.
+ * Missing `before` counts as changed so the Shopify consumer re-checks the product.
+ */
+export function stxOfferedSizesChanged(before: unknown, after: unknown, productId: string): boolean {
+  if (!before || typeof before !== "object") return true;
+  const a = listOfferedStxSupplierVariantIds(before, productId);
+  const b = listOfferedStxSupplierVariantIds(after, productId);
+  if (a.size !== b.size) return true;
+  for (const id of a) if (!b.has(id)) return true;
+  return false;
+}
+
 /**
  * Product delisted on KicksDB (fetch 404). Zero stock on every STX `SupplierVariant` linked to it
  * (price preserved; `manualLock` rows skipped) so the Galaxus feed drops it to out-of-stock.
