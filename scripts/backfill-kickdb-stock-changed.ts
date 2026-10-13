@@ -62,7 +62,7 @@ async function main() {
   );
   if (!write || summary.behind === 0) return;
 
-  const updated = await prisma.$executeRaw`
+  const picked = await prisma.$queryRaw<Array<{ id: string }>>`
     WITH behind AS (
       SELECT p."id", s."shopifySyncedAt", p."lastFetchedAt"
       FROM "public"."ShopifySyncState" s
@@ -74,11 +74,10 @@ async function main() {
         AND p."lastFetchedAt" > s."shopifySyncedAt"
         AND p."rawFetchedAt" <= s."shopifySyncedAt"
         AND (p."stockChangedAt" IS NULL OR p."stockChangedAt" <= s."shopifySyncedAt")
-    ),
-    picked AS (
-      SELECT behind."id"
-      FROM behind
-      ORDER BY
+    )
+    SELECT behind."id"
+    FROM behind
+    ORDER BY
         EXISTS (
           SELECT 1
           FROM "public"."KickDBVariant" kv
@@ -90,13 +89,21 @@ async function main() {
             AND sv."updatedAt" > behind."shopifySyncedAt"
         ) DESC,
         behind."lastFetchedAt" DESC
-      LIMIT ${limit}
-    )
-    UPDATE "public"."KickDBProduct" p
-    SET "stockChangedAt" = NOW()
-    FROM picked
-    WHERE p."id" = picked."id"
+    LIMIT ${limit}
   `;
+
+  // Pick and update in separate statements: one UPDATE ... ORDER BY EXISTS over the
+  // whole backlog exceeds the pooler statement timeout.
+  let updated = 0;
+  const ids = picked.map((r) => r.id);
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    updated += await prisma.$executeRaw`
+      UPDATE "public"."KickDBProduct"
+      SET "stockChangedAt" = NOW()
+      WHERE "id" = ANY(${chunk})
+    `;
+  }
   console.log(`[backfill-stock-changed] queued=${updated}`);
 }
 
