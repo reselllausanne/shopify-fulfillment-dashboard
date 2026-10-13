@@ -106,7 +106,7 @@ const IT_COMPONENT_TEXT_RE = new RegExp(
 );
 const IT_COMPONENT_CASE_RE = /\b\d+\s?GB\b[^,]*\bRAM\b|\bRAM\b[^,]*\b\d+\s?GB\b|\bNAS\b/;
 
-const IT_COMPONENT_KEEP_RE = /raspberry|\brpi\b|nvidia|\bddr5\b|so-?dimm/i;
+const IT_COMPONENT_KEEP_RE = /raspberry|\brpi\b|nvidia|\bddr5\b|so-?dimm|\bcsx\b/i;
 
 const TUBE_LAMP_RE =
   /\btube led\b|\bled[- ]?tube\b|led[- ]?r[oö]hre|leuchtstoff(?:r[oö]hre|lampe)|\btube fluo|\bn[eé]on (?:tube|lamp|lampe|r[oö]hre)\b|\btube n[eé]on\b|\bT[58]\b[^,]*\b(?:led|tube|r[oö]hre)\b/i;

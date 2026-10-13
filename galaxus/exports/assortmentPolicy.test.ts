@@ -44,6 +44,9 @@ describe("galaxusAssortmentBlockReason", () => {
       "rei_not_allowlisted"
     );
     expect(galaxusAssortmentBlockReason({ providerKey: "REI_4021553335377", title: "Barthelme Telefonstecklampe" })).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "REI_4250312512913", title: "CSX DIMM DDR4-2400MHZ 8 GO CSX", brand: "CSX" })
+    ).toBeNull();
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
   });
 
