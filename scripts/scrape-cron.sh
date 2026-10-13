@@ -13,7 +13,9 @@
 #     0 3 * * * /opt/resell/scripts/scrape-cron.sh >> /opt/resell/scrape-cron.log 2>&1
 #
 #   Detached heavy scrapers (own container, survive web restarts; skip if still running):
-#     0 3 * * * /opt/resell/scripts/run-reichelt-detached.sh >> /opt/resell/scrape-rei-cron.log 2>&1
+#     0 3 * * 0 /opt/resell/scripts/run-reichelt-detached.sh >> /opt/resell/scrape-rei-cron.log 2>&1
+#   REI is weekly: Galaxus only lists the REI allowlist (reiGalaxusAllowlist.ts) and REI
+#   stock stays valid 8 days (SUPPLIER_STOCK_MAX_AGE_DAYS_REI).
 #   EXL/BWZ/WRK run in the shared batch; run-*-detached.sh is for manual full passes.
 #
 #   Single-shop via API (examples from vps-patch scripts):

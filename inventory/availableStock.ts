@@ -60,6 +60,17 @@ export function supplierStockMaxAgeDays(): number {
   return Number.isFinite(n) && n >= 0 ? n : 2;
 }
 
+/**
+ * REI is scraped weekly, so its stock stays valid one full cycle plus a missed-run day.
+ * SUPPLIER_STOCK_MAX_AGE_DAYS_REI overrides.
+ */
+export function supplierStockMaxAgeDaysFor(supplierKey: string | null | undefined): number {
+  const key = String(supplierKey ?? "").trim().toLowerCase();
+  if (key !== "rei") return supplierStockMaxAgeDays();
+  const n = Number.parseFloat(String(process.env.SUPPLIER_STOCK_MAX_AGE_DAYS_REI ?? "").trim());
+  return Number.isFinite(n) && n >= 0 ? n : 8;
+}
+
 export function isScrapedStockStale(
   lastSyncAt: Date | null | undefined,
   now: Date = new Date(),
@@ -277,7 +288,11 @@ export async function attachAvailableStock<T extends SupplierVariantLike>(
     if (
       stock > 0 &&
       lastSyncById.has(supplierVariantId) &&
-      isScrapedStockStale(lastSyncById.get(supplierVariantId), now, maxAgeDays)
+      isScrapedStockStale(
+        lastSyncById.get(supplierVariantId),
+        now,
+        supplierStockMaxAgeDaysFor(resolveSupplierKeyFromIds(supplierVariantId))
+      )
     ) {
       stock = 0;
       staleZeroed += 1;

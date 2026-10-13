@@ -1,11 +1,16 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   galaxusAssortmentBlockReason,
   galaxusAssortmentBlockReasonForCandidate,
 } from "@/galaxus/exports/assortmentPolicy";
 
 describe("galaxusAssortmentBlockReason", () => {
+  beforeEach(() => {
+    process.env.GALAXUS_REI_ALLOWLIST = "0";
+  });
+
   afterEach(() => {
+    delete process.env.GALAXUS_REI_ALLOWLIST;
     delete process.env.GALAXUS_ASSORTMENT_POLICY;
     delete process.env.GALAXUS_SHOE_MAX_RETAIL_CHF;
     delete process.env.GALAXUS_SHOE_CAP_SCOPE;
@@ -18,6 +23,24 @@ describe("galaxusAssortmentBlockReason", () => {
       "electronics"
     );
     expect(galaxusAssortmentBlockReason({ supplierVariantId: "rei_abc", title: "Lötstation 80 W" })).toBeNull();
+  });
+
+  it("delists REI outside the allowlist", () => {
+    delete process.env.GALAXUS_REI_ALLOWLIST;
+    expect(galaxusAssortmentBlockReason({ providerKey: "REI_123", title: "Lötstation 80 W" })).toBe(
+      "rei_not_allowlisted"
+    );
+    expect(galaxusAssortmentBlockReason({ providerKey: "rei_7350001162034", title: "Kksb HAT Case Raspberry Pi 5" })).toBeNull();
+    expect(
+      galaxusAssortmentBlockReasonForCandidate({
+        gtin: "0840006674900",
+        variant: { supplierVariantId: "rei_ABC", supplierProductName: "Corsair Vengeance DDR5 2x16GB" },
+      })
+    ).toBeNull();
+    expect(galaxusAssortmentBlockReason({ providerKey: "REI_4013674035441", title: "Ansmann NiMH AA" })).toBe(
+      "rei_not_allowlisted"
+    );
+    expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
   });
 
   it("keeps electronics that are not storage or IT components", () => {
