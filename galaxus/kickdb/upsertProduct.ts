@@ -8,7 +8,7 @@ import {
   stxOfferedSizesChanged,
   zeroStxStockForKickdbProduct,
 } from "@/galaxus/jobs/stxSync";
-import { zeroShopifySoldoutForKickdbProduct } from "@/shopify/stx/zeroSoldoutShopify";
+import { syncShopifyStxStockForKickdbProduct } from "@/shopify/stx/stxStockShopify";
 
 export type KickdbUpsertBody = {
   data?: unknown;
@@ -61,7 +61,7 @@ export async function upsertKickdbProductPayload(body: KickdbUpsertBody): Promis
       WHERE "kickdbProductId" = ${kickdbProductId}
     `;
     const stockZeroed = await zeroStxStockForKickdbProduct(kickdbProductId);
-    await zeroShopifySoldoutForKickdbProduct(kickdbProductId, null);
+    await syncShopifyStxStockForKickdbProduct(kickdbProductId, null);
     return {
       ok: true,
       delisted: true,

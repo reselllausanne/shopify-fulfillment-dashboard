@@ -1,12 +1,14 @@
 /**
- * Zero Shopify "Website stock" for StockX sizes sold out live.
+ * Align Shopify "Website stock" with live StockX asks (same rule as the Python
+ * consumer: 1 when the size has ≥1 ask, 0 otherwise).
  *
  * Shopify quantities are otherwise only written by the Python SSE consumer,
- * which never hears about sold-outs found by `stx-refresh`. A Shopify variant
- * is zeroed only when:
- *   - it has available > 0 at the online location (Chemin / Website stock),
+ * which only runs on SSE events / sweeper refreshes, so sizes that sell out or
+ * come back between those drift from the DB. A Shopify variant is changed only when:
+ *   - it is stocked at the online location (Chemin / Website stock),
  *   - it matches exactly one StockX variant of the live payload,
- *   - that StockX variant has 0 asks across every lane,
+ *   - zero: available > 0 and that StockX variant has 0 asks across every lane,
+ *   - restore: available = 0, ≥1 ask and a Shopify price ≥ the lowest live ask,
  *   - it is not price_locked and not an admin-only product.
  * Physical locations are never touched; unmatched / ambiguous sizes are skipped.
  */
@@ -20,13 +22,14 @@ import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProduct
 import { cleanGtin } from "@/shopify/restock/gtinNormalize";
 
 const VARIANTS_QUERY = /* GraphQL */ `
-query ZeroSoldoutVariants($id: ID!, $loc: ID!) {
+query StxStockVariants($id: ID!, $loc: ID!) {
   product(id: $id) {
     id
     variants(first: 100) {
       nodes {
         id
         title
+        price
         barcode
         usSize: metafield(namespace: "custom", key: "us_size") { value }
         priceLocked: metafield(namespace: "custom", key: "price_locked") { value }
@@ -42,15 +45,16 @@ query ZeroSoldoutVariants($id: ID!, $loc: ID!) {
 }`;
 
 const SET_QUANTITIES = /* GraphQL */ `
-mutation ZeroSoldout($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+mutation StxStockSet($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
   inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
     userErrors { field message }
   }
 }`;
 
-export type SoldoutShopifyVariant = {
+export type StxShopifyVariant = {
   id: string;
   title: string | null;
+  price?: string | null;
   barcode: string | null;
   usSize: { value: string | null } | null;
   priceLocked?: { value: string | null } | null;
@@ -67,21 +71,40 @@ export type LiveStxVariant = {
   /** StockX primary size + US men's ("7", "4C", "5W"). Never the other gender's US. */
   primary: Set<string>;
   asks: number;
+  /** Lowest ask price across lanes with asks (payload currency, CHF). */
+  minAsk: number | null;
 };
 
-export type ZeroSoldoutStats = {
+export type StxStockStats = {
   checked: number;
-  stillOffered: number;
+  inSync: number;
   unmatched: number;
+  notStocked: number;
+  noPrice: number;
+  underpriced: number;
   locked: number;
   adminOnly: number;
   zeroed: number;
+  restored: number;
   applyFail: number;
   examples: string[];
 };
 
-export function emptyZeroSoldoutStats(): ZeroSoldoutStats {
-  return { checked: 0, stillOffered: 0, unmatched: 0, locked: 0, adminOnly: 0, zeroed: 0, applyFail: 0, examples: [] };
+export function emptyStxStockStats(): StxStockStats {
+  return {
+    checked: 0,
+    inSync: 0,
+    unmatched: 0,
+    notStocked: 0,
+    noPrice: 0,
+    underpriced: 0,
+    locked: 0,
+    adminOnly: 0,
+    zeroed: 0,
+    restored: 0,
+    applyFail: 0,
+    examples: [],
+  };
 }
 
 function gtinKey(value: string | null | undefined): string {
@@ -126,11 +149,11 @@ export function liveVariantsFromPayload(payload: any): LiveStxVariant[] {
       if (type === "eu") add(eu, entry?.size);
       else if (type === "us m" || type === "us") add(primary, entry?.size);
     }
-    const asks = (Array.isArray(v?.prices) ? v.prices : []).reduce(
-      (sum: number, p: any) => sum + (Number(p?.asks) > 0 ? Number(p.asks) : 0),
-      0
-    );
-    return { barcodes, eu, primary, asks };
+    const lanes = (Array.isArray(v?.prices) ? v.prices : []).filter((p: any) => Number(p?.asks) > 0);
+    const asks = lanes.reduce((sum: number, p: any) => sum + Number(p.asks), 0);
+    const askPrices = lanes.map((p: any) => Number(p?.price)).filter((n: number) => Number.isFinite(n) && n > 0);
+    const minAsk = askPrices.length > 0 ? Math.min(...askPrices) : null;
+    return { barcodes, eu, primary, asks, minAsk };
   });
 }
 
@@ -139,7 +162,7 @@ export function liveVariantsFromPayload(payload: any): LiveStxVariant[] {
  * First step with a unique hit wins; an ambiguous step returns null.
  */
 export function matchLiveStxVariant(
-  node: Pick<SoldoutShopifyVariant, "title" | "barcode" | "usSize">,
+  node: Pick<StxShopifyVariant, "title" | "barcode" | "usSize">,
   live: LiveStxVariant[]
 ): LiveStxVariant | null {
   const title = normSize(node.title);
@@ -159,65 +182,90 @@ export function matchLiveStxVariant(
   return null;
 }
 
-function availableOnline(node: SoldoutShopifyVariant): number {
-  return node.inventoryItem?.inventoryLevel?.quantities?.[0]?.quantity ?? 0;
+export type StxStockDecision =
+  | { action: "zero" | "restore"; from: number; to: number }
+  | {
+      action: "skip";
+      reason: "inSync" | "unmatched" | "notStocked" | "noPrice" | "underpriced" | "locked" | "adminOnly";
+    };
+
+/** `live === null` = delisted product: every size is sold out. */
+export function decideStxStock(
+  node: StxShopifyVariant,
+  live: LiveStxVariant[] | null,
+  productGid: string
+): StxStockDecision {
+  const level = node.inventoryItem?.inventoryLevel;
+  if (!node.inventoryItem?.id || !level) return { action: "skip", reason: "notStocked" };
+  const qty = level.quantities?.[0]?.quantity ?? 0;
+
+  let wanted: 0 | 1 = 0;
+  let minAsk: number | null = null;
+  if (live) {
+    const hit = matchLiveStxVariant(node, live);
+    if (!hit) return { action: "skip", reason: "unmatched" };
+    wanted = hit.asks > 0 ? 1 : 0;
+    minAsk = hit.minAsk;
+  }
+  if (wanted === 0 ? qty <= 0 : qty !== 0) return { action: "skip", reason: "inSync" };
+
+  if (String(node.priceLocked?.value ?? "").trim().toLowerCase() === "true") {
+    return { action: "skip", reason: "locked" };
+  }
+  if (isAdminOnlyShopifyVariant(node.id, productGid)) return { action: "skip", reason: "adminOnly" };
+  if (wanted === 1) {
+    const price = Number(node.price);
+    if (!(price > 0)) return { action: "skip", reason: "noPrice" };
+    // A stale price under the live buy price would sell at a loss; the price workers fix it first.
+    if (minAsk !== null && price < minAsk) return { action: "skip", reason: "underpriced" };
+  }
+
+  return wanted === 1 ? { action: "restore", from: qty, to: 1 } : { action: "zero", from: qty, to: 0 };
 }
 
-export async function zeroShopifySoldoutForProduct(input: {
+export async function syncShopifyStxStockForProduct(input: {
   shopifyProductId: string;
   /** Live KicksDB product. `null` = delisted product: every size is sold out. */
   payload: unknown | null;
   apply: boolean;
-  stats?: ZeroSoldoutStats;
-}): Promise<ZeroSoldoutStats> {
-  const stats = input.stats ?? emptyZeroSoldoutStats();
+  stats?: StxStockStats;
+}): Promise<StxStockStats> {
+  const stats = input.stats ?? emptyStxStockStats();
   const productGid = input.shopifyProductId.startsWith("gid://")
     ? input.shopifyProductId
     : `gid://shopify/Product/${input.shopifyProductId}`;
   const locationId = ONLINE_LOCATION.id;
 
-  const delisted = input.payload === null;
-  const live = delisted ? [] : liveVariantsFromPayload(input.payload);
-  if (!delisted && live.length === 0) return stats;
+  const live = input.payload === null ? null : liveVariantsFromPayload(input.payload);
+  if (live && live.length === 0) return stats;
 
-  const res = await shopifyGraphQL<{ product: { variants: { nodes: SoldoutShopifyVariant[] } } | null }>(
+  const res = await shopifyGraphQL<{ product: { variants: { nodes: StxShopifyVariant[] } } | null }>(
     VARIANTS_QUERY,
     { id: productGid, loc: locationId }
   );
   if (res.errors?.length) throw new Error(res.errors.map((e) => e.message).join("; "));
-  const nodes = (res.data?.product?.variants?.nodes ?? []).filter((n) => availableOnline(n) > 0);
 
-  const toZero: Array<{ node: SoldoutShopifyVariant; qty: number }> = [];
-  for (const node of nodes) {
+  const changes: Array<{ node: StxShopifyVariant; action: "zero" | "restore"; from: number; to: number }> = [];
+  for (const node of res.data?.product?.variants?.nodes ?? []) {
+    const d = decideStxStock(node, live, productGid);
+    if (d.action === "skip") {
+      if (d.reason !== "notStocked") stats.checked += 1;
+      stats[d.reason] += 1;
+      continue;
+    }
     stats.checked += 1;
-    if (!delisted) {
-      const hit = matchLiveStxVariant(node, live);
-      if (!hit) {
-        stats.unmatched += 1;
-        continue;
-      }
-      if (hit.asks > 0) {
-        stats.stillOffered += 1;
-        continue;
-      }
-    }
-    if (String(node.priceLocked?.value ?? "").trim().toLowerCase() === "true") {
-      stats.locked += 1;
-      continue;
-    }
-    if (isAdminOnlyShopifyVariant(node.id, productGid)) {
-      stats.adminOnly += 1;
-      continue;
-    }
-    toZero.push({ node, qty: availableOnline(node) });
+    changes.push({ node, ...d });
   }
-  if (toZero.length === 0) return stats;
+  if (changes.length === 0) return stats;
 
+  const zeroed = changes.filter((c) => c.action === "zero").length;
+  const restored = changes.length - zeroed;
   if (stats.examples.length < 15) {
-    stats.examples.push(`${productGid} → ${toZero.map((z) => `${z.node.title}(${z.qty})`).join(", ")}`);
+    stats.examples.push(`${productGid} → ${changes.map((c) => `${c.node.title}(${c.from}→${c.to})`).join(", ")}`);
   }
   if (!input.apply) {
-    stats.zeroed += toZero.length;
+    stats.zeroed += zeroed;
+    stats.restored += restored;
     return stats;
   }
 
@@ -228,12 +276,12 @@ export async function zeroShopifySoldoutForProduct(input: {
         input: {
           name: "available",
           reason: "correction",
-          referenceDocumentUri: `gid://resell-lausanne/StxSoldoutZero/${Date.now()}`,
-          quantities: toZero.map((z) => ({
-            inventoryItemId: z.node.inventoryItem!.id,
+          referenceDocumentUri: `gid://resell-lausanne/StxStockSync/${Date.now()}`,
+          quantities: changes.map((c) => ({
+            inventoryItemId: c.node.inventoryItem!.id,
             locationId,
-            quantity: 0,
-            changeFromQuantity: z.qty,
+            quantity: c.to,
+            changeFromQuantity: c.from,
           })),
         },
         idempotencyKey: crypto.randomUUID(),
@@ -244,48 +292,45 @@ export async function zeroShopifySoldoutForProduct(input: {
       ...(upd.data?.inventorySetQuantities?.userErrors ?? []).map((e) => e.message),
     ];
     if (errs.length) throw new Error(errs.join("; "));
-    stats.zeroed += toZero.length;
-    const now = new Date();
-    await prisma.channelListingState.updateMany({
-      where: { channel: "SHOPIFY", externalVariantId: { in: toZero.map((z) => z.node.id) } },
-      data: { lastPushedStock: 0, soldOutAt: now, lastSyncedAt: now },
-    });
+    stats.zeroed += zeroed;
+    stats.restored += restored;
   } catch (err) {
-    stats.applyFail += toZero.length;
-    console.error(`[stx-soldout-zero] apply ${productGid}:`, err instanceof Error ? err.message : err);
+    stats.applyFail += changes.length;
+    console.error(`[stx-stock-shopify] apply ${productGid}:`, err instanceof Error ? err.message : err);
   }
   return stats;
 }
 
 /**
- * `stx-refresh` / delist hook: push the product's sold-outs to Shopify. With a
- * live payload only 0-ask sizes are zeroed; `null` (delisted) zeroes every
- * Website-stock size. Never throws.
+ * `stx-refresh` / delist hook: align the product's Website stock with the live
+ * payload (`null` = delisted → every Website-stock size to 0). Never throws.
  */
-export async function zeroShopifySoldoutForKickdbProduct(
+export async function syncShopifyStxStockForKickdbProduct(
   kickdbProductId: string,
   payload: unknown | null
-): Promise<number> {
-  if (["0", "false", "no"].includes(String(process.env.STX_REFRESH_SHOPIFY_ZERO ?? "1").toLowerCase())) {
-    return 0;
+): Promise<{ zeroed: number; restored: number }> {
+  const none = { zeroed: 0, restored: 0 };
+  const toggle = process.env.STX_REFRESH_SHOPIFY_STOCK ?? process.env.STX_REFRESH_SHOPIFY_ZERO ?? "1";
+  if (["0", "false", "no"].includes(toggle.toLowerCase())) {
+    return none;
   }
   try {
     const sss = await prisma.shopifySyncState.findFirst({
       where: { kickdbProductId, syncStatus: "synced", shopifyProductId: { not: null } },
       select: { shopifyProductId: true },
     });
-    if (!sss?.shopifyProductId) return 0;
-    const stats = await zeroShopifySoldoutForProduct({
+    if (!sss?.shopifyProductId) return none;
+    const stats = await syncShopifyStxStockForProduct({
       shopifyProductId: sss.shopifyProductId,
       payload,
       apply: true,
     });
-    return stats.zeroed;
+    return { zeroed: stats.zeroed, restored: stats.restored };
   } catch (err) {
-    console.warn("[stx-soldout-zero] hook failed", {
+    console.warn("[stx-stock-shopify] hook failed", {
       kickdbProductId,
       err: err instanceof Error ? err.message : err,
     });
-    return 0;
+    return none;
   }
 }
