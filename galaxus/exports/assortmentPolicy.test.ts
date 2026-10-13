@@ -40,6 +40,10 @@ describe("galaxusAssortmentBlockReason", () => {
     expect(galaxusAssortmentBlockReason({ providerKey: "REI_4013674035441", title: "Ansmann NiMH AA" })).toBe(
       "rei_not_allowlisted"
     );
+    expect(galaxusAssortmentBlockReason({ providerKey: "REI_8720169316751", title: "Philips Master LED tube" })).toBe(
+      "rei_not_allowlisted"
+    );
+    expect(galaxusAssortmentBlockReason({ providerKey: "REI_4021553335377", title: "Barthelme Telefonstecklampe" })).toBeNull();
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
   });
 
