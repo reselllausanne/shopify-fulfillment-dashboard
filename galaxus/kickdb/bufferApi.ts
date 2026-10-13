@@ -214,8 +214,9 @@ export async function queryKickdbStaleProducts(params: {
     FROM "public"."ShopifySyncState" s
     INNER JOIN "public"."KickDBProduct" p
       ON p."kickdbProductId" = s."kickdbProductId"
-    WHERE p."rawFetchedAt" IS NULL
-       OR p."rawFetchedAt" < NOW() - (${maxAgeDays} * INTERVAL '1 day')
+    WHERE p."notFound" = false
+      AND (p."rawFetchedAt" IS NULL
+       OR p."rawFetchedAt" < NOW() - (${maxAgeDays} * INTERVAL '1 day'))
     ORDER BY p."rawFetchedAt" ASC NULLS FIRST
     LIMIT ${limit}
   `;
