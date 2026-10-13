@@ -61,29 +61,36 @@ describe("attachAvailableStock stale cutoff", () => {
 
   it("zeroes stale scraped rows, keeps fresh, manual-locked and non-scraped rows", async () => {
     const fresh = new Date(Date.now() - 1 * DAY);
-    const old = new Date(Date.now() - 8 * DAY);
+    const weekly = new Date(Date.now() - 5 * DAY);
+    const old = new Date(Date.now() - 9 * DAY);
     findMany.mockResolvedValue([
       { supplierVariantId: "rei_fresh", lastSyncAt: fresh },
+      { supplierVariantId: "rei_weekly", lastSyncAt: weekly },
       { supplierVariantId: "rei_old", lastSyncAt: old },
+      { supplierVariantId: "wel_old", lastSyncAt: weekly },
       { supplierVariantId: "wel_never", lastSyncAt: null },
     ]);
 
     const map = await attachAvailableStock([
       { supplierVariantId: "rei_fresh", stock: 1 },
+      { supplierVariantId: "rei_weekly", stock: 1 },
       { supplierVariantId: "rei_old", stock: 1 },
+      { supplierVariantId: "wel_old", stock: 3 },
       { supplierVariantId: "wel_never", stock: 5 },
       { supplierVariantId: "rei_locked", stock: 0, manualLock: true, manualStock: 2 },
       { supplierVariantId: "stx_123", stock: 4 },
     ]);
 
     expect(map.get("rei_fresh")).toBe(1);
+    expect(map.get("rei_weekly")).toBe(1);
     expect(map.get("rei_old")).toBe(0);
+    expect(map.get("wel_old")).toBe(0);
     expect(map.get("wel_never")).toBe(0);
     expect(map.get("rei_locked")).toBe(2);
     expect(map.get("stx_123")).toBe(4);
 
     const queried = findMany.mock.calls.flatMap((c) => c[0].where.supplierVariantId.in);
-    expect(queried).toEqual(["rei_fresh", "rei_old", "wel_never"]);
+    expect(queried).toEqual(["rei_fresh", "rei_weekly", "rei_old", "wel_old", "wel_never"]);
   });
 });
 

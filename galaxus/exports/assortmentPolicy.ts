@@ -11,6 +11,7 @@
  *   focus brands (stxBrandBuckets) with no collab exemption; env switches to all
  *   brands (GALAXUS_SHOE_CAP_SCOPE=all) or re-enables the collab exemption
  *   (GALAXUS_SHOE_CAP_COLLAB_EXEMPT=1).
+ * - rei_not_allowlisted: REI rows outside reiGalaxusAllowlist (GALAXUS_REI_ALLOWLIST=0 disables).
  * - price_outlier: absurd StockX resale prices (thin asks) — absolute cap or far above
  *   brand retail. Off unless GALAXUS_PRICE_OUTLIER_FILTER=1 (not requested by Galaxus).
  *
@@ -21,18 +22,21 @@ import { classifyGalaxusProductKind, isFootwearKind } from "@/galaxus/exports/pr
 import { galaxusCategoryPathForKind } from "@/galaxus/exports/galaxusCategoryPaths";
 import { classifyStxBrand, normalizeStxBrand } from "@/galaxus/exports/stxBrandBuckets";
 import { bwzShipChfFromManualNote, isBwzUnshippableNote } from "@/app/lib/bwzParcel";
+import { isGalaxusReiAllowlistEnabled, isReiGalaxusAllowlisted } from "@/galaxus/exports/reiGalaxusAllowlist";
 
 export type GalaxusAssortmentBlockReason =
   | "electronics"
   | "shoe_over_cap"
   | "price_outlier"
   | "bulky_shipping"
-  | "gift_card";
+  | "gift_card"
+  | "rei_not_allowlisted";
 
 export type GalaxusAssortmentInput = {
   providerKey?: string | null;
   supplierVariantId?: string | null;
   supplierKey?: string | null;
+  gtin?: string | null;
   title?: string | null;
   brand?: string | null;
   sizeRaw?: string | null;
@@ -326,6 +330,14 @@ export function galaxusAssortmentBlockReason(
 ): GalaxusAssortmentBlockReason | null {
   if (!isGalaxusAssortmentPolicyEnabled()) return null;
   const supplierKey = resolveAssortmentSupplierKey(input);
+  if (
+    supplierKey === "rei" &&
+    isGalaxusReiAllowlistEnabled() &&
+    !isReiGalaxusAllowlisted(input.providerKey) &&
+    !isReiGalaxusAllowlisted(input.gtin ? `REI_${String(input.gtin).trim()}` : null)
+  ) {
+    return "rei_not_allowlisted";
+  }
 
   const kind = classifyGalaxusProductKind({
     title: input.title,
@@ -374,11 +386,18 @@ export function galaxusAssortmentBlockReason(
 export type GalaxusAssortmentStats = Record<GalaxusAssortmentBlockReason, number>;
 
 export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
-  return { electronics: 0, shoe_over_cap: 0, price_outlier: 0, bulky_shipping: 0, gift_card: 0 };
+  return {
+    electronics: 0,
+    shoe_over_cap: 0,
+    price_outlier: 0,
+    bulky_shipping: 0,
+    gift_card: 0,
+    rei_not_allowlisted: 0,
+  };
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
@@ -394,6 +413,7 @@ export function galaxusAssortmentBlockReasonForCandidate(candidate: any): Galaxu
     providerKey: candidate?.providerKey ?? null,
     supplierVariantId: variant?.supplierVariantId ?? null,
     supplierKey: candidate?.mapping?.supplierKey ?? null,
+    gtin: candidate?.gtin ?? variant?.gtin ?? null,
     title: variant?.supplierProductName ?? product?.name ?? null,
     brand: variant?.supplierBrand ?? product?.brand ?? null,
     sizeRaw: variant?.sizeRaw ?? null,
