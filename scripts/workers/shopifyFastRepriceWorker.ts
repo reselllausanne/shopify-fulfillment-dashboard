@@ -15,6 +15,12 @@
  *   SHOPIFY_FAST_REPRICE_SKIP_FRESH_HOURS  default 6 (skip variants pushed within N h; 0 = all)
  *   SHOPIFY_FAST_REPRICE_INITIAL_DELAY_MS  default 60000
  *   SHOPIFY_FAST_REPRICE_FAILURE_RETRY_MS  default 60000 (retry delay after a failed pass)
+ *   SHOPIFY_FAST_REPRICE_DRIFT_PAUSE_MS    default 300000 (drift loop: sizes whose StockX buy
+ *                                          changed since the last Shopify write; 0 disables)
+ *   SHOPIFY_FAST_REPRICE_DRIFT_MAX_PRODUCTS default 1500 (products per drift pass)
+ *
+ * A full pass takes ~7.5h; without the drift loop a StockX price rise stays
+ * under cost on Shopify until the shard comes back around.
  */
 import { spawn } from "node:child_process";
 
@@ -24,28 +30,40 @@ const SKIP_FRESH_HOURS = Math.max(0, Number(process.env.SHOPIFY_FAST_REPRICE_SKI
 const INITIAL_DELAY_MS = Math.max(0, Number(process.env.SHOPIFY_FAST_REPRICE_INITIAL_DELAY_MS ?? 60_000));
 /** Failed pass (e.g. DB statement timeout on the row load) retries soon, not after PAUSE_MS. */
 const FAILURE_RETRY_MS = Math.max(0, Number(process.env.SHOPIFY_FAST_REPRICE_FAILURE_RETRY_MS ?? 60_000));
+const DRIFT_PAUSE_MS = Math.max(0, Number(process.env.SHOPIFY_FAST_REPRICE_DRIFT_PAUSE_MS ?? 5 * 60 * 1000));
+const DRIFT_MAX_PRODUCTS = Math.max(1, Number(process.env.SHOPIFY_FAST_REPRICE_DRIFT_MAX_PRODUCTS ?? 1500));
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function runPass(shard: number): Promise<number> {
+  return runReprice(`s${shard}`, [
+    `--shards=${SHARDS}`,
+    `--shard=${shard}`,
+    "--limit=5000000",
+    `--skip-fresh-hours=${SKIP_FRESH_HOURS}`,
+    "--progress-every=1000",
+  ]);
+}
+
+function runDriftPass(): Promise<number> {
+  return runReprice("drift", [
+    "--only-drifted",
+    "--skip-fresh-hours=0",
+    "--limit=5000000",
+    `--max-products=${DRIFT_MAX_PRODUCTS}`,
+    "--progress-every=500",
+  ]);
+}
+
+function runReprice(tag: string, args: string[]): Promise<number> {
   return new Promise((resolve) => {
-    const child = spawn(
-      "npx",
-      [
-        "tsx",
-        "scripts/reprice-shopify-fast.ts",
-        "--apply",
-        `--shards=${SHARDS}`,
-        `--shard=${shard}`,
-        "--limit=5000000",
-        `--skip-fresh-hours=${SKIP_FRESH_HOURS}`,
-        "--progress-every=1000",
-      ],
-      { stdio: ["ignore", "pipe", "pipe"], env: process.env }
-    );
-    const prefix = `[WORKER][SHOPIFY_FAST_REPRICE][s${shard}]`;
+    const child = spawn("npx", ["tsx", "scripts/reprice-shopify-fast.ts", "--apply", ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
+    const prefix = `[WORKER][SHOPIFY_FAST_REPRICE][${tag}]`;
     const pipe = (stream: NodeJS.ReadableStream, log: (line: string) => void) => {
       let buf = "";
       stream.on("data", (chunk) => {
@@ -84,3 +102,17 @@ console.info("[WORKER][SHOPIFY_FAST_REPRICE] starting", {
   skipFreshHours: SKIP_FRESH_HOURS,
 });
 for (let s = 0; s < SHARDS; s += 1) void shardLoop(s);
+
+async function driftLoop(): Promise<never> {
+  await sleep(INITIAL_DELAY_MS);
+  while (true) {
+    const startedAt = Date.now();
+    const code = await runDriftPass();
+    console.info("[WORKER][SHOPIFY_FAST_REPRICE][drift] pass done", {
+      exitCode: code,
+      durationMs: Date.now() - startedAt,
+    });
+    await sleep(code === 0 ? DRIFT_PAUSE_MS : FAILURE_RETRY_MS);
+  }
+}
+if (DRIFT_PAUSE_MS > 0) void driftLoop();

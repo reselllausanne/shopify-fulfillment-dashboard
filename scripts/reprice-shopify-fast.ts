@@ -50,6 +50,12 @@ const SHARD = Math.min(SHARDS - 1, Math.floor(num("shard", 0)));
 const SKIP_FRESH_HOURS = num("skip-fresh-hours", 24);
 const MAX_PRICE = num("max-price", 5000);
 const PROGRESS_EVERY = Math.max(1, Math.floor(num("progress-every", 200)));
+/**
+ * Only sizes whose DB row changed after the last Shopify write AND whose formula
+ * price differs from that write. Newest changes first, capped by --max-products.
+ */
+const ONLY_DRIFTED = process.argv.includes("--only-drifted");
+const MAX_PRODUCTS = Math.max(1, Math.floor(num("max-products", 1_000_000)));
 
 const VARIANTS_QUERY = /* GraphQL */ `
 query FastRepriceProduct($id: ID!, $first: Int!) {
@@ -160,13 +166,29 @@ async function stampListingState(rows: StampRow[], productGid: string): Promise<
   }
 }
 
+function isPriceDrifted(r: Row): boolean {
+  const { normalSell } = computeStxSellPrices({
+    stxRow: {
+      deliveryType: r.deliveryType,
+      price: r.price,
+      standardBuyPrice: r.standardBuyPrice,
+      expressBuyPrice: r.expressBuyPrice,
+      supplierProductName: r.supplierProductName,
+      supplierBrand: r.supplierBrand,
+    },
+    productHandle: r.productHandle,
+  });
+  if (normalSell == null) return false;
+  return r.lastPushedPrice == null || Math.abs(r.lastPushedPrice - normalSell) >= 0.005;
+}
+
 function truthy(v: string | null | undefined): boolean {
   return String(v ?? "").trim().toLowerCase() === "true";
 }
 
 async function main() {
   console.log(
-    `${APPLY ? "APPLY" : "DRY-RUN"} | shard ${SHARD}/${SHARDS} | skip-fresh=${SKIP_FRESH_HOURS}h | only-unpriced=${ONLY_UNPRICED} | max-price=${MAX_PRICE} | limit=${LIMIT}`
+    `${APPLY ? "APPLY" : "DRY-RUN"} | shard ${SHARD}/${SHARDS} | skip-fresh=${SKIP_FRESH_HOURS}h | only-unpriced=${ONLY_UNPRICED} | only-drifted=${ONLY_DRIFTED} | max-price=${MAX_PRICE} | limit=${LIMIT}`
   );
 
   const shardClause =
@@ -177,6 +199,10 @@ async function main() {
     ? `AND (cls."lastSyncedAt" IS NULL OR cls."lastSyncedAt" < NOW() - INTERVAL '${Math.round(SKIP_FRESH_HOURS)} hours')`
     : "";
   const onlyUnpricedClause = ONLY_UNPRICED ? `AND cls."lastPushedPrice" IS NULL` : "";
+  const onlyDriftedClause = ONLY_DRIFTED
+    ? `AND (cls."lastSyncedAt" IS NULL OR sv."updatedAt" > cls."lastSyncedAt")`
+    : "";
+  const orderBy = ONLY_DRIFTED ? `sv."updatedAt" DESC` : `sss."shopifyProductId"`;
 
   const rows = await prisma.$queryRawUnsafe<Row[]>(`
     SELECT sv."supplierVariantId",
@@ -213,20 +239,23 @@ async function main() {
       ${shardClause}
       ${skipFreshClause}
       ${onlyUnpricedClause}
-    ORDER BY sss."shopifyProductId"
+      ${onlyDriftedClause}
+    ORDER BY ${orderBy}
     LIMIT ${Math.max(1, Math.floor(LIMIT))}
   `);
+  const loaded = ONLY_DRIFTED ? rows.filter(isPriceDrifted) : rows;
 
   // Group rows by Shopify product. Barcode map for primary match; full list for
   // size-EU fallback when Shopify has the size but an empty/wrong barcode.
   const byProduct = new Map<string, { byBarcode: Map<string, Row>; rows: Row[] }>();
   const seenSv = new Set<string>();
-  for (const r of rows) {
+  for (const r of loaded) {
     if (seenSv.has(r.supplierVariantId)) continue;
     seenSv.add(r.supplierVariantId);
     const pid = String(r.shopifyProductId);
     let bucket = byProduct.get(pid);
     if (!bucket) {
+      if (byProduct.size >= MAX_PRODUCTS) continue;
       bucket = { byBarcode: new Map(), rows: [] };
       byProduct.set(pid, bucket);
     }
@@ -236,7 +265,9 @@ async function main() {
     }
   }
 
-  console.log(`Rows: ${rows.length} | products: ${byProduct.size}`);
+  console.log(
+    `Rows: ${rows.length}${ONLY_DRIFTED ? ` | drifted: ${loaded.length}` : ""} | products: ${byProduct.size}`
+  );
   if (byProduct.size === 0) return;
 
   let productsDone = 0;
