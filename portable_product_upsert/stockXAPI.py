@@ -7,8 +7,9 @@ import time
 STOCKX_REQUEST_DELAY_SEC = float(os.getenv("STOCKX_REQUEST_DELAY_SEC", "0"))
 STOCKX_MAX_RETRIES = int(os.getenv("STOCKX_MAX_RETRIES", "5"))
 STOCKX_TIMEOUT_SEC = float(os.getenv("STOCKX_TIMEOUT_SEC", "25"))
+STOCKX_5XX_RETRIES = int(os.getenv("STOCKX_5XX_RETRIES", "2"))
 KICKS_API_KEY = os.getenv("KICKSDB_API_KEY") or os.getenv("KICKS_API_KEY") or "sd_kRbsuYh7brcMNR5BermZnUhufKUNBnuA"
-# Set by getOne on failure: timeout | http_404 | http_error | empty_body | None
+# Set by getOne on failure: timeout | http_404 | cannot_fetch | http_error | empty_body | None
 last_fetch_error = None
 
 
@@ -98,6 +99,7 @@ def getOne(product_id, proxies=None):
 
     global last_fetch_error
     last_fetch_error = None
+    server_errors = 0
 
     for attempt in range(STOCKX_MAX_RETRIES):
         try:
@@ -134,6 +136,17 @@ def getOne(product_id, proxies=None):
                 if attempt < STOCKX_MAX_RETRIES - 1:
                     time.sleep(backoff)
                     continue
+            elif response.status_code in [500, 502, 504]:
+                # Transient on KicksDB incidents; "cannot fetch product" that survives
+                # the retries is a dead StockX product (vault/NFT/removed listing).
+                dead = "cannot fetch product" in (response.text or "").lower()
+                last_fetch_error = "cannot_fetch" if dead else "http_error"
+                server_errors += 1
+                print(f"Failed to get product info. Status code: {response.status_code} ({last_fetch_error})")
+                if server_errors <= STOCKX_5XX_RETRIES and attempt < STOCKX_MAX_RETRIES - 1:
+                    time.sleep(server_errors)
+                    continue
+                break
             else:
                 last_fetch_error = "http_error"
                 print(f"Failed to get product info. Status code: {response.status_code}")

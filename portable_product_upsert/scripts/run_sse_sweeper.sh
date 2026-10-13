@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Refresh stale catalog products (availability decay protection). Cron: daily.
-# 20k catalog / 3-day max age needs ~7k refreshes per day.
+# ~99k catalog: 14k/day ≈ 7-day cycle. stx-refresh zeroes live sold-outs on
+# Shopify every run, so the sweeper is the long-tail backstop, not the only one.
 set -u
 ROOT="/opt/shopify-automation"
 LOCK="/tmp/sse_sweeper.lock"
@@ -17,6 +18,6 @@ cd "${ROOT}"
 {
   echo "=== $(date -Is) sweeper run ==="
   "${PYTHON}" sweeper_refresh_stale.py --db-api "${KICKDB_BUFFER_BASE:-${RESELL_API_BASE:-http://127.0.0.1:3002}}" \
-    --max-age-days 3 --limit 7000
+    --max-age-days 3 --limit "${SWEEPER_LIMIT:-14000}"
   echo "=== exit=$? ==="
 } >> "${LOG}" 2>&1
