@@ -265,6 +265,22 @@ async function getState(event) {
 // ---------- transport ----------
 let queue = [];
 let timer = null;
+function postBatch(body) {
+  try {
+    fetch(ENDPOINT, {
+      method: "POST",
+      mode: "no-cors",
+      keepalive: true,
+      credentials: "omit",
+      headers: { "Content-Type": "text/plain" },
+      body,
+    }).catch(function () {
+      try {
+        browser.sendBeacon(ENDPOINT, body);
+      } catch (_) {}
+    });
+  } catch (_) {}
+}
 function flush() {
   if (timer) {
     clearTimeout(timer);
@@ -272,21 +288,7 @@ function flush() {
   }
   while (queue.length) {
     const batch = queue.splice(0, MAX_BATCH);
-    const body = JSON.stringify({ k: TRACK_KEY, e: batch });
-    try {
-      fetch(ENDPOINT, {
-        method: "POST",
-        mode: "no-cors",
-        keepalive: true,
-        credentials: "omit",
-        headers: { "Content-Type": "text/plain" },
-        body,
-      }).catch(() => {
-        try {
-          browser.sendBeacon(ENDPOINT, body);
-        } catch (_) {}
-      });
-    } catch (_) {}
+    postBatch(JSON.stringify({ k: TRACK_KEY, e: batch }));
   }
 }
 function enqueue(payload, immediate) {
@@ -464,14 +466,16 @@ async function handle(event, fields) {
   enqueue(payload, IMMEDIATE_EVENTS.has(event.name));
 }
 
-STANDARD_EVENTS.forEach((name) => {
-  analytics.subscribe(name, (event) => {
-    handle(event, extract(name, event.data)).catch(() => {});
+function subscribeStandard(name) {
+  analytics.subscribe(name, function (event) {
+    handle(event, extract(name, event.data)).catch(function () {});
   });
-});
+}
+function subscribeCustom(name) {
+  analytics.subscribe(name, function (event) {
+    handle(event, fromCustom(name, event.customData)).catch(function () {});
+  });
+}
 
-CUSTOM_EVENTS.forEach((name) => {
-  analytics.subscribe(name, (event) => {
-    handle(event, fromCustom(name, event.customData)).catch(() => {});
-  });
-});
+STANDARD_EVENTS.forEach(subscribeStandard);
+CUSTOM_EVENTS.forEach(subscribeCustom);
