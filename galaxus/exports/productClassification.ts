@@ -371,7 +371,8 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
   if (CONSOLE_RE.test(text)) return "console";
   if (CONTROLLER_RE.test(text)) return "controller";
   if (LEGO_RE.test(text)) return "lego";
-  if (TRADINGCARD_RE.test(text)) return "tradingcard";
+  // Sized "Pokémon" rows are collab sneakers / apparel (adidas, Puma, Levi's), not cards.
+  if (TRADINGCARD_RE.test(text) && !classifyFromSizeRaw(input.sizeRaw)) return "tradingcard";
   if (STICKER_RE.test(text)) return "sticker";
   if (SKATEBOARD_RE.test(text)) return "skateboard";
   if (WATCH_RE.test(text)) return "watch";
