@@ -3451,7 +3451,7 @@ model SupplierScrapeQualityRun {
 }
 
 /// Storefront + checkout funnel events from the Shopify custom pixel
-/// (docs/shopify-custom-pixel-funnel.js → POST /api/track/funnel).
+/// (docs/tracking/shopify-custom-pixel.js → POST /api/track/funnel).
 /// No PII: no email/phone/name/address; country + 2-char zip prefix only.
 model FunnelEvent {
   id                  BigInt   @id @default(autoincrement())
@@ -3503,9 +3503,22 @@ model FunnelEvent {
   alertMessage        String?  @map("alert_message")
   isFirstOrder        Boolean? @map("is_first_order")
   props               Json?
+  /// Shopify order id (numeric) on checkout_completed — joins ShopifyOrder / OrderMatch.
+  orderId             String?  @map("order_id")
+  /// Ad click ids from the landing URL; only stored when marketing consent was granted.
+  gclid               String?
+  gbraid              String?
+  wbraid              String?
+  fbclid              String?
+  ttclid              String?
+  msclkid             String?
+  consentMarketing    Boolean? @map("consent_marketing")
+  consentSaleOfData   Boolean? @map("consent_sale_of_data")
+  pixelVersion        String?  @map("pixel_version")
 
   @@index([eventName, createdAt], map: "funnel_events_event_name_created_at_idx")
   @@index([checkoutToken], map: "funnel_events_checkout_token_idx")
+  @@index([orderId], map: "funnel_events_order_id_idx")
   @@index([sessionId], map: "funnel_events_session_id_idx")
   @@index([createdAt], map: "funnel_events_created_at_idx")
   @@map("funnel_events")

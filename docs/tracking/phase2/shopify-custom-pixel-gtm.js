@@ -1,26 +1,12 @@
-// Shopify custom pixel — Google Tag Manager (resell-lausanne.ch)
+// PHASE 2 REFERENCE ONLY — DO NOT INSTALL (docs/tracking/TRACKING-PLAN.md, gate G3).
 //
-// Pattern officiel Shopify : GTM chargé DANS le sandbox du pixel personnalisé, events Shopify
-// (standard + custom du thème) poussés dans window.dataLayer au format GA4 ecommerce.
-// Conteneur GTM à importer : docs/gtm-container-resell.json.
+// GTM-in-sandbox loader kept as a reference for the GA4 TEST shadow route. When G3 is approved
+// this logic is merged INTO docs/tracking/shopify-custom-pixel.js (one pixel, never two).
+// Container: docs/tracking/phase2/gtm-web-container.json (GA4 TEST placeholder, all tags paused,
+// no Google Ads tags). Hard rule: the web container must never reference the production GA4
+// stream (Simprosys) nor the production Google Ads tag; shadow data goes to a TEST property only.
 //
-// Remplacer GTM_ID ci-dessous par l'id du conteneur (GTM-XXXXXXX = placeholder : GTM n'est
-// pas chargé tant que l'id n'est pas remplacé ; le dataLayer est quand même alimenté).
-//
-// ── Split avec Simprosys (app pixel, G-828PXC8REN + AW-11152326139, Consent Mode) ─────────
-// Vérifié (script Simprosys + réseau, 2026-10-14) — Simprosys envoie déjà :
-//   GA4  : page_view, view_item, view_item_list, search, add_to_cart, view_cart, begin_checkout,
-//          add_shipping_info, add_payment_info, purchase (+ scroll/user_engagement auto)
-//   Ads  : remarketing page_view/view_item/view_item_list/view_search_results/add_to_cart/purchase
-//          (items shopify_CH_<pid>_<vid>) + conversions purchase, add_to_cart, begin_checkout
-// Simprosys n'utilise PAS de conteneur GTM (gtm_enabled: 0, gtm_container: "").
-// Donc côté GTM (switch "Const - GTM ecommerce takeover" = false par défaut) seuls partent :
-//   GA4 : view_item_variant (rs_variant_selected), size_selected, upsell_shown|accepted|skipped,
-//         ab_assigned, flow_cart_opened, flow_checkout_redirect, add_contact_info,
-//         add_address_info, checkout_error (alert_displayed)
-//   Ads : remarketing view_item sur view_item_variant (taille choisie, id variante)
-// Les events standard sont quand même poussés dans le dataLayer ; passer le switch à "true"
-// dans GTM le jour où Simprosys est désactivé (sinon doublons GA4 + conversions Ads).
+// GTM n'est pas chargé tant que GTM_ID est le placeholder ; le dataLayer est quand même alimenté.
 //
 // ── Consentement ─────────────────────────────────────────────────────────────────────────
 // Consent Mode v2 : défaut "denied" puis update depuis init.customerPrivacy et à chaque

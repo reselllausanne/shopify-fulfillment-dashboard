@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Public ingest for the Shopify custom pixel (docs/shopify-custom-pixel-funnel.js).
+ * Public ingest for the Shopify custom pixel (docs/tracking/shopify-custom-pixel.js).
  * Custom pixels run in a sandboxed iframe without allow-same-origin, so browsers
  * send `Origin: null`; the pixel posts text/plain with `mode: "no-cors"` (simple
  * request, no preflight) and never reads the response.

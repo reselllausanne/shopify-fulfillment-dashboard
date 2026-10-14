@@ -1,6 +1,6 @@
 /**
  * Validation + normalisation for Shopify custom pixel funnel events
- * (docs/shopify-custom-pixel-funnel.js → POST /api/track/funnel).
+ * (docs/tracking/shopify-custom-pixel.js → POST /api/track/funnel).
  *
  * Wire format (text/plain JSON, so the pixel needs no CORS preflight):
  *   { "k": "<FUNNEL_TRACK_KEY>", "e": [ { id, name, ts, ...flat fields } ] }
@@ -91,7 +91,20 @@ export type FunnelEventRow = {
   alertMessage: string | null;
   isFirstOrder: boolean | null;
   props: Record<string, string | number | boolean | null> | null;
+  orderId: string | null;
+  gclid: string | null;
+  gbraid: string | null;
+  wbraid: string | null;
+  fbclid: string | null;
+  ttclid: string | null;
+  msclkid: string | null;
+  consentMarketing: boolean | null;
+  consentSaleOfData: boolean | null;
+  pixelVersion: string | null;
 };
+
+export const CLICK_ID_KEYS = ["gclid", "gbraid", "wbraid", "fbclid", "ttclid", "msclkid"] as const;
+type ClickIdKey = (typeof CLICK_ID_KEYS)[number];
 
 export type FunnelParseResult =
   | { ok: true; key: string; events: FunnelEventRow[]; dropped: number }
@@ -163,6 +176,20 @@ function zipPrefix(v: unknown): string | null {
   if (!s) return null;
   const cleaned = s.replace(/[^0-9A-Za-z]/g, "").slice(0, 2).toUpperCase();
   return cleaned || null;
+}
+
+/** Ad click ids are opaque URL-safe tokens; anything else is dropped. */
+export function clickId(v: unknown): string | null {
+  const s = str(v, 300);
+  return s && /^[A-Za-z0-9._~-]{6,300}$/.test(s) ? s : null;
+}
+
+/** Shopify order id: numeric id or gid://shopify/Order/<id> → "<id>". */
+export function shopifyOrderId(v: unknown): string | null {
+  const s = str(v, 100);
+  if (!s) return null;
+  const tail = s.slice(s.lastIndexOf("/") + 1);
+  return /^\d{1,20}$/.test(tail) ? tail : null;
 }
 
 function currency(v: unknown): string | null {
@@ -277,6 +304,11 @@ export function normalizeFunnelEvent(raw: unknown, now = Date.now()): FunnelEven
 
   const ua = parseUserAgent(str(raw.userAgent, 500));
   const webdriver = bool(raw.webdriver);
+  const consentMarketing = bool(raw.consentMarketing);
+  // Click ids are advertising identifiers: never persisted without marketing consent.
+  const clicks = Object.fromEntries(
+    CLICK_ID_KEYS.map((k) => [k, consentMarketing === true ? clickId(raw[k]) : null]),
+  ) as Record<ClickIdKey, string | null>;
 
   return {
     eventId,
@@ -323,6 +355,11 @@ export function normalizeFunnelEvent(raw: unknown, now = Date.now()): FunnelEven
     alertMessage: str(raw.alertMessage, 300),
     isFirstOrder: bool(raw.isFirstOrder),
     props: sanitizeProps(raw.props),
+    orderId: shopifyOrderId(raw.orderId),
+    ...clicks,
+    consentMarketing,
+    consentSaleOfData: bool(raw.consentSaleOfData),
+    pixelVersion: str(raw.pixelVersion, 20),
   };
 }
 

@@ -206,3 +206,40 @@ describe("helpers", () => {
     ).toEqual({ deviceType: "desktop", os: "windows", browser: "edge" });
   });
 });
+
+describe("attribution keys", () => {
+  const base = { id: "k1", name: "checkout_completed" };
+
+  it("normalizes Shopify order ids", () => {
+    expect(normalizeFunnelEvent({ ...base, orderId: "gid://shopify/Order/6123456789" }, NOW)?.orderId).toBe(
+      "6123456789",
+    );
+    expect(normalizeFunnelEvent({ ...base, orderId: 6123456789 }, NOW)?.orderId).toBe("6123456789");
+    expect(normalizeFunnelEvent({ ...base, orderId: "abc" }, NOW)?.orderId).toBeNull();
+  });
+
+  it("keeps click ids only with marketing consent", () => {
+    const withConsent = normalizeFunnelEvent(
+      { ...base, consentMarketing: true, gclid: "Cj0KCQjw-abc_123", fbclid: "IwAR0xyz123", ttclid: "bad id!" },
+      NOW,
+    );
+    expect(withConsent?.gclid).toBe("Cj0KCQjw-abc_123");
+    expect(withConsent?.fbclid).toBe("IwAR0xyz123");
+    expect(withConsent?.ttclid).toBeNull();
+    expect(withConsent?.consentMarketing).toBe(true);
+
+    const denied = normalizeFunnelEvent({ ...base, consentMarketing: false, gclid: "Cj0KCQjw-abc_123" }, NOW);
+    expect(denied?.gclid).toBeNull();
+    expect(denied?.consentMarketing).toBe(false);
+
+    const unknown = normalizeFunnelEvent({ ...base, gclid: "Cj0KCQjw-abc_123" }, NOW);
+    expect(unknown?.gclid).toBeNull();
+    expect(unknown?.consentMarketing).toBeNull();
+  });
+
+  it("stores pixel version and sale-of-data consent", () => {
+    const row = normalizeFunnelEvent({ ...base, pixelVersion: "2026-10-14.1", consentSaleOfData: false }, NOW);
+    expect(row?.pixelVersion).toBe("2026-10-14.1");
+    expect(row?.consentSaleOfData).toBe(false);
+  });
+});

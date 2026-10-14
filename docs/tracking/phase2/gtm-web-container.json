@@ -10,7 +10,7 @@
       "path": "accounts/0/containers/0",
       "accountId": "0",
       "containerId": "0",
-      "name": "resell-lausanne.ch",
+      "name": "resell-lausanne.ch SHADOW TEST (phase 2, paused)",
       "publicId": "GTM-XXXXXXX",
       "usageContext": [
         "WEB"
@@ -27,13 +27,13 @@
         "containerId": "0",
         "fingerprint": "1760443200000",
         "tagId": "1",
-        "name": "Google tag - GA4 G-828PXC8REN (no page_view)",
+        "name": "Google tag - GA4 GA4 TEST (no page_view)",
         "type": "googtag",
         "parameter": [
           {
             "type": "TEMPLATE",
             "key": "tagId",
-            "value": "{{Const - GA4 measurement ID}}"
+            "value": "{{Const - GA4 TEST measurement ID}}"
           },
           {
             "type": "LIST",
@@ -135,7 +135,8 @@
               }
             ]
           }
-        }
+        },
+        "paused": true
       },
       {
         "accountId": "0",
@@ -163,7 +164,7 @@
           {
             "type": "TEMPLATE",
             "key": "measurementIdOverride",
-            "value": "{{Const - GA4 measurement ID}}"
+            "value": "{{Const - GA4 TEST measurement ID}}"
           },
           {
             "type": "LIST",
@@ -550,7 +551,8 @@
               }
             ]
           }
-        }
+        },
+        "paused": true
       },
       {
         "accountId": "0",
@@ -578,7 +580,7 @@
           {
             "type": "TEMPLATE",
             "key": "measurementIdOverride",
-            "value": "{{Const - GA4 measurement ID}}"
+            "value": "{{Const - GA4 TEST measurement ID}}"
           },
           {
             "type": "LIST",
@@ -695,451 +697,8 @@
               }
             ]
           }
-        }
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "tagId": "4",
-        "name": "Google Ads - Remarketing view_item (taille choisie)",
-        "type": "sp",
-        "parameter": [
-          {
-            "type": "TEMPLATE",
-            "key": "conversionId",
-            "value": "{{Const - Google Ads conversion ID}}"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "customParamsFormat",
-            "value": "NONE"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableDynamicRemarketing",
-            "value": "true"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "eventName",
-            "value": "view_item"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "eventValue",
-            "value": "{{DLV - ecommerce.value}}"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "eventItems",
-            "value": "{{DLV - ads_items}}"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableOgtRmktParams",
-            "value": "true"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableUserId",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "rdp",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableConversionLinker",
-            "value": "true"
-          }
-        ],
-        "firingTriggerId": [
-          "2"
-        ],
-        "tagFiringOption": "ONCE_PER_EVENT",
-        "monitoringMetadata": {
-          "type": "MAP"
         },
-        "consentSettings": {
-          "consentStatus": "NEEDED",
-          "consentType": {
-            "type": "LIST",
-            "list": [
-              {
-                "type": "TEMPLATE",
-                "value": "ad_storage"
-              }
-            ]
-          }
-        }
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "tagId": "5",
-        "name": "Google Ads - Remarketing standard (takeover)",
-        "type": "sp",
-        "parameter": [
-          {
-            "type": "TEMPLATE",
-            "key": "conversionId",
-            "value": "{{Const - Google Ads conversion ID}}"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "customParamsFormat",
-            "value": "NONE"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableDynamicRemarketing",
-            "value": "true"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "eventName",
-            "value": "{{LT - Ads remarketing event name}}"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "eventValue",
-            "value": "{{DLV - ecommerce.value}}"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "eventItems",
-            "value": "{{DLV - ads_items}}"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableOgtRmktParams",
-            "value": "true"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableUserId",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "rdp",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableConversionLinker",
-            "value": "true"
-          }
-        ],
-        "firingTriggerId": [
-          "4"
-        ],
-        "tagFiringOption": "ONCE_PER_EVENT",
-        "monitoringMetadata": {
-          "type": "MAP"
-        },
-        "consentSettings": {
-          "consentStatus": "NEEDED",
-          "consentType": {
-            "type": "LIST",
-            "list": [
-              {
-                "type": "TEMPLATE",
-                "value": "ad_storage"
-              }
-            ]
-          }
-        }
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "tagId": "6",
-        "name": "Google Ads - Conversion purchase (takeover)",
-        "type": "awct",
-        "parameter": [
-          {
-            "type": "TEMPLATE",
-            "key": "conversionId",
-            "value": "{{Const - Google Ads conversion ID}}"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "conversionLabel",
-            "value": "jO0PCITe3NUYEPv768Up"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "conversionValue",
-            "value": "{{DLV - ecommerce.value}}"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "currencyCode",
-            "value": "{{DLV - ecommerce.currency}}"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "orderId",
-            "value": "{{DLV - transaction_id}}"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableConversionLinker",
-            "value": "true"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "conversionCookiePrefix",
-            "value": "_gcl"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableProductReporting",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableShippingData",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableNewCustomerReporting",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "rdp",
-            "value": "false"
-          }
-        ],
-        "firingTriggerId": [
-          "5"
-        ],
-        "tagFiringOption": "ONCE_PER_EVENT",
-        "monitoringMetadata": {
-          "type": "MAP"
-        },
-        "consentSettings": {
-          "consentStatus": "NEEDED",
-          "consentType": {
-            "type": "LIST",
-            "list": [
-              {
-                "type": "TEMPLATE",
-                "value": "ad_storage"
-              }
-            ]
-          }
-        }
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "tagId": "7",
-        "name": "Google Ads - Conversion add_to_cart (takeover)",
-        "type": "awct",
-        "parameter": [
-          {
-            "type": "TEMPLATE",
-            "key": "conversionId",
-            "value": "{{Const - Google Ads conversion ID}}"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "conversionLabel",
-            "value": "1OhKCJDe3NUYEPv768Up"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "conversionValue",
-            "value": "{{DLV - ecommerce.value}}"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "currencyCode",
-            "value": "{{DLV - ecommerce.currency}}"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableConversionLinker",
-            "value": "true"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "conversionCookiePrefix",
-            "value": "_gcl"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableProductReporting",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableShippingData",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableNewCustomerReporting",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "rdp",
-            "value": "false"
-          }
-        ],
-        "firingTriggerId": [
-          "6"
-        ],
-        "tagFiringOption": "ONCE_PER_EVENT",
-        "monitoringMetadata": {
-          "type": "MAP"
-        },
-        "consentSettings": {
-          "consentStatus": "NEEDED",
-          "consentType": {
-            "type": "LIST",
-            "list": [
-              {
-                "type": "TEMPLATE",
-                "value": "ad_storage"
-              }
-            ]
-          }
-        }
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "tagId": "8",
-        "name": "Google Ads - Conversion begin_checkout (takeover)",
-        "type": "awct",
-        "parameter": [
-          {
-            "type": "TEMPLATE",
-            "key": "conversionId",
-            "value": "{{Const - Google Ads conversion ID}}"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "conversionLabel",
-            "value": "6crpCJPe3NUYEPv768Up"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "conversionValue",
-            "value": "{{DLV - ecommerce.value}}"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "currencyCode",
-            "value": "{{DLV - ecommerce.currency}}"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableConversionLinker",
-            "value": "true"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "conversionCookiePrefix",
-            "value": "_gcl"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableProductReporting",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableShippingData",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableNewCustomerReporting",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "rdp",
-            "value": "false"
-          }
-        ],
-        "firingTriggerId": [
-          "7"
-        ],
-        "tagFiringOption": "ONCE_PER_EVENT",
-        "monitoringMetadata": {
-          "type": "MAP"
-        },
-        "consentSettings": {
-          "consentStatus": "NEEDED",
-          "consentType": {
-            "type": "LIST",
-            "list": [
-              {
-                "type": "TEMPLATE",
-                "value": "ad_storage"
-              }
-            ]
-          }
-        }
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "tagId": "9",
-        "name": "Conversion Linker (takeover)",
-        "type": "gclidw",
-        "parameter": [
-          {
-            "type": "BOOLEAN",
-            "key": "enableCrossDomain",
-            "value": "false"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableUrlPassthrough",
-            "value": "true"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "enableCookieOverrides",
-            "value": "false"
-          }
-        ],
-        "firingTriggerId": [
-          "8"
-        ],
-        "tagFiringOption": "ONCE_PER_EVENT",
-        "monitoringMetadata": {
-          "type": "MAP"
-        },
-        "consentSettings": {
-          "consentStatus": "NEEDED",
-          "consentType": {
-            "type": "LIST",
-            "list": [
-              {
-                "type": "TEMPLATE",
-                "value": "ad_storage"
-              }
-            ]
-          }
-        }
+        "paused": true
       }
     ],
     "trigger": [
@@ -1163,31 +722,6 @@
                 "type": "TEMPLATE",
                 "key": "arg1",
                 "value": "^(view_item_variant|size_selected|upsell_shown|upsell_accepted|upsell_skipped|ab_assigned|flow_cart_opened|flow_checkout_redirect|add_contact_info|add_address_info|checkout_error)$"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "triggerId": "2",
-        "name": "CE - view_item_variant",
-        "type": "CUSTOM_EVENT",
-        "customEventFilter": [
-          {
-            "type": "EQUALS",
-            "parameter": [
-              {
-                "type": "TEMPLATE",
-                "key": "arg0",
-                "value": "{{_event}}"
-              },
-              {
-                "type": "TEMPLATE",
-                "key": "arg1",
-                "value": "view_item_variant"
               }
             ]
           }
@@ -1234,216 +768,6 @@
             ]
           }
         ]
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "triggerId": "4",
-        "name": "CE - Ads remarketing standard (takeover)",
-        "type": "CUSTOM_EVENT",
-        "customEventFilter": [
-          {
-            "type": "MATCH_REGEX",
-            "parameter": [
-              {
-                "type": "TEMPLATE",
-                "key": "arg0",
-                "value": "{{_event}}"
-              },
-              {
-                "type": "TEMPLATE",
-                "key": "arg1",
-                "value": "^(view_item|view_item_list|search|add_to_cart|view_cart|begin_checkout|purchase)$"
-              }
-            ]
-          }
-        ],
-        "filter": [
-          {
-            "type": "EQUALS",
-            "parameter": [
-              {
-                "type": "TEMPLATE",
-                "key": "arg0",
-                "value": "{{Const - GTM ecommerce takeover}}"
-              },
-              {
-                "type": "TEMPLATE",
-                "key": "arg1",
-                "value": "true"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "triggerId": "5",
-        "name": "CE - purchase (takeover)",
-        "type": "CUSTOM_EVENT",
-        "customEventFilter": [
-          {
-            "type": "EQUALS",
-            "parameter": [
-              {
-                "type": "TEMPLATE",
-                "key": "arg0",
-                "value": "{{_event}}"
-              },
-              {
-                "type": "TEMPLATE",
-                "key": "arg1",
-                "value": "purchase"
-              }
-            ]
-          }
-        ],
-        "filter": [
-          {
-            "type": "EQUALS",
-            "parameter": [
-              {
-                "type": "TEMPLATE",
-                "key": "arg0",
-                "value": "{{Const - GTM ecommerce takeover}}"
-              },
-              {
-                "type": "TEMPLATE",
-                "key": "arg1",
-                "value": "true"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "triggerId": "6",
-        "name": "CE - add_to_cart (takeover)",
-        "type": "CUSTOM_EVENT",
-        "customEventFilter": [
-          {
-            "type": "EQUALS",
-            "parameter": [
-              {
-                "type": "TEMPLATE",
-                "key": "arg0",
-                "value": "{{_event}}"
-              },
-              {
-                "type": "TEMPLATE",
-                "key": "arg1",
-                "value": "add_to_cart"
-              }
-            ]
-          }
-        ],
-        "filter": [
-          {
-            "type": "EQUALS",
-            "parameter": [
-              {
-                "type": "TEMPLATE",
-                "key": "arg0",
-                "value": "{{Const - GTM ecommerce takeover}}"
-              },
-              {
-                "type": "TEMPLATE",
-                "key": "arg1",
-                "value": "true"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "triggerId": "7",
-        "name": "CE - begin_checkout (takeover)",
-        "type": "CUSTOM_EVENT",
-        "customEventFilter": [
-          {
-            "type": "EQUALS",
-            "parameter": [
-              {
-                "type": "TEMPLATE",
-                "key": "arg0",
-                "value": "{{_event}}"
-              },
-              {
-                "type": "TEMPLATE",
-                "key": "arg1",
-                "value": "begin_checkout"
-              }
-            ]
-          }
-        ],
-        "filter": [
-          {
-            "type": "EQUALS",
-            "parameter": [
-              {
-                "type": "TEMPLATE",
-                "key": "arg0",
-                "value": "{{Const - GTM ecommerce takeover}}"
-              },
-              {
-                "type": "TEMPLATE",
-                "key": "arg1",
-                "value": "true"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "triggerId": "8",
-        "name": "CE - gtm.js (takeover)",
-        "type": "CUSTOM_EVENT",
-        "customEventFilter": [
-          {
-            "type": "EQUALS",
-            "parameter": [
-              {
-                "type": "TEMPLATE",
-                "key": "arg0",
-                "value": "{{_event}}"
-              },
-              {
-                "type": "TEMPLATE",
-                "key": "arg1",
-                "value": "gtm.js"
-              }
-            ]
-          }
-        ],
-        "filter": [
-          {
-            "type": "EQUALS",
-            "parameter": [
-              {
-                "type": "TEMPLATE",
-                "key": "arg0",
-                "value": "{{Const - GTM ecommerce takeover}}"
-              },
-              {
-                "type": "TEMPLATE",
-                "key": "arg1",
-                "value": "true"
-              }
-            ]
-          }
-        ]
       }
     ],
     "variable": [
@@ -1452,28 +776,13 @@
         "containerId": "0",
         "fingerprint": "1760443200000",
         "variableId": "1",
-        "name": "Const - GA4 measurement ID",
+        "name": "Const - GA4 TEST measurement ID",
         "type": "c",
         "parameter": [
           {
             "type": "TEMPLATE",
             "key": "value",
-            "value": "G-828PXC8REN"
-          }
-        ]
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "variableId": "2",
-        "name": "Const - Google Ads conversion ID",
-        "type": "c",
-        "parameter": [
-          {
-            "type": "TEMPLATE",
-            "key": "value",
-            "value": "11152326139"
+            "value": "G-TESTPLACEHOLDER"
           }
         ]
       },
@@ -2196,31 +1505,6 @@
         "accountId": "0",
         "containerId": "0",
         "fingerprint": "1760443200000",
-        "variableId": "32",
-        "name": "DLV - ads_items",
-        "type": "v",
-        "parameter": [
-          {
-            "type": "INTEGER",
-            "key": "dataLayerVersion",
-            "value": "2"
-          },
-          {
-            "type": "BOOLEAN",
-            "key": "setDefaultValue",
-            "value": "false"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "name",
-            "value": "ads_items"
-          }
-        ]
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
         "variableId": "33",
         "name": "DLV - ecommerce.value",
         "type": "v",
@@ -2289,67 +1573,6 @@
             "type": "TEMPLATE",
             "key": "name",
             "value": "ecommerce.items"
-          }
-        ]
-      },
-      {
-        "accountId": "0",
-        "containerId": "0",
-        "fingerprint": "1760443200000",
-        "variableId": "36",
-        "name": "LT - Ads remarketing event name",
-        "type": "smm",
-        "parameter": [
-          {
-            "type": "BOOLEAN",
-            "key": "setDefaultValue",
-            "value": "true"
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "input",
-            "value": "{{Event}}"
-          },
-          {
-            "type": "LIST",
-            "key": "map",
-            "list": [
-              {
-                "type": "MAP",
-                "map": [
-                  {
-                    "type": "TEMPLATE",
-                    "key": "key",
-                    "value": "search"
-                  },
-                  {
-                    "type": "TEMPLATE",
-                    "key": "value",
-                    "value": "view_search_results"
-                  }
-                ]
-              },
-              {
-                "type": "MAP",
-                "map": [
-                  {
-                    "type": "TEMPLATE",
-                    "key": "key",
-                    "value": "view_item_variant"
-                  },
-                  {
-                    "type": "TEMPLATE",
-                    "key": "value",
-                    "value": "view_item"
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "type": "TEMPLATE",
-            "key": "defaultValue",
-            "value": "{{Event}}"
           }
         ]
       }
