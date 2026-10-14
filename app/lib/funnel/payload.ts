@@ -26,11 +26,15 @@ export const FUNNEL_STANDARD_EVENTS = [
 
 /** Custom events the theme publishes via `Shopify.analytics.publish(name, data)`. */
 export const FUNNEL_CUSTOM_EVENTS = [
+  "ab_assigned",
   "ab_upsell_assigned",
+  "rs_variant_selected",
   "size_selected",
   "upsell_shown",
   "upsell_accepted",
   "upsell_skipped",
+  "flow_cart_opened",
+  "flow_checkout_redirect",
 ] as const;
 
 const ALLOWED_EVENTS = new Set<string>([...FUNNEL_STANDARD_EVENTS, ...FUNNEL_CUSTOM_EVENTS]);
@@ -166,9 +170,30 @@ function currency(v: unknown): string | null {
   return s && /^[A-Z]{3}$/.test(s) ? s : null;
 }
 
+/**
+ * Experiment assignments: "experiment:variant,..." (theme rs-ab engine), or a bare
+ * legacy variant ("A"/"B" = experiment "upsell").
+ */
 function abVariant(v: unknown): string | null {
-  const s = str(v, 20);
-  return s && /^[A-Za-z0-9_-]+$/.test(s) ? s : null;
+  const s = str(v, 300);
+  if (!s) return null;
+  if (/^[A-Za-z0-9_-]{1,20}$/.test(s)) return s;
+  return /^[a-z0-9_]{1,40}:[A-Za-z0-9_-]{1,20}(,[a-z0-9_]{1,40}:[A-Za-z0-9_-]{1,20})*$/.test(s) ? s : null;
+}
+
+/** Parses an ab_variant column value into { experiment: variant }. */
+export function parseAbAssignments(v: string | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!v) return out;
+  if (!v.includes(":")) {
+    out.upsell = v;
+    return out;
+  }
+  for (const pair of v.split(",")) {
+    const i = pair.indexOf(":");
+    if (i > 0) out[pair.slice(0, i)] = pair.slice(i + 1);
+  }
+  return out;
 }
 
 function sanitizeProps(v: unknown): FunnelEventRow["props"] {

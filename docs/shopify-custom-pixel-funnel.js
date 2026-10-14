@@ -15,9 +15,17 @@
 // With the "Analytics" permission, Shopify additionally does not load the pixel at all for
 // visitors in consent-required regions until they accept analytics.
 //
-// Theme custom events (publish from theme JS with Shopify.analytics.publish(name, data)):
-//   ab_upsell_assigned { variant }, size_selected { productId, variantId, size },
-//   upsell_shown / upsell_accepted / upsell_skipped { productId, variantId, price, ... }
+// Theme custom events (publish from theme JS with Shopify.analytics.publish(name, data)),
+// see theme snippets/rs-ab.liquid + assets/product-size-selection-modal.js:
+//   ab_assigned { experiment, variant }            (generic A/B engine, one per tracked experiment)
+//   ab_upsell_assigned { variant }                 (legacy, = experiment "upsell")
+//   rs_variant_selected { productId, variantId, size, lane, price, currency }  (size click)
+//   size_selected { productId, variantId, size, lane: standard|express, price, currency }  (add to cart)
+//   upsell_shown / upsell_accepted / upsell_skipped { productId, variantId, price, upsellType, ... }
+//   flow_cart_opened { productId, variantId, size, lane }   (post_size_flow B lands on /cart)
+//   flow_checkout_redirect { source, flow, upsell }        (modal / auto / cart page → checkout)
+// Theme events also carry `ab` = "experiment:variant,..." (all experiments the visitor is in).
+// Stored per event: ab_variant = sorted "experiment:variant,..." (session-sticky, localStorage).
 
 const ENDPOINT = "__FUNNEL_ENDPOINT__";
 const TRACK_KEY = "__FUNNEL_TRACK_KEY__";
@@ -38,12 +46,18 @@ const STANDARD_EVENTS = [
   "alert_displayed",
 ];
 const CUSTOM_EVENTS = [
+  "ab_assigned",
   "ab_upsell_assigned",
+  "rs_variant_selected",
   "size_selected",
   "upsell_shown",
   "upsell_accepted",
   "upsell_skipped",
+  "flow_cart_opened",
+  "flow_checkout_redirect",
 ];
+const AB_ID_RE = /^[a-z0-9_]{1,40}$/;
+const AB_VARIANT_RE = /^[A-Za-z0-9_-]{1,20}$/;
 const IMMEDIATE_EVENTS = new Set(["checkout_completed", "payment_info_submitted"]);
 const EXPRESS_RE = /express|priority|prioritaire|24\s?h|next.?day|same.?day|a-post/i;
 const MAX_BATCH = 20;
@@ -105,7 +119,28 @@ async function storageSet(store, key, value) {
   } catch (_) {}
 }
 
-// ---------- session state (sessionStorage: sid + landing/utm; localStorage: ab variant) ----------
+// ---------- A/B experiments map { experimentId: variant } ----------
+function parseAbString(s) {
+  const out = {};
+  String(s || "")
+    .split(",")
+    .forEach((pair) => {
+      const i = pair.indexOf(":");
+      if (i <= 0) return;
+      const id = pair.slice(0, i).trim();
+      const v = pair.slice(i + 1).trim();
+      if (AB_ID_RE.test(id) && AB_VARIANT_RE.test(v)) out[id] = v;
+    });
+  return out;
+}
+function abString(map) {
+  return Object.keys(map || {})
+    .sort()
+    .map((id) => `${id}:${map[id]}`)
+    .join(",");
+}
+
+// ---------- session state (sessionStorage: sid + landing/utm; localStorage: ab map) ----------
 let state = null;
 async function getState(event) {
   if (state) return state;
@@ -140,8 +175,17 @@ async function getState(event) {
     };
     await storageSet("sessionStorage", "rl_funnel_landing", JSON.stringify(landing));
   }
-  const abVariant = await storageGet("localStorage", "rl_ab_upsell");
-  state = { sessionId, landing, abVariant, webdriver: webdriverFlag() };
+  let ab = {};
+  const rawAb = await storageGet("localStorage", "rl_ab");
+  if (rawAb) {
+    try {
+      ab = JSON.parse(rawAb) || {};
+    } catch (_) {}
+  } else {
+    const legacy = await storageGet("localStorage", "rl_ab_upsell");
+    if (legacy && AB_VARIANT_RE.test(legacy)) ab = { upsell: legacy };
+  }
+  state = { sessionId, landing, ab, webdriver: webdriverFlag() };
   return state;
 }
 
@@ -281,14 +325,25 @@ function fromCustom(name, d) {
   d = d || {};
   const props = {};
   for (const k of Object.keys(d)) {
-    if (!["productId", "variantId", "price", "variant", "currency"].includes(k)) props[k] = d[k];
+    if (!["productId", "variantId", "price", "currency", "ab"].includes(k)) props[k] = d[k];
+  }
+  // abFull: authoritative experiment set from the theme; abAssign: one experiment update.
+  let abFull = null;
+  let abAssign = null;
+  if (typeof d.ab === "string" && d.ab) abFull = parseAbString(d.ab);
+  if (name === "ab_assigned" && AB_ID_RE.test(String(d.experiment || "")) && AB_VARIANT_RE.test(String(d.variant || ""))) {
+    abAssign = { [String(d.experiment)]: String(d.variant) };
+  }
+  if (name === "ab_upsell_assigned" && AB_VARIANT_RE.test(String(d.variant || ""))) {
+    abAssign = { upsell: String(d.variant) };
   }
   return {
     productId: shortId(d.productId),
     variantId: shortId(d.variantId),
     price: d.price !== undefined && d.price !== null ? Number(d.price) : null,
     currency: d.currency || null,
-    abVariant: name === "ab_upsell_assigned" && d.variant ? String(d.variant) : undefined,
+    abFull,
+    abAssign,
     props,
   };
 }
@@ -297,9 +352,15 @@ function fromCustom(name, d) {
 async function handle(event, fields) {
   if (!analyticsAllowed) return;
   const s = await getState(event);
-  if (fields.abVariant) {
-    s.abVariant = fields.abVariant;
-    await storageSet("localStorage", "rl_ab_upsell", fields.abVariant);
+  const { abFull, abAssign } = fields;
+  delete fields.abFull;
+  delete fields.abAssign;
+  if (abFull || abAssign) {
+    const next = Object.assign({}, abFull || s.ab, abAssign || {});
+    if (abString(next) !== abString(s.ab)) {
+      s.ab = next;
+      await storageSet("localStorage", "rl_ab", JSON.stringify(next));
+    }
   }
   const ctx = event.context || {};
   const nav = ctx.navigator || {};
@@ -318,7 +379,7 @@ async function handle(event, fields) {
     },
     s.landing,
     fields,
-    { abVariant: s.abVariant || null },
+    { abVariant: abString(s.ab) || null },
   );
   enqueue(payload, IMMEDIATE_EVENTS.has(event.name));
 }

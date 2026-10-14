@@ -8,6 +8,12 @@
  *   npx tsx scripts/funnel-report.ts --all-countries    # include non-delivery countries
  *   npx tsx scripts/funnel-report.ts --include-bots     # keep webdriver / bot UA sessions
  *   npx tsx scripts/funnel-report.ts --json
+ *   npx tsx scripts/funnel-report.ts --experiment=post_size_flow   # only that experiment's split
+ *
+ * A/B: ab_variant holds "experiment:variant,..." (theme rs-ab engine; legacy bare "A"/"B" =
+ * experiment "upsell"). One table per experiment seen in the window, grouped by variant;
+ * sessions not in the experiment are left out of that table. Primary metric: pv→paid
+ * (orders per product-view session); secondary: pv→co (checkout reach) and shipping rate.
  *
  * Session = session_id (sessionStorage in the pixel), fallback client_id.
  * Country = checkout shipping/localization country, else geo header country; sessions
@@ -15,6 +21,7 @@
  */
 import "dotenv/config";
 
+import { parseAbAssignments } from "../app/lib/funnel/payload";
 import { prisma } from "../app/lib/prisma";
 
 const DELIVERY_COUNTRIES = new Set(["CH", "FR", "DE", "AT", "ES", "IT", "NL"]);
@@ -22,6 +29,7 @@ const EXPRESS_RE = /express|priority|prioritaire|24\s?h|next.?day|same.?day|a-po
 
 const STEPS = [
   ["product_viewed", "pv"],
+  ["size_selected", "size"],
   ["checkout_started", "co"],
   ["contact", "contact"],
   ["address", "address"],
@@ -54,7 +62,7 @@ function shipClass(method: string | null): string {
 type Funnel = { sessions: number } & Record<StepKey, number>;
 
 function emptyFunnel(): Funnel {
-  return { sessions: 0, pv: 0, co: 0, contact: 0, address: 0, shipping: 0, payment: 0, completed: 0 };
+  return { sessions: 0, pv: 0, size: 0, co: 0, contact: 0, address: 0, shipping: 0, payment: 0, completed: 0 };
 }
 
 function add(f: Funnel, s: SessionRow) {
@@ -71,12 +79,13 @@ function printTable(title: string, groups: Map<string, Funnel>, sortByKey = fals
     sortByKey ? a[0].localeCompare(b[0]) : b[1].sessions - a[1].sessions,
   );
   console.log(`\n== ${title}`);
-  const head = ["group", "sessions", ...STEPS.map(([label]) => label), "pv→co", "co→paid", "pv→paid"];
+  const head = ["group", "sessions", ...STEPS.map(([label]) => label), "pv→co", "pv→ship", "co→paid", "pv→paid"];
   const body = rows.map(([g, f]) => [
     g,
     String(f.sessions),
     ...STEPS.map(([, k], i) => (i === 0 ? String(f[k]) : `${f[k]} (${pct(f[k], f[STEPS[i - 1][1]])})`)),
     pct(f.co, f.pv),
+    pct(f.shipping, f.pv),
     pct(f.completed, f.co),
     pct(f.completed, f.pv),
   ]);
@@ -103,6 +112,7 @@ async function main() {
   const allCountries = arg("all-countries") === "true";
   const includeBots = arg("include-bots") === "true";
   const asJson = arg("json") === "true";
+  const onlyExperiment = arg("experiment");
   const since = new Date(Date.now() - days * 86_400_000);
 
   const raw = await prisma.$queryRaw<SessionRow[]>`
@@ -117,6 +127,7 @@ async function main() {
       (array_agg(shipping_method ORDER BY occurred_at DESC) FILTER (WHERE shipping_method IS NOT NULL))[1] AS ship,
       bool_or(webdriver IS TRUE OR device_type = 'bot') AS bot,
       bool_or(event_name = 'product_viewed') AS pv,
+      bool_or(event_name = 'size_selected') AS size,
       bool_or(event_name = 'checkout_started') AS co,
       bool_or(event_name = 'checkout_contact_info_submitted') AS contact,
       bool_or(event_name = 'checkout_address_info_submitted') AS address,
@@ -152,9 +163,25 @@ async function main() {
     [`by ${by}`, groupBy(sessions, periodKey)],
     ["by device", groupBy(sessions, (s) => s.device ?? "(unknown)")],
     ["by country", groupBy(sessions, (s) => s.country ?? "(unknown)")],
-    ["by ab variant", groupBy(sessions, (s) => s.ab ?? "(none)")],
+    ["by ab assignment", groupBy(sessions, (s) => s.ab ?? "(none)")],
     ["by shipping method", groupBy(sessions, (s) => shipClass(s.ship))],
   ];
+
+  const abBySession = new Map(sessions.map((s) => [s, parseAbAssignments(s.ab)]));
+  const experiments = [...new Set([...abBySession.values()].flatMap((m) => Object.keys(m)))]
+    .filter((id) => !onlyExperiment || id === onlyExperiment)
+    .sort();
+  for (const id of experiments) {
+    const inExp = sessions.filter((s) => abBySession.get(s)?.[id]);
+    tables.push([`experiment ${id}`, groupBy(inExp, (s) => abBySession.get(s)![id])]);
+    tables.push([
+      `experiment ${id} × device`,
+      groupBy(inExp, (s) => `${abBySession.get(s)![id]} / ${s.device ?? "(unknown)"}`),
+    ]);
+  }
+  if (onlyExperiment && experiments.length === 0) {
+    console.error(`no sessions with experiment "${onlyExperiment}" in window`);
+  }
 
   if (asJson) {
     console.log(

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   FUNNEL_MAX_EVENTS_PER_REQUEST,
   normalizeFunnelEvent,
+  parseAbAssignments,
   parseFunnelPayload,
   parseUserAgent,
   sanitizePath,
@@ -117,6 +118,29 @@ describe("normalizeFunnelEvent", () => {
     expect(row?.countryCode).toBeNull();
     expect(row?.currency).toBeNull();
     expect(row?.abVariant).toBeNull();
+  });
+
+  it("accepts generic experiment assignments and the new theme events", () => {
+    const row = normalizeFunnelEvent(
+      {
+        id: "ab_1",
+        name: "flow_cart_opened",
+        abVariant: "post_size_flow:B,upsell:A",
+        props: { size: "42", lane: "express" },
+      },
+      NOW,
+    );
+    expect(row?.abVariant).toBe("post_size_flow:B,upsell:A");
+    for (const name of ["ab_assigned", "rs_variant_selected", "flow_checkout_redirect"]) {
+      expect(normalizeFunnelEvent({ id: name, name }, NOW)?.eventName).toBe(name);
+    }
+    expect(normalizeFunnelEvent({ id: "x", name: "page_viewed", abVariant: "a:B;drop" }, NOW)?.abVariant).toBeNull();
+  });
+
+  it("parses ab_variant column values", () => {
+    expect(parseAbAssignments("post_size_flow:B,upsell:A")).toEqual({ post_size_flow: "B", upsell: "A" });
+    expect(parseAbAssignments("B")).toEqual({ upsell: "B" });
+    expect(parseAbAssignments(null)).toEqual({});
   });
 
   it("falls back to server time for missing or skewed timestamps", () => {
