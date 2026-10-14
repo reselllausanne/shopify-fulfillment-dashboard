@@ -56,13 +56,16 @@ describe("galaxusAssortmentBlockReason", () => {
     delete process.env.GALAXUS_FASHION_ONLY;
     delete process.env.GALAXUS_REI_ALLOWLIST;
     for (const input of [
-      { providerKey: "STX_1", title: "Sony PlayStation 5 Console Disc Edition", brand: "Sony", suggestedRetailInclVatChf: 600 },
       { providerKey: "STX_2", title: "Apple AirPods Pro 2", suggestedRetailInclVatChf: 250 },
       { providerKey: "STX_3", title: "Supreme Skateboard Deck", brand: "Supreme", suggestedRetailInclVatChf: 150 },
+      { providerKey: "STX_4", title: "Stanley Quencher 40oz Tumbler Rose", suggestedRetailInclVatChf: 80 },
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBe("non_fashion");
     }
     for (const input of [
+      { providerKey: "STX_1", title: "Sony PlayStation 5 Console Disc Edition", brand: "Sony", suggestedRetailInclVatChf: 600 },
+      { providerKey: "STX_5", title: "Sony PS5 DualSense Wireless Controller Sterling Silver", suggestedRetailInclVatChf: 90 },
+      { providerKey: "STX_041604418976", title: "Stanley Chocolate Flowstate Quencher 40oz Tumbler", suggestedRetailInclVatChf: 80 },
       { providerKey: "STX_10", title: "Nike Dunk Low Panda", brand: "Nike", sizeRaw: "42", suggestedRetailInclVatChf: 150 },
       { providerKey: "STX_11", title: "Essentials Fleece Hoodie Black", brand: "Fear of God", sizeRaw: "M", suggestedRetailInclVatChf: 120 },
       { providerKey: "STX_12", title: "LEGO Star Wars Millennium Falcon 75192", brand: "LEGO", suggestedRetailInclVatChf: 800 },
@@ -72,6 +75,12 @@ describe("galaxusAssortmentBlockReason", () => {
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBeNull();
     }
+  });
+
+  it("blocks manually listed rows", () => {
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "stx_4560157584359", title: "Takashi Murakami Flower Plush 30CM" })
+    ).toBe("manual_block");
   });
 
   it("keeps electronics that are not storage or IT components", () => {

@@ -26,6 +26,7 @@ import { galaxusCategoryPathForKind, type GalaxusProductKind } from "@/galaxus/e
 import { classifyStxBrand, normalizeStxBrand } from "@/galaxus/exports/stxBrandBuckets";
 import { bwzShipChfFromManualNote, isBwzUnshippableNote } from "@/app/lib/bwzParcel";
 import { isGalaxusReiAllowlistEnabled, isReiGalaxusAllowlisted } from "@/galaxus/exports/reiGalaxusAllowlist";
+import { isGalaxusManuallyBlocked } from "@/galaxus/exports/galaxusManualBlocklist";
 
 export type GalaxusAssortmentBlockReason =
   | "electronics"
@@ -34,7 +35,8 @@ export type GalaxusAssortmentBlockReason =
   | "bulky_shipping"
   | "gift_card"
   | "rei_not_allowlisted"
-  | "non_fashion";
+  | "non_fashion"
+  | "manual_block";
 
 export type GalaxusAssortmentInput = {
   providerKey?: string | null;
@@ -136,8 +138,12 @@ const FASHION_EXTRA_LEAVES = new Set([
   "Tasche",
   "Bauchtasche",
 ]);
-/** Non-fashion kept on purpose: LEGO + trading cards (Pokémon). */
-const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>(["lego", "tradingcard"]);
+/** Non-fashion kept on purpose: LEGO, trading cards (Pokémon), collectible consoles / controllers. */
+const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>(["lego", "tradingcard", "console", "controller"]);
+/** Non-fashion rows kept because they sold on Galaxus. */
+const FASHION_EXEMPT_PROVIDER_KEYS = new Set([
+  "STX_041604418976", // Stanley Chocolate Flowstate Quencher 40oz
+]);
 /** WEL kept whole; REI is already narrowed by reiGalaxusAllowlist. */
 const FASHION_EXEMPT_SUPPLIERS = new Set(["wel", "rei"]);
 const FASHION_UNKNOWN_KIND_SUPPLIERS = new Set(["stx", "ner", "the", "gld"]);
@@ -376,6 +382,7 @@ export function isGalaxusFashionKept(
 ): boolean {
   if (FASHION_EXEMPT_SUPPLIERS.has(supplierKey)) return true;
   if (FASHION_EXEMPT_KINDS.has(kind)) return true;
+  if (FASHION_EXEMPT_PROVIDER_KEYS.has(String(input.providerKey ?? "").trim().toUpperCase())) return true;
   if (hasFashionEvidence(input)) return true;
   // Unclassified falls back to the Sneakers path — only trustworthy for sneaker suppliers.
   if (kind === "unknown") return FASHION_UNKNOWN_KIND_SUPPLIERS.has(supplierKey);
@@ -388,6 +395,7 @@ export function galaxusAssortmentBlockReason(
   input: GalaxusAssortmentInput
 ): GalaxusAssortmentBlockReason | null {
   if (!isGalaxusAssortmentPolicyEnabled()) return null;
+  if (isGalaxusManuallyBlocked(input.providerKey)) return "manual_block";
   const supplierKey = resolveAssortmentSupplierKey(input);
   if (
     supplierKey === "rei" &&
@@ -454,11 +462,12 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
     gift_card: 0,
     rei_not_allowlisted: 0,
     non_fashion: 0,
+    manual_block: 0,
   };
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};non_fashion=${stats.non_fashion}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
