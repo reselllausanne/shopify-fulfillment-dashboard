@@ -26,7 +26,7 @@ import { galaxusCategoryPathForKind, type GalaxusProductKind } from "@/galaxus/e
 import { classifyStxBrand, normalizeStxBrand } from "@/galaxus/exports/stxBrandBuckets";
 import { bwzShipChfFromManualNote, isBwzUnshippableNote } from "@/app/lib/bwzParcel";
 import { isGalaxusReiAllowlistEnabled, isReiGalaxusAllowlisted } from "@/galaxus/exports/reiGalaxusAllowlist";
-import { isGalaxusManuallyBlocked } from "@/galaxus/exports/galaxusManualBlocklist";
+import { galaxusCategoryBlocklistCategory, isGalaxusManuallyBlocked } from "@/galaxus/exports/galaxusManualBlocklist";
 
 export type GalaxusAssortmentBlockReason =
   | "electronics"
@@ -37,7 +37,8 @@ export type GalaxusAssortmentBlockReason =
   | "rei_not_allowlisted"
   | "non_fashion"
   | "manual_block"
-  | "food";
+  | "food"
+  | "category_block";
 
 export type GalaxusAssortmentInput = {
   providerKey?: string | null;
@@ -418,6 +419,7 @@ export function galaxusAssortmentBlockReason(
 ): GalaxusAssortmentBlockReason | null {
   if (!isGalaxusAssortmentPolicyEnabled()) return null;
   if (isGalaxusManuallyBlocked(input.providerKey)) return "manual_block";
+  if (galaxusCategoryBlocklistCategory(input.providerKey)) return "category_block";
   const supplierKey = resolveAssortmentSupplierKey(input);
   if (
     supplierKey === "rei" &&
@@ -487,11 +489,12 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
     non_fashion: 0,
     manual_block: 0,
     food: 0,
+    category_block: 0,
   };
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
