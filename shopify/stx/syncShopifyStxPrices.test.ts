@@ -130,6 +130,71 @@ describe("syncShopifyStxPricesForSupplierVariantIds", () => {
     );
   });
 
+  it("updates One Size TCG when KickDB has placeholder US size", async () => {
+    mockedFindSupplier.mockResolvedValue({
+      supplierVariantId: "stx_pokemon_151",
+      gtin: null,
+      sizeRaw: null,
+      supplierProductName: "Pokémon Scarlet & Violet 151 Booster Box (Japanese)",
+      supplierBrand: "Pokemon",
+      deliveryType: "express_standard",
+      price: 448.21,
+      standardBuyPrice: 357.48,
+      expressBuyPrice: 448.21,
+      mappings: [
+        {
+          kickdbVariant: {
+            sizeEu: null,
+            sizeUs: "US",
+            product: { urlKey: "pokemon-scarlet-violet-151-booster-box-japanese" },
+          },
+        },
+      ],
+    });
+
+    mockedGraphQL
+      .mockResolvedValueOnce({
+        data: {
+          products: {
+            nodes: [
+              {
+                id: "gid://shopify/Product/1",
+                handle: "pokemon-scarlet-violet-151-booster-box-japanese",
+                variants: {
+                  nodes: [
+                    {
+                      id: "gid://shopify/ProductVariant/1",
+                      title: "One Size",
+                      sku: "cb8df497-65d1-4290-a1e4-25b326af604e-OS",
+                      product: { id: "gid://shopify/Product/1" },
+                      usSize: { value: null },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+        errors: undefined,
+      })
+      .mockResolvedValueOnce({
+        data: { productVariant: { metafield: { value: "false" } } },
+        errors: undefined,
+      })
+      .mockResolvedValueOnce({
+        data: { productVariantsBulkUpdate: { userErrors: [] } },
+        errors: undefined,
+      })
+      .mockResolvedValueOnce({
+        data: { metafieldsSet: { userErrors: [] } },
+        errors: undefined,
+      });
+
+    const res = await syncShopifyStxPricesForSupplierVariantIds(["stx_pokemon_151"]);
+    expect(res.synced).toBe(1);
+    expect(res.results[0]?.ok).toBe(true);
+  });
+
   it("skips when no Shopify variant matches by size", async () => {
     mockedFindSupplier.mockResolvedValue({
       supplierVariantId: "stx_test_2",

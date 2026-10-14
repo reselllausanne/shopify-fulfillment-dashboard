@@ -24,6 +24,8 @@
  *                  script); only real diffs are pushed, no per-product reads.
  *   --full-read    Legacy: read every product of the shard (no DB diff).
  *
+ * Includes PENDING_GTIN (no barcode) rows via VariantMapping + size match.
+ *
  * Dry-run by default.
  *   npx tsx scripts/reprice-shopify-fast.ts --limit=200
  *   npx tsx scripts/reprice-shopify-fast.ts --apply
@@ -223,8 +225,9 @@ async function main() {
     : "";
   const orderBy = ONLY_DRIFTED ? `sv."updatedAt" DESC` : `sss."shopifyProductId"`;
 
+  const baseLimit = Math.max(1, Math.floor(LIMIT));
   // Pooled 2min statement_timeout cancels the catalogue join when the DB is busy.
-  const rows = await prisma.$transaction(
+  const gtinRows = await prisma.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '300s'`);
       return tx.$queryRawUnsafe<Row[]>(`
@@ -264,11 +267,71 @@ async function main() {
       ${onlyUnpricedClause}
       ${onlyDriftedClause}
     ORDER BY ${orderBy}
-    LIMIT ${Math.max(1, Math.floor(LIMIT))}
+    LIMIT ${baseLimit}
   `);
     },
     { timeout: 330_000, maxWait: 30_000 }
   );
+
+  const pendingSkipFresh = SKIP_FRESH_HOURS && !VERIFY_BULK
+    ? `AND (cls."lastSyncedAt" IS NULL OR cls."lastSyncedAt" < NOW() - INTERVAL '${Math.round(SKIP_FRESH_HOURS)} hours')`
+    : "";
+  const pendingOnlyUnpriced = ONLY_UNPRICED
+    ? `AND cls."lastPushedPrice" IS NULL`
+    : "";
+  const noGtinRows = await prisma.$queryRawUnsafe<Row[]>(`
+    SELECT sv."supplierVariantId",
+           sv."providerKey",
+           sv."gtin",
+           kv."ean" AS "ean",
+           kv."sizeEu" AS "sizeEu",
+           kv."sizeUs" AS "sizeUs",
+           sv."sizeRaw" AS "sizeRaw",
+           sv."deliveryType",
+           sv."price"::float AS price,
+           sv."standardBuyPrice"::float AS "standardBuyPrice",
+           sv."expressBuyPrice"::float AS "expressBuyPrice",
+           sv."supplierProductName",
+           sv."supplierBrand",
+           sss."shopifyProductId",
+           p."urlKey" AS "productHandle",
+           cls."lastPushedPrice"::float AS "lastPushedPrice"
+    FROM "SupplierVariant" sv
+    INNER JOIN "VariantMapping" m ON m."supplierVariantId" = sv."supplierVariantId"
+    INNER JOIN "KickDBVariant" kv ON kv."id" = m."kickdbVariantId"
+    INNER JOIN "KickDBProduct" p ON p."id" = kv."productId"
+    INNER JOIN "ShopifySyncState" sss ON sss."kickdbProductId" = p."kickdbProductId"
+    LEFT JOIN "ChannelListingState" cls
+      ON cls."channel" = 'SHOPIFY' AND cls."supplierVariantId" = sv."supplierVariantId"
+    WHERE sv.stock > 0
+      AND sv."manualLock" IS DISTINCT FROM TRUE
+      AND sv."supplierVariantId" LIKE 'stx_%'
+      AND sv."gtin" IS NULL
+      AND COALESCE(sv."standardBuyPrice", sv.price) > 0
+      AND sss."syncStatus" = 'synced'
+      AND sss."shopifyProductId" IS NOT NULL
+      ${shardClause}
+      ${pendingSkipFresh}
+      ${pendingOnlyUnpriced}
+    ORDER BY
+      CASE
+        WHEN sv."supplierProductName" ~* '(pokemon|pokémon|tcg|trading card|booster box|booster pack|elite trainer)'
+        THEN 0 ELSE 1
+      END,
+      sv.stock DESC,
+      sss."shopifyProductId"
+    LIMIT ${baseLimit}
+  `);
+
+  const rows: Row[] = [];
+  const seen = new Set<string>();
+  for (const r of [...gtinRows, ...noGtinRows]) {
+    if (seen.has(r.supplierVariantId)) continue;
+    seen.add(r.supplierVariantId);
+    rows.push(r);
+    if (rows.length >= baseLimit) break;
+  }
+
   // Sizes whose formula price equals our last push are skipped without a Shopify
   // read; external overwrites of those are caught by the --verify-bulk pass.
   const dbDiff = MODE === "db-diff" || MODE === "drift";

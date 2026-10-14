@@ -276,8 +276,8 @@ export async function handleKickdbBufferRequest(
     const gated = await kickdbUpsertGate.run(() =>
       upsertKickdbProductPayload({
         ...(body as { data?: unknown; notFound?: boolean; priceOnly?: boolean }),
-        // Keep SSE hot path focused on DB writes; Shopify pricing runs async elsewhere.
-        skipShopifyPriceSync: true,
+        // Planned push: GraphQL only when computed sell ≠ lastPushed (see shopifyStxPriceSyncPlan).
+        skipShopifyPriceSync: false,
       })
     );
     if (!gated.ok) {
