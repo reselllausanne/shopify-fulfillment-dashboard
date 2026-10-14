@@ -10,6 +10,7 @@
 import "dotenv/config";
 
 import { prisma } from "@/app/lib/prisma";
+import { formatShopifyApiMetricsLine } from "@/lib/shopifyAdmin";
 import { reconcileShopifyStxStock } from "@/shopify/stx/stxStockReconcile";
 
 function num(name: string, fallback: number): number {
@@ -29,9 +30,11 @@ async function main() {
     shard,
     limit: num("limit", Number.POSITIVE_INFINITY),
     progressEvery: Math.max(1, Math.floor(num("progress-every", 500))),
+    batchSize: Math.max(1, Math.floor(num("batch-size", 200))),
   });
   console.log(`\nEXAMPLES:\n  ${examples.join("\n  ")}`);
   console.log(`\nRESUME shard ${shard}/${shards} ${apply ? "" : "(dry-run: would change)"}:`, counts);
+  console.log(formatShopifyApiMetricsLine("SHOPIFY_API][stock"));
 }
 
 main()

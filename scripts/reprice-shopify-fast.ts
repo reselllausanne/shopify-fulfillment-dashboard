@@ -16,17 +16,28 @@
  * `lastSyncedAt` just like the sync path, so the worker's 48h skip and diff-skip
  * treat these variants as fresh and never re-walk them.
  *
- * Shard across processes to reach the shop's request ceiling:
- *   for i in 0..7: reprice-shopify-fast --apply --shards=8 --shard=$i
+ * Modes (API budget: every product read costs ~50-300 points of a 100 pts/s bucket):
+ *   default        DB diff first: only sizes whose formula price differs from
+ *                  `ChannelListingState.lastPushedPrice` are read + pushed.
+ *   --verify-bulk  Full verification: one bulk export of every variant, compared
+ *                  locally (catches prices/express overwritten outside this
+ *                  script); only real diffs are pushed, no per-product reads.
+ *   --full-read    Legacy: read every product of the shard (no DB diff).
  *
  * Dry-run by default.
  *   npx tsx scripts/reprice-shopify-fast.ts --limit=200
- *   npx tsx scripts/reprice-shopify-fast.ts --apply --shards=8 --shard=0
+ *   npx tsx scripts/reprice-shopify-fast.ts --apply
+ *   npx tsx scripts/reprice-shopify-fast.ts --apply --verify-bulk
  */
 import "dotenv/config";
 
 import { prisma } from "@/app/lib/prisma";
-import { shopifyGraphQL } from "@/lib/shopifyAdmin";
+import { formatShopifyApiMetricsLine, shopifyGraphQL } from "@/lib/shopifyAdmin";
+import {
+  exportVariantSnapshot,
+  groupSnapshotByProduct,
+  type SnapshotVariantNode,
+} from "@/shopify/bulk/variantSnapshot";
 import { computeStxSellPrices, pickShopifyVariantBySize } from "@/shopify/stx/syncShopifyStxPrices";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 import { cleanGtin } from "@/shopify/restock/gtinNormalize";
@@ -57,6 +68,9 @@ const PROGRESS_EVERY = Math.max(1, Math.floor(num("progress-every", 200)));
 const ONLY_DRIFTED = process.argv.includes("--only-drifted");
 const MAX_PRODUCTS = Math.max(1, Math.floor(num("max-products", 1_000_000)));
 const DRIFT_WINDOW_HOURS = Math.max(1, num("drift-window-hours", 12));
+const VERIFY_BULK = process.argv.includes("--verify-bulk");
+const FULL_READ = process.argv.includes("--full-read");
+const MODE = VERIFY_BULK ? "verify-bulk" : FULL_READ ? "full-read" : ONLY_DRIFTED ? "drift" : "db-diff";
 
 const VARIANTS_QUERY = /* GraphQL */ `
 query FastRepriceProduct($id: ID!, $first: Int!) {
@@ -189,14 +203,15 @@ function truthy(v: string | null | undefined): boolean {
 
 async function main() {
   console.log(
-    `${APPLY ? "APPLY" : "DRY-RUN"} | shard ${SHARD}/${SHARDS} | skip-fresh=${SKIP_FRESH_HOURS}h | only-unpriced=${ONLY_UNPRICED} | only-drifted=${ONLY_DRIFTED} | max-price=${MAX_PRICE} | limit=${LIMIT}`
+    `${APPLY ? "APPLY" : "DRY-RUN"} | mode=${MODE} | shard ${SHARD}/${SHARDS} | skip-fresh=${VERIFY_BULK ? 0 : SKIP_FRESH_HOURS}h | only-unpriced=${ONLY_UNPRICED} | only-drifted=${ONLY_DRIFTED} | max-price=${MAX_PRICE} | limit=${LIMIT}`
   );
+  const startedAt = Date.now();
 
   const shardClause =
     SHARDS > 1
       ? `AND (abs(hashtextextended(sss."shopifyProductId", 0)) % ${SHARDS}) = ${SHARD}`
       : "";
-  const skipFreshClause = SKIP_FRESH_HOURS
+  const skipFreshClause = SKIP_FRESH_HOURS && !VERIFY_BULK
     ? `AND (cls."lastSyncedAt" IS NULL OR cls."lastSyncedAt" < NOW() - INTERVAL '${Math.round(SKIP_FRESH_HOURS)} hours')`
     : "";
   const onlyUnpricedClause = ONLY_UNPRICED ? `AND cls."lastPushedPrice" IS NULL` : "";
@@ -254,7 +269,11 @@ async function main() {
     },
     { timeout: 330_000, maxWait: 30_000 }
   );
-  const loaded = ONLY_DRIFTED ? rows.filter(isPriceDrifted) : rows;
+  // Sizes whose formula price equals our last push are skipped without a Shopify
+  // read; external overwrites of those are caught by the --verify-bulk pass.
+  const dbDiff = MODE === "db-diff" || MODE === "drift";
+  const loaded = dbDiff ? rows.filter(isPriceDrifted) : rows;
+  const neverPushed = loaded.filter((r) => r.lastPushedPrice == null).length;
 
   // Group rows by Shopify product. Barcode map for primary match; full list for
   // size-EU fallback when Shopify has the size but an empty/wrong barcode.
@@ -277,9 +296,25 @@ async function main() {
   }
 
   console.log(
-    `Rows: ${rows.length}${ONLY_DRIFTED ? ` | drifted: ${loaded.length}` : ""} | products: ${byProduct.size}`
+    `Rows: ${rows.length}${dbDiff ? ` | drifted: ${loaded.length} (never pushed: ${neverPushed})` : ""} | products: ${byProduct.size}`
   );
-  if (byProduct.size === 0) return;
+  if (byProduct.size === 0) {
+    console.log(formatShopifyApiMetricsLine(`SHOPIFY_API][${MODE}`));
+    return;
+  }
+
+  let snapshotNodes: Map<string, SnapshotVariantNode[]> | null = null;
+  if (VERIFY_BULK) {
+    const t0 = Date.now();
+    const snapshot = await exportVariantSnapshot({ metafieldKeys: ["price_locked", "us_size", "express_price"] });
+    snapshotNodes = groupSnapshotByProduct(snapshot);
+    console.log(
+      `Bulk snapshot: variants=${snapshot.size} products=${snapshotNodes.size} in ${Math.round((Date.now() - t0) / 1000)}s`
+    );
+    snapshot.clear();
+  }
+  let productsMissingInSnapshot = 0;
+  let verifiedStampSkipped = 0;
 
   let productsDone = 0;
   let variantsPushed = 0;
@@ -310,26 +345,35 @@ async function main() {
         };
       } | null;
     };
-    try {
-      // Shopify throttles on *requested* cost (scales with `first`); most
-      // products have < 40 sizes, so ask small and refetch only when truncated.
-      let res = await shopifyGraphQL<typeof productData>(VARIANTS_QUERY, {
-        id: productGid,
-        first: 80,
-      });
-      if (res.errors?.length) throw new Error(res.errors.map((e) => e.message).join("; "));
-      if (res.data?.product?.variants?.pageInfo?.hasNextPage) {
-        res = await shopifyGraphQL<typeof productData>(VARIANTS_QUERY, {
+    if (snapshotNodes) {
+      const fromSnapshot = snapshotNodes.get(productGid);
+      if (!fromSnapshot) {
+        productsMissingInSnapshot += 1;
+        continue;
+      }
+      productData = { product: { id: productGid, variants: { pageInfo: { hasNextPage: false }, nodes: fromSnapshot } } };
+    } else {
+      try {
+        // Shopify throttles on *requested* cost (scales with `first`); most
+        // products have < 40 sizes, so ask small and refetch only when truncated.
+        let res = await shopifyGraphQL<typeof productData>(VARIANTS_QUERY, {
           id: productGid,
-          first: 250,
+          first: 80,
         });
         if (res.errors?.length) throw new Error(res.errors.map((e) => e.message).join("; "));
+        if (res.data?.product?.variants?.pageInfo?.hasNextPage) {
+          res = await shopifyGraphQL<typeof productData>(VARIANTS_QUERY, {
+            id: productGid,
+            first: 250,
+          });
+          if (res.errors?.length) throw new Error(res.errors.map((e) => e.message).join("; "));
+        }
+        productData = res.data;
+      } catch (err) {
+        productErrors += 1;
+        console.error(`  product ${productGid} query failed:`, err instanceof Error ? err.message : err);
+        continue;
       }
-      productData = res.data;
-    } catch (err) {
-      productErrors += 1;
-      console.error(`  product ${productGid} query failed:`, err instanceof Error ? err.message : err);
-      continue;
     }
 
     const nodes = productData?.product?.variants?.nodes ?? [];
@@ -415,7 +459,12 @@ async function main() {
         expressCurrent
       ) {
         variantsUnchanged += 1;
-        if (row.providerKey) {
+        // Bulk verify walks the whole catalogue: only rewrite rows whose DB view is stale.
+        const dbAlreadyCurrent =
+          row.lastPushedPrice != null && Math.abs(row.lastPushedPrice - normalSell) < 0.005;
+        if (VERIFY_BULK && dbAlreadyCurrent) {
+          verifiedStampSkipped += 1;
+        } else if (row.providerKey) {
           verified.push({
             providerKey: row.providerKey,
             supplierVariantId: row.supplierVariantId,
@@ -523,8 +572,11 @@ async function main() {
   }
 
   console.log(
-    `\nRESUME shard ${SHARD}/${SHARDS}: products=${productsDone} pushedVariants=${variantsPushed} matchedBySize=${variantsMatchedBySize} unchanged=${variantsUnchanged} locked=${variantsLocked} adminOnly=${variantsAdminOnly} ceiling=${variantsCeiling} noMatch=${variantsNoMatch} productErrors=${productErrors}`
+    `\nRESUME shard ${SHARD}/${SHARDS}: products=${productsDone} pushedVariants=${variantsPushed} matchedBySize=${variantsMatchedBySize} unchanged=${variantsUnchanged} locked=${variantsLocked} adminOnly=${variantsAdminOnly} ceiling=${variantsCeiling} noMatch=${variantsNoMatch} productErrors=${productErrors}${
+      VERIFY_BULK ? ` missingInSnapshot=${productsMissingInSnapshot} verifiedStampSkipped=${verifiedStampSkipped}` : ""
+    } mode=${MODE} durationSec=${Math.round((Date.now() - startedAt) / 1000)}`
   );
+  console.log(formatShopifyApiMetricsLine(`SHOPIFY_API][${MODE}`));
 }
 
 main()
