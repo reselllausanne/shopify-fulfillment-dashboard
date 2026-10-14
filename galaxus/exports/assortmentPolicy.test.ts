@@ -7,10 +7,12 @@ import {
 describe("galaxusAssortmentBlockReason", () => {
   beforeEach(() => {
     process.env.GALAXUS_REI_ALLOWLIST = "0";
+    process.env.GALAXUS_FASHION_ONLY = "0";
   });
 
   afterEach(() => {
     delete process.env.GALAXUS_REI_ALLOWLIST;
+    delete process.env.GALAXUS_FASHION_ONLY;
     delete process.env.GALAXUS_ASSORTMENT_POLICY;
     delete process.env.GALAXUS_SHOE_MAX_RETAIL_CHF;
     delete process.env.GALAXUS_SHOE_CAP_SCOPE;
@@ -48,6 +50,28 @@ describe("galaxusAssortmentBlockReason", () => {
       galaxusAssortmentBlockReason({ providerKey: "REI_4250312512913", title: "CSX DIMM DDR4-2400MHZ 8 GO CSX", brand: "CSX" })
     ).toBeNull();
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
+  });
+
+  it("fashion-only: delists non-fashion, keeps fashion, LEGO, trading cards, WEL, REI allowlist", () => {
+    delete process.env.GALAXUS_FASHION_ONLY;
+    delete process.env.GALAXUS_REI_ALLOWLIST;
+    for (const input of [
+      { providerKey: "STX_1", title: "Sony PlayStation 5 Console Disc Edition", brand: "Sony", suggestedRetailInclVatChf: 600 },
+      { providerKey: "STX_2", title: "Apple AirPods Pro 2", suggestedRetailInclVatChf: 250 },
+      { providerKey: "STX_3", title: "Supreme Skateboard Deck", brand: "Supreme", suggestedRetailInclVatChf: 150 },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).toBe("non_fashion");
+    }
+    for (const input of [
+      { providerKey: "STX_10", title: "Nike Dunk Low Panda", brand: "Nike", sizeRaw: "42", suggestedRetailInclVatChf: 150 },
+      { providerKey: "STX_11", title: "Essentials Fleece Hoodie Black", brand: "Fear of God", sizeRaw: "M", suggestedRetailInclVatChf: 120 },
+      { providerKey: "STX_12", title: "LEGO Star Wars Millennium Falcon 75192", brand: "LEGO", suggestedRetailInclVatChf: 800 },
+      { providerKey: "STX_13", title: "Pokemon TCG Scarlet & Violet Booster Box", brand: "Pokemon", suggestedRetailInclVatChf: 200 },
+      { providerKey: "WEL_1", title: "Catan Basisspiel", supplierProductType: "Board Games", purchasePriceExVatChf: 30 },
+      { providerKey: "REI_7350001162034", title: "Kksb HAT Case Raspberry Pi 5" },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).toBeNull();
+    }
   });
 
   it("keeps electronics that are not storage or IT components", () => {
