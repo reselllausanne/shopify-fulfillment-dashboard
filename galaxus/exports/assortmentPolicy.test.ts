@@ -83,6 +83,25 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBe("manual_block");
   });
 
+  it("blocks sports nutrition, keeps bottles and gel-padded gear", () => {
+    for (const input of [
+      { providerKey: "NER_1", title: "Gel énergétique Tā Energy Pastèque salée - 40ml", brand: "Tā Energy", sizeRaw: "OS" },
+      { providerKey: "NER_2", title: "Repas Lyophilisé Voyager Chili Végétalien 80g", brand: "Voyager", sizeRaw: "OS" },
+      { providerKey: "NER_3", title: "Boisson Protéinée Fenioux Multi-Sports Whey+ Cookies - 750g", sizeRaw: "OS" },
+      { providerKey: "NER_4", title: "Pâtes de fruits Overstims Bio Fraise - 4x25g", brand: "Overstims", sizeRaw: "OS" },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).toBe("food");
+    }
+    for (const input of [
+      { providerKey: "NER_5", title: "Bidon Nduranz 1000 ml", brand: "Nduranz", sizeRaw: "OS" },
+      { providerKey: "NER_6", title: "Selle Femme Selle Italia Diva Gel Superflow L Noir", sizeRaw: "OS" },
+      { providerKey: "NER_7", title: "Chaussures Homme ASICS SONICBLAST 2 Energy Aqua", sizeRaw: "41 1/2" },
+      { providerKey: "STX_8", title: "GU Wide Pants Beige", brand: "GU", sizeRaw: "M" },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).not.toBe("food");
+    }
+  });
+
   it("keeps electronics that are not storage or IT components", () => {
     for (const input of [
       { providerKey: "STX_1", title: "Sony PlayStation 5 Console Disc Edition", brand: "Sony", suggestedRetailInclVatChf: 600 },

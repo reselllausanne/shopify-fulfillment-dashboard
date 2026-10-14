@@ -36,7 +36,8 @@ export type GalaxusAssortmentBlockReason =
   | "gift_card"
   | "rei_not_allowlisted"
   | "non_fashion"
-  | "manual_block";
+  | "manual_block"
+  | "food";
 
 export type GalaxusAssortmentInput = {
   providerKey?: string | null;
@@ -152,6 +153,27 @@ const APPAREL_TEXT_RE =
   /\b(t-?shirts?|tees?|shirts?|hoodies?|sweat\w*|pullover|crewneck|beanies?|m[uü]tze|caps?|hats?|slides?|jackets?|jacke|hosen?|cordhose|pants|shorts|jeans|socks?|socken|leggings?|tights|dress|kleid|body|strampler)\b/i;
 
 const GIFT_CARD_RE = /gutschein|geschenkkarte|gift ?card|carte[- ]cadeau|bon[- ]cadeau|e-?voucher/i;
+
+/** Sports nutrition / freeze-dried meals (mostly NER, French titles). */
+const FOOD_TEXT_RE =
+  /[ée]nerg[ée]tiques?|\b(?:gels?|poudres?|pastilles|comprim[ée]s|g[ée]lules|tablettes?)\s+(?:de r[ée]cup|r[ée]cup|isotoniques?|hypotoniques?|prot[ée]in|d'effort|d'hydratation|hydratante?s?|[ée]lectrolytes?|de sel|sal[ée]e?s?|sportive)|\bboissons?\b|[ée]lectrolytes?\b|\bprot[ée]ines?\b|\bwhey\b|isotonique|maltr?odextrine|\bbcaa\b|cr[ée]atine|p[aâ]tes? de fruits?|lyophilis[ée]|d[ée]shydrat[ée]|multivitamin|spiruline|barres? (?:c[ée]r[ée]ales|prot|[ée]nerg)|compotes?|caf[ée]ine|\bchews\b|shot bloks|bonbons/i;
+const FOOD_NOT_RE =
+  /\b(bidons?|flasques?|gourdes?|ceintures?|porte-?dossard|chaussures?|sacs?|gilets?|shorts?|sweats?|t-?shirts?|maillots?|vestes?|casquettes?|harnais|gants?|selles?|ruban)\b/i;
+const FOOD_BRANDS = new Set([
+  "226ers", "decathlon nutrition", "overstims", "powerbar", "tā energy", "ta energy", "goldnutrition", "meltonic",
+  "baouw", "santa madre", "näak", "naak", "apurna", "nduranz", "chimpanzee", "isostar", "styrkr",
+  "precision fuel & hydration", "andros sport", "maurten", "gu", "clif bar", "pillar", "hydratis", "hydrascore",
+  "neversecond", "high5", "science in sport", "sis", "enervit", "tailwind", "nutrixxion", "sponser", "winforce",
+  "squeezy", "mulebar", "voyager", "firepot", "mx3",
+]);
+
+function isFoodItem(input: GalaxusAssortmentInput, supplierKey: string): boolean {
+  const title = String(input.title ?? "");
+  if (FOOD_NOT_RE.test(title)) return false;
+  if (FOOD_TEXT_RE.test(title)) return true;
+  // Brand match NER-only: StockX "GU" is the Uniqlo apparel label.
+  return supplierKey === "ner" && FOOD_BRANDS.has(String(input.brand ?? "").trim().toLowerCase());
+}
 
 const IT_COMPONENT_BRANDS = new Set([
   "sandisk",
@@ -427,6 +449,7 @@ export function galaxusAssortmentBlockReason(
   if (!hasShoeSize && isBulkyShippingItem(input)) return "bulky_shipping";
   if (GIFT_CARD_RE.test(`${input.title ?? ""} ${input.supplierProductType ?? ""}`)) return "gift_card";
   if (supplierKey === "bwz" && isBwzShippingUnsafe(input)) return "bulky_shipping";
+  if (supplierKey !== "wel" && isFoodItem(input, supplierKey)) return "food";
   if (isGalaxusFashionOnlyEnabled() && !isGalaxusFashionKept(kind, supplierKey, input)) return "non_fashion";
 
   const consumer = estimateGalaxusConsumerPriceChf(input);
@@ -463,11 +486,12 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
     rei_not_allowlisted: 0,
     non_fashion: 0,
     manual_block: 0,
+    food: 0,
   };
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
