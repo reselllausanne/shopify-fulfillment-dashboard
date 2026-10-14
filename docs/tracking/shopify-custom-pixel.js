@@ -466,16 +466,16 @@ async function handle(event, fields) {
   enqueue(payload, IMMEDIATE_EVENTS.has(event.name));
 }
 
-function subscribeStandard(name) {
-  analytics.subscribe(name, function (event) {
-    handle(event, extract(name, event.data)).catch(function () {});
-  });
-}
-function subscribeCustom(name) {
-  analytics.subscribe(name, function (event) {
-    handle(event, fromCustom(name, event.customData)).catch(function () {});
-  });
-}
+// Top-level string literals — Shopify Admin static check ignores analytics.subscribe(name)
+// when `name` is a variable (forEach / helper). Bulk subs + allowlists = same events as before.
+const STANDARD_EVENT_SET = new Set(STANDARD_EVENTS);
+const CUSTOM_EVENT_SET = new Set(CUSTOM_EVENTS);
 
-STANDARD_EVENTS.forEach(subscribeStandard);
-CUSTOM_EVENTS.forEach(subscribeCustom);
+analytics.subscribe("all_standard_events", function (event) {
+  if (!STANDARD_EVENT_SET.has(event.name)) return;
+  handle(event, extract(event.name, event.data)).catch(function () {});
+});
+analytics.subscribe("all_custom_events", function (event) {
+  if (!CUSTOM_EVENT_SET.has(event.name)) return;
+  handle(event, fromCustom(event.name, event.customData)).catch(function () {});
+});
