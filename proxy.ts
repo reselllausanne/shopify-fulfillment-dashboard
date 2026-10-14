@@ -71,6 +71,8 @@ const PUBLIC_PATHS = [
   // Phase 4 orphan reconciliation (physical stock without STX row).
   "/api/inventory/reconcile-orphans",
   "/api/tracking/token",
+  // Shopify custom pixel funnel ingest. Own gate: FUNNEL_TRACK_KEY + origin allowlist + rate limit.
+  "/api/track/funnel",
   // QZ Tray public cert only (never private key). Needed for silent print + override.crt download.
   "/api/qz/certificate",
   "/api/qz/override.crt",
