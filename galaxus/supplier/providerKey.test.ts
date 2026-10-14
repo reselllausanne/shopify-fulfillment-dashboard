@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveOrderLineProductKey } from "@/galaxus/supplier/providerKey";
+import {
+  resolveOrderLineProductKey,
+  resolveShopifyStxListingProviderKey,
+} from "@/galaxus/supplier/providerKey";
 
 describe("resolveOrderLineProductKey", () => {
   it("returns stored CODE_gtin providerKey", () => {
@@ -40,5 +43,15 @@ describe("resolveOrderLineProductKey", () => {
         gtin: null,
       })
     ).toBeNull();
+  });
+});
+
+describe("resolveShopifyStxListingProviderKey", () => {
+  it("uses STX_SV_ when gtin pending", () => {
+    expect(
+      resolveShopifyStxListingProviderKey({
+        supplierVariantId: "stx_36a77b5c-63e3-41df-a26e-9c02e17d5fd1",
+      })
+    ).toBe("STX_SV_36a77b5c-63e3-41df-a26e-9c02e17d5fd1");
   });
 });

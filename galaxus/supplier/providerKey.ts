@@ -55,6 +55,25 @@ export function buildProviderKey(
 }
 
 /**
+ * ChannelListingState key for Shopify STX price pushes.
+ * GTIN rows use STX_{gtin}; PENDING_GTIN rows use STX_SV_{uuid} so freshness
+ * tracking works without a barcode.
+ */
+export function resolveShopifyStxListingProviderKey(input: {
+  providerKey?: string | null;
+  gtin?: string | null;
+  supplierVariantId?: string | null;
+}): string | null {
+  const explicit = String(input.providerKey ?? "").trim();
+  if (explicit) return explicit;
+  const fromGtin = buildProviderKey(input.gtin, input.supplierVariantId);
+  if (fromGtin) return fromGtin;
+  const svId = String(input.supplierVariantId ?? "").trim();
+  if (svId.startsWith("stx_")) return `STX_SV_${svId.slice(4)}`;
+  return null;
+}
+
+/**
  * Product key for Galaxus order lines (`REI_4018…`).
  * Prefer stored providerKey / SUPPLIER_PID when already `CODE_gtin`, else rebuild from GTIN + supplier ref.
  */

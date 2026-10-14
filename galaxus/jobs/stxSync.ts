@@ -10,9 +10,10 @@ import {
   stxProductAskMedian,
 } from "@/galaxus/stx/variantPriceLanes";
 import {
-  syncShopifyStxPricesForGtins,
-  syncShopifyStxPricesForSupplierVariantIds,
-} from "@/shopify/stx/syncShopifyStxPrices";
+  bumpKickdbRawFetchedAtForPythonRetry,
+  runPlannedShopifyStxPriceSyncForSupplierVariantIds,
+} from "@/shopify/stx/shopifyStxPriceSyncPlan";
+import { syncShopifyStxPricesForGtins } from "@/shopify/stx/syncShopifyStxPrices";
 import { syncShopifyStxStockForKickdbProduct } from "@/shopify/stx/stxStockShopify";
 import {
   bulkInsertSupplierVariants,
@@ -518,28 +519,33 @@ export async function ingestStxFromRawPayload(
 
   const stockZeroed = stockZeroedMapped + stockZeroedPayload;
 
-  const gtins = rows.map((r) => r.gtin).filter((g): g is string => Boolean(g));
-  const pendingNoGtinSupplierIds = rows
-    .filter((r) => !r.gtin)
-    .map((r) => r.supplierVariantId)
-    .filter(Boolean);
-  const shouldSyncShopify =
-    options?.skipShopifyPriceSync !== true &&
-    (gtins.length > 0 || pendingNoGtinSupplierIds.length > 0) &&
-    (created > 0 || updated > 0);
-  if (shouldSyncShopify) {
+  const supplierVariantIds = rows.map((r) => r.supplierVariantId).filter(Boolean);
+  if (options?.skipShopifyPriceSync !== true && supplierVariantIds.length > 0) {
     try {
-      if (gtins.length > 0) {
-        await syncShopifyStxPricesForGtins(gtins);
+      const shopifyPlan = await runPlannedShopifyStxPriceSyncForSupplierVariantIds(
+        supplierVariantIds
+      );
+      if (shopifyPlan.hadMappingFailures) {
+        await bumpKickdbRawFetchedAtForPythonRetry(cleanId);
       }
-      if (pendingNoGtinSupplierIds.length > 0) {
-        await syncShopifyStxPricesForSupplierVariantIds(pendingNoGtinSupplierIds);
+      if (shopifyPlan.needsPush > 0 || shopifyPlan.shopify.synced > 0) {
+        console.info("[galaxus][ingest:stx-raw-payload] shopify price plan", {
+          kickdbProductId: cleanId,
+          offered: shopifyPlan.offered,
+          needsPush: shopifyPlan.needsPush,
+          unchanged: shopifyPlan.unchanged,
+          synced: shopifyPlan.shopify.synced,
+          skipped: shopifyPlan.shopify.skipped,
+          failed: shopifyPlan.shopify.failed,
+          pythonRetryBump: shopifyPlan.hadMappingFailures,
+        });
       }
     } catch (err) {
       console.warn("[galaxus][ingest:stx-raw-payload] shopify price sync failed", {
         kickdbProductId: cleanId,
         err,
       });
+      await bumpKickdbRawFetchedAtForPythonRetry(cleanId).catch(() => undefined);
     }
   }
 

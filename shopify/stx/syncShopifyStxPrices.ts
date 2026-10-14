@@ -5,6 +5,7 @@ import {
   calcShopifySellPrice,
   resolveStxWebsiteSellPrices,
 } from "@/shopify/pricing/calcShopifySellPrice";
+import { resolveShopifyStxListingProviderKey } from "@/galaxus/supplier/providerKey";
 import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 
@@ -107,10 +108,12 @@ function toNumber(value: unknown): number | null {
  * sync skip a redundant Shopify write when the computed price has not moved.
  * Best-effort: returns null if the delegate is absent (e.g. in unit tests).
  */
-async function readLastPushedShopifyPrice(
-  providerKey: string | null | undefined
-): Promise<number | null> {
-  const key = String(providerKey ?? "").trim();
+async function readLastPushedShopifyPrice(input: {
+  providerKey?: string | null;
+  gtin?: string | null;
+  supplierVariantId?: string | null;
+}): Promise<number | null> {
+  const key = resolveShopifyStxListingProviderKey(input);
   if (!key) return null;
   const cls = (prisma as any).channelListingState;
   if (!cls?.findUnique) return null;
@@ -141,7 +144,11 @@ async function recordShopifyStxPush(input: {
   productId?: string | null;
   price: number;
 }): Promise<void> {
-  const key = String(input.providerKey ?? "").trim();
+  const key = resolveShopifyStxListingProviderKey({
+    providerKey: input.providerKey,
+    gtin: input.gtin,
+    supplierVariantId: input.supplierVariantId,
+  });
   if (!key) return;
   const cls = (prisma as any).channelListingState;
   if (!cls?.upsert) return;
@@ -181,9 +188,14 @@ async function recordShopifyStxPush(input: {
 async function recordShopifyStxSkip(
   providerKey: string | null | undefined,
   gtin: string | null,
-  reason: string
+  reason: string,
+  supplierVariantId?: string | null
 ): Promise<void> {
-  const key = String(providerKey ?? "").trim();
+  const key = resolveShopifyStxListingProviderKey({
+    providerKey,
+    gtin,
+    supplierVariantId,
+  });
   if (!key) return;
   const cls = (prisma as any).channelListingState;
   if (!cls?.upsert) return;
@@ -222,6 +234,33 @@ async function resolveProductHandle(gtin: string): Promise<string | null> {
   return kv?.product?.urlKey ?? null;
 }
 
+/** Shopify / KickDB labels that mean a single-SKU product (TCG boxes, accessories). */
+export function isOneSizeLabel(raw: string | null | undefined): boolean {
+  const value = String(raw ?? "").trim().toUpperCase();
+  if (!value) return false;
+  if (value === "ONE SIZE" || value === "ONESIZE" || value === "O/S" || value === "OS") {
+    return true;
+  }
+  return /\bONE\s*SIZE\b/.test(value);
+}
+
+function isOneSizeShopifySku(sku: string | null | undefined): boolean {
+  const value = String(sku ?? "").trim().toUpperCase();
+  return value.endsWith("-OS") || value.endsWith("-O/S");
+}
+
+/** KickDB often sends sizeUs="US" with no EU size for one-size STX SKUs. */
+export function isPlaceholderKickdbOneSize(
+  sizeEu?: string | null,
+  sizeUs?: string | null
+): boolean {
+  const eu = String(sizeEu ?? "").trim();
+  if (eu && isOneSizeLabel(eu)) return true;
+  if (eu) return false;
+  const us = String(sizeUs ?? "").trim().toUpperCase();
+  return !us || us === "US" || isOneSizeLabel(us);
+}
+
 function sizeTokens(raw: string | null | undefined): string[] {
   const value = String(raw ?? "").trim();
   if (!value) return [];
@@ -252,17 +291,26 @@ export function sharesSizeToken(a: string | null | undefined, b: string | null |
  * Returns null when 0 or >1 candidates — never guess under ambiguity.
  */
 export function pickShopifyVariantBySize<
-  T extends { title?: string | null; usSize?: { value: string | null } | null },
->(
-  variants: T[],
-  sizeEu?: string | null,
-  sizeUs?: string | null
-): T | null {
+  T extends {
+    title?: string | null;
+    sku?: string | null;
+    usSize?: { value: string | null } | null;
+  },
+>(variants: T[], sizeEu?: string | null, sizeUs?: string | null): T | null {
   const byEu = variants.filter((v) => sharesSizeToken(v.title, sizeEu));
   if (byEu.length === 1) return byEu[0]!;
   if (byEu.length > 1) return null;
   const byUs = variants.filter((v) => sharesSizeToken(v.usSize?.value, sizeUs));
   if (byUs.length === 1) return byUs[0]!;
+
+  if (isPlaceholderKickdbOneSize(sizeEu, sizeUs)) {
+    const oneSize = variants.filter(
+      (v) => isOneSizeLabel(v.title) || isOneSizeShopifySku(v.sku)
+    );
+    if (oneSize.length === 1) return oneSize[0]!;
+    if (variants.length === 1) return variants[0]!;
+  }
+
   return null;
 }
 
@@ -454,7 +502,11 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
     productHandle: handleForCalc,
   });
   if (preview.normalSell != null) {
-    const lastPushed = await readLastPushedShopifyPrice(providerKey);
+    const lastPushed = await readLastPushedShopifyPrice({
+      providerKey,
+      gtin: cleanGtin,
+      supplierVariantId: stxRow.supplierVariantId ?? null,
+    });
     if (lastPushed != null && Math.abs(lastPushed - preview.normalSell) < 0.005) {
       await recordShopifyStxPush({
         providerKey,
@@ -474,7 +526,12 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
 
   const { match: barcodeMatch, ambiguous } = await findShopifyVariantByGtin(cleanGtin);
   if (ambiguous) {
-    await recordShopifyStxSkip(providerKey, cleanGtin, "ambiguous_shopify_variant");
+    await recordShopifyStxSkip(
+      providerKey,
+      cleanGtin,
+      "ambiguous_shopify_variant",
+      stxRow.supplierVariantId ?? null
+    );
     return { gtin: cleanGtin, ok: false, reason: "ambiguous_shopify_variant" };
   }
 
@@ -505,7 +562,12 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
           })
         : null;
     if (!sizeHit?.variantId || !sizeHit.productId) {
-      await recordShopifyStxSkip(providerKey, cleanGtin, "no_shopify_variant");
+      await recordShopifyStxSkip(
+        providerKey,
+        cleanGtin,
+        "no_shopify_variant",
+        stxRow.supplierVariantId ?? null
+      );
       return { gtin: cleanGtin, ok: false, reason: "no_shopify_variant" };
     }
     variantId = sizeHit.variantId;
@@ -515,12 +577,22 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
   }
 
   if (await readShopifyPriceLocked(variantId)) {
-    await recordShopifyStxSkip(providerKey, cleanGtin, "price_locked");
+    await recordShopifyStxSkip(
+      providerKey,
+      cleanGtin,
+      "price_locked",
+      stxRow.supplierVariantId ?? null
+    );
     return { gtin: cleanGtin, ok: false, reason: "price_locked" };
   }
 
   if (isAdminOnlyShopifyVariant(variantId, productId)) {
-    await recordShopifyStxSkip(providerKey, cleanGtin, "admin_only_product");
+    await recordShopifyStxSkip(
+      providerKey,
+      cleanGtin,
+      "admin_only_product",
+      stxRow.supplierVariantId ?? null
+    );
     return { gtin: cleanGtin, ok: false, reason: "admin_only_product" };
   }
 
@@ -539,7 +611,12 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
   });
 
   if (normalSell == null) {
-    await recordShopifyStxSkip(providerKey, cleanGtin, "no_computed_normal_price");
+    await recordShopifyStxSkip(
+      providerKey,
+      cleanGtin,
+      "no_computed_normal_price",
+      stxRow.supplierVariantId ?? null
+    );
     return { gtin: cleanGtin, ok: false, reason: "no_computed_normal_price" };
   }
 
@@ -593,6 +670,62 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
     normalPrice: normalSell,
     expressPrice: expressSell,
   };
+}
+
+/**
+ * In-stock STX rows with no GTIN that are on Shopify (via KickDB mapping).
+ * Same freshness ordering as the nightly GTIN worker — PENDING_GTIN is not
+ * "feed-only"; it just cannot be keyed by barcode.
+ */
+export async function loadInStockStxNoGtinSupplierVariantIds(options: {
+  onlyOnShopify?: boolean;
+  minAgeHours?: number;
+  limit?: number;
+}): Promise<string[]> {
+  const onlyOnShopify = options.onlyOnShopify !== false;
+  const minAgeHours = Math.max(0, Number(options.minAgeHours ?? 48));
+  const limit = Math.max(1, Math.floor(Number(options.limit ?? 500)));
+  const shopifyClause = onlyOnShopify
+    ? `AND sss."syncStatus" = 'synced'
+       AND sss."shopifyProductId" IS NOT NULL`
+    : "";
+  const havingClause =
+    minAgeHours <= 0
+      ? ""
+      : `HAVING MIN(cls."lastSyncedAt") IS NULL
+            OR MIN(cls."lastSyncedAt") < NOW() - (${Math.round(minAgeHours)} * INTERVAL '1 hour')`;
+  const rows = await prisma.$queryRawUnsafe<Array<{ supplierVariantId: string }>>(`
+    SELECT sv."supplierVariantId"
+    FROM "public"."SupplierVariant" sv
+    INNER JOIN "public"."VariantMapping" m
+      ON m."supplierVariantId" = sv."supplierVariantId"
+    INNER JOIN "public"."KickDBVariant" kv ON kv."id" = m."kickdbVariantId"
+    INNER JOIN "public"."KickDBProduct" p ON p."id" = kv."productId"
+    INNER JOIN "public"."ShopifySyncState" sss
+      ON sss."kickdbProductId" = p."kickdbProductId"
+    LEFT JOIN "public"."ChannelListingState" cls
+      ON cls."channel" = 'SHOPIFY'
+      AND cls."supplierVariantId" = sv."supplierVariantId"
+    WHERE sv."supplierVariantId" LIKE 'stx_%'
+      AND sv."gtin" IS NULL
+      AND sv."stock" > 0
+      AND coalesce(sv."manualLock", false) = false
+      AND coalesce(sv."standardBuyPrice", sv."price") > 0
+      ${shopifyClause}
+    GROUP BY sv."supplierVariantId", sv."supplierProductName", sv."stock"
+    ${havingClause}
+    ORDER BY
+      CASE
+        WHEN sv."supplierProductName" ~* '(pokemon|pokémon|tcg|trading card|booster box|booster pack|elite trainer)'
+        THEN 0 ELSE 1
+      END,
+      sv."stock" DESC,
+      MIN(cls."lastSyncedAt") ASC NULLS FIRST
+    LIMIT ${limit}
+  `);
+  return rows
+    .map((r) => String(r.supplierVariantId ?? "").trim())
+    .filter((id) => id.startsWith("stx_"));
 }
 
 /**
@@ -667,11 +800,13 @@ export async function syncShopifyStxPricesForSupplierVariantIds(
       sizeUs: mapped?.sizeUs ?? null,
     });
     if (!match?.variantId || !match.productId) {
+      await recordShopifyStxSkip(row.providerKey, null, "no_shopify_variant_by_size", supplierVariantId);
       results.push({ supplierVariantId, ok: false, reason: "no_shopify_variant_by_size" });
       continue;
     }
 
     if (await readShopifyPriceLocked(match.variantId)) {
+      await recordShopifyStxSkip(row.providerKey, null, "price_locked", supplierVariantId);
       results.push({
         supplierVariantId,
         ok: false,
@@ -682,6 +817,7 @@ export async function syncShopifyStxPricesForSupplierVariantIds(
     }
 
     if (isAdminOnlyShopifyVariant(match.variantId, match.productId)) {
+      await recordShopifyStxSkip(row.providerKey, null, "admin_only_product", supplierVariantId);
       results.push({
         supplierVariantId,
         ok: false,
@@ -703,7 +839,33 @@ export async function syncShopifyStxPricesForSupplierVariantIds(
       productHandle: handle,
     });
     if (normalSell == null) {
+      await recordShopifyStxSkip(row.providerKey, null, "no_computed_normal_price", supplierVariantId);
       results.push({ supplierVariantId, ok: false, reason: "no_computed_normal_price" });
+      continue;
+    }
+
+    const lastPushed = await readLastPushedShopifyPrice({
+      providerKey: row.providerKey,
+      gtin: null,
+      supplierVariantId,
+    });
+    if (lastPushed != null && Math.abs(lastPushed - normalSell) < 0.005) {
+      await recordShopifyStxPush({
+        providerKey: row.providerKey,
+        supplierVariantId,
+        gtin: null,
+        variantId: match.variantId,
+        productId: match.productId,
+        price: normalSell,
+      });
+      results.push({
+        supplierVariantId,
+        ok: true,
+        reason: "price_unchanged",
+        matchedVariantId: match.variantId,
+        normalPrice: normalSell,
+        expressPrice: expressSell,
+      });
       continue;
     }
 

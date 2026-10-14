@@ -1,19 +1,16 @@
 #!/usr/bin/env npx tsx
 /**
- * Nightly Shopify STX price refresh.
+ * Safety-net Shopify STX price refresh (small capped batches).
  *
- * SSE ingest only pushes Shopify prices when a SupplierVariant row is
- * created/updated in DB. When a StockX ask stays constant over multiple SSE
- * events, Shopify keeps whatever price was last written — even if the sell
- * formula, brand rules, or fee model changed since. This worker closes that
- * gap by scanning the DB (no KicksDB API) for every in-stock STX GTIN and
- * calling syncShopifyStxPricesForGtins in batches so Shopify always reflects
- * the current DB-computed sell price.
+ * Primary path: SSE ingest → DB update → planned Shopify push only when
+ * computed sell ≠ lastPushed (see shopifyStxPriceSyncPlan). This worker
+ * catches formula changes / missed events without rescanning the full catalog.
  *
  * Priorisation (2026-09):
- *   - On ne synchronise QUE les GTIN dont le produit KickDB est réellement sur
- *     Shopify (ShopifySyncState.syncStatus='synced'). Cela retire ~134k GTIN
- *     feed-only (Galaxus/Decathlon) que le sync ignorait de toute façon.
+ *   - GTIN path: only KickDB products on Shopify (ShopifySyncState synced) —
+ *     skips ~134k feed-only rows.
+ *   - No-GTIN path (PENDING_GTIN / TCG one-size): same Shopify filter via
+ *     KickDB mapping + handle/size match (not barcode).
  *   - Tri par date de dernière synchro croissante: la variante la plus périmée
  *     passe en premier, donc un redémarrage ne peut jamais affamer la fin de
  *     file. La péremption maximale est bornée par la durée d'un cycle.
@@ -24,9 +21,16 @@
  *   SHOPIFY_STX_SYNC_BATCH_SIZE    default 50 gtins per call
  *   SHOPIFY_STX_SYNC_BATCH_SLEEP_MS  default 1500 (throttle Shopify writes)
  *   SHOPIFY_STX_SYNC_ONLY_ON_SHOPIFY  default "1" (set "0" to scan every GTIN)
+ *   SHOPIFY_STX_SYNC_MIN_AGE_HOURS   default 168 (7d safety net; SSE handles hot path)
+ *   SHOPIFY_STX_SYNC_MAX_GTINS_PER_CYCLE  default 3000
+ *   SHOPIFY_STX_SYNC_PENDING_LIMIT   default 500 (TCG / high stock first)
  */
 import { prisma } from "../../app/lib/prisma";
-import { syncShopifyStxPricesForGtins } from "../../shopify/stx/syncShopifyStxPrices";
+import {
+  loadInStockStxNoGtinSupplierVariantIds,
+  syncShopifyStxPricesForGtins,
+  syncShopifyStxPricesForSupplierVariantIds,
+} from "../../shopify/stx/syncShopifyStxPrices";
 
 const INTERVAL_MS = Number(
   process.env.SHOPIFY_STX_SYNC_INTERVAL_MS ?? 60 * 60 * 1000
@@ -52,7 +56,15 @@ const BATCH_SLEEP_MS = Math.max(
 // write quota. 0 disables the guard (full rescan every cycle).
 const MIN_AGE_HOURS = Math.max(
   0,
-  Number(process.env.SHOPIFY_STX_SYNC_MIN_AGE_HOURS ?? 48)
+  Number(process.env.SHOPIFY_STX_SYNC_MIN_AGE_HOURS ?? 168)
+);
+const MAX_GTINS_PER_CYCLE = Math.max(
+  0,
+  Number(process.env.SHOPIFY_STX_SYNC_MAX_GTINS_PER_CYCLE ?? 3000)
+);
+const PENDING_LIMIT = Math.max(
+  1,
+  Number(process.env.SHOPIFY_STX_SYNC_PENDING_LIMIT ?? 500)
 );
 
 function sleep(ms: number): Promise<void> {
@@ -60,51 +72,36 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function loadInStockStxGtins(): Promise<string[]> {
-  // Stalest Shopify push first so the tail is never starved by a restart, and
-  // skip GTINs a recent push (SSE ingest or a prior worker cycle) already made
-  // current. Restricted to products actually on Shopify unless told to scan all.
-  //
-  // Freshness is ChannelListingState.lastSyncedAt (set on every Shopify price
-  // push). NULL = never pushed → highest priority. The HAVING clause drops
-  // anything pushed inside MIN_AGE_HOURS.
-  const rows = ONLY_ON_SHOPIFY
-    ? await prisma.$queryRaw<Array<{ gtin: string }>>`
-        SELECT sv."gtin"
-        FROM "public"."SupplierVariant" sv
-        JOIN "public"."KickDBVariant" kv
+  if (MAX_GTINS_PER_CYCLE <= 0) return [];
+  const havingClause =
+    MIN_AGE_HOURS <= 0
+      ? ""
+      : `HAVING MIN(cls."lastSyncedAt") IS NULL
+            OR MIN(cls."lastSyncedAt") < NOW() - (${Math.round(MIN_AGE_HOURS)} * INTERVAL '1 hour')`;
+  const shopifyJoin = ONLY_ON_SHOPIFY
+    ? `JOIN "public"."KickDBVariant" kv
           ON kv."gtin" = sv."gtin" OR kv."ean" = sv."gtin"
         JOIN "public"."KickDBProduct" p ON p."id" = kv."productId"
         JOIN "public"."ShopifySyncState" sss
           ON sss."kickdbProductId" = p."kickdbProductId"
-        LEFT JOIN "public"."ChannelListingState" cls
-          ON cls."channel" = 'SHOPIFY' AND cls."providerKey" = sv."providerKey"
-        WHERE sv."supplierVariantId" LIKE 'stx_%'
-          AND sv."gtin" IS NOT NULL
-          AND sv."stock" > 0
-          AND coalesce(sv."manualLock", false) = false
           AND sss."syncStatus" = 'synced'
-          AND sss."shopifyProductId" IS NOT NULL
-        GROUP BY sv."gtin"
-        HAVING ${MIN_AGE_HOURS} <= 0
-            OR MIN(cls."lastSyncedAt") IS NULL
-            OR MIN(cls."lastSyncedAt") < NOW() - (${MIN_AGE_HOURS} * INTERVAL '1 hour')
-        ORDER BY MIN(cls."lastSyncedAt") ASC NULLS FIRST
-      `
-    : await prisma.$queryRaw<Array<{ gtin: string }>>`
-        SELECT sv."gtin"
-        FROM "public"."SupplierVariant" sv
-        LEFT JOIN "public"."ChannelListingState" cls
-          ON cls."channel" = 'SHOPIFY' AND cls."providerKey" = sv."providerKey"
-        WHERE sv."supplierVariantId" LIKE 'stx_%'
-          AND sv."gtin" IS NOT NULL
-          AND sv."stock" > 0
-          AND coalesce(sv."manualLock", false) = false
-        GROUP BY sv."gtin"
-        HAVING ${MIN_AGE_HOURS} <= 0
-            OR MIN(cls."lastSyncedAt") IS NULL
-            OR MIN(cls."lastSyncedAt") < NOW() - (${MIN_AGE_HOURS} * INTERVAL '1 hour')
-        ORDER BY MIN(cls."lastSyncedAt") ASC NULLS FIRST
-      `;
+          AND sss."shopifyProductId" IS NOT NULL`
+    : "";
+  const rows = await prisma.$queryRawUnsafe<Array<{ gtin: string }>>(`
+    SELECT sv."gtin"
+    FROM "public"."SupplierVariant" sv
+    ${shopifyJoin}
+    LEFT JOIN "public"."ChannelListingState" cls
+      ON cls."channel" = 'SHOPIFY' AND cls."providerKey" = sv."providerKey"
+    WHERE sv."supplierVariantId" LIKE 'stx_%'
+      AND sv."gtin" IS NOT NULL
+      AND sv."stock" > 0
+      AND coalesce(sv."manualLock", false) = false
+    GROUP BY sv."gtin"
+    ${havingClause}
+    ORDER BY MIN(cls."lastSyncedAt") ASC NULLS FIRST
+    LIMIT ${Math.floor(MAX_GTINS_PER_CYCLE)}
+  `);
   return rows.map((r) => String(r.gtin ?? "").trim()).filter((g) => g.length > 0);
 }
 
@@ -117,8 +114,16 @@ function chunk<T>(items: T[], size: number): T[][] {
 async function runOnce(): Promise<void> {
   const startedAt = Date.now();
   let gtins: string[] = [];
+  let noGtinSupplierIds: string[] = [];
   try {
-    gtins = await loadInStockStxGtins();
+    [gtins, noGtinSupplierIds] = await Promise.all([
+      loadInStockStxGtins(),
+      loadInStockStxNoGtinSupplierVariantIds({
+        onlyOnShopify: ONLY_ON_SHOPIFY,
+        minAgeHours: MIN_AGE_HOURS,
+        limit: PENDING_LIMIT,
+      }),
+    ]);
   } catch (err: unknown) {
     console.error(
       "[WORKER][SHOPIFY_STX_SYNC] load failed",
@@ -127,6 +132,7 @@ async function runOnce(): Promise<void> {
     return;
   }
   const batches = chunk(gtins, BATCH_SIZE);
+  const pendingBatches = chunk(noGtinSupplierIds, BATCH_SIZE);
   let synced = 0;
   let skipped = 0;
   let failed = 0;
@@ -159,10 +165,39 @@ async function runOnce(): Promise<void> {
     }
   }
 
+  for (let i = 0; i < pendingBatches.length; i += 1) {
+    const batch = pendingBatches[i]!;
+    try {
+      const result = await syncShopifyStxPricesForSupplierVariantIds(batch);
+      synced += result.synced;
+      skipped += result.skipped;
+      failed += result.failed;
+      for (const row of result.results) {
+        if (row.ok) continue;
+        const reason = row.reason ?? "unknown";
+        failReasons.set(`pending:${reason}`, (failReasons.get(`pending:${reason}`) ?? 0) + 1);
+      }
+    } catch (err: unknown) {
+      failed += batch.length;
+      const reason = err instanceof Error ? err.message : String(err);
+      failReasons.set(reason, (failReasons.get(reason) ?? 0) + batch.length);
+      console.error("[WORKER][SHOPIFY_STX_SYNC] pending batch failed", {
+        batchIndex: i,
+        size: batch.length,
+        reason,
+      });
+    }
+    if (BATCH_SLEEP_MS > 0 && i < pendingBatches.length - 1) {
+      await sleep(BATCH_SLEEP_MS);
+    }
+  }
+
   const durationMs = Date.now() - startedAt;
   console.info("[WORKER][SHOPIFY_STX_SYNC] done", {
     gtins: gtins.length,
+    pendingNoGtin: noGtinSupplierIds.length,
     batches: batches.length,
+    pendingBatches: pendingBatches.length,
     synced,
     skipped,
     failed,
@@ -179,6 +214,8 @@ async function main(): Promise<void> {
     batchSleepMs: BATCH_SLEEP_MS,
     onlyOnShopify: ONLY_ON_SHOPIFY,
     minAgeHours: MIN_AGE_HOURS,
+    maxGtinsPerCycle: MAX_GTINS_PER_CYCLE,
+    pendingLimit: PENDING_LIMIT,
   });
   await sleep(INITIAL_DELAY_MS);
   while (true) {
