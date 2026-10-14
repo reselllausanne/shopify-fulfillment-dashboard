@@ -12,6 +12,9 @@
  *   brands (GALAXUS_SHOE_CAP_SCOPE=all) or re-enables the collab exemption
  *   (GALAXUS_SHOE_CAP_COLLAB_EXEMPT=1).
  * - rei_not_allowlisted: REI rows outside reiGalaxusAllowlist (GALAXUS_REI_ALLOWLIST=0 disables).
+ * - non_fashion (Galaxus, 2026-10-13): only "Mode > …" categories + the sport / bag types on
+ *   Galaxus's fashion list. Exempt: LEGO, trading cards, WEL, REI allowlist.
+ *   GALAXUS_FASHION_ONLY=0 disables.
  * - price_outlier: absurd StockX resale prices (thin asks) — absolute cap or far above
  *   brand retail. Off unless GALAXUS_PRICE_OUTLIER_FILTER=1 (not requested by Galaxus).
  *
@@ -19,7 +22,7 @@
  * Kill switch: GALAXUS_ASSORTMENT_POLICY=0.
  */
 import { classifyGalaxusProductKind, isFootwearKind } from "@/galaxus/exports/productClassification";
-import { galaxusCategoryPathForKind } from "@/galaxus/exports/galaxusCategoryPaths";
+import { galaxusCategoryPathForKind, type GalaxusProductKind } from "@/galaxus/exports/galaxusCategoryPaths";
 import { classifyStxBrand, normalizeStxBrand } from "@/galaxus/exports/stxBrandBuckets";
 import { bwzShipChfFromManualNote, isBwzUnshippableNote } from "@/app/lib/bwzParcel";
 import { isGalaxusReiAllowlistEnabled, isReiGalaxusAllowlisted } from "@/galaxus/exports/reiGalaxusAllowlist";
@@ -30,7 +33,8 @@ export type GalaxusAssortmentBlockReason =
   | "price_outlier"
   | "bulky_shipping"
   | "gift_card"
-  | "rei_not_allowlisted";
+  | "rei_not_allowlisted"
+  | "non_fashion";
 
 export type GalaxusAssortmentInput = {
   providerKey?: string | null;
@@ -113,6 +117,33 @@ const TUBE_LAMP_RE =
 const LONG_ITEM_RE =
   /\b(?:strip|ruban|lichtband|rail|tige|barre|baguette)\b|profil|schiene|streifen|stange|rohr|(?<!steckdosen)leiste/i;
 const LENGTH_1M_PLUS_RE = /(?<![\d.,])(?:[1-9]\d?(?:[.,]\d+)?\s?m|[1-9]\d{3,}\s?mm)\b/i;
+
+/** Sport-tree product types on Galaxus's fashion list (Solutions Manzinali.xlsx) + bags. */
+const FASHION_EXTRA_LEAVES = new Set([
+  "Laufschuhe",
+  "Wanderschuhe",
+  "Outdoorjacken",
+  "Outdoorhose",
+  "Sportshirt",
+  "Funktionsshirt",
+  "Funktionsunterhose",
+  "Gamaschen",
+  "Sportsocken",
+  "Velojacke",
+  "Velohosen",
+  "Sturmhaube + Halsschlauch",
+  "Rucksack",
+  "Tasche",
+  "Bauchtasche",
+]);
+/** Non-fashion kept on purpose: LEGO + trading cards (Pokémon). */
+const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>(["lego", "tradingcard"]);
+/** WEL kept whole; REI is already narrowed by reiGalaxusAllowlist. */
+const FASHION_EXEMPT_SUPPLIERS = new Set(["wel", "rei"]);
+const FASHION_UNKNOWN_KIND_SUPPLIERS = new Set(["stx", "ner", "the", "gld"]);
+const APPAREL_SIZE_RE = /^(?:[2-5]?X{0,3}[SL]|XS|M|\d{2,3}(?:\/\d{2,3})?\s*cm)$/i;
+const APPAREL_TEXT_RE =
+  /\b(t-?shirts?|tees?|shirts?|hoodies?|sweat\w*|pullover|crewneck|beanies?|m[uü]tze|caps?|hats?|slides?|jackets?|jacke|hosen?|cordhose|pants|shorts|jeans|socks?|socken|leggings?|tights|dress|kleid|body|strampler)\b/i;
 
 const GIFT_CARD_RE = /gutschein|geschenkkarte|gift ?card|carte[- ]cadeau|bon[- ]cadeau|e-?voucher/i;
 
@@ -325,6 +356,34 @@ function isShoeCapInScope(input: GalaxusAssortmentInput): boolean {
   return true;
 }
 
+export function isGalaxusFashionOnlyEnabled(): boolean {
+  const raw = String(process.env.GALAXUS_FASHION_ONLY ?? "1").trim().toLowerCase();
+  return !["0", "false", "no", "off"].includes(raw);
+}
+
+/** Shoe / apparel size or clothing word overrides keyword misclassification ("Pool Slide" → pool_robot). */
+function hasFashionEvidence(input: GalaxusAssortmentInput): boolean {
+  const size = String(input.sizeRaw ?? "").trim();
+  if (SHOE_SIZE_RE.test(size) || APPAREL_SIZE_RE.test(size)) return true;
+  const text = `${input.title ?? ""} ${input.brand ?? ""}`;
+  return APPAREL_TEXT_RE.test(text) || FOOTWEAR_TEXT_RE.test(text);
+}
+
+export function isGalaxusFashionKept(
+  kind: GalaxusProductKind,
+  supplierKey: string,
+  input: GalaxusAssortmentInput = {}
+): boolean {
+  if (FASHION_EXEMPT_SUPPLIERS.has(supplierKey)) return true;
+  if (FASHION_EXEMPT_KINDS.has(kind)) return true;
+  if (hasFashionEvidence(input)) return true;
+  // Unclassified falls back to the Sneakers path — only trustworthy for sneaker suppliers.
+  if (kind === "unknown") return FASHION_UNKNOWN_KIND_SUPPLIERS.has(supplierKey);
+  const path = galaxusCategoryPathForKind(kind, supplierKey);
+  if (path.startsWith("Mode >")) return true;
+  return FASHION_EXTRA_LEAVES.has(path.split(">").pop()!.trim());
+}
+
 export function galaxusAssortmentBlockReason(
   input: GalaxusAssortmentInput
 ): GalaxusAssortmentBlockReason | null {
@@ -360,6 +419,7 @@ export function galaxusAssortmentBlockReason(
   if (!hasShoeSize && isBulkyShippingItem(input)) return "bulky_shipping";
   if (GIFT_CARD_RE.test(`${input.title ?? ""} ${input.supplierProductType ?? ""}`)) return "gift_card";
   if (supplierKey === "bwz" && isBwzShippingUnsafe(input)) return "bulky_shipping";
+  if (isGalaxusFashionOnlyEnabled() && !isGalaxusFashionKept(kind, supplierKey, input)) return "non_fashion";
 
   const consumer = estimateGalaxusConsumerPriceChf(input);
   if (consumer != null) {
@@ -393,11 +453,12 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
     bulky_shipping: 0,
     gift_card: 0,
     rei_not_allowlisted: 0,
+    non_fashion: 0,
   };
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};non_fashion=${stats.non_fashion}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
