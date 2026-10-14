@@ -1,3 +1,7 @@
+// DEPRECATED — remplacé par docs/shopify-custom-pixel-gtm.js + docs/gtm-container-resell.json
+// (tag "Google Ads - Remarketing view_item (taille choisie)"). Ne pas installer les deux :
+// doublon view_item Ads. Si déjà installé, le déconnecter après publication du conteneur GTM.
+//
 // Shopify custom pixel — Google Ads dynamic remarketing on size choice (resell-lausanne.ch)
 //
 // Pourquoi : le pixel Simprosys (AW-11152326139 / G-828PXC8REN) n'écoute que les events
