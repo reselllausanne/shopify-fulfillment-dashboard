@@ -1,6 +1,21 @@
 // lib/shopifyAdmin.ts
 
-import { missingShopifyAdminEnvKeys, resolveShopifyAdminEnv } from "@/lib/shopifyEnv";
+import {
+  missingShopifyAdminEnvKeys,
+  resolveShopifyAdminEnv,
+  type ShopifyTokenPurpose,
+} from "@/lib/shopifyEnv";
+import {
+  computeAdmissionWaitMs,
+  createThrottleStore,
+  debitState,
+  emptyShopifyApiMetrics,
+  envReservePoints,
+  formatShopifyApiMetrics,
+  stateFromThrottleStatus,
+  type ShopifyApiMetrics,
+  type ShopifyThrottleStore,
+} from "@/lib/shopifyThrottle";
 
 type ShopifyGqlError = { message: string; extensions?: any };
 
@@ -22,21 +37,116 @@ export type ShopifyGraphQLResult<T> = {
   extensions?: ShopifyGraphQLExtensions;
 };
 
-let shopifyGraphQLChain: Promise<unknown> = Promise.resolve();
-
-type ThrottleSnapshot = {
-  available: number;
-  restoreRate: number;
-  maximumAvailable: number;
-  updatedAtMs: number;
+export type ShopifyGraphQLOptions = {
+  /** Points to admit the first attempt with; defaults to the last requestedQueryCost seen for this query. */
+  estimatedQueryCost?: number;
+  /**
+   * Points left in the bucket after this request. Defaults to SHOPIFY_API_RESERVE_POINTS
+   * (set on background workers, unset = 0 for web/interactive calls).
+   */
+  reservePoints?: number;
+  /** "analytics" uses SHOPIFY_ANALYTICS_ACCESS_TOKEN (own bucket) when set. */
+  tokenPurpose?: ShopifyTokenPurpose;
 };
 
-let throttleSnapshot: ThrottleSnapshot | null = null;
+const UNKNOWN_QUERY_COST = 50;
+const MAX_ADMISSION_SLEEP_MS = 5_000;
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Admission against the shared bucket estimate: waits until
+ * `projected available - cost >= reserve`, then debits `cost` optimistically.
+ * Real `throttleStatus` from each response overwrites the estimate.
+ */
+export class ShopifyRateLimiter {
+  private readonly now: () => number;
+  private readonly sleep: (ms: number) => Promise<void>;
+
+  constructor(
+    private readonly store: ShopifyThrottleStore,
+    options: { now?: () => number; sleep?: (ms: number) => Promise<void> } = {}
+  ) {
+    this.now = options.now ?? Date.now;
+    this.sleep = options.sleep ?? sleepMs;
+  }
+
+  /** Resolves once the request may be sent; returns ms waited. */
+  async acquire(cost: number, reserve: number): Promise<number> {
+    let waited = 0;
+    for (;;) {
+      const nowMs = this.now();
+      const state = this.store.read();
+      const waitMs = computeAdmissionWaitMs({ state, nowMs, cost, reserve });
+      if (waitMs <= 0) {
+        this.store.write(debitState(state, nowMs, cost));
+        return waited;
+      }
+      // Re-read in chunks: other processes refresh the shared state meanwhile.
+      const chunk = Math.min(waitMs + 25, MAX_ADMISSION_SLEEP_MS);
+      await this.sleep(chunk);
+      waited += chunk;
+    }
+  }
+
+  observe(extensions: ShopifyGraphQLExtensions | undefined): void {
+    const state = stateFromThrottleStatus(extensions?.cost?.throttleStatus, this.now());
+    if (state) this.store.write(state);
+  }
+}
+
+type LimiterSlot = { limiter: ShopifyRateLimiter; chain: Promise<unknown> };
+const limiterSlots = new Map<string, LimiterSlot>();
+const lastRequestedCostByQuery = new Map<string, number>();
+
+let apiMetrics: ShopifyApiMetrics = emptyShopifyApiMetrics();
+let metricsTimer: ReturnType<typeof setInterval> | null = null;
+
+function limiterSlot(shop: string, token: string): LimiterSlot {
+  const key = `${shop}|${token}`;
+  let slot = limiterSlots.get(key);
+  if (!slot) {
+    slot = { limiter: new ShopifyRateLimiter(createThrottleStore(shop, token)), chain: Promise.resolve() };
+    limiterSlots.set(key, slot);
+  }
+  return slot;
+}
+
+export function getShopifyApiMetrics(): ShopifyApiMetrics {
+  return { ...apiMetrics };
+}
+
+export function resetShopifyApiMetrics(): void {
+  apiMetrics = emptyShopifyApiMetrics();
+}
+
+/** One-line summary: points/s used, THROTTLED count, admission wait. */
+export function formatShopifyApiMetricsLine(tag = "SHOPIFY_API"): string {
+  return `[${tag}] ${formatShopifyApiMetrics(apiMetrics)}`;
+}
+
+/** SHOPIFY_API_METRICS_LOG_MS > 0 → periodic metrics line (unref'd timer). */
+function ensureMetricsTimer(): void {
+  if (metricsTimer) return;
+  const everyMs = Number(process.env.SHOPIFY_API_METRICS_LOG_MS ?? 0);
+  if (!(everyMs > 0)) return;
+  metricsTimer = setInterval(() => console.info(formatShopifyApiMetricsLine()), everyMs);
+  metricsTimer.unref?.();
+}
+
+function recordResponse(extensions: ShopifyGraphQLExtensions | undefined): void {
+  const cost = extensions?.cost;
+  if (!cost) return;
+  apiMetrics.pointsRequested += Number(cost.requestedQueryCost ?? 0);
+  apiMetrics.pointsActual += Number(cost.actualQueryCost ?? 0);
+  const available = cost.throttleStatus?.currentlyAvailable;
+  if (available != null) {
+    const n = Number(available);
+    apiMetrics.minAvailableSeen = apiMetrics.minAvailableSeen == null ? n : Math.min(apiMetrics.minAvailableSeen, n);
+  }
+}
 
 function normalizeShopifyOrderIdValue(value: unknown): unknown {
   const raw = typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
@@ -59,37 +169,6 @@ function normalizeShopifyGraphQLVariables(input: unknown): unknown {
     return [key, normalizeShopifyGraphQLVariables(value)];
   });
   return Object.fromEntries(entries);
-}
-
-function applyThrottleExtensions(extensions: ShopifyGraphQLExtensions | undefined): void {
-  const status = extensions?.cost?.throttleStatus;
-  if (!status) return;
-  throttleSnapshot = {
-    available: Number(status.currentlyAvailable ?? 0),
-    restoreRate: Number(status.restoreRate ?? 100),
-    maximumAvailable: Number(status.maximumAvailable ?? 1000),
-    updatedAtMs: Date.now(),
-  };
-}
-
-function projectedShopifyCapacity(): number {
-  if (!throttleSnapshot) return 1000;
-  const elapsedMs = Date.now() - throttleSnapshot.updatedAtMs;
-  return Math.min(
-    throttleSnapshot.maximumAvailable,
-    throttleSnapshot.available + (throttleSnapshot.restoreRate * elapsedMs) / 1000
-  );
-}
-
-async function waitForShopifyCapacity(requiredCost: number): Promise<void> {
-  const target = requiredCost + 80;
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    if (projectedShopifyCapacity() >= target) return;
-    const deficit = target - projectedShopifyCapacity();
-    const restoreRate = throttleSnapshot?.restoreRate ?? 100;
-    const waitMs = Math.ceil((deficit / restoreRate) * 1000) + 250;
-    await sleepMs(Math.min(waitMs, 15000));
-  }
 }
 
 export async function sleepForShopifyQueryCost(
@@ -121,51 +200,26 @@ function isTransientShopifyTransportError(error: unknown): boolean {
   );
 }
 
-function isRetryableShopifyGraphQLError(errors: ShopifyGqlError[] | undefined): boolean {
+function isThrottledShopifyGraphQLError(errors: ShopifyGqlError[] | undefined): boolean {
   return (errors ?? []).some((error) => {
     const code = String(error?.extensions?.code ?? "").toUpperCase();
     const message = String(error?.message ?? "").toUpperCase();
-    return (
-      code === "THROTTLED" ||
-      code === "MAX_COST_EXCEEDED" ||
-      message.includes("THROTTLED") ||
-      message.includes("MAX_COST_EXCEEDED")
-    );
+    return code === "THROTTLED" || message.includes("THROTTLED");
   });
 }
 
-function computeShopifyRetryDelayMs(
-  extensions: ShopifyGraphQLExtensions | undefined,
-  attempt: number
-): number {
-  const requested = Number(extensions?.cost?.requestedQueryCost ?? 0);
-  const available = Number(extensions?.cost?.throttleStatus?.currentlyAvailable ?? 0);
-  const restoreRate = Number(extensions?.cost?.throttleStatus?.restoreRate ?? 100);
-  const deficit = Math.max(0, requested - available);
-  const restoreWaitMs =
-    deficit > 0 && restoreRate > 0 ? Math.ceil((deficit / restoreRate) * 1000) : 0;
-  const backoffMs = 1000 + attempt * 800;
-  return Math.min(20000, Math.max(backoffMs, restoreWaitMs + 600));
-}
-
 async function shopifyGraphQLOnce<T>(
+  env: { shop: string; token: string; version: string },
   query: string,
   variables: Record<string, any> = {}
 ): Promise<ShopifyGraphQLResult<T>> {
-  const { shop, token, version } = resolveShopifyAdminEnv();
-
-  if (!shop || !token) {
-    const missing = missingShopifyAdminEnvKeys({ shop, token, version });
-    throw new Error(`Missing Shopify admin env vars: ${missing.join(", ")}`);
-  }
-
-  const url = `https://${shop}/admin/api/${version}/graphql.json`;
+  const url = `https://${env.shop}/admin/api/${env.version}/graphql.json`;
 
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "X-Shopify-Access-Token": token,
+      "X-Shopify-Access-Token": env.token,
     },
     body: JSON.stringify({ query, variables }),
   });
@@ -192,9 +246,18 @@ async function shopifyGraphQLOnce<T>(
 export async function shopifyGraphQL<T>(
   query: string,
   variables: Record<string, any> = {},
-  options?: { estimatedQueryCost?: number }
+  options?: ShopifyGraphQLOptions
 ): Promise<ShopifyGraphQLResult<T>> {
+  const env = resolveShopifyAdminEnv(options?.tokenPurpose ?? "admin");
+  if (!env.shop || !env.token) {
+    const missing = missingShopifyAdminEnvKeys(env);
+    throw new Error(`Missing Shopify admin env vars: ${missing.join(", ")}`);
+  }
+
   const normalizedVariables = normalizeShopifyGraphQLVariables(variables) as Record<string, any>;
+  const slot = limiterSlot(env.shop, env.token);
+  const reserve = options?.reservePoints ?? envReservePoints();
+  ensureMetricsTimer();
 
   const run = async (): Promise<ShopifyGraphQLResult<T>> => {
     let lastResult: ShopifyGraphQLResult<T> | null = null;
@@ -202,18 +265,17 @@ export async function shopifyGraphQL<T>(
 
     for (let attempt = 0; attempt < 15; attempt += 1) {
       const requiredCost =
-        estimatedCost > 0
-          ? estimatedCost
-          : Number(lastResult?.extensions?.cost?.requestedQueryCost ?? 0);
-      if (requiredCost > 0) {
-        await waitForShopifyCapacity(requiredCost);
-      }
+        Number(lastResult?.extensions?.cost?.requestedQueryCost ?? 0) ||
+        (estimatedCost > 0 ? estimatedCost : lastRequestedCostByQuery.get(query) ?? UNKNOWN_QUERY_COST);
+      apiMetrics.admissionWaitMs += await slot.limiter.acquire(requiredCost, reserve);
 
       let result: ShopifyGraphQLResult<T>;
       try {
-        result = await shopifyGraphQLOnce<T>(query, normalizedVariables);
+        apiMetrics.requests += 1;
+        result = await shopifyGraphQLOnce<T>(env, query, normalizedVariables);
       } catch (error) {
         if (isTransientShopifyTransportError(error) && attempt < 14) {
+          apiMetrics.transportRetries += 1;
           const delayMs = Math.min(20000, 1000 + attempt * 1200);
           console.warn(
             `[SHOPIFY] transport retry ${attempt + 1}/15 in ${delayMs}ms`,
@@ -225,29 +287,38 @@ export async function shopifyGraphQL<T>(
         throw error;
       }
       lastResult = result;
-      applyThrottleExtensions(result.extensions);
+      slot.limiter.observe(result.extensions);
+      recordResponse(result.extensions);
+      const requested = Number(result.extensions?.cost?.requestedQueryCost ?? 0);
+      if (requested > 0) {
+        // Some callers interpolate values into the query text: keep the cache bounded.
+        if (lastRequestedCostByQuery.size >= 500) lastRequestedCostByQuery.clear();
+        lastRequestedCostByQuery.set(query, requested);
+      }
 
       if (!result.errors?.length) {
         return result;
       }
 
-      if (!isRetryableShopifyGraphQLError(result.errors) || attempt >= 14) {
+      if (!isThrottledShopifyGraphQLError(result.errors) || attempt >= 14) {
         return result;
       }
 
-      const delayMs = computeShopifyRetryDelayMs(result.extensions, attempt);
+      apiMetrics.throttled += 1;
       console.warn(
-        `[SHOPIFY] GraphQL retry ${attempt + 1}/15 in ${delayMs}ms`,
-        result.errors?.[0]?.extensions?.code ?? result.errors?.[0]?.message
+        `[SHOPIFY] THROTTLED retry ${attempt + 1}/15 (requested=${requested}, available=${
+          result.extensions?.cost?.throttleStatus?.currentlyAvailable ?? "?"
+        })`
       );
-      await sleepMs(delayMs);
+      // Next acquire() waits for the bucket to refill; small floor avoids a hot loop.
+      await sleepMs(250 + attempt * 250);
     }
 
     return lastResult as ShopifyGraphQLResult<T>;
   };
 
-  const resultPromise = shopifyGraphQLChain.then(run, run);
-  shopifyGraphQLChain = resultPromise.then(
+  const resultPromise = slot.chain.then(run, run);
+  slot.chain = resultPromise.then(
     () => undefined,
     () => undefined
   );

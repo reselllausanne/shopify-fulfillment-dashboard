@@ -2,6 +2,7 @@ const DEFAULT_SHOPIFY_API_VERSION = "2026-07";
 
 const SHOP_ENV_KEYS = ["SHOP_NAME_SHOPIFY", "SHOPIFY_SHOP_DOMAIN"] as const;
 const TOKEN_ENV_KEYS = ["ACCESS_TOKEN_SHOPIFY", "SHOPIFY_ADMIN_ACCESS_TOKEN"] as const;
+const ANALYTICS_TOKEN_ENV_KEYS = ["SHOPIFY_ANALYTICS_ACCESS_TOKEN"] as const;
 const VERSION_ENV_KEYS = ["API_VERSION_SHOPIFY", "SHOPIFY_API_VERSION"] as const;
 
 export const REQUIRED_SHOPIFY_ADMIN_SCOPES = [
@@ -38,10 +39,17 @@ export type ShopifyAdminEnv = {
   version: string;
 };
 
-export function resolveShopifyAdminEnv(): ShopifyAdminEnv {
+/**
+ * "analytics" = read-only custom app (own API bucket) for reports/analytics;
+ * falls back to the main admin token when SHOPIFY_ANALYTICS_ACCESS_TOKEN is unset.
+ */
+export type ShopifyTokenPurpose = "admin" | "analytics";
+
+export function resolveShopifyAdminEnv(purpose: ShopifyTokenPurpose = "admin"): ShopifyAdminEnv {
+  const mainToken = readFirst(TOKEN_ENV_KEYS);
   return {
     shop: readFirst(SHOP_ENV_KEYS),
-    token: readFirst(TOKEN_ENV_KEYS),
+    token: purpose === "analytics" ? readFirst(ANALYTICS_TOKEN_ENV_KEYS, mainToken) : mainToken,
     version: readFirst(VERSION_ENV_KEYS, DEFAULT_SHOPIFY_API_VERSION),
   };
 }

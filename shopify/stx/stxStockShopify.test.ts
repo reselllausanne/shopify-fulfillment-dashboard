@@ -3,11 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/app/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/shopifyAdmin", () => ({ shopifyGraphQL: vi.fn() }));
 
+import { shopifyGraphQL } from "@/lib/shopifyAdmin";
+
 import {
+  applyStxStockChanges,
   decideStxStock,
+  emptyStxStockStats,
   liveVariantsFromPayload,
   matchLiveStxVariant,
+  MAX_QUANTITIES_PER_SET,
   normSize,
+  planStxStockChanges,
   type StxShopifyVariant,
 } from "./stxStockShopify";
 
@@ -124,5 +130,47 @@ describe("decideStxStock", () => {
 
   it("zeroes every stocked size of a delisted product", () => {
     expect(decideStxStock(variant("40", 1), null, PRODUCT)).toEqual({ action: "zero", from: 1, to: 0 });
+  });
+
+  it("plans changes without API calls and counts skips", () => {
+    const stats = emptyStxStockStats();
+    const changes = planStxStockChanges(
+      [variant("40", 0), variant("41", 1), variant("40", 2), variant("40", null)],
+      live,
+      PRODUCT,
+      stats
+    );
+    expect(changes.map((c) => [c.node.title, c.action, c.productGid])).toEqual([
+      ["40", "restore", PRODUCT],
+      ["41", "zero", PRODUCT],
+    ]);
+    expect(stats.inSync).toBe(1);
+    expect(stats.notStocked).toBe(1);
+    expect(vi.mocked(shopifyGraphQL)).not.toHaveBeenCalled();
+  });
+
+  it("applies changes of several products in one compare-and-set call", async () => {
+    vi.mocked(shopifyGraphQL).mockResolvedValueOnce({
+      data: { inventorySetQuantities: { userErrors: [] } },
+    } as any);
+    const stats = emptyStxStockStats();
+    const a = planStxStockChanges([variant("40", 0)], live, "gid://shopify/Product/A", stats);
+    const b = planStxStockChanges([variant("41", 1)], live, "gid://shopify/Product/B", stats);
+    await applyStxStockChanges([...a, ...b]);
+    expect(vi.mocked(shopifyGraphQL)).toHaveBeenCalledTimes(1);
+    const vars = vi.mocked(shopifyGraphQL).mock.calls[0]![1] as any;
+    expect(vars.input.quantities).toHaveLength(2);
+    expect(vars.input.quantities[1]).toMatchObject({ quantity: 0, changeFromQuantity: 1 });
+  });
+
+  it("refuses batches above the Shopify per-call quantity cap", async () => {
+    const big = Array.from({ length: MAX_QUANTITIES_PER_SET + 1 }, () => ({
+      productGid: PRODUCT,
+      node: variant("40", 0),
+      action: "restore" as const,
+      from: 0,
+      to: 1,
+    }));
+    await expect(applyStxStockChanges(big)).rejects.toThrow(/quantities/);
   });
 });

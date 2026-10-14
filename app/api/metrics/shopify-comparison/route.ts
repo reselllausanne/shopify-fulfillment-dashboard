@@ -99,7 +99,7 @@ const decimalToNumber = (
 
 async function fetchShopifyOrders(namespace: string, first = 50): Promise<ShopifyOrderEdge[]> {
   const { shop: shopifyShopDomain, token: shopifyAccessToken, version: shopifyApiVersion } =
-    resolveShopifyAdminEnv();
+    resolveShopifyAdminEnv("analytics");
 
   if (!shopifyAccessToken || !shopifyShopDomain) {
     throw new Error("Shopify credentials not configured");

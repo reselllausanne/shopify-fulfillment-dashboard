@@ -223,6 +223,86 @@ export function decideStxStock(
   return wanted === 1 ? { action: "restore", from: qty, to: 1 } : { action: "zero", from: qty, to: 0 };
 }
 
+export type StxStockChange = {
+  productGid: string;
+  node: StxShopifyVariant;
+  action: "zero" | "restore";
+  from: number;
+  to: number;
+};
+
+/** Shopify caps `inventorySetQuantities` at 250 quantities per call. */
+export const MAX_QUANTITIES_PER_SET = 250;
+
+export function toProductGid(id: string): string {
+  return id.startsWith("gid://") ? id : `gid://shopify/Product/${id}`;
+}
+
+/** Decides every variant of one product; counts skips into `stats`. No API calls. */
+export function planStxStockChanges(
+  nodes: StxShopifyVariant[],
+  live: LiveStxVariant[] | null,
+  productGid: string,
+  stats: StxStockStats
+): StxStockChange[] {
+  const changes: StxStockChange[] = [];
+  for (const node of nodes) {
+    const d = decideStxStock(node, live, productGid);
+    if (d.action === "skip") {
+      if (d.reason !== "notStocked") stats.checked += 1;
+      stats[d.reason] += 1;
+      continue;
+    }
+    stats.checked += 1;
+    changes.push({ productGid, node, ...d });
+  }
+  if (changes.length > 0 && stats.examples.length < 15) {
+    stats.examples.push(`${productGid} → ${changes.map((c) => `${c.node.title}(${c.from}→${c.to})`).join(", ")}`);
+  }
+  return changes;
+}
+
+/**
+ * One `inventorySetQuantities` for up to MAX_QUANTITIES_PER_SET changes (any
+ * products). `changeFromQuantity` makes it compare-and-set: a stale `from`
+ * fails the call instead of overwriting a newer quantity.
+ */
+export async function applyStxStockChanges(changes: StxStockChange[]): Promise<void> {
+  if (changes.length === 0) return;
+  if (changes.length > MAX_QUANTITIES_PER_SET) {
+    throw new Error(`inventorySetQuantities: ${changes.length} > ${MAX_QUANTITIES_PER_SET} quantities`);
+  }
+  const locationId = ONLINE_LOCATION.id;
+  const upd = await shopifyGraphQL<{ inventorySetQuantities: { userErrors: Array<{ message: string }> } }>(
+    SET_QUANTITIES,
+    {
+      input: {
+        name: "available",
+        reason: "correction",
+        referenceDocumentUri: `gid://resell-lausanne/StxStockSync/${Date.now()}`,
+        quantities: changes.map((c) => ({
+          inventoryItemId: c.node.inventoryItem!.id,
+          locationId,
+          quantity: c.to,
+          changeFromQuantity: c.from,
+        })),
+      },
+      idempotencyKey: crypto.randomUUID(),
+    }
+  );
+  const errs = [
+    ...(upd.errors ?? []).map((e) => e.message),
+    ...(upd.data?.inventorySetQuantities?.userErrors ?? []).map((e) => e.message),
+  ];
+  if (errs.length) throw new Error(errs.join("; "));
+}
+
+export function countStxStockApplied(changes: StxStockChange[], stats: StxStockStats): void {
+  const zeroed = changes.filter((c) => c.action === "zero").length;
+  stats.zeroed += zeroed;
+  stats.restored += changes.length - zeroed;
+}
+
 export async function syncShopifyStxStockForProduct(input: {
   shopifyProductId: string;
   /** Live KicksDB product. `null` = delisted product: every size is sold out. */
@@ -231,9 +311,7 @@ export async function syncShopifyStxStockForProduct(input: {
   stats?: StxStockStats;
 }): Promise<StxStockStats> {
   const stats = input.stats ?? emptyStxStockStats();
-  const productGid = input.shopifyProductId.startsWith("gid://")
-    ? input.shopifyProductId
-    : `gid://shopify/Product/${input.shopifyProductId}`;
+  const productGid = toProductGid(input.shopifyProductId);
   const locationId = ONLINE_LOCATION.id;
 
   const live = input.payload === null ? null : liveVariantsFromPayload(input.payload);
@@ -245,55 +323,19 @@ export async function syncShopifyStxStockForProduct(input: {
   );
   if (res.errors?.length) throw new Error(res.errors.map((e) => e.message).join("; "));
 
-  const changes: Array<{ node: StxShopifyVariant; action: "zero" | "restore"; from: number; to: number }> = [];
-  for (const node of res.data?.product?.variants?.nodes ?? []) {
-    const d = decideStxStock(node, live, productGid);
-    if (d.action === "skip") {
-      if (d.reason !== "notStocked") stats.checked += 1;
-      stats[d.reason] += 1;
-      continue;
-    }
-    stats.checked += 1;
-    changes.push({ node, ...d });
-  }
+  const changes = planStxStockChanges(res.data?.product?.variants?.nodes ?? [], live, productGid, stats);
   if (changes.length === 0) return stats;
-
-  const zeroed = changes.filter((c) => c.action === "zero").length;
-  const restored = changes.length - zeroed;
-  if (stats.examples.length < 15) {
-    stats.examples.push(`${productGid} → ${changes.map((c) => `${c.node.title}(${c.from}→${c.to})`).join(", ")}`);
-  }
   if (!input.apply) {
-    stats.zeroed += zeroed;
-    stats.restored += restored;
+    countStxStockApplied(changes, stats);
     return stats;
   }
 
   try {
-    const upd = await shopifyGraphQL<{ inventorySetQuantities: { userErrors: Array<{ message: string }> } }>(
-      SET_QUANTITIES,
-      {
-        input: {
-          name: "available",
-          reason: "correction",
-          referenceDocumentUri: `gid://resell-lausanne/StxStockSync/${Date.now()}`,
-          quantities: changes.map((c) => ({
-            inventoryItemId: c.node.inventoryItem!.id,
-            locationId,
-            quantity: c.to,
-            changeFromQuantity: c.from,
-          })),
-        },
-        idempotencyKey: crypto.randomUUID(),
-      }
-    );
-    const errs = [
-      ...(upd.errors ?? []).map((e) => e.message),
-      ...(upd.data?.inventorySetQuantities?.userErrors ?? []).map((e) => e.message),
-    ];
-    if (errs.length) throw new Error(errs.join("; "));
-    stats.zeroed += zeroed;
-    stats.restored += restored;
+    for (let i = 0; i < changes.length; i += MAX_QUANTITIES_PER_SET) {
+      const chunk = changes.slice(i, i + MAX_QUANTITIES_PER_SET);
+      await applyStxStockChanges(chunk);
+      countStxStockApplied(chunk, stats);
+    }
   } catch (err) {
     stats.applyFail += changes.length;
     console.error(`[stx-stock-shopify] apply ${productGid}:`, err instanceof Error ? err.message : err);
