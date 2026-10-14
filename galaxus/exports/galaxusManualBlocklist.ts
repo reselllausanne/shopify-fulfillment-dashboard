@@ -10,7 +10,8 @@ const GALAXUS_MANUAL_BLOCKLIST = new Set<string>([
 /**
  * Category cleanup snapshot (2026-10-14 review): ProviderKeys grouped by category
  * (home/kitchen, bike drivetrain without sales, forks/shocks/bearings, camping,
- * lubes/cleaners, plush priced > 3x retail). New catalog rows are not covered.
+ * lubes/cleaners, plush priced > 3x retail; round 2: tyres, wheels, bike tools/pumps/locks/racks,
+ * StockX toys/books/balls). New catalog rows are not covered.
  */
 const GALAXUS_CATEGORY_BLOCKLIST = new Map<string, string>(
   Object.entries(categoryBlocklist as Record<string, string[]>).flatMap(([category, keys]) =>
