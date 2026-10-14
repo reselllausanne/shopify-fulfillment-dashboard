@@ -127,9 +127,8 @@ function amount(m) {
 }
 function webdriverFlag() {
   try {
-    return typeof navigator !== "undefined" && typeof navigator.webdriver === "boolean"
-      ? navigator.webdriver
-      : null;
+    if (typeof navigator === "undefined" || typeof navigator.webdriver !== "boolean") return null;
+    return navigator.webdriver;
   } catch (_) {
     return null;
   }
@@ -319,6 +318,10 @@ function fromCheckout(c) {
   const tx = (Array.isArray(c.transactions) && c.transactions[0]) || null;
   const shippingMethod = (opt && opt.title) || null;
   const first = lines[0] && lines[0].variant;
+  let isFirstOrder = null;
+  if (c.order && c.order.customer && typeof c.order.customer.isFirstOrder === "boolean") {
+    isFirstOrder = c.order.customer.isFirstOrder;
+  }
   return {
     checkoutToken: c.token || null,
     orderId: c.order ? shortId(c.order.id) : null,
@@ -339,10 +342,7 @@ function fromCheckout(c) {
       (c.localization && c.localization.country && c.localization.country.isoCode) ||
       null,
     zipPrefix: addr && addr.zip ? String(addr.zip).slice(0, 2) : null,
-    isFirstOrder:
-      c.order && c.order.customer && typeof c.order.customer.isFirstOrder === "boolean"
-        ? c.order.customer.isFirstOrder
-        : null,
+    isFirstOrder,
     props: {
       express: shippingMethod ? EXPRESS_RE.test(shippingMethod) : null,
       variantIds: lines.map((l) => shortId(l.variant && l.variant.id)).filter(Boolean),
