@@ -3,7 +3,7 @@
 // Install: Shopify Admin > Settings > Customer events > Add custom pixel > paste this file.
 // Permission: "Required" + Analytics only (NOT marketing / sale of data). Then Save + Connect.
 // Replace the two placeholders below before saving:
-//   __FUNNEL_ENDPOINT__  e.g. https://solutions.resell-lausanne.ch/api/track/funnel
+//   __FUNNEL_ENDPOINT__  e.g. https://solution.resell-lausanne.ch/api/track/funnel
 //   __FUNNEL_TRACK_KEY__ same value as FUNNEL_TRACK_KEY on the server (public write key)
 //
 // Runs in Shopify's strict sandbox (iframe, Origin: null). Sends text/plain JSON with
