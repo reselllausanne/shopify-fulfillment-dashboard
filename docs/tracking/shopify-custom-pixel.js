@@ -1,4 +1,10 @@
-// Shopify custom pixel — funnel tracking (storefront + checkout) for resell-lausanne.ch
+// Shopify custom pixel — resell-lausanne.ch first-party shadow tracking (Phase 1)
+//
+// THE single custom pixel of the store (replaces the funnel / GTM / Google-variant drafts).
+// Phase 1 = observation only: events go to OUR endpoint (funnel_events table) and nowhere else.
+// No Google / Meta / TikTok / Klaviyo calls, no third-party script, no cookies written.
+// Simprosys (app pixel) stays the only sender to GA4 G-828PXC8REN / Google Ads AW-11152326139.
+// See docs/tracking/TRACKING-PLAN.md (gates G1..G6) before adding any outbound destination.
 //
 // Install: Shopify Admin > Settings > Customer events > Add custom pixel > paste this file.
 // Permission: "Required" + Analytics only (NOT marketing / sale of data). Then Save + Connect.
@@ -26,9 +32,20 @@
 //   flow_checkout_redirect { source, flow, upsell }        (modal / auto / cart page → checkout)
 // Theme events also carry `ab` = "experiment:variant,..." (all experiments the visitor is in).
 // Stored per event: ab_variant = sorted "experiment:variant,..." (session-sticky, localStorage).
+//
+// Reconciliation keys (docs/tracking/TRACKING-PLAN.md §7):
+//   id (Shopify event.id = future event_id), clientId (Shopify client id), sessionId,
+//   checkoutToken, orderId (checkout_completed → ShopifyOrder.shopifyOrderId / transaction_id),
+//   click ids gclid/gbraid/wbraid/fbclid/ttclid/msclkid — read from the landing URL and kept
+//   90 days in storefront localStorage ONLY while marketing consent is granted (wiped on revoke),
+//   consentMarketing / consentSaleOfData snapshot on every event.
 
 const ENDPOINT = "__FUNNEL_ENDPOINT__";
 const TRACK_KEY = "__FUNNEL_TRACK_KEY__";
+const PIXEL_VERSION = "2026-10-14.p1";
+const CLICK_KEYS = ["gclid", "gbraid", "wbraid", "fbclid", "ttclid", "msclkid"];
+const CLICK_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const CLICK_STORE_KEY = "rl_clk";
 
 const STANDARD_EVENTS = [
   "page_viewed",
@@ -65,9 +82,23 @@ const FLUSH_DELAY_MS = 200;
 
 // ---------- consent ----------
 let analyticsAllowed = true;
+let marketingAllowed = null;
+let saleOfDataAllowed = null;
+let clicks = null;
+function applyConsent(cp) {
+  if (!cp) return;
+  if (typeof cp.analyticsProcessingAllowed === "boolean") analyticsAllowed = cp.analyticsProcessingAllowed;
+  if (typeof cp.marketingAllowed === "boolean") marketingAllowed = cp.marketingAllowed;
+  if (typeof cp.saleOfDataAllowed === "boolean") saleOfDataAllowed = cp.saleOfDataAllowed;
+  if (marketingAllowed === false) {
+    clicks = null;
+    try {
+      browser.localStorage.removeItem(CLICK_STORE_KEY);
+    } catch (_) {}
+  }
+}
 try {
-  const cp = init && init.customerPrivacy;
-  if (cp && cp.analyticsProcessingAllowed === false) analyticsAllowed = false;
+  applyConsent(init && init.customerPrivacy);
 } catch (_) {}
 try {
   const privacyApi =
@@ -76,10 +107,7 @@ try {
     null;
   if (privacyApi && typeof privacyApi.subscribe === "function") {
     privacyApi.subscribe("visitorConsentCollected", (event) => {
-      const cp = event && event.customerPrivacy;
-      if (cp && typeof cp.analyticsProcessingAllowed === "boolean") {
-        analyticsAllowed = cp.analyticsProcessingAllowed;
-      }
+      applyConsent(event && event.customerPrivacy);
     });
   }
 } catch (_) {}
@@ -140,6 +168,50 @@ function abString(map) {
     .join(",");
 }
 
+// ---------- ad click ids (marketing consent only) ----------
+const CLICK_RE = /^[A-Za-z0-9._~-]{6,300}$/;
+async function getClicks(event) {
+  if (marketingAllowed !== true) return null;
+  if (!clicks) {
+    clicks = {};
+    const raw = await storageGet("localStorage", CLICK_STORE_KEY);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.exp > Date.now()) clicks = parsed.ids || {};
+      } catch (_) {}
+    }
+  }
+  let params = null;
+  try {
+    params = new URLSearchParams((event.context.document.location || {}).search || "");
+  } catch (_) {}
+  const fresh = {};
+  CLICK_KEYS.forEach((k) => {
+    const v = params && params.get(k);
+    if (v && CLICK_RE.test(v)) fresh[k] = v;
+  });
+  if (Object.keys(fresh).length) {
+    // A new ad click replaces the previous attribution set (last click wins).
+    clicks = fresh;
+    await storageSet(
+      "localStorage",
+      CLICK_STORE_KEY,
+      JSON.stringify({ ids: clicks, exp: Date.now() + CLICK_TTL_MS }),
+    );
+  }
+  return clicks;
+}
+
+// Source inferred from the presence of a click id (no id value stored, so consent-neutral).
+function inferredSource(p) {
+  if (p("gclid") || p("gbraid") || p("wbraid")) return "google";
+  if (p("fbclid")) return "meta";
+  if (p("ttclid")) return "tiktok";
+  if (p("msclkid")) return "bing";
+  return null;
+}
+
 // ---------- session state (sessionStorage: sid + landing/utm; localStorage: ab map) ----------
 let state = null;
 async function getState(event) {
@@ -167,8 +239,10 @@ async function getState(event) {
     landing = {
       landingPath: loc.pathname || null,
       referrerHost: doc.referrer || null,
-      utmSource: p("utm_source") || (p("gclid") ? "google" : null),
-      utmMedium: p("utm_medium") || (p("gclid") ? "cpc" : null),
+      utmSource: p("utm_source") || inferredSource(p),
+      utmMedium:
+        p("utm_medium") ||
+        ({ google: "cpc", bing: "cpc", meta: "social", tiktok: "social" }[inferredSource(p)] || null),
       utmCampaign: p("utm_campaign"),
       utmContent: p("utm_content"),
       utmTerm: p("utm_term"),
@@ -247,6 +321,7 @@ function fromCheckout(c) {
   const first = lines[0] && lines[0].variant;
   return {
     checkoutToken: c.token || null,
+    orderId: c.order ? shortId(c.order.id) : null,
     value: amount(c.totalPrice),
     currency: c.currencyCode || (c.totalPrice && c.totalPrice.currencyCode) || null,
     discountAmount: amount(c.discountsAmount),
@@ -365,6 +440,7 @@ async function handle(event, fields) {
   const ctx = event.context || {};
   const nav = ctx.navigator || {};
   const loc = (ctx.document && ctx.document.location) || {};
+  const ids = await getClicks(event);
   const payload = Object.assign(
     {
       id: event.id || rid(),
@@ -376,8 +452,12 @@ async function handle(event, fields) {
       userAgent: nav.userAgent || null,
       locale: nav.language || null,
       webdriver: s.webdriver,
+      pixelVersion: PIXEL_VERSION,
+      consentMarketing: marketingAllowed,
+      consentSaleOfData: saleOfDataAllowed,
     },
     s.landing,
+    ids || {},
     fields,
     { abVariant: abString(s.ab) || null },
   );
