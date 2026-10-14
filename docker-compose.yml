@@ -202,3 +202,47 @@ services:
       - SHOPIFY_API_METRICS_LOG_MS=${SHOPIFY_FAST_REPRICE_API_METRICS_LOG_MS:-300000}
     command: ["npx", "tsx", "scripts/workers/shopifyFastRepriceWorker.ts"]
     restart: unless-stopped
+
+  # Server-side Google Tag Manager — OFF by default (docs/tracking/SGTM-VPS.md).
+  # Profile "sgtm": `docker compose config --services` (deploy script) skips these until the
+  # VPS .env sets COMPOSE_PROFILES=sgtm + SGTM_CONTAINER_CONFIG. No env_file on purpose:
+  # the tagging server must never see app secrets. Localhost-only; host nginx terminates TLS.
+  sgtm-tagging:
+    image: gcr.io/cloud-tagging-10302018/gtm-cloud-image:${SGTM_IMAGE_TAG:-stable}
+    profiles: ["sgtm"]
+    pull_policy: missing
+    environment:
+      - CONTAINER_CONFIG=${SGTM_CONTAINER_CONFIG:-}
+      - PREVIEW_SERVER_URL=${SGTM_PREVIEW_SERVER_URL:-https://sgtm-preview.resell-lausanne.ch}
+      - PORT=8080
+    ports:
+      - "127.0.0.1:${SGTM_TAGGING_PORT:-8090}:8080"
+    mem_limit: ${SGTM_TAGGING_MEM_LIMIT:-768m}
+    cpus: ${SGTM_TAGGING_CPUS:-1.5}
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    restart: unless-stopped
+    depends_on:
+      - sgtm-preview
+
+  sgtm-preview:
+    image: gcr.io/cloud-tagging-10302018/gtm-cloud-image:${SGTM_IMAGE_TAG:-stable}
+    profiles: ["sgtm"]
+    pull_policy: missing
+    environment:
+      - CONTAINER_CONFIG=${SGTM_CONTAINER_CONFIG:-}
+      - RUN_AS_PREVIEW_SERVER=true
+      - PORT=8080
+    ports:
+      - "127.0.0.1:${SGTM_PREVIEW_PORT:-8091}:8080"
+    mem_limit: ${SGTM_PREVIEW_MEM_LIMIT:-384m}
+    cpus: ${SGTM_PREVIEW_CPUS:-0.5}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
