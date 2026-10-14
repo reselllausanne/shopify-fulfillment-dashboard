@@ -83,6 +83,12 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBe("manual_block");
   });
 
+  it("blocks category cleanup rows", () => {
+    for (const providerKey of ["NER_0036121950047", "ner_0036121621008", "STX_000002739779"]) {
+      expect(galaxusAssortmentBlockReason({ providerKey, title: "x" })).toBe("category_block");
+    }
+  });
+
   it("blocks sports nutrition, keeps bottles and gel-padded gear", () => {
     for (const input of [
       { providerKey: "NER_1", title: "Gel énergétique Tā Energy Pastèque salée - 40ml", brand: "Tā Energy", sizeRaw: "OS" },
