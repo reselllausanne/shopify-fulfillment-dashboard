@@ -129,6 +129,8 @@ function stxVariantSyncPatch(row: ParsedStxRow) {
     standardBuyPrice: row.standardBuyPrice,
     expressBuyPrice: row.expressBuyPrice,
     standardSuggestedRetailPriceInclVat: row.standardSuggestedRetailPriceInclVat,
+    // Nightly/targeted refresh always recomputed both lanes; null express must clear DB.
+    lanesEvaluated: true,
   };
 }
 

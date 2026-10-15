@@ -53,6 +53,7 @@ function stxVariantSyncPatch(row: {
     price: row.price,
     stock: row.stock,
     deliveryType: row.deliveryType,
+    lanesEvaluated: true as const,
   };
 }
 
@@ -67,7 +68,7 @@ describe("price/stock update patch", () => {
     });
     expect(patch).not.toHaveProperty("images");
     expect(Object.keys(patch).sort()).toEqual(
-      ["deliveryType", "price", "stock", "supplierVariantId"].sort()
+      ["deliveryType", "lanesEvaluated", "price", "stock", "supplierVariantId"].sort()
     );
   });
 });
@@ -90,6 +91,7 @@ describe("write-path wiring (non-regression)", () => {
     expect(src).toContain("resolveCanonicalKickdbImageList");
     expect(src).toMatch(/function stxVariantSyncPatch[\s\S]*return \{[\s\S]*price:/);
     expect(src).not.toMatch(/function stxVariantSyncPatch[\s\S]*images:/);
+    expect(src).toMatch(/function stxVariantSyncPatch[\s\S]*lanesEvaluated:\s*true/);
   });
 
   it("imageSync resolveSourceImageUrl uses resolveCanonicalKickdbImageFromList", () => {
