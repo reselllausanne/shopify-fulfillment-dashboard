@@ -29,7 +29,8 @@ const EXPRESS_RE = /express|priority|prioritaire|24\s?h|next.?day|same.?day|a-po
 
 const STEPS = [
   ["product_viewed", "pv"],
-  ["size_selected", "size"],
+  ["variant_selected", "size"],
+  ["cart_item_added", "cart"],
   ["checkout_started", "co"],
   ["contact", "contact"],
   ["address", "address"],
@@ -62,7 +63,7 @@ function shipClass(method: string | null): string {
 type Funnel = { sessions: number } & Record<StepKey, number>;
 
 function emptyFunnel(): Funnel {
-  return { sessions: 0, pv: 0, size: 0, co: 0, contact: 0, address: 0, shipping: 0, payment: 0, completed: 0 };
+  return { sessions: 0, pv: 0, size: 0, cart: 0, co: 0, contact: 0, address: 0, shipping: 0, payment: 0, completed: 0 };
 }
 
 function add(f: Funnel, s: SessionRow) {
@@ -127,7 +128,8 @@ async function main() {
       (array_agg(shipping_method ORDER BY occurred_at DESC) FILTER (WHERE shipping_method IS NOT NULL))[1] AS ship,
       bool_or(webdriver IS TRUE OR device_type = 'bot') AS bot,
       bool_or(event_name = 'product_viewed') AS pv,
-      bool_or(event_name = 'size_selected') AS size,
+      bool_or(event_name = 'variant_selected') AS size,
+      bool_or(event_name = 'cart_item_added') AS cart,
       bool_or(event_name = 'checkout_started') AS co,
       bool_or(event_name = 'checkout_contact_info_submitted') AS contact,
       bool_or(event_name = 'checkout_address_info_submitted') AS address,
@@ -156,6 +158,28 @@ async function main() {
     GROUP BY 1, 2
     ORDER BY n DESC
     LIMIT 15
+  `;
+
+  const [atcTracking] = await prisma.$queryRaw<
+    {
+      standardEvents: bigint;
+      standardSessions: bigint;
+      confirmedEvents: bigint;
+      confirmedSessions: bigint;
+      confirmedExpress: bigint;
+      confirmedStandard: bigint;
+    }[]
+  >`
+    SELECT
+      COUNT(*) FILTER (WHERE event_name = 'product_added_to_cart') AS "standardEvents",
+      COUNT(DISTINCT COALESCE(session_id, client_id)) FILTER (WHERE event_name = 'product_added_to_cart') AS "standardSessions",
+      COUNT(*) FILTER (WHERE event_name = 'cart_item_added') AS "confirmedEvents",
+      COUNT(DISTINCT COALESCE(session_id, client_id)) FILTER (WHERE event_name = 'cart_item_added') AS "confirmedSessions",
+      COUNT(*) FILTER (WHERE event_name = 'cart_item_added' AND props->>'fulfillmentMode' = 'express') AS "confirmedExpress",
+      COUNT(*) FILTER (WHERE event_name = 'cart_item_added' AND props->>'fulfillmentMode' = 'standard') AS "confirmedStandard"
+    FROM public.funnel_events
+    WHERE created_at >= ${since}
+      AND (${includeBots}::boolean OR (webdriver IS NOT TRUE AND device_type IS DISTINCT FROM 'bot'))
   `;
 
   const periodKey = (s: SessionRow) => new Date(s.period).toISOString().slice(0, 10);
@@ -192,6 +216,9 @@ async function main() {
           sessions: sessions.length,
           excluded: raw.length - sessions.length,
           tables: Object.fromEntries(tables.map(([t, m]) => [t, Object.fromEntries(m)])),
+          atcTracking: Object.fromEntries(
+            Object.entries(atcTracking ?? {}).map(([key, value]) => [key, Number(value)]),
+          ),
           alerts: alerts.map((a) => ({ ...a, n: Number(a.n) })),
         },
         null,
@@ -208,6 +235,15 @@ async function main() {
   printTable("total", groupBy(sessions, () => "all"));
   printTable(tables[0][0], tables[0][1], true);
   for (const [title, m] of tables.slice(1)) printTable(title, m);
+
+  console.log("\n== ATC instrumentation (not additive conversions)");
+  console.log(
+    `Shopify product_added_to_cart: ${Number(atcTracking?.standardEvents ?? 0)} events / ${Number(atcTracking?.standardSessions ?? 0)} sessions`,
+  );
+  console.log(
+    `Theme cart_item_added confirmed: ${Number(atcTracking?.confirmedEvents ?? 0)} events / ${Number(atcTracking?.confirmedSessions ?? 0)} sessions` +
+      ` [express=${Number(atcTracking?.confirmedExpress ?? 0)}, standard=${Number(atcTracking?.confirmedStandard ?? 0)}]`,
+  );
 
   console.log("\n== top alert_displayed");
   for (const a of alerts) console.log(`${String(a.n).padStart(6)}  ${a.target ?? "-"}  ${a.message}`);

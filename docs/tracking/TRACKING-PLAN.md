@@ -66,8 +66,9 @@ Stockés dans `funnel_events` (1 ligne = 1 event Shopify, `event_id` = `event.id
 | collection_viewed | liste | view_item_list | collectionId |
 | search_submitted | recherche | search | query (100 c.) |
 | product_viewed | PDP | view_item | product_id, variant_id, price |
-| rs_variant_selected (thème) | clic taille | view_item_variant | variantId, size, lane, price |
-| size_selected (thème) | ajout panier taille | size_selected | variantId, size, lane express/standard |
+| rs_variant_selected → variant_selected (thème) | clic taille réel | view_item_variant | variantId, SKU, selectedSize, displayedPrice |
+| rs_fulfillment_mode_selected → fulfillment_mode_selected (thème) | choix Standard/Express | fulfillment_mode_selected | mode, previousMode, prix affichés |
+| rs_cart_item_added → cart_item_added (thème) | confirmation ATC thème | cart_item_added | variante/taille/SKU, mode final, propriétés ligne |
 | product_added_to_cart | ATC | add_to_cart | quantity, value |
 | upsell_shown / accepted / skipped (thème) | upsell | idem | upsellType, parentProductId |
 | flow_cart_opened / flow_checkout_redirect (thème) | flow A/B | idem | source, flow |
@@ -80,6 +81,11 @@ Stockés dans `funnel_events` (1 ligne = 1 event Shopify, `event_id` = `event.id
 | checkout_completed | achat | purchase | **order_id**, value, is_first_order |
 | alert_displayed | erreur checkout | checkout_error | alert_type/target/message |
 | ab_assigned (thème) | A/B | ab_assigned | experiment, variant |
+
+`cart_item_added` confirme le succès réseau et conserve le mode/propriétés thème absents de
+`product_added_to_cart`. Les deux restent distincts; rapports conversion ne les additionnent pas.
+`_express_price` et prix affichés sont diagnostiques client: Cart Transform valide le prix via
+la métadonnée variante, jamais via cette valeur client.
 
 Commun à chaque event : `client_id` (Shopify), `session_id` (sessionStorage), `ab_variant`
 (`experiment:variant,...`), device/os/browser, locale, `webdriver`, `pixel_version`,

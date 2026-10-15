@@ -131,10 +131,67 @@ describe("normalizeFunnelEvent", () => {
       NOW,
     );
     expect(row?.abVariant).toBe("post_size_flow:B,upsell:A");
-    for (const name of ["ab_assigned", "rs_variant_selected", "flow_checkout_redirect", "collection_navigated"]) {
+    for (const name of [
+      "ab_assigned",
+      "rs_variant_selected",
+      "variant_selected",
+      "fulfillment_mode_selected",
+      "cart_item_added",
+      "flow_checkout_redirect",
+      "collection_navigated",
+    ]) {
       expect(normalizeFunnelEvent({ id: name, name }, NOW)?.eventName).toBe(name);
     }
     expect(normalizeFunnelEvent({ id: "x", name: "page_viewed", abVariant: "a:B;drop" }, NOW)?.abVariant).toBeNull();
+  });
+
+  it("stores selected size, fulfillment mode, and confirmed cart properties as diagnostics", () => {
+    const row = normalizeFunnelEvent(
+      {
+        id: "cart_custom_1",
+        name: "cart_item_added",
+        productId: "123",
+        variantId: "456",
+        productTitle: "Nike Dunk Low",
+        variantTitle: "42 EU",
+        price: 219,
+        quantity: 1,
+        currency: "CHF",
+        props: {
+          productHandle: "nike-dunk-low",
+          sku: "DD1391-100-42",
+          selectedSize: "42",
+          fulfillmentMode: "express",
+          standardPrice: 189,
+          expressPrice: 219,
+          linePropertiesJson:
+            "{\"Mode d'expédition\":\"Express 2 à 5 jours ouvrés\",\"_delivery\":\"express\",\"_express_price\":\"21900\"}",
+          clientExpressPricePropertyCents: "21900",
+        },
+      },
+      NOW,
+    );
+    expect(row).toMatchObject({
+      eventName: "cart_item_added",
+      productId: "123",
+      variantId: "456",
+      productTitle: "Nike Dunk Low",
+      variantTitle: "42 EU",
+      price: 219,
+      quantity: 1,
+      currency: "CHF",
+      props: {
+        productHandle: "nike-dunk-low",
+        sku: "DD1391-100-42",
+        selectedSize: "42",
+        fulfillmentMode: "express",
+        standardPrice: 189,
+        expressPrice: 219,
+        linePropertiesJson:
+          "{\"Mode d'expédition\":\"Express 2 à 5 jours ouvrés\",\"_delivery\":\"express\",\"_express_price\":\"21900\"}",
+        clientExpressPricePropertyCents: "21900",
+      },
+    });
   });
 
   it("stores an AJAX collection navigation without URL query data", () => {
