@@ -32,6 +32,7 @@
 //   flow_cart_opened { productId, variantId, size, lane }   (post_size_flow B lands on /cart)
 //   flow_checkout_redirect { source, flow, upsell }        (modal / auto / cart page → checkout)
 //   rs_collection_navigated { collectionHandle, collectionTitle, url, source } (AJAX collection nav)
+//   rs_upsell_carousel_interacted { sourceComponent, interactionType, scrollDirection, visibleProductIds, ... }
 // Theme events also carry `ab` = "experiment:variant,..." (all experiments the visitor is in).
 // Stored per event: ab_variant = sorted "experiment:variant,..." (session-sticky, localStorage).
 //
@@ -44,7 +45,7 @@
 
 const ENDPOINT = "__FUNNEL_ENDPOINT__";
 const TRACK_KEY = "__FUNNEL_TRACK_KEY__";
-const PIXEL_VERSION = "2026-10-15.p2";
+const PIXEL_VERSION = "2026-10-15.p3";
 const CLICK_KEYS = ["gclid", "gbraid", "wbraid", "fbclid", "ttclid", "msclkid"];
 const CLICK_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const CLICK_STORE_KEY = "rl_clk";
@@ -77,6 +78,7 @@ const CUSTOM_EVENTS = [
   "rs_collection_navigated",
   "rs_fulfillment_mode_selected",
   "rs_cart_item_added",
+  "rs_upsell_carousel_interacted",
 ];
 const AB_ID_RE = /^[a-z0-9_]{1,40}$/;
 const AB_VARIANT_RE = /^[A-Za-z0-9_-]{1,20}$/;
@@ -517,6 +519,7 @@ analytics.subscribe("all_custom_events", function (event) {
       rs_variant_selected: "variant_selected",
       rs_fulfillment_mode_selected: "fulfillment_mode_selected",
       rs_cart_item_added: "cart_item_added",
+      rs_upsell_carousel_interacted: "upsell_carousel_interacted",
     }[event.name] || event.name;
   handle(event, fromCustom(event.name, event.customData), name).catch(function () {});
 });

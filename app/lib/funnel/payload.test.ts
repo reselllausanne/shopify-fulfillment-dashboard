@@ -139,6 +139,7 @@ describe("normalizeFunnelEvent", () => {
       "cart_item_added",
       "flow_checkout_redirect",
       "collection_navigated",
+      "upsell_carousel_interacted",
     ]) {
       expect(normalizeFunnelEvent({ id: name, name }, NOW)?.eventName).toBe(name);
     }
