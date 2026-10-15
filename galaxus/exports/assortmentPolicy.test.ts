@@ -105,6 +105,8 @@ describe("galaxusAssortmentBlockReason", () => {
       { providerKey: "NER_5", title: "Gants Longs Fox Defend Noir", sizeRaw: "XL" },
       { providerKey: "NER_6", title: "Casquette Unisexe Buff Pack Speed Noir", sizeRaw: "S/M" },
       { providerKey: "NER_7", title: "Haut Femme adidas adi365 Manches Longues", sizeRaw: "M" },
+      { providerKey: "NER_8", title: "Chaussures Pédales Plates Fox Union Noir", sizeRaw: "42" },
+      { providerKey: "NER_9", title: "Brassière Nike Swift High Support Noir Femme", sizeRaw: "M" },
     ]) {
       expect(galaxusAssortmentBlockReason(input)).not.toBe("ner_not_apparel");
     }
@@ -116,6 +118,15 @@ describe("galaxusAssortmentBlockReason", () => {
       { providerKey: "NER_14", title: "Lunettes POC Elicit Noir", sizeRaw: "OS" },
       { providerKey: "NER_15", title: "Spray Imperméabilisant Vêtements Muc-Off 250ml", sizeRaw: "OS" },
       { providerKey: "NER_16", title: "Visière Magnétique Kask Bambino Pro Transparente", sizeRaw: "OS" },
+      { providerKey: "NER_17", title: "Selle Prologo Dimension AGX Slide Control Nack Noir", sizeRaw: "OS" },
+      { providerKey: "NER_18", title: "Sac de Randonnée Salewa Alp Trainer 25L Bleu", sizeRaw: "OS" },
+      { providerKey: "NER_19", title: "RACE FACE Paire de Protèges Manivelles Alu BOOT PEDAL Rouge", sizeRaw: "OS" },
+      { providerKey: "NER_20", title: "Sabot Protection Moteur AVS pour Lapierre GLP2", sizeRaw: "OS" },
+      { providerKey: "NER_21", title: "Coque de Protection Quad Lock MAG Poncho pour iPhone 15 Pro Max", sizeRaw: "OS" },
+      { providerKey: "NER_22", title: "Lot Pneus VTT Hutchinson Python 2 29'' Tubeless Ready", sizeRaw: "OS" },
+      { providerKey: "NER_23", title: "Home Trainer Wahoo Fitness Kickr Core v2", sizeRaw: "OS" },
+      { providerKey: "NER_24", title: "Gilet de Protection Leatt ReaFlex Stealth Noir", sizeRaw: "M" },
+      { providerKey: "NER_25", title: "Bandeau de Rechange Petzl Swift RL Noir/Orange", sizeRaw: "OS" },
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBe("ner_not_apparel");
     }
