@@ -194,6 +194,18 @@ type ScanResult = {
       shopifyOrderId: string;
       shopifyOrderName?: string | null;
       shopifyLineItemId: string;
+      unitSelection?: {
+        requiresPopup: boolean;
+        totalOpenUnits: number;
+        openLineCount: number;
+        reason: string;
+      } | null;
+      openUnits?: Array<{
+        lineItemId: string;
+        title: string;
+        remainingQuantity: number;
+        isScannedLine?: boolean;
+      }>;
     } | null;
     autoDecathlon?: {
       orderId: string;
