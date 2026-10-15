@@ -279,7 +279,15 @@ async function main() {
   const pendingOnlyUnpriced = ONLY_UNPRICED
     ? `AND cls."lastPushedPrice" IS NULL`
     : "";
-  const noGtinRows = await prisma.$queryRawUnsafe<Row[]>(`
+  const pendingOnlyDrifted = ONLY_DRIFTED
+    ? `AND sv."updatedAt" > NOW() - INTERVAL '${Math.round(DRIFT_WINDOW_HOURS)} hours'
+       AND (cls."lastSyncedAt" IS NULL OR sv."updatedAt" > cls."lastSyncedAt")`
+    : "";
+  // ~240k no-GTIN Shopify sizes: the unwindowed scan takes ~150s, past the pooled 2min timeout.
+  const noGtinRows = await prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '300s'`);
+      return tx.$queryRawUnsafe<Row[]>(`
     SELECT sv."supplierVariantId",
            sv."providerKey",
            sv."gtin",
@@ -313,6 +321,7 @@ async function main() {
       ${shardClause}
       ${pendingSkipFresh}
       ${pendingOnlyUnpriced}
+      ${pendingOnlyDrifted}
     ORDER BY
       CASE
         WHEN sv."supplierProductName" ~* '(pokemon|pokémon|tcg|trading card|booster box|booster pack|elite trainer)'
@@ -322,6 +331,9 @@ async function main() {
       sss."shopifyProductId"
     LIMIT ${baseLimit}
   `);
+    },
+    { timeout: 330_000, maxWait: 30_000 }
+  );
 
   const rows: Row[] = [];
   const seen = new Set<string>();
