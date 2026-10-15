@@ -8,11 +8,15 @@ describe("galaxusAssortmentBlockReason", () => {
   beforeEach(() => {
     process.env.GALAXUS_REI_ALLOWLIST = "0";
     process.env.GALAXUS_FASHION_ONLY = "0";
+    process.env.GALAXUS_NER_APPAREL_ONLY = "0";
+    process.env.GALAXUS_DISABLED_SUPPLIERS = "";
   });
 
   afterEach(() => {
     delete process.env.GALAXUS_REI_ALLOWLIST;
     delete process.env.GALAXUS_FASHION_ONLY;
+    delete process.env.GALAXUS_NER_APPAREL_ONLY;
+    delete process.env.GALAXUS_DISABLED_SUPPLIERS;
     delete process.env.GALAXUS_ASSORTMENT_POLICY;
     delete process.env.GALAXUS_SHOE_MAX_RETAIL_CHF;
     delete process.env.GALAXUS_SHOE_CAP_SCOPE;
@@ -81,6 +85,40 @@ describe("galaxusAssortmentBlockReason", () => {
     expect(
       galaxusAssortmentBlockReason({ providerKey: "stx_4560157584359", title: "Takashi Murakami Flower Plush 30CM" })
     ).toBe("manual_block");
+  });
+
+  it("delists every Baby-Walz row by default", () => {
+    delete process.env.GALAXUS_DISABLED_SUPPLIERS;
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "BWZ_1", title: "2er-Pack Bodys langarm", sizeRaw: "62/68" })
+    ).toBe("supplier_disabled");
+    expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
+  });
+
+  it("NER: keeps clothing and shoes only", () => {
+    delete process.env.GALAXUS_NER_APPAREL_ONLY;
+    for (const input of [
+      { providerKey: "NER_1", title: "Veja V-90 - White / Black", sizeRaw: "46" },
+      { providerKey: "NER_2", title: "Salomon XT-6", sizeRaw: "42 2/3" },
+      { providerKey: "NER_3", title: "Chaussures Homme ASICS SONICBLAST 2", sizeRaw: "41 1/2" },
+      { providerKey: "NER_4", title: "Maillot Manches Courtes Fox Flexair Pro Vert", sizeRaw: "L" },
+      { providerKey: "NER_5", title: "Gants Longs Fox Defend Noir", sizeRaw: "XL" },
+      { providerKey: "NER_6", title: "Casquette Unisexe Buff Pack Speed Noir", sizeRaw: "S/M" },
+      { providerKey: "NER_7", title: "Haut Femme adidas adi365 Manches Longues", sizeRaw: "M" },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).not.toBe("ner_not_apparel");
+    }
+    for (const input of [
+      { providerKey: "NER_10", title: "Casque Intégral Fox Proframe RS Aura Blanc/Noir", sizeRaw: "M(55-59CM)" },
+      { providerKey: "NER_11", title: "Chaîne BBB FlatLine 12V Argent", sizeRaw: "90" },
+      { providerKey: "NER_12", title: "Plateau Spécialités TA Alizé Extérieur 130mm", sizeRaw: "48" },
+      { providerKey: "NER_13", title: "Sac à Dos Columbia Landroamer 24L Noir", sizeRaw: "OS" },
+      { providerKey: "NER_14", title: "Lunettes POC Elicit Noir", sizeRaw: "OS" },
+      { providerKey: "NER_15", title: "Spray Imperméabilisant Vêtements Muc-Off 250ml", sizeRaw: "OS" },
+      { providerKey: "NER_16", title: "Visière Magnétique Kask Bambino Pro Transparente", sizeRaw: "OS" },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).toBe("ner_not_apparel");
+    }
   });
 
   it("blocks category cleanup rows", () => {
