@@ -7,6 +7,11 @@ import {
   loadShipmentItemsForOrders,
   type WarehouseOrderForCoverage,
 } from "@/galaxus/warehouse/shipmentLineCoverage";
+import {
+  awbAlreadyInPackingSession,
+  filterGalaxusLinesForAwbPin,
+  type AwbGalaxusPin,
+} from "@/app/api/scan-awb/packing-session/awbGalaxusPin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +25,7 @@ type SessionEntry = {
   unitIndex: number;
   supplierPid: string;
   gtin?: string | null;
+  scanCode?: string | null;
 };
 
 type RejectResponse = {
@@ -115,34 +121,94 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
     );
     const gtinCandidates = normalizeGtinCandidates([scanCodeRaw, ...awbCandidatesBase]);
 
-    // -------- Path 1: AWB → StxPurchaseUnit --------
+    // -------- Path 1: AWB → StockX buy (pin Galaxus order; never FIFO another order same GTIN) --------
     let sourceGtins: string[] = [];
     let sourceSupplierPids: string[] = [];
     let resolvedVia: MatchResponse["matched"]["resolvedVia"] = "gtin";
+    let awbPin: AwbGalaxusPin | null = null;
 
     if (awbCandidates.length > 0) {
-      const stxUnit = await prisma.stxPurchaseUnit.findFirst({
+      const sessionScanCodes = session
+        .map((s) => String(s.scanCode ?? "").trim())
+        .filter(Boolean);
+      if (
+        awbAlreadyInPackingSession({
+          awbCandidates,
+          sessionScanCodes,
+          normalize: awbLookupCandidates,
+        })
+      ) {
+        return reject("This AWB is already in the packing box", scanCodeRaw);
+      }
+
+      const stockxMatch = await prisma.galaxusStockxMatch.findFirst({
         where: {
           OR: [
-            { awb: { in: awbCandidates } },
+            { stockxAwb: { in: awbCandidates } },
             ...awbCandidates.map((c) => ({
-              manualTrackingRaw: { contains: c, mode: "insensitive" as const },
-            })),
-            ...awbCandidates.map((c) => ({
-              stockxOrderNumber: { contains: c, mode: "insensitive" as const },
+              stockxOrderNumber: { equals: c, mode: "insensitive" as const },
             })),
           ],
-          cancelledAt: null,
         },
         select: {
-          gtin: true,
-          supplierVariantId: true,
-          galaxusOrderId: true,
+          galaxusOrderLineId: true,
+          unitIndex: true,
+          stockxOrderNumber: true,
+          order: { select: { galaxusOrderId: true } },
         },
+        orderBy: { createdAt: "desc" },
       });
+      if (stockxMatch?.order?.galaxusOrderId) {
+        awbPin = {
+          galaxusOrderRef: stockxMatch.order.galaxusOrderId,
+          galaxusOrderLineId: stockxMatch.galaxusOrderLineId,
+          unitIndex: stockxMatch.unitIndex,
+          stockxOrderNumber: stockxMatch.stockxOrderNumber,
+        };
+        notes.push(
+          `AWB pinned to GalaxusStockxMatch line ${stockxMatch.galaxusOrderLineId} unit ${stockxMatch.unitIndex}`
+        );
+      }
+
+      const stxUnit =
+        (await prisma.stxPurchaseUnit.findFirst({
+          where: { awb: { in: awbCandidates }, cancelledAt: null },
+          select: {
+            gtin: true,
+            supplierVariantId: true,
+            galaxusOrderId: true,
+            stockxOrderNumber: true,
+          },
+        })) ??
+        (await prisma.stxPurchaseUnit.findFirst({
+          where: {
+            OR: [
+              ...awbCandidates.map((c) => ({
+                manualTrackingRaw: { contains: c, mode: "insensitive" as const },
+              })),
+              ...awbCandidates.map((c) => ({
+                stockxOrderNumber: { equals: c, mode: "insensitive" as const },
+              })),
+            ],
+            cancelledAt: null,
+          },
+          select: {
+            gtin: true,
+            supplierVariantId: true,
+            galaxusOrderId: true,
+            stockxOrderNumber: true,
+          },
+        }));
+
       if (stxUnit?.gtin) {
         sourceGtins.push(stxUnit.gtin);
         resolvedVia = "awb_stx_purchase_unit";
+        if (!awbPin?.galaxusOrderRef) {
+          awbPin = {
+            galaxusOrderRef: stxUnit.galaxusOrderId,
+            stockxOrderNumber: stxUnit.stockxOrderNumber,
+          };
+        }
         notes.push(
           `AWB matched StxPurchaseUnit for gtin ${stxUnit.gtin} (order ref ${stxUnit.galaxusOrderId})`
         );
@@ -247,11 +313,21 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
     }
 
     // Exclude any direct-delivery survivors (belt & suspenders — filter above already excludes).
-    const filtered = candidateLines.filter(
+    let filtered = candidateLines.filter(
       (l) => String(l.order.deliveryType ?? "").toLowerCase() !== "direct_delivery"
     );
     if (filtered.length === 0) {
       return reject("Only direct-delivery orders match — not a warehouse pair", scanCodeRaw);
+    }
+
+    if (awbPin) {
+      filtered = filterGalaxusLinesForAwbPin(filtered, awbPin);
+      if (filtered.length === 0) {
+        return reject(
+          "AWB belongs to another Galaxus order — not a pending warehouse line on that order",
+          scanCodeRaw
+        );
+      }
     }
 
     // Build coverage per candidate line.
@@ -318,7 +394,20 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
       const availableAfterSession = cov.remaining - inSession;
       if (availableAfterSession <= 0) continue;
 
-      const unitIndex = cov.shipped + cov.reserved + inSession;
+      let unitIndex = cov.shipped + cov.reserved + inSession;
+      if (
+        awbPin?.galaxusOrderLineId &&
+        line.id === awbPin.galaxusOrderLineId &&
+        awbPin.unitIndex != null
+      ) {
+        const pinned = awbPin.unitIndex;
+        const pinnedTakenInSession = session.some(
+          (s) => s.galaxusOrderLineId === line.id && s.unitIndex === pinned
+        );
+        if (pinnedTakenInSession) continue;
+        if (pinned < cov.shipped || pinned >= cov.ordered) continue;
+        unitIndex = pinned;
+      }
       const gtin = line.gtin ?? null;
       const supplierPid = line.supplierPid ?? line.buyerPid ?? "";
 
@@ -365,6 +454,13 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
           },
         },
         { status: 200 }
+      );
+    }
+
+    if (resolvedVia === "awb_stx_purchase_unit" && awbPin) {
+      return reject(
+        "This StockX AWB is already packed or has no remaining unit on its Galaxus order",
+        scanCodeRaw
       );
     }
 

@@ -6,6 +6,8 @@ import {
   catalogSkuHitIndexes,
   resolveCatalogSkuHits,
 } from "@/app/api/scan-awb/catalogSkuLookup";
+import { expandGtinCandidates } from "@/lib/gtinCandidates";
+import { resolveShopifySkusForGtinCandidates } from "@/lib/shopifyGtinSkuResolve";
 import {
   computeShipmentCoverageForOrders,
   loadDelrShipmentIdsForOrders,
@@ -239,17 +241,10 @@ async function searchGalaxus(
 async function searchShopify(q: string, limit: number): Promise<SuggestItem[]> {
   const digits = digitsOnly(q);
   const contains: Prisma.StringFilter = { contains: q, mode: "insensitive" };
-  const skuFromGtin =
+  const skus =
     digits.length >= 8
-      ? await prisma.shopifyVariantLocationStock.findMany({
-          where: { gtin: { contains: digits }, sku: { not: null } },
-          select: { sku: true },
-          take: limit * 2,
-        })
+      ? await resolveShopifySkusForGtinCandidates(expandGtinCandidates([digits]))
       : [];
-  const skus = Array.from(
-    new Set(skuFromGtin.map((r) => String(r.sku ?? "").trim()).filter(Boolean))
-  );
 
   const or: Prisma.OrderMatchWhereInput[] = [
     { shopifyOrderName: contains },

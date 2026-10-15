@@ -35,6 +35,7 @@ import { resolveVerifiedShopifyAwbFallback } from "@/app/lib/shopifyOpenLineCand
 import type { OpenShopifyLineCandidate } from "@/app/lib/shopifyAwbFallback";
 import { resolveScannedAwbViaStockxLive } from "@/galaxus/stx/scanLiveAwbResolve";
 import { galaxusScanDisplayRecipient } from "@/lib/swissPostRecipient";
+import { expandGtinCandidates } from "@/lib/gtinCandidates";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -730,7 +731,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const gtinFallback =
       !hasShipmentMatch && gtinCandidates.length > 0
-        ? await resolveGtinFallback(gtinCandidates)
+        ? await resolveGtinFallback(expandGtinCandidates(gtinCandidates))
         : null;
 
     const hasAnyMatch = hasShipmentMatch || Boolean(gtinFallback);

@@ -14,6 +14,8 @@ import {
 } from "@/lib/galaxusDirectOpenUnits";
 import type { UnitSelectionDecision } from "@/lib/shopifyFulfillUnitSelection";
 import { galaxusScanDisplayRecipient } from "@/lib/swissPostRecipient";
+import { expandGtinCandidates } from "@/lib/gtinCandidates";
+import { resolveShopifySkusForGtinCandidates } from "@/lib/shopifyGtinSkuResolve";
 
 const DECATHLON_TERMINAL_STATES = new Set([
   "CANCELED",
@@ -295,19 +297,22 @@ async function loadGalaxusGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
 }
 
 async function loadShopifyGtinOrders(gtinCandidates: string[]): Promise<GtinOrderRow[]> {
-  const skuRows = await prisma.shopifyVariantLocationStock.findMany({
-    where: { gtin: { in: gtinCandidates }, sku: { not: null } },
-    select: { sku: true, gtin: true },
-    take: 40,
-  });
-  const skus = Array.from(
-    new Set(skuRows.map((r) => String(r.sku ?? "").trim()).filter(Boolean))
-  );
-  if (skus.length === 0) return [];
+  const expandedGtins = expandGtinCandidates(gtinCandidates);
+  const skus = await resolveShopifySkusForGtinCandidates(gtinCandidates);
+  if (skus.length === 0 && expandedGtins.length === 0) return [];
+
+  const matchOr: Array<Record<string, unknown>> = [];
+  if (skus.length > 0) {
+    matchOr.push({ shopifySku: { in: skus } });
+  }
+  if (expandedGtins.length > 0) {
+    matchOr.push({ localStockLot: { gtin: { in: expandedGtins } } });
+  }
+  if (matchOr.length === 0) return [];
 
   const matches = await prisma.orderMatch.findMany({
     where: {
-      shopifySku: { in: skus },
+      OR: matchOr as any,
       returnAppliedAt: null,
       shopifyCreatedAt: { gte: shopifyMatchMinCreatedAt() },
     },
