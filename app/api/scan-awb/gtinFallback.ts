@@ -12,7 +12,15 @@ import {
   listGalaxusDirectOpenUnits,
   type GalaxusDirectOpenUnit,
 } from "@/lib/galaxusDirectOpenUnits";
-import type { UnitSelectionDecision } from "@/lib/shopifyFulfillUnitSelection";
+import {
+  decideFulfillUnitSelection,
+  type UnitSelectionDecision,
+} from "@/lib/shopifyFulfillUnitSelection";
+import { listAllOpenUnits } from "@/lib/shopifyOrderOpenSiblings";
+import {
+  fetchOrderFulfillmentMap,
+  fetchOrderShippingInfo,
+} from "@/lib/shopifyFulfillment";
 import { galaxusScanDisplayRecipient } from "@/lib/swissPostRecipient";
 import { expandGtinCandidates } from "@/lib/gtinCandidates";
 import { resolveShopifySkusForGtinCandidates } from "@/lib/shopifyGtinSkuResolve";
@@ -105,6 +113,13 @@ export type GtinFallbackPayload = {
     shopifyOrderId: string;
     shopifyOrderName: string | null;
     shopifyLineItemId: string;
+    unitSelection?: UnitSelectionDecision | null;
+    openUnits?: Array<{
+      lineItemId: string;
+      title: string;
+      remainingQuantity: number;
+      isScannedLine?: boolean;
+    }>;
   } | null;
   autoDecathlon: {
     orderId: string;
@@ -518,23 +533,50 @@ function autoChannelOf(row: GtinOrderRow): GtinAutoChannel | null {
 
 /**
  * Decide whether GTIN scan may auto-claim a fulfill channel.
- * When the same GTIN is open on warehouse AND direct, never auto — one physical
- * unit cannot pack into a warehouse box and also ship as direct.
+ * Galaxus warehouse + direct ambiguity blocks auto **Galaxus direct** only —
+ * Shopify/Decathlon FIFO must still win when they are the oldest open row.
  */
 export function decideGtinAutoChannel(params: {
   openDirect: number;
   openWarehouse: number;
   autoRowChannel: GtinAutoChannel | null;
 }): { autoChannel: GtinAutoChannel | null; requiresChannelChoice: boolean } {
-  const requiresChannelChoice =
+  const galaxusWarehouseDirectConflict =
     params.openDirect > 0 && params.openWarehouse > 0;
-  if (requiresChannelChoice) {
+
+  if (params.autoRowChannel === "shopify" || params.autoRowChannel === "decathlon") {
+    return { autoChannel: params.autoRowChannel, requiresChannelChoice: false };
+  }
+
+  if (params.autoRowChannel === "galaxus_direct" && galaxusWarehouseDirectConflict) {
     return { autoChannel: null, requiresChannelChoice: true };
   }
+
+  if (!params.autoRowChannel && galaxusWarehouseDirectConflict) {
+    return { autoChannel: null, requiresChannelChoice: true };
+  }
+
   return {
     autoChannel: params.autoRowChannel,
     requiresChannelChoice: false,
   };
+}
+
+const AUTO_FULFILL_CHANNEL_RANK: Record<GtinAutoChannel, number> = {
+  shopify: 0,
+  decathlon: 1,
+  galaxus_direct: 2,
+};
+
+function compareOpenOrdersForAutoFulfill(a: GtinOrderRow, b: GtinOrderRow): number {
+  const byDate = a.orderDate.localeCompare(b.orderDate);
+  if (byDate !== 0) return byDate;
+  const aCh = autoChannelOf(a);
+  const bCh = autoChannelOf(b);
+  if (aCh && bCh && aCh !== bCh) {
+    return AUTO_FULFILL_CHANNEL_RANK[aCh] - AUTO_FULFILL_CHANNEL_RANK[bCh];
+  }
+  return 0;
 }
 
 /**
@@ -555,7 +597,7 @@ export async function resolveGtinFallback(
   const all = [...galaxus, ...shopify, ...decathlon];
   if (all.length === 0) return null;
 
-  const openOrders = all.filter(isOpen).sort((a, b) => a.orderDate.localeCompare(b.orderDate));
+  const openOrders = all.filter(isOpen).sort(compareOpenOrdersForAutoFulfill);
   const closedOrders = all
     .filter((o) => !isOpen(o))
     .sort((a, b) => a.orderDate.localeCompare(b.orderDate));
@@ -570,14 +612,21 @@ export async function resolveGtinFallback(
   const openShopify = openOrders.filter((o) => o.channel === "shopify").length;
   const openDecathlon = openOrders.filter((o) => o.channel === "decathlon").length;
 
-  const autoDirectOrder =
-    openOrders.find((o) => o.channel === "galaxus" && o.isDirectDelivery) ?? null;
-  const autoShopifyRow = openOrders.find((o) => o.channel === "shopify" && o.shopifyLineItemId) ?? null;
-  const autoDecathlonRow =
-    openOrders.find((o) => o.channel === "decathlon" && o.decathlonOrderId) ?? null;
-
   // Oldest fulfillable open row across Galaxus direct / Shopify / Decathlon.
   const autoRow = openOrders.find(isAutoFulfillable) ?? null;
+
+  const autoDirectOrder =
+    autoRow?.channel === "galaxus" && autoRow.isDirectDelivery
+      ? autoRow
+      : openOrders.find((o) => o.channel === "galaxus" && o.isDirectDelivery) ?? null;
+  const autoShopifyRow =
+    autoRow?.channel === "shopify" && autoRow.shopifyLineItemId
+      ? autoRow
+      : openOrders.find((o) => o.channel === "shopify" && o.shopifyLineItemId) ?? null;
+  const autoDecathlonRow =
+    autoRow?.channel === "decathlon" && autoRow.decathlonOrderId
+      ? autoRow
+      : openOrders.find((o) => o.channel === "decathlon" && o.decathlonOrderId) ?? null;
   const { autoChannel, requiresChannelChoice } = decideGtinAutoChannel({
     openDirect,
     openWarehouse,
@@ -605,6 +654,51 @@ export async function resolveGtinFallback(
         }).catch(() => null)
       : null;
 
+  let autoShopifyPayload: GtinFallbackPayload["autoShopify"] = null;
+  if (autoShopifyRow?.shopifyLineItemId && autoShopifyRow.shopifyOrderId) {
+    autoShopifyPayload = {
+      shopifyOrderId: autoShopifyRow.shopifyOrderId,
+      shopifyOrderName: autoShopifyRow.shopifyOrderName ?? null,
+      shopifyLineItemId: autoShopifyRow.shopifyLineItemId,
+    };
+    if (autoChannel === "shopify") {
+      try {
+        const [orderInfo, fulfillmentMap] = await Promise.all([
+          fetchOrderShippingInfo(autoShopifyRow.shopifyOrderId),
+          fetchOrderFulfillmentMap(autoShopifyRow.shopifyOrderId),
+        ]);
+        if (orderInfo?.lineItems?.nodes && fulfillmentMap.order) {
+          const lineId = autoShopifyRow.shopifyLineItemId;
+          const openUnits = listAllOpenUnits({
+            orderLineItems: orderInfo.lineItems.nodes,
+            fulfillmentOrders: fulfillmentMap.order.fulfillmentOrders.nodes,
+          }).map((u) => ({
+            lineItemId: u.lineItemId,
+            title: u.title,
+            remainingQuantity: u.remainingQuantity,
+            isScannedLine: u.lineItemId === lineId,
+          }));
+          autoShopifyPayload = {
+            ...autoShopifyPayload,
+            openUnits,
+            unitSelection: decideFulfillUnitSelection(
+              openUnits.map((u) => ({
+                lineItemId: u.lineItemId,
+                title: u.title,
+                variantTitle: null,
+                sku: null,
+                remainingQuantity: u.remainingQuantity,
+                isScannedLine: u.isScannedLine,
+              }))
+            ),
+          };
+        }
+      } catch {
+        // Fulfill path will re-fetch; scan may still prompt on client.
+      }
+    }
+  }
+
   return {
     gtin: gtinCandidates[0],
     productName: orderedList.find((o) => o.productName)?.productName ?? null,
@@ -618,14 +712,7 @@ export async function resolveGtinFallback(
     autoDirectRemaining: Math.max(0, Number(autoDirectOrder?.remaining ?? 0)),
     autoDirectOpenUnits: directOpen?.openUnits ?? [],
     autoDirectUnitSelection: directOpen?.unitSelection ?? null,
-    autoShopify:
-      autoShopifyRow?.shopifyLineItemId && autoShopifyRow.shopifyOrderId
-        ? {
-            shopifyOrderId: autoShopifyRow.shopifyOrderId,
-            shopifyOrderName: autoShopifyRow.shopifyOrderName ?? null,
-            shopifyLineItemId: autoShopifyRow.shopifyLineItemId,
-          }
-        : null,
+    autoShopify: autoShopifyPayload,
     autoDecathlon:
       autoDecathlonRow?.decathlonOrderId && autoDecathlonRow.lineId
         ? {

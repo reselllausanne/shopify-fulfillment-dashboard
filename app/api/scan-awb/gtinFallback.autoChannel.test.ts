@@ -22,12 +22,22 @@ describe("decideGtinAutoChannel", () => {
     ).toEqual({ autoChannel: null, requiresChannelChoice: true });
   });
 
-  it("still blocks auto even if shopify would have won", () => {
+  it("allows shopify auto when warehouse+direct also open (FIFO wins)", () => {
     expect(
       decideGtinAutoChannel({
         openDirect: 2,
         openWarehouse: 1,
         autoRowChannel: "shopify",
+      })
+    ).toEqual({ autoChannel: "shopify", requiresChannelChoice: false });
+  });
+
+  it("blocks galaxus direct auto when warehouse+direct conflict", () => {
+    expect(
+      decideGtinAutoChannel({
+        openDirect: 1,
+        openWarehouse: 1,
+        autoRowChannel: "galaxus_direct",
       })
     ).toEqual({ autoChannel: null, requiresChannelChoice: true });
   });

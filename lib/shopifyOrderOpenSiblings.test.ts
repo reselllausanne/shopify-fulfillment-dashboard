@@ -91,4 +91,37 @@ describe("listOpenSiblingLines", () => {
       "gid://shopify/LineItem/2",
     ]);
   });
+
+  it("listAllOpenUnits ignores package protection add-on lines", () => {
+    const withProtection = [
+      ...orderLineItems,
+      {
+        id: "gid://shopify/LineItem/99",
+        title: "Protection du colis",
+        variantTitle: null,
+        sku: "PROTECTION-COLIS",
+        variant: { id: "gid://shopify/ProductVariant/99", sku: "PROTECTION-COLIS" },
+      },
+    ];
+    const foWithProtection = [
+      {
+        status: "OPEN",
+        lineItems: {
+          nodes: [
+            ...fulfillmentOrders[0]!.lineItems!.nodes!,
+            {
+              remainingQuantity: 1,
+              variant: { id: "gid://shopify/ProductVariant/99", sku: "PROTECTION-COLIS" },
+            },
+          ],
+        },
+      },
+    ];
+    const open = listAllOpenUnits({
+      orderLineItems: withProtection,
+      fulfillmentOrders: foWithProtection,
+    });
+    expect(open).toHaveLength(2);
+    expect(open.some((l) => l.title.toLowerCase().includes("protection"))).toBe(false);
+  });
 });

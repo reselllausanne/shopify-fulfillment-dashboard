@@ -2,6 +2,7 @@ import {
   fetchOrderFulfillmentMap,
   fetchOrderShippingInfo,
 } from "@/lib/shopifyFulfillment";
+import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
 
 export type OpenSiblingLine = {
   lineItemId: string;
@@ -63,6 +64,9 @@ export function listAllOpenUnits(params: {
 
   const open: OpenSiblingLine[] = [];
   for (const orderLine of params.orderLineItems) {
+    const sku =
+      orderLine.sku || orderLine.variantSku || orderLine.variant?.sku || null;
+    if (isPackageProtectionShopifyLine(orderLine.title, sku)) continue;
     const key = lineVariantKey(orderLine);
     const remainingQuantity = key ? remainingByKey.get(key) ?? 0 : 0;
     if (remainingQuantity <= 0) continue;
