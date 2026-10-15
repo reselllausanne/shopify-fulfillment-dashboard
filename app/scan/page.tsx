@@ -83,6 +83,18 @@ type ScanMatchPayload = {
     quantity?: number | null;
   };
   shopifyOrder?: ScanShopifyOrderExtras;
+  unitSelection?: {
+    requiresPopup?: boolean;
+    reason?: string;
+    totalOpenUnits?: number;
+    openLineCount?: number;
+  } | null;
+  openUnits?: Array<{
+    lineItemId: string;
+    title: string;
+    remainingQuantity: number;
+    isScannedLine?: boolean;
+  }>;
 };
 
 type ScanDemoChannel = "decathlon" | "galaxus";
