@@ -3,6 +3,7 @@ import {
   buildSwissPostRecipient,
   buildSwissPostRecipientFromGalaxusOrder,
   buildSwissPostRecipientNameFields,
+  galaxusEndCustomerDisplayName,
   sanitizeStreetForSwissPost,
 } from "@/lib/swissPostRecipient";
 
@@ -91,6 +92,28 @@ describe("buildSwissPostRecipientNameFields", () => {
         customerType: "private_customer",
       }).personallyAddressed
     ).toBe(true);
+  });
+});
+
+describe("galaxusEndCustomerDisplayName", () => {
+  it("Digitec placeholder + referencePerson → end customer name", () => {
+    expect(
+      galaxusEndCustomerDisplayName({
+        recipientName: "Digitec Galaxus AG",
+        customerName: "Digitec Galaxus AG",
+        referencePerson: "Kees Engelbarts",
+      })
+    ).toBe("Kees Engelbarts");
+  });
+
+  it("real customerName without placeholder → customerName", () => {
+    expect(
+      galaxusEndCustomerDisplayName({
+        recipientName: "Digitec Galaxus AG",
+        customerName: "Anna Keller",
+        referencePerson: null,
+      })
+    ).toBe("Anna Keller");
   });
 });
 

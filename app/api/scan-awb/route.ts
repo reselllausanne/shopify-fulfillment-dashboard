@@ -34,6 +34,7 @@ import {
 import { resolveVerifiedShopifyAwbFallback } from "@/app/lib/shopifyOpenLineCandidates";
 import type { OpenShopifyLineCandidate } from "@/app/lib/shopifyAwbFallback";
 import { resolveScannedAwbViaStockxLive } from "@/galaxus/stx/scanLiveAwbResolve";
+import { galaxusScanDisplayRecipient } from "@/lib/swissPostRecipient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -441,6 +442,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
               recipientCity: true,
               recipientPostalCode: true,
               recipientCountryCode: true,
+              customerName: true,
+              customerCity: true,
+              customerPostalCode: true,
+              customerCountryCode: true,
+              referencePerson: true,
               shipments: {
                 select: {
                   id: true,
@@ -845,12 +851,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           carrierFinal: galaxusWarehouseShipment.carrierFinal ?? null,
           carrierRaw: galaxusWarehouseShipment.carrierRaw ?? null,
           labelPdfUrl: galaxusWarehouseShipment.labelPdfUrl ?? null,
-          recipient: {
-            name: galaxusOrder?.recipientName ?? null,
-            city: galaxusOrder?.recipientCity ?? null,
-            postalCode: galaxusOrder?.recipientPostalCode ?? null,
-            countryCode: galaxusOrder?.recipientCountryCode ?? null,
-          },
+          recipient: galaxusOrder
+            ? galaxusScanDisplayRecipient(galaxusOrder)
+            : {
+                name: null,
+                city: null,
+                postalCode: null,
+                countryCode: null,
+              },
         },
       };
     }
