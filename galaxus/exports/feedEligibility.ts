@@ -66,6 +66,15 @@ function resolveSupplierKeyPrefix(input: {
 }
 
 /**
+ * Delisted rows (XNT, dead/BAE suppliers, off-allowlist suppliers, assortment blocks) are
+ * omitted from the stock CSV by default. Set `GALAXUS_STOCK_ZERO_PUSH=1` to emit qty 0
+ * rows instead — needed once when newly delisting rows that still have live stock on Galaxus.
+ */
+export function isGalaxusStockZeroPushEnabled(): boolean {
+  return String(process.env.GALAXUS_STOCK_ZERO_PUSH ?? "").trim() === "1";
+}
+
+/**
  * When `GALAXUS_STOCK_POSITIVE_ALLOWLIST` is set, force stock=0 for every
  * supplier not on the list. Empty env = disabled (no force-zero).
  */
