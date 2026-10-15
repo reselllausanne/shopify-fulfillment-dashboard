@@ -1491,6 +1491,8 @@ model KickDBVariant {
   mappings VariantMapping[]
 
   @@index([productId])
+  @@index([gtin])
+  @@index([ean])
   @@schema("public")
 }
 
