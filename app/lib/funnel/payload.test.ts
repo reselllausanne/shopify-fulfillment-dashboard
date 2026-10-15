@@ -131,10 +131,35 @@ describe("normalizeFunnelEvent", () => {
       NOW,
     );
     expect(row?.abVariant).toBe("post_size_flow:B,upsell:A");
-    for (const name of ["ab_assigned", "rs_variant_selected", "flow_checkout_redirect"]) {
+    for (const name of ["ab_assigned", "rs_variant_selected", "flow_checkout_redirect", "collection_navigated"]) {
       expect(normalizeFunnelEvent({ id: name, name }, NOW)?.eventName).toBe(name);
     }
     expect(normalizeFunnelEvent({ id: "x", name: "page_viewed", abVariant: "a:B;drop" }, NOW)?.abVariant).toBeNull();
+  });
+
+  it("stores an AJAX collection navigation without URL query data", () => {
+    const row = normalizeFunnelEvent(
+      {
+        id: "collection_1",
+        name: "collection_navigated",
+        pagePath: "/collections/dunk-low?sort_by=price-ascending",
+        props: {
+          collectionHandle: "dunk-low",
+          collectionTitle: "Nike Dunk Low",
+          source: "chip",
+        },
+      },
+      NOW,
+    );
+    expect(row).toMatchObject({
+      eventName: "collection_navigated",
+      pagePath: "/collections/dunk-low",
+      props: {
+        collectionHandle: "dunk-low",
+        collectionTitle: "Nike Dunk Low",
+        source: "chip",
+      },
+    });
   });
 
   it("parses ab_variant column values", () => {
