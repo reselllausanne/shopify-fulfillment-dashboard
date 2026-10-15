@@ -25,8 +25,9 @@
 // see theme snippets/rs-ab.liquid + assets/product-size-selection-modal.js:
 //   ab_assigned { experiment, variant }            (generic A/B engine, one per tracked experiment)
 //   ab_upsell_assigned { variant }                 (legacy, = experiment "upsell")
-//   rs_variant_selected { productId, variantId, size, lane, price, currency }  (size click)
-//   size_selected { productId, variantId, size, lane: standard|express, price, currency }  (add to cart)
+//   rs_variant_selected { productId, productHandle, variantId, sku, selectedSize, displayedPrice, ... }
+//   rs_fulfillment_mode_selected { fulfillmentMode, previousMode, standardPrice, expressPrice, ... }
+//   rs_cart_item_added { variantId, sku, fulfillmentMode, linePropertiesJson, displayedPrice, ... }
 //   upsell_shown / upsell_accepted / upsell_skipped { productId, variantId, price, upsellType, ... }
 //   flow_cart_opened { productId, variantId, size, lane }   (post_size_flow B lands on /cart)
 //   flow_checkout_redirect { source, flow, upsell }        (modal / auto / cart page → checkout)
@@ -43,7 +44,7 @@
 
 const ENDPOINT = "__FUNNEL_ENDPOINT__";
 const TRACK_KEY = "__FUNNEL_TRACK_KEY__";
-const PIXEL_VERSION = "2026-10-15.p1";
+const PIXEL_VERSION = "2026-10-15.p2";
 const CLICK_KEYS = ["gclid", "gbraid", "wbraid", "fbclid", "ttclid", "msclkid"];
 const CLICK_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const CLICK_STORE_KEY = "rl_clk";
@@ -74,10 +75,12 @@ const CUSTOM_EVENTS = [
   "flow_cart_opened",
   "flow_checkout_redirect",
   "rs_collection_navigated",
+  "rs_fulfillment_mode_selected",
+  "rs_cart_item_added",
 ];
 const AB_ID_RE = /^[a-z0-9_]{1,40}$/;
 const AB_VARIANT_RE = /^[A-Za-z0-9_-]{1,20}$/;
-const IMMEDIATE_EVENTS = new Set(["checkout_completed", "payment_info_submitted"]);
+const IMMEDIATE_EVENTS = new Set(["checkout_completed", "payment_info_submitted", "cart_item_added"]);
 const EXPRESS_RE = /express|priority|prioritaire|24\s?h|next.?day|same.?day|a-post/i;
 const MAX_BATCH = 20;
 const FLUSH_DELAY_MS = 200;
@@ -404,7 +407,22 @@ function fromCustom(name, d) {
   d = d || {};
   const props = {};
   for (const k of Object.keys(d)) {
-    if (!["productId", "variantId", "price", "currency", "ab", "url"].includes(k)) props[k] = d[k];
+    if (
+      ![
+        "productId",
+        "variantId",
+        "productTitle",
+        "variantTitle",
+        "price",
+        "displayedPrice",
+        "quantity",
+        "currency",
+        "ab",
+        "url",
+      ].includes(k)
+    ) {
+      props[k] = d[k];
+    }
   }
   // abFull: authoritative experiment set from the theme; abAssign: one experiment update.
   let abFull = null;
@@ -419,7 +437,15 @@ function fromCustom(name, d) {
   const fields = {
     productId: shortId(d.productId),
     variantId: shortId(d.variantId),
-    price: d.price !== undefined && d.price !== null ? Number(d.price) : null,
+    productTitle: d.productTitle || null,
+    variantTitle: d.variantTitle || null,
+    price:
+      d.displayedPrice !== undefined && d.displayedPrice !== null
+        ? Number(d.displayedPrice)
+        : d.price !== undefined && d.price !== null
+          ? Number(d.price)
+          : null,
+    quantity: d.quantity !== undefined && d.quantity !== null ? Number(d.quantity) : null,
     currency: d.currency || null,
     abFull,
     abAssign,
@@ -481,6 +507,12 @@ analytics.subscribe("all_standard_events", function (event) {
 });
 analytics.subscribe("all_custom_events", function (event) {
   if (!CUSTOM_EVENT_SET.has(event.name)) return;
-  const name = event.name === "rs_collection_navigated" ? "collection_navigated" : event.name;
+  const name =
+    {
+      rs_collection_navigated: "collection_navigated",
+      rs_variant_selected: "variant_selected",
+      rs_fulfillment_mode_selected: "fulfillment_mode_selected",
+      rs_cart_item_added: "cart_item_added",
+    }[event.name] || event.name;
   handle(event, fromCustom(event.name, event.customData), name).catch(function () {});
 });
