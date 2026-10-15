@@ -33,6 +33,7 @@ import {
   isGalaxusCatalogReady,
   isXntFeedBlockedBrand,
   resolveGalaxusDirectDeliverySupported,
+  isGalaxusStockZeroPushEnabled,
   shouldForceGalaxusStockZero,
 } from "@/galaxus/exports/feedEligibility";
 import { shouldForceDeadStockZero } from "@/galaxus/exports/deadSupplierKill";
@@ -331,15 +332,15 @@ export async function GET(request: Request) {
     physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
   }
 
+  const pushZeroRows = isGalaxusStockZeroPushEnabled();
   exportCandidates.forEach((candidate) => {
     const variant = candidate.variant as any;
     const providerKey = candidate.providerKey ?? "";
     if (!providerKey) return;
     const mappingSupplierKey = (candidate as any)?.mapping?.supplierKey ?? null;
     const supplierVariantIdEarly = String(variant?.supplierVariantId ?? "");
-    // Force stock=0 delist rows (XNT / BAE kill / stock-positive allowlist).
-    // Bypass catalog-ready / MOQ so previously published ProviderKeys still
-    // receive QuantityOnStock=0 and Galaxus removes the live offer.
+    // Delisted rows (XNT / dead + BAE kill / stock-positive allowlist): omitted by default;
+    // with GALAXUS_STOCK_ZERO_PUSH=1 they bypass catalog-ready / MOQ and get QuantityOnStock=0.
     if (
       isXntFeedBlockedBrand(variant) ||
       shouldForceDeadStockZero({
@@ -358,15 +359,22 @@ export async function GET(request: Request) {
         providerKey,
       })
     ) {
-      rows.push(
-        buildForceZeroStockRow(providerKey, mappingSupplierKey, supplierVariantIdEarly, variant?.manualNote ?? null)
-      );
+      if (pushZeroRows) {
+        rows.push(
+          buildForceZeroStockRow(providerKey, mappingSupplierKey, supplierVariantIdEarly, variant?.manualNote ?? null)
+        );
+      }
       return;
     }
     const assortmentBlock = galaxusAssortmentBlockReasonForCandidate(candidate);
-    // Blocked rows stay in master/specs but are omitted from stock + offer (no qty 0 push).
+    // Blocked rows stay in master/specs but are omitted from stock + offer.
     if (assortmentBlock) {
       assortmentStats[assortmentBlock] += 1;
+      if (pushZeroRows) {
+        rows.push(
+          buildForceZeroStockRow(providerKey, mappingSupplierKey, supplierVariantIdEarly, variant?.manualNote ?? null)
+        );
+      }
       return;
     }
     const sellPrice = Number(candidate.sellPriceExVat);
@@ -530,6 +538,7 @@ export async function GET(request: Request) {
       for (const item of excluded) {
         if (item.reason !== "ASSORTMENT_POLICY") continue;
         assortmentStats.alternative += 1;
+        if (pushZeroRows) altRows.push(buildForceZeroStockRow(item.product.providerKey, null, null));
       }
       finalRows = [...rows, ...altRows];
       if (finalRows.length < rows.length) {
