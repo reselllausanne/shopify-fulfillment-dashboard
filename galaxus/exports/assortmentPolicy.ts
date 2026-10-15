@@ -7,10 +7,14 @@
  *   Kept on purpose (strong sellers): Nvidia, DDR5 RAM, SO-DIMM, Raspberry Pi + accessories.
  * - bulky_shipping: long items that are expensive to ship — fluorescent / LED tubes
  *   ("néon"), and strips / profiles / rails / rods of 1 m or more.
- * - shoe_over_cap: footwear with consumer price > 300 CHF. Scope defaults to Tali's
- *   focus brands (stxBrandBuckets) with no collab exemption; env switches to all
- *   brands (GALAXUS_SHOE_CAP_SCOPE=all) or re-enables the collab exemption
- *   (GALAXUS_SHOE_CAP_COLLAB_EXEMPT=1).
+ * - shoe_over_cap: footwear with consumer price > 350 CHF (> 300 CHF for low-retail
+ *   running / outdoor / casual brands: a 300+ Hoka / Salomon / On is a thin ask, not
+ *   a market price). Scope defaults to Tali's focus brands (stxBrandBuckets) with no
+ *   collab exemption; env switches to all brands (GALAXUS_SHOE_CAP_SCOPE=all) or
+ *   re-enables the collab exemption (GALAXUS_SHOE_CAP_COLLAB_EXEMPT=1).
+ * - size_price_outlier: STX size priced ≥ 1.5× the median of the product's in-feed
+ *   sizes (one Salomon size at 350 while the rest sit at 150 → SAV). Needs the
+ *   feed-wide index from buildStxSizePriceMedianIndex. GALAXUS_STX_SIZE_OUTLIER_RATIO=0 disables.
  * - rei_not_allowlisted: REI rows outside reiGalaxusAllowlist (GALAXUS_REI_ALLOWLIST=0 disables).
  * - non_fashion (Galaxus, 2026-10-13): only "Mode > …" categories + the sport / bag types on
  *   Galaxus's fashion list. Exempt: LEGO, trading cards, WEL, REI allowlist.
@@ -32,6 +36,7 @@ import { isGalaxusNerApparelOnlyEnabled, isNerApparelOrShoe } from "@/galaxus/ex
 export type GalaxusAssortmentBlockReason =
   | "electronics"
   | "shoe_over_cap"
+  | "size_price_outlier"
   | "price_outlier"
   | "bulky_shipping"
   | "gift_card"
@@ -60,6 +65,8 @@ export type GalaxusAssortmentInput = {
   brandRetailPrice?: number | null;
   /** SupplierVariant.manualNote — BWZ stores parcel class / ship CHF here. */
   manualNote?: string | null;
+  /** Median consumer price of the product's in-feed STX sizes (buildStxSizePriceMedianIndex). */
+  productSizeMedianChf?: number | null;
 };
 
 const PRICE_OUTLIER_SUPPLIER_KEYS = new Set(["stx"]);
@@ -207,6 +214,26 @@ const FOOTWEAR_TEXT_RE =
 const FOCUS_SHOE_BRAND_TITLE_RE =
   /\b(nike|jordan|asics|new balance|hoka|salomon|saucony|puma|ugg|brooks|converse|mizuno|birkenstock|crocs|autry|on running)\b/i;
 
+/** Brands whose retail rarely exceeds ~200 CHF: keep the lower shoe cap. */
+const LOW_CAP_SHOE_BRANDS = new Set([
+  "hoka",
+  "hoka one one",
+  "salomon",
+  "on",
+  "on running",
+  "asics",
+  "saucony",
+  "brooks",
+  "mizuno",
+  "puma",
+  "converse",
+  "crocs",
+  "ugg",
+  "birkenstock",
+]);
+const LOW_CAP_SHOE_TITLE_RE =
+  /\b(hoka|salomon|on running|asics|saucony|brooks|mizuno|puma|converse|crocs|ugg|birkenstock)\b/i;
+
 const SHOE_SIZE_RE = /^(?:(?:EU|US|UK)\s*)?(?:[MWYC]\s*)?\d{1,2}(?:[.,]\d)?(?:\s*[12]\/3)?\s*[CYW]?$/i;
 
 /** Collabs / hype lines allowed above the shoe cap. Lowercase match on title + brand. */
@@ -290,7 +317,76 @@ export function isGalaxusAssortmentPolicyEnabled(): boolean {
 
 /** Footwear consumer price cap (CHF incl VAT). Env: GALAXUS_SHOE_MAX_RETAIL_CHF. */
 export function galaxusShoeMaxRetailChf(): number {
-  return readNumberEnv("GALAXUS_SHOE_MAX_RETAIL_CHF", 300);
+  return readNumberEnv("GALAXUS_SHOE_MAX_RETAIL_CHF", 350);
+}
+
+/** Cap for low-retail brands (LOW_CAP_SHOE_BRANDS). Env: GALAXUS_SHOE_LOW_CAP_MAX_RETAIL_CHF. */
+export function galaxusShoeLowCapMaxRetailChf(): number {
+  return readNumberEnv("GALAXUS_SHOE_LOW_CAP_MAX_RETAIL_CHF", 300);
+}
+
+/** Brand field wins; title only when brand is empty (NER) so "Nike x Converse" stays Nike. */
+export function isLowCapShoeBrand(input: { title?: string | null; brand?: string | null }): boolean {
+  const brand = normalizeStxBrand(input.brand);
+  if (brand) return LOW_CAP_SHOE_BRANDS.has(brand);
+  return LOW_CAP_SHOE_TITLE_RE.test(String(input.title ?? ""));
+}
+
+export function galaxusShoeMaxRetailChfFor(input: { title?: string | null; brand?: string | null }): number {
+  return isLowCapShoeBrand(input)
+    ? Math.min(galaxusShoeLowCapMaxRetailChf(), galaxusShoeMaxRetailChf())
+    : galaxusShoeMaxRetailChf();
+}
+
+/** Size / product-median ratio that blocks an STX size. 0 disables. Env: GALAXUS_STX_SIZE_OUTLIER_RATIO. */
+export function galaxusStxSizeOutlierRatio(): number {
+  const n = Number.parseFloat(String(process.env.GALAXUS_STX_SIZE_OUTLIER_RATIO ?? "1.5"));
+  return Number.isFinite(n) && n >= 0 ? n : 1.5;
+}
+
+/** Fewer in-feed sizes than this → median is not a reliable reference. */
+const SIZE_OUTLIER_MIN_SIZES = 3;
+
+function stxSizeProductKey(candidate: any): string | null {
+  const variant = candidate?.variant ?? {};
+  const supplierKey = resolveAssortmentSupplierKey({
+    supplierKey: candidate?.mapping?.supplierKey ?? null,
+    supplierVariantId: variant?.supplierVariantId ?? null,
+    providerKey: candidate?.providerKey ?? null,
+  });
+  if (supplierKey !== "stx") return null;
+  const sku = String(variant?.supplierSku ?? "").trim().toLowerCase();
+  return sku ? sku : null;
+}
+
+function candidateSrp(candidate: any): number | null {
+  const n = Number(candidate?.variant?.suggestedRetailPriceInclVat);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Median SRP per STX product (supplierSku = product-level SKU) over in-stock feed candidates.
+ * Products with fewer than SIZE_OUTLIER_MIN_SIZES priced sizes are left out.
+ */
+export function buildStxSizePriceMedianIndex(candidates: readonly any[]): Map<string, number> {
+  const pricesByProduct = new Map<string, number[]>();
+  for (const candidate of candidates) {
+    const key = stxSizeProductKey(candidate);
+    const srp = candidateSrp(candidate);
+    if (!key || srp == null) continue;
+    if (!(Number(candidate?.variant?.stock ?? 0) > 0)) continue;
+    const list = pricesByProduct.get(key) ?? [];
+    list.push(srp);
+    pricesByProduct.set(key, list);
+  }
+  const index = new Map<string, number>();
+  for (const [key, prices] of pricesByProduct) {
+    if (prices.length < SIZE_OUTLIER_MIN_SIZES) continue;
+    prices.sort((a, b) => a - b);
+    const mid = Math.floor(prices.length / 2);
+    index.set(key, prices.length % 2 === 0 ? (prices[mid - 1]! + prices[mid]!) / 2 : prices[mid]!);
+  }
+  return index;
 }
 
 export function isGalaxusPriceOutlierFilterEnabled(): boolean {
@@ -484,12 +580,17 @@ export function galaxusAssortmentBlockReason(
       }
     }
     if (
-      consumer > galaxusShoeMaxRetailChf() &&
+      consumer > galaxusShoeMaxRetailChfFor(input) &&
       isFootwearKind(kind) &&
       hasFootwearEvidence(input) &&
       isShoeCapInScope(input)
     ) {
       return "shoe_over_cap";
+    }
+    const ratio = galaxusStxSizeOutlierRatio();
+    const median = Number(input.productSizeMedianChf);
+    if (supplierKey === "stx" && ratio > 0 && Number.isFinite(median) && median > 0 && consumer >= median * ratio) {
+      return "size_price_outlier";
     }
   }
   return null;
@@ -501,6 +602,7 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
   return {
     electronics: 0,
     shoe_over_cap: 0,
+    size_price_outlier: 0,
     price_outlier: 0,
     bulky_shipping: 0,
     gift_card: 0,
@@ -515,11 +617,15 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block};supplier_disabled=${stats.supplier_disabled};ner_not_apparel=${stats.ner_not_apparel}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};size_price_outlier=${stats.size_price_outlier};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block};supplier_disabled=${stats.supplier_disabled};ner_not_apparel=${stats.ner_not_apparel}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
-export function galaxusAssortmentBlockReasonForCandidate(candidate: any): GalaxusAssortmentBlockReason | null {
+export function galaxusAssortmentBlockReasonForCandidate(
+  candidate: any,
+  stxSizeMedianIndex?: ReadonlyMap<string, number> | null
+): GalaxusAssortmentBlockReason | null {
+  const sizeKey = stxSizeMedianIndex ? stxSizeProductKey(candidate) : null;
   const variant = candidate?.variant ?? {};
   const product = candidate?.product ?? candidate?.mapping?.kickdbVariant?.product ?? null;
   const toNum = (value: unknown) => {
@@ -540,5 +646,6 @@ export function galaxusAssortmentBlockReasonForCandidate(candidate: any): Galaxu
     purchasePriceExVatChf: toNum(variant?.manualLock ? variant?.manualPrice : null) ?? toNum(candidate?.sellPriceExVat),
     brandRetailPrice: toNum(product?.retailPrice),
     manualNote: variant?.manualNote ?? null,
+    productSizeMedianChf: sizeKey ? stxSizeMedianIndex!.get(sizeKey) ?? null : null,
   });
 }

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  buildStxSizePriceMedianIndex,
   galaxusAssortmentBlockReason,
   galaxusAssortmentBlockReasonForCandidate,
 } from "@/galaxus/exports/assortmentPolicy";
@@ -177,14 +178,14 @@ describe("galaxusAssortmentBlockReason", () => {
     }
   });
 
-  it("blocks general-release shoes above 300 CHF", () => {
+  it("blocks general-release shoes above 350 CHF", () => {
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_3",
         title: "Nike Dunk Low Retro White Black Panda",
         brand: "Nike",
         sizeRaw: "EU 42",
-        suggestedRetailInclVatChf: 320,
+        suggestedRetailInclVatChf: 360,
       })
     ).toBe("shoe_over_cap");
     expect(
@@ -193,7 +194,7 @@ describe("galaxusAssortmentBlockReason", () => {
         title: "Nike Air Force 1 Low '07 White",
         brand: "Nike",
         sizeRaw: "US 10.5",
-        suggestedRetailInclVatChf: 310,
+        suggestedRetailInclVatChf: 355,
       })
     ).toBe("shoe_over_cap");
   });
@@ -373,7 +374,7 @@ describe("galaxusAssortmentBlockReason", () => {
         providerKey: "NER_1",
         title: "Nike Air Max 95 OG Neon",
         sizeRaw: "42",
-        purchasePriceExVatChf: 230,
+        purchasePriceExVatChf: 260,
       })
     ).toBe("shoe_over_cap");
     expect(
@@ -488,6 +489,23 @@ describe("galaxusAssortmentBlockReason", () => {
       })
     ).toBeNull();
   });
+
+  it("caps low-retail shoe brands at 300, others at 350", () => {
+    const shoe = (brand: string, title: string, srp: number) =>
+      galaxusAssortmentBlockReason({ providerKey: "STX_20", brand, title, sizeRaw: "EU 42", suggestedRetailInclVatChf: srp });
+    expect(shoe("Nike", "Nike Dunk Low Panda", 340)).toBeNull();
+    expect(shoe("Nike", "Nike Dunk Low Panda", 360)).toBe("shoe_over_cap");
+    for (const [brand, title] of [
+      ["Salomon", "Salomon XT-6 Black"],
+      ["Hoka One One", "Hoka Clifton 9 Black"],
+      ["On", "On Cloudmonster White"],
+      ["ASICS", "ASICS Gel-Kayano 14"],
+      ["Converse", "Converse Chuck 70 Hi"],
+    ]) {
+      expect(shoe(brand, title, 320)).toBe("shoe_over_cap");
+      expect(shoe(brand, title, 290)).toBeNull();
+    }
+  });
 });
 
 describe("galaxusAssortmentBlockReasonForCandidate", () => {
@@ -502,10 +520,38 @@ describe("galaxusAssortmentBlockReasonForCandidate", () => {
           supplierProductName: "Nike Dunk Low Retro Grey Fog",
           supplierBrand: "Nike",
           sizeRaw: "EU 44",
-          suggestedRetailPriceInclVat: "349.00",
+          suggestedRetailPriceInclVat: "399.00",
         },
         product: { name: "Nike Dunk Low Retro Grey Fog", retailPrice: 115 },
       })
     ).toBe("shoe_over_cap");
+  });
+
+  it("blocks an STX size priced far above its sibling sizes", () => {
+    const size = (id: string, srp: number, stock = 1) => ({
+      providerKey: `STX_${id}`,
+      mapping: { supplierKey: "stx" },
+      variant: {
+        supplierVariantId: `stx_${id}`,
+        supplierSku: "L47452800",
+        supplierProductName: "Salomon XT-6 Black",
+        supplierBrand: "Salomon",
+        sizeRaw: "EU 42",
+        suggestedRetailPriceInclVat: srp,
+        stock,
+      },
+    });
+    const sizes = [size("a", 150), size("b", 155), size("c", 160), size("d", 290)];
+    const index = buildStxSizePriceMedianIndex(sizes);
+    expect(galaxusAssortmentBlockReasonForCandidate(sizes[3], index)).toBe("size_price_outlier");
+    expect(galaxusAssortmentBlockReasonForCandidate(sizes[0], index)).toBeNull();
+    expect(galaxusAssortmentBlockReasonForCandidate(sizes[3])).toBeNull();
+
+    const twoSizes = [size("a", 150), size("d", 290)];
+    expect(galaxusAssortmentBlockReasonForCandidate(twoSizes[1], buildStxSizePriceMedianIndex(twoSizes))).toBeNull();
+
+    process.env.GALAXUS_STX_SIZE_OUTLIER_RATIO = "0";
+    expect(galaxusAssortmentBlockReasonForCandidate(sizes[3], index)).toBeNull();
+    delete process.env.GALAXUS_STX_SIZE_OUTLIER_RATIO;
   });
 });

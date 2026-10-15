@@ -39,6 +39,7 @@ import {
 import { shouldForceDeadStockZero } from "@/galaxus/exports/deadSupplierKill";
 import { shouldForceBaeStockZero } from "@/galaxus/exports/baeKill";
 import {
+  buildStxSizePriceMedianIndex,
   createGalaxusAssortmentStats,
   galaxusAssortmentBlockReasonForCandidate,
   galaxusAssortmentStatsHeaderValue,
@@ -333,6 +334,7 @@ export async function GET(request: Request) {
   }
 
   const pushZeroRows = isGalaxusStockZeroPushEnabled();
+  const stxSizeMedianIndex = buildStxSizePriceMedianIndex(exportCandidates);
   exportCandidates.forEach((candidate) => {
     const variant = candidate.variant as any;
     const providerKey = candidate.providerKey ?? "";
@@ -366,7 +368,7 @@ export async function GET(request: Request) {
       }
       return;
     }
-    const assortmentBlock = galaxusAssortmentBlockReasonForCandidate(candidate);
+    const assortmentBlock = galaxusAssortmentBlockReasonForCandidate(candidate, stxSizeMedianIndex);
     // Blocked rows stay in master/specs but are omitted from stock + offer.
     if (assortmentBlock) {
       assortmentStats[assortmentBlock] += 1;

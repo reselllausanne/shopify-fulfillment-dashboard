@@ -31,6 +31,7 @@ import {
 } from "@/galaxus/exports/feedEligibility";
 import { isDeadFeedBlocked } from "@/galaxus/exports/deadSupplierKill";
 import {
+  buildStxSizePriceMedianIndex,
   createGalaxusAssortmentStats,
   galaxusAssortmentBlockReasonForCandidate,
   galaxusAssortmentStatsHeaderValue,
@@ -220,6 +221,8 @@ export async function GET(request: Request) {
     physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
   }
 
+  const stxSizeMedianIndex = buildStxSizePriceMedianIndex(exportCandidates);
+
   for (const candidate of exportCandidates) {
     const mapping = candidate.mapping;
     const variant = candidate.variant as any;
@@ -237,7 +240,7 @@ export async function GET(request: Request) {
     ) {
       continue;
     }
-    const assortmentBlock = galaxusAssortmentBlockReasonForCandidate(candidate);
+    const assortmentBlock = galaxusAssortmentBlockReasonForCandidate(candidate, stxSizeMedianIndex);
     if (assortmentBlock) {
       assortmentStats[assortmentBlock] += 1;
       continue;
