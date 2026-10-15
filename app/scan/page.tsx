@@ -2210,6 +2210,9 @@ export default function ScanPage() {
         }
       } else if (gtinAutoChannel === "shopify" && ENABLE_AUTO_FULFILLMENT && data.gtin?.autoShopify) {
         const auto = data.gtin.autoShopify;
+        const unitSelection = auto.unitSelection;
+        const openUnits = auto.openUnits ?? [];
+        const needsUnitAck = Boolean(unitSelection?.requiresPopup);
         await runFulfillFromScan(
           {
             ...data,
@@ -2220,12 +2223,15 @@ export default function ScanPage() {
               shopifyOrderName: auto.shopifyOrderName ?? null,
               shopifyLineItemId: auto.shopifyLineItemId,
               trackingUrl: null,
+              unitSelection,
+              openUnits,
             },
           },
           {
             scanStartedAt: new Date(startedAt).toISOString(),
             scanCompletedAt: new Date(finishedAt).toISOString(),
             gtinFulfill: true,
+            unitSelectionConfirmed: !needsUnitAck,
           }
         );
       } else if (gtinAutoChannel === "decathlon" && data.gtin?.autoDecathlon) {
