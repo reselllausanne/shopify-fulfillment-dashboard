@@ -1733,6 +1733,7 @@ export default function ScanPage() {
             unitIndex: e.unitIndex,
             supplierPid: e.supplierPid,
             gtin: e.gtin,
+            scanCode: e.scanCode,
           })),
         }),
       });
