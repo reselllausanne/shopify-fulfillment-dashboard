@@ -144,6 +144,8 @@ const FASHION_EXTRA_LEAVES = new Set([
   "Gamaschen",
   "Sportsocken",
   "Velojacke",
+  "Velotrikot",
+  "Sport-BH",
   "Velohosen",
   "Sturmhaube + Halsschlauch",
   "Rucksack",

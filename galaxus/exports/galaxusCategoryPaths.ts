@@ -73,6 +73,9 @@ export type GalaxusProductKind =
   | "winter_jacket"
   | "running_jacket"
   | "bike_jacket"
+  | "bike_jersey"
+  | "swim_trunks"
+  | "swimsuit"
   | "outdoor_pants"
   | "bike_pants"
   | "outdoor_shirt"
@@ -317,6 +320,10 @@ export const GALAXUS_CATEGORY_PATHS: Record<GalaxusProductKind, string> = {
   winter_jacket: "Mode > Alles in Mode > Bekleidung > Jacken > Winterjacken",
   running_jacket: "Sport > Running > Runningbekleidung > Laufjacke",
   bike_jacket: "Sport > Bike > Velobekleidung > Velojacke",
+  bike_jersey: "Sport > Bike > Velobekleidung > Velotrikot",
+  // Not in Producttypes.xlsx export — Galaxus AI remaps from the leaf name.
+  swim_trunks: "Mode > Alles in Mode > Bademode > Badehose",
+  swimsuit: "Mode > Alles in Mode > Bademode > Badeanzug",
   outdoor_pants: "Sport > Outdoor > Outdoorbekleidung > Outdoorhose",
   bike_pants: "Sport > Bike > Velobekleidung > Velohosen",
   outdoor_shirt: "Sport > Outdoor > Outdoorbekleidung > Sportshirt",
