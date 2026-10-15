@@ -12,6 +12,7 @@ import { classifySnowleaderCategoryLabel } from "@/app/lib/snowleaderGalaxusCate
 import { classifyReicheltGalaxusKind } from "@/app/lib/reicheltGalaxusCategories";
 import { classifyNewsoleGalaxusKind } from "@/app/lib/newsoleGalaxusCategories";
 import { classifyXntGalaxusKind } from "@/app/lib/xntGalaxusCategories";
+import { classifyNerGalaxusKind } from "@/app/lib/nerGalaxusCategories";
 import { buildLightingDescriptionBits } from "@/galaxus/exports/lightingSpecs";
 
 export type { GalaxusProductKind };
@@ -251,6 +252,9 @@ const CLOTHING_SIZE_KINDS = new Set<GalaxusProductKind>([
   "winter_jacket",
   "running_jacket",
   "bike_jacket",
+  "bike_jersey",
+  "swim_trunks",
+  "swimsuit",
   "outdoor_pants",
   "bike_pants",
   "outdoor_shirt",
@@ -335,6 +339,11 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
       brand: input.brand,
     });
     if (fromNewsole) return fromNewsole;
+  }
+
+  if (supplierKey === "ner") {
+    const fromNer = classifyNerGalaxusKind({ title: input.title });
+    if (fromNer) return fromNer;
   }
 
   if (supplierKey === "rei") {
@@ -525,6 +534,13 @@ export function resolveGalaxusDescription(input: {
   }
   if (kind === "home_accessory") {
     return `${prefix}. Home accessory for everyday living and interior use.`;
+  }
+  if (CLOTHING_SIZE_KINDS.has(kind)) {
+    return `${prefix}. Sports and outdoor apparel designed for comfort and performance.`;
+  }
+  if (kind === "sunglasses") return `${prefix}. Sunglasses offering eye protection and clear vision outdoors.`;
+  if (FOOTWEAR_KINDS.has(kind) && kind !== "sneakers") {
+    return `${prefix}. Footwear with durable construction for sport and everyday wear.`;
   }
   return `${prefix}. Lifestyle sneakers with durable construction and all-day comfort.`;
 }

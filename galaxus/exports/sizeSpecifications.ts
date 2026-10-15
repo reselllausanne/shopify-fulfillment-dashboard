@@ -33,6 +33,9 @@ function sanitizeText(value?: string | null): string {
 
 function resolveExportKind(input: ExportClassificationInput): GalaxusProductKind {
   // 1. KickDB structured signals (breadcrumbs/product_type/brand) — deterministic.
+  // sizeRaw must be here too: the classifier never returns "unknown" (it falls back to the
+  // supplier default), so without it an "XL" jersey became sneakers → Shoe size (EU)=XL while
+  // the master feed (which passes sizeRaw) put it under Bekleidung.
   const structuredKind = classifyGalaxusProductKind({
     breadcrumbAliases: input.breadcrumbAliases ?? null,
     productType: input.productType ?? null,
@@ -40,6 +43,7 @@ function resolveExportKind(input: ExportClassificationInput): GalaxusProductKind
     supplierKey: input.supplierKey ?? null,
     supplierProductType: input.supplierProductType ?? null,
     title: input.supplierTitle ?? input.kickdbTitle ?? null,
+    sizeRaw: input.sizeRaw ?? null,
   });
   if (structuredKind !== "unknown") return structuredKind;
 
@@ -155,10 +159,37 @@ export function formatGalaxusSizeSpecValue(
   return trimmed;
 }
 
-export function resolveGalaxusSizeSpecKey(kind: GalaxusProductKind): string {
+/**
+ * NER size keys requested in the Galaxus assortment-error report (15.10.2026):
+ * Galaxus product types for these kinds ask for their own size property, not Clothing size.
+ */
+const NER_SIZE_KEY_BY_KIND: Partial<Record<GalaxusProductKind, string>> = {
+  trousers: "Trouser size",
+  outdoor_pants: "Trouser size",
+  ski_pants: "Trouser size",
+  langlauf_pants: "Trouser size",
+  shorts: "Trouser size",
+  socks: "Shoe size",
+  sport_socks: "Shoe size",
+  sport_bra: "Bra size",
+  swim_trunks: "Swimming trunks size",
+  gloves: "Glove size",
+  ski_gloves: "Glove size",
+};
+
+export function resolveGalaxusSizeSpecKey(kind: GalaxusProductKind, supplierKey?: string | null): string {
   if (isGalaxusLengthCmKind(kind)) return GALAXUS_LENGTH_CM_KEY;
   if (isFootwearKind(kind)) return GALAXUS_SHOE_SIZE_KEY;
+  if (String(supplierKey ?? "").toLowerCase() === "ner") {
+    const nerKey = NER_SIZE_KEY_BY_KIND[kind];
+    if (nerKey) return nerKey;
+  }
   return GALAXUS_CLOTHING_SIZE_KEY;
+}
+
+/** NER sizes carry a French-sizing suffix ("34FR", "38FR"). */
+function normalizeNerSizeValue(value: string): string {
+  return value.replace(/^(\d{1,3}(?:[.,]\d)?)\s*FR$/i, "$1");
 }
 
 export function buildGalaxusSizeSpecRow(input: {
@@ -196,10 +227,11 @@ export function buildGalaxusSizeSpecRow(input: {
     formatGalaxusSizeSpecValue(input.sizeRaw, kind) ??
     formatGalaxusSizeSpecValue(input.sizeNormalized, kind);
   if (!sizeValue) return null;
+  const isNer = String(input.supplierKey ?? "").toLowerCase() === "ner";
 
   return {
     ProviderKey: providerKey,
-    SpecificationKey: resolveGalaxusSizeSpecKey(kind),
-    SpecificationValue: sizeValue,
+    SpecificationKey: resolveGalaxusSizeSpecKey(kind, input.supplierKey),
+    SpecificationValue: isNer ? normalizeNerSizeValue(sizeValue) : sizeValue,
   };
 }
