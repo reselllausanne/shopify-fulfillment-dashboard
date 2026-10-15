@@ -30,6 +30,7 @@
 //   upsell_shown / upsell_accepted / upsell_skipped { productId, variantId, price, upsellType, ... }
 //   flow_cart_opened { productId, variantId, size, lane }   (post_size_flow B lands on /cart)
 //   flow_checkout_redirect { source, flow, upsell }        (modal / auto / cart page → checkout)
+//   rs_collection_navigated { collectionHandle, collectionTitle, url, source } (AJAX collection nav)
 // Theme events also carry `ab` = "experiment:variant,..." (all experiments the visitor is in).
 // Stored per event: ab_variant = sorted "experiment:variant,..." (session-sticky, localStorage).
 //
@@ -42,7 +43,7 @@
 
 const ENDPOINT = "__FUNNEL_ENDPOINT__";
 const TRACK_KEY = "__FUNNEL_TRACK_KEY__";
-const PIXEL_VERSION = "2026-10-14.p1";
+const PIXEL_VERSION = "2026-10-15.p1";
 const CLICK_KEYS = ["gclid", "gbraid", "wbraid", "fbclid", "ttclid", "msclkid"];
 const CLICK_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const CLICK_STORE_KEY = "rl_clk";
@@ -72,6 +73,7 @@ const CUSTOM_EVENTS = [
   "upsell_skipped",
   "flow_cart_opened",
   "flow_checkout_redirect",
+  "rs_collection_navigated",
 ];
 const AB_ID_RE = /^[a-z0-9_]{1,40}$/;
 const AB_VARIANT_RE = /^[A-Za-z0-9_-]{1,20}$/;
@@ -402,7 +404,7 @@ function fromCustom(name, d) {
   d = d || {};
   const props = {};
   for (const k of Object.keys(d)) {
-    if (!["productId", "variantId", "price", "currency", "ab"].includes(k)) props[k] = d[k];
+    if (!["productId", "variantId", "price", "currency", "ab", "url"].includes(k)) props[k] = d[k];
   }
   // abFull: authoritative experiment set from the theme; abAssign: one experiment update.
   let abFull = null;
@@ -414,7 +416,7 @@ function fromCustom(name, d) {
   if (name === "ab_upsell_assigned" && AB_VARIANT_RE.test(String(d.variant || ""))) {
     abAssign = { upsell: String(d.variant) };
   }
-  return {
+  const fields = {
     productId: shortId(d.productId),
     variantId: shortId(d.variantId),
     price: d.price !== undefined && d.price !== null ? Number(d.price) : null,
@@ -423,10 +425,12 @@ function fromCustom(name, d) {
     abAssign,
     props,
   };
+  if (name === "rs_collection_navigated") fields.pagePath = d.url || null;
+  return fields;
 }
 
 // ---------- handler ----------
-async function handle(event, fields) {
+async function handle(event, fields, eventName) {
   if (!analyticsAllowed) return;
   const s = await getState(event);
   const { abFull, abAssign } = fields;
@@ -446,7 +450,7 @@ async function handle(event, fields) {
   const payload = Object.assign(
     {
       id: event.id || rid(),
-      name: event.name,
+      name: eventName || event.name,
       ts: event.timestamp || new Date().toISOString(),
       clientId: event.clientId || null,
       sessionId: s.sessionId,
@@ -463,7 +467,7 @@ async function handle(event, fields) {
     fields,
     { abVariant: abString(s.ab) || null },
   );
-  enqueue(payload, IMMEDIATE_EVENTS.has(event.name));
+  enqueue(payload, IMMEDIATE_EVENTS.has(eventName || event.name));
 }
 
 // Top-level string literals — Shopify Admin static check ignores analytics.subscribe(name)
@@ -477,5 +481,6 @@ analytics.subscribe("all_standard_events", function (event) {
 });
 analytics.subscribe("all_custom_events", function (event) {
   if (!CUSTOM_EVENT_SET.has(event.name)) return;
-  handle(event, fromCustom(event.name, event.customData)).catch(function () {});
+  const name = event.name === "rs_collection_navigated" ? "collection_navigated" : event.name;
+  handle(event, fromCustom(event.name, event.customData), name).catch(function () {});
 });

@@ -24,7 +24,7 @@ export const FUNNEL_STANDARD_EVENTS = [
   "ui_extension_errored",
 ] as const;
 
-/** Custom events the theme publishes via `Shopify.analytics.publish(name, data)`. */
+/** First-party events derived from theme custom events. */
 export const FUNNEL_CUSTOM_EVENTS = [
   "ab_assigned",
   "ab_upsell_assigned",
@@ -35,6 +35,7 @@ export const FUNNEL_CUSTOM_EVENTS = [
   "upsell_skipped",
   "flow_cart_opened",
   "flow_checkout_redirect",
+  "collection_navigated",
 ] as const;
 
 const ALLOWED_EVENTS = new Set<string>([...FUNNEL_STANDARD_EVENTS, ...FUNNEL_CUSTOM_EVENTS]);
