@@ -70,8 +70,14 @@ function resolveSupplierKeyPrefix(input: {
  * omitted from the stock CSV by default. Set `GALAXUS_STOCK_ZERO_PUSH=1` to emit qty 0
  * rows instead — needed once when newly delisting rows that still have live stock on Galaxus.
  */
-export function isGalaxusStockZeroPushEnabled(): boolean {
-  return String(process.env.GALAXUS_STOCK_ZERO_PUSH ?? "").trim() === "1";
+export const GALAXUS_STOCK_ZERO_PUSH_UNTIL = new Date("2026-10-16T01:00:00Z");
+
+export function isGalaxusStockZeroPushEnabled(now: Date = new Date()): boolean {
+  const flag = String(process.env.GALAXUS_STOCK_ZERO_PUSH ?? "").trim();
+  if (flag === "1") return true;
+  if (flag === "0") return false;
+  // Rows blocked on 2026-10-15 still have live qty on Galaxus; zero them once before the nightly snapshot.
+  return now < GALAXUS_STOCK_ZERO_PUSH_UNTIL;
 }
 
 /**
