@@ -370,6 +370,75 @@ export function buildSwissPostRecipient(input: {
   };
 }
 
+function firstNonEmptyGalaxusText(...values: unknown[]): string {
+  for (const value of values) {
+    const text = normalizeSwissPostText(value);
+    if (text) return text;
+  }
+  return "";
+}
+
+/** Human-readable end customer for ops UI (scan GTIN table, direct delivery, etc.). */
+export function galaxusEndCustomerDisplayName(order: {
+  referencePerson?: string | null;
+  customerName?: string | null;
+  recipientName?: string | null;
+}): string {
+  const ref = normalizeSwissPostText(order.referencePerson);
+  const customer = normalizeSwissPostText(order.customerName);
+  const recipient = normalizeSwissPostText(order.recipientName);
+  if (
+    ref &&
+    !isGalaxusFacilityOrDockReference(ref) &&
+    (isGalaxusMarketplacePlaceholderName(customer) ||
+      isGalaxusMarketplacePlaceholderName(recipient) ||
+      !customer)
+  ) {
+    return ref;
+  }
+  return firstNonEmptyGalaxusText(customer, recipient, ref);
+}
+
+export type GalaxusScanDisplayRecipient = {
+  name: string | null;
+  city: string | null;
+  postalCode: string | null;
+  countryCode: string | null;
+};
+
+/** Resolve scan/UI recipient line (name + city/zip) for a Galaxus order row. */
+export function galaxusScanDisplayRecipient(order: {
+  referencePerson?: string | null;
+  customerName?: string | null;
+  recipientName?: string | null;
+  recipientCity?: string | null;
+  recipientPostalCode?: string | null;
+  recipientCountryCode?: string | null;
+  customerCity?: string | null;
+  customerPostalCode?: string | null;
+  customerCountryCode?: string | null;
+}): GalaxusScanDisplayRecipient {
+  const displayName = galaxusEndCustomerDisplayName(order);
+  const recipientIsPlaceholder = isGalaxusMarketplacePlaceholderName(order.recipientName);
+  const useCustomerGeo =
+    recipientIsPlaceholder &&
+    Boolean(displayName) &&
+    displayName !== normalizeSwissPostText(order.recipientName);
+
+  return {
+    name: displayName || normalizeSwissPostText(order.recipientName) || null,
+    city: (useCustomerGeo ? order.customerCity : order.recipientCity) ?? order.customerCity ?? null,
+    postalCode:
+      (useCustomerGeo ? order.customerPostalCode : order.recipientPostalCode) ??
+      order.customerPostalCode ??
+      null,
+    countryCode:
+      (useCustomerGeo ? order.customerCountryCode : order.recipientCountryCode) ??
+      order.customerCountryCode ??
+      null,
+  };
+}
+
 /** Galaxus order → Post recipient (company vs private_customer + referencePerson). */
 export function buildSwissPostRecipientFromGalaxusOrder(order: {
   recipientName?: string | null;

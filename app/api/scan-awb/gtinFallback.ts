@@ -13,6 +13,7 @@ import {
   type GalaxusDirectOpenUnit,
 } from "@/lib/galaxusDirectOpenUnits";
 import type { UnitSelectionDecision } from "@/lib/shopifyFulfillUnitSelection";
+import { galaxusScanDisplayRecipient } from "@/lib/swissPostRecipient";
 
 const DECATHLON_TERMINAL_STATES = new Set([
   "CANCELED",
@@ -161,6 +162,11 @@ async function loadGalaxusGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
           recipientCity: true,
           recipientPostalCode: true,
           recipientCountryCode: true,
+          customerName: true,
+          customerCity: true,
+          customerPostalCode: true,
+          customerCountryCode: true,
+          referencePerson: true,
           shipments: {
             orderBy: { shippedAt: "desc" },
             select: {
@@ -265,12 +271,7 @@ async function loadGalaxusGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
       physicalDeliveryNoteRequired: Boolean(order.physicalDeliveryNoteRequired),
       ordrSentAt: order.ordrSentAt ? order.ordrSentAt.toISOString() : null,
       cancelledAt: order.cancelledAt ? order.cancelledAt.toISOString() : null,
-      recipient: {
-        name: order.recipientName,
-        city: order.recipientCity,
-        postalCode: order.recipientPostalCode,
-        countryCode: order.recipientCountryCode,
-      },
+      recipient: galaxusScanDisplayRecipient(order),
       shipments: orderShipments.map((s) => ({
         id: s.id,
         trackingNumber: s.trackingNumber,
