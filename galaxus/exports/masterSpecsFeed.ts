@@ -498,7 +498,6 @@ export async function buildMasterSpecsFeedExport(params: {
       alternatives,
       normalByGtin,
       normalByProviderKey,
-      galaxusAssortmentPolicy: true,
     });
     masterRows = [...masterRows, ...buildGalaxusAlternativeMasterRows(exportable, { minimal: false, includeWeight })];
     specsRows = [...specsRows, ...buildGalaxusAlternativeSpecRows(exportable)];
