@@ -364,11 +364,9 @@ export async function GET(request: Request) {
       return;
     }
     const assortmentBlock = galaxusAssortmentBlockReasonForCandidate(candidate);
+    // Blocked rows stay in master/specs but are omitted from stock + offer (no qty 0 push).
     if (assortmentBlock) {
       assortmentStats[assortmentBlock] += 1;
-      rows.push(
-        buildForceZeroStockRow(providerKey, mappingSupplierKey, supplierVariantIdEarly, variant?.manualNote ?? null)
-      );
       return;
     }
     const sellPrice = Number(candidate.sellPriceExVat);
@@ -532,7 +530,6 @@ export async function GET(request: Request) {
       for (const item of excluded) {
         if (item.reason !== "ASSORTMENT_POLICY") continue;
         assortmentStats.alternative += 1;
-        altRows.push(buildForceZeroStockRow(item.product.providerKey, null, null));
       }
       finalRows = [...rows, ...altRows];
       if (finalRows.length < rows.length) {
