@@ -39,6 +39,7 @@ export const FUNNEL_CUSTOM_EVENTS = [
   "flow_cart_opened",
   "flow_checkout_redirect",
   "collection_navigated",
+  "upsell_carousel_interacted",
 ] as const;
 
 const ALLOWED_EVENTS = new Set<string>([...FUNNEL_STANDARD_EVENTS, ...FUNNEL_CUSTOM_EVENTS]);
