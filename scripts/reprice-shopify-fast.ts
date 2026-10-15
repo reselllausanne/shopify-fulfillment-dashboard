@@ -217,19 +217,36 @@ async function main() {
     ? `AND (cls."lastSyncedAt" IS NULL OR cls."lastSyncedAt" < NOW() - INTERVAL '${Math.round(SKIP_FRESH_HOURS)} hours')`
     : "";
   const onlyUnpricedClause = ONLY_UNPRICED ? `AND cls."lastPushedPrice" IS NULL` : "";
-  // Window keeps the drift scan on the SupplierVariant.updatedAt index; older drift is
-  // covered by the full shard passes (~7.5h cycle).
+  // Drift: pick recently changed sizes on the SupplierVariant.updatedAt index first, then
+  // join only those ids. Filtering inside the catalogue join scans every size and times out
+  // when the DB is IO-bound. Older drift is covered by the full shard passes.
+  const driftIds = ONLY_DRIFTED
+    ? (
+        await prisma.$queryRawUnsafe<Array<{ id: string }>>(`
+          SELECT "supplierVariantId" AS id FROM "SupplierVariant"
+          WHERE "updatedAt" > NOW() - INTERVAL '${Math.round(DRIFT_WINDOW_HOURS)} hours'
+            AND stock > 0
+            AND "supplierVariantId" LIKE 'stx_%'
+            AND "manualLock" IS DISTINCT FROM TRUE`)
+      ).map((r) => r.id)
+    : [];
+  if (ONLY_DRIFTED) console.log(`Drift candidates (changed < ${Math.round(DRIFT_WINDOW_HOURS)}h): ${driftIds.length}`);
+  if (ONLY_DRIFTED && driftIds.length === 0) return;
+  const driftParams = ONLY_DRIFTED ? [driftIds] : [];
   const onlyDriftedClause = ONLY_DRIFTED
-    ? `AND sv."updatedAt" > NOW() - INTERVAL '${Math.round(DRIFT_WINDOW_HOURS)} hours'
+    ? `AND sv."supplierVariantId" = ANY($1::text[])
        AND (cls."lastSyncedAt" IS NULL OR sv."updatedAt" > cls."lastSyncedAt")`
     : "";
+  // Full passes read the whole catalogue; the DB can need more than 5 min when busy.
+  const statementTimeout = ONLY_DRIFTED ? "300s" : "900s";
+  const txOptions = { timeout: ONLY_DRIFTED ? 330_000 : 930_000, maxWait: 30_000 };
   const orderBy = ONLY_DRIFTED ? `sv."updatedAt" DESC` : `sss."shopifyProductId"`;
 
   const baseLimit = Math.max(1, Math.floor(LIMIT));
   // Pooled 2min statement_timeout cancels the catalogue join when the DB is busy.
   const gtinRows = await prisma.$transaction(
     async (tx) => {
-      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '300s'`);
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${statementTimeout}'`);
       return tx.$queryRawUnsafe<Row[]>(`
     SELECT sv."supplierVariantId",
            sv."providerKey",
@@ -268,9 +285,9 @@ async function main() {
       ${onlyDriftedClause}
     ORDER BY ${orderBy}
     LIMIT ${baseLimit}
-  `);
+  `, ...driftParams);
     },
-    { timeout: 330_000, maxWait: 30_000 }
+    txOptions
   );
 
   const pendingSkipFresh = SKIP_FRESH_HOURS && !VERIFY_BULK
@@ -279,14 +296,11 @@ async function main() {
   const pendingOnlyUnpriced = ONLY_UNPRICED
     ? `AND cls."lastPushedPrice" IS NULL`
     : "";
-  const pendingOnlyDrifted = ONLY_DRIFTED
-    ? `AND sv."updatedAt" > NOW() - INTERVAL '${Math.round(DRIFT_WINDOW_HOURS)} hours'
-       AND (cls."lastSyncedAt" IS NULL OR sv."updatedAt" > cls."lastSyncedAt")`
-    : "";
+  const pendingOnlyDrifted = onlyDriftedClause;
   // ~240k no-GTIN Shopify sizes: the unwindowed scan takes ~150s, past the pooled 2min timeout.
   const noGtinRows = await prisma.$transaction(
     async (tx) => {
-      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '300s'`);
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${statementTimeout}'`);
       return tx.$queryRawUnsafe<Row[]>(`
     SELECT sv."supplierVariantId",
            sv."providerKey",
@@ -330,9 +344,9 @@ async function main() {
       sv.stock DESC,
       sss."shopifyProductId"
     LIMIT ${baseLimit}
-  `);
+  `, ...driftParams);
     },
-    { timeout: 330_000, maxWait: 30_000 }
+    txOptions
   );
 
   const rows: Row[] = [];
