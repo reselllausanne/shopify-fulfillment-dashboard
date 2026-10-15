@@ -27,6 +27,7 @@ import { classifyStxBrand, normalizeStxBrand } from "@/galaxus/exports/stxBrandB
 import { bwzShipChfFromManualNote, isBwzUnshippableNote } from "@/app/lib/bwzParcel";
 import { isGalaxusReiAllowlistEnabled, isReiGalaxusAllowlisted } from "@/galaxus/exports/reiGalaxusAllowlist";
 import { galaxusCategoryBlocklistCategory, isGalaxusManuallyBlocked } from "@/galaxus/exports/galaxusManualBlocklist";
+import { isGalaxusNerApparelOnlyEnabled, isNerApparelOrShoe } from "@/galaxus/exports/nerApparelOnly";
 
 export type GalaxusAssortmentBlockReason =
   | "electronics"
@@ -38,7 +39,9 @@ export type GalaxusAssortmentBlockReason =
   | "non_fashion"
   | "manual_block"
   | "food"
-  | "category_block";
+  | "category_block"
+  | "supplier_disabled"
+  | "ner_not_apparel";
 
 export type GalaxusAssortmentInput = {
   providerKey?: string | null;
@@ -385,6 +388,18 @@ function isShoeCapInScope(input: GalaxusAssortmentInput): boolean {
   return true;
 }
 
+/** Suppliers fully delisted from Galaxus. GALAXUS_DISABLED_SUPPLIERS overrides (comma list, "" = none). */
+export function galaxusDisabledSuppliers(): Set<string> {
+  const raw = process.env.GALAXUS_DISABLED_SUPPLIERS;
+  const list = raw === undefined ? "bwz" : raw;
+  return new Set(
+    list
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
 export function isGalaxusFashionOnlyEnabled(): boolean {
   const raw = String(process.env.GALAXUS_FASHION_ONLY ?? "1").trim().toLowerCase();
   return !["0", "false", "no", "off"].includes(raw);
@@ -421,6 +436,10 @@ export function galaxusAssortmentBlockReason(
   if (isGalaxusManuallyBlocked(input.providerKey)) return "manual_block";
   if (galaxusCategoryBlocklistCategory(input.providerKey)) return "category_block";
   const supplierKey = resolveAssortmentSupplierKey(input);
+  if (galaxusDisabledSuppliers().has(supplierKey)) return "supplier_disabled";
+  if (supplierKey === "ner" && isGalaxusNerApparelOnlyEnabled() && !isNerApparelOrShoe(input)) {
+    return "ner_not_apparel";
+  }
   if (
     supplierKey === "rei" &&
     isGalaxusReiAllowlistEnabled() &&
@@ -490,11 +509,13 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
     manual_block: 0,
     food: 0,
     category_block: 0,
+    supplier_disabled: 0,
+    ner_not_apparel: 0,
   };
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block};supplier_disabled=${stats.supplier_disabled};ner_not_apparel=${stats.ner_not_apparel}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
