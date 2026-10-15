@@ -130,6 +130,15 @@ function shortId(v) {
 function amount(m) {
   return m && m.amount !== undefined && m.amount !== null ? Number(m.amount) : null;
 }
+function optionalNumber(v) {
+  if (v === undefined || v === null) return null;
+  return Number(v);
+}
+function parseOptionalPrice(d) {
+  if (d.displayedPrice !== undefined && d.displayedPrice !== null) return Number(d.displayedPrice);
+  if (d.price !== undefined && d.price !== null) return Number(d.price);
+  return null;
+}
 function webdriverFlag() {
   try {
     if (typeof navigator === "undefined" || typeof navigator.webdriver !== "boolean") return null;
@@ -439,13 +448,8 @@ function fromCustom(name, d) {
     variantId: shortId(d.variantId),
     productTitle: d.productTitle || null,
     variantTitle: d.variantTitle || null,
-    price:
-      d.displayedPrice !== undefined && d.displayedPrice !== null
-        ? Number(d.displayedPrice)
-        : d.price !== undefined && d.price !== null
-          ? Number(d.price)
-          : null,
-    quantity: d.quantity !== undefined && d.quantity !== null ? Number(d.quantity) : null,
+    price: parseOptionalPrice(d),
+    quantity: optionalNumber(d.quantity),
     currency: d.currency || null,
     abFull,
     abAssign,
