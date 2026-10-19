@@ -1,4 +1,81 @@
 import type { Page } from "playwright";
+import { waitForStockxEmailOtp } from "@/lib/stockxEmailOtp";
+
+const OTP_SCREEN_RE =
+  /type=OTP|passwordless-email-challenge|verify|one[-\s]?time|enter (the )?code|we sent (you )?a code|check your email|verification code|authentication code|2fa|two[-\s]?factor/i;
+
+async function fillStockxOtp(page: Page, code: string): Promise<boolean> {
+  const selectors = [
+    'input[autocomplete="one-time-code"]',
+    'input[name*="otp" i]',
+    'input[id*="otp" i]',
+    'input[name*="code" i]',
+    'input[id*="code" i]',
+    'input[inputmode="numeric"]',
+  ];
+  const visible = [];
+  for (const selector of selectors) {
+    const candidates = page.locator(selector);
+    for (let i = 0; i < (await candidates.count()); i += 1) {
+      const candidate = candidates.nth(i);
+      if (await candidate.isVisible({ timeout: 300 }).catch(() => false)) visible.push(candidate);
+    }
+    if (visible.length) break;
+  }
+  if (!visible.length) return false;
+
+  if (visible.length === 1) {
+    await visible[0].fill(code);
+  } else {
+    for (let i = 0; i < Math.min(code.length, visible.length); i += 1) {
+      await visible[i].fill(code[i]);
+    }
+  }
+  const form = visible[0].locator("xpath=ancestor::form[1]");
+  const terms = form.locator('input[type="checkbox"]').first();
+  if (
+    (await terms.count()) > 0 &&
+    (await terms.isVisible({ timeout: 500 }).catch(() => false)) &&
+    !(await terms.isChecked().catch(() => false))
+  ) {
+    await terms.check({ force: true });
+  }
+  await page.waitForTimeout(300);
+  const submit = form.locator('button[type="submit"]').first();
+  if (
+    (await submit.count()) > 0 &&
+    (await submit.isVisible({ timeout: 500 }).catch(() => false)) &&
+    (await submit.isEnabled().catch(() => false))
+  ) {
+    await submit.click();
+    return true;
+  }
+  // Enter stays scoped to the OTP input when the form has no submit button.
+  await visible[visible.length - 1].press("Enter").catch(() => undefined);
+  return true;
+}
+
+async function completeStockxEmailOtp(
+  page: Page,
+  requestedAfter: Date
+): Promise<{ completed: boolean; error: string | null }> {
+  console.log("[STOCKX-PW] Waiting for StockX code in Gmail");
+  const result = await waitForStockxEmailOtp({ after: requestedAfter });
+  if (!result.code) return { completed: false, error: result.error };
+  const filled = await fillStockxOtp(page, result.code);
+  if (!filled) return { completed: false, error: "StockX OTP input not found" };
+  const deadline = Date.now() + 15_000;
+  let text = "";
+  do {
+    await page.waitForTimeout(1_000);
+    text = `${page.url()}\n${await page.locator("body").innerText().catch(() => "")}`;
+    if (!OTP_SCREEN_RE.test(text)) return { completed: true, error: null };
+  } while (Date.now() < deadline);
+  return {
+    completed: false,
+    error: "StockX OTP was rejected or confirmation did not finish",
+  };
+}
 
 async function waitForCloudflareClear(page: Page, timeoutMs = 120000): Promise<boolean> {
   const start = Date.now();
@@ -48,8 +125,7 @@ async function waitForCloudflareClear(page: Page, timeoutMs = 120000): Promise<b
 }
 
 /**
- * Fills StockX's email → password login when env credentials exist.
- * Does not handle email OTP / authenticator — returns needsOtp if that screen appears.
+ * Fills StockX's email → password login and reads an email OTP from Gmail when requested.
  */
 export async function tryStockxCredentialLogin(
   page: Page,
@@ -139,11 +215,15 @@ export async function tryStockxCredentialLogin(
     await page.waitForTimeout(400);
 
     let passwordInput = await findVisible(passwordSelectors);
+    let emailSubmittedAt: Date | null = null;
     if (!passwordInput) {
-      const cont = await findVisible(continueSelectors);
-      if (cont) {
-        await cont.click().catch(() => undefined);
-      }
+      emailSubmittedAt = new Date();
+      // Enter targets the identifier form reliably; generic submit selectors can hit
+      // StockX's hidden/header forms instead.
+      await emailInput.press("Enter").catch(async () => {
+        const cont = await findVisible(continueSelectors);
+        await cont?.click().catch(() => undefined);
+      });
       // After "Continue" StockX spins for several seconds, then may offer a passkey
       // prompt or a method picker before the password field appears.
       const deadline = Date.now() + 25000;
@@ -156,9 +236,14 @@ export async function tryStockxCredentialLogin(
           await alt.click().catch(() => undefined);
           continue;
         }
-        const text = (await page.locator("body").innerText().catch(() => "")) || "";
-        if (/enter (the )?code|we sent (you )?a code|check your email|verification code/i.test(text)) {
-          return { attempted: true, needsOtp: true, error: "StockX asked for an email code" };
+        const text = `${page.url()}\n${(await page.locator("body").innerText().catch(() => "")) || ""}`;
+        if (OTP_SCREEN_RE.test(text)) {
+          const otp = await completeStockxEmailOtp(page, emailSubmittedAt);
+          return {
+            attempted: true,
+            needsOtp: !otp.completed,
+            error: otp.error,
+          };
         }
       }
     }
@@ -170,6 +255,7 @@ export async function tryStockxCredentialLogin(
     await passwordInput.fill(password);
     await page.waitForTimeout(300);
 
+    const loginSubmittedAt = new Date();
     const submit = await findVisible(continueSelectors);
     if (submit) {
       await submit.click().catch(() => undefined);
@@ -181,12 +267,17 @@ export async function tryStockxCredentialLogin(
 
     const bodyText = (await page.locator("body").innerText().catch(() => "")) || "";
     const url = page.url();
-    const needsOtp =
-      /type=OTP|verify|one[-\s]?time|enter (the )?code|authentication code|2fa|two[-\s]?factor/i.test(
-        `${url}\n${bodyText}`
-      );
+    const needsOtp = OTP_SCREEN_RE.test(`${url}\n${bodyText}`);
+    if (needsOtp) {
+      const otp = await completeStockxEmailOtp(page, loginSubmittedAt);
+      return {
+        attempted: true,
+        needsOtp: !otp.completed,
+        error: otp.error,
+      };
+    }
 
-    return { attempted: true, needsOtp, error: null };
+    return { attempted: true, needsOtp: false, error: null };
   } catch (error: any) {
     return {
       attempted: true,
