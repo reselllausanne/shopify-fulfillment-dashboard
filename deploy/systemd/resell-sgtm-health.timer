@@ -1,0 +1,10 @@
+[Unit]
+Description=Probe server-side GTM every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+Unit=resell-sgtm-health.service
+
+[Install]
+WantedBy=timers.target

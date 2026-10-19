@@ -1,0 +1,10 @@
+[Unit]
+Description=Resell server-side GTM health probe (no-op while sGTM profile is disabled)
+After=network.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/resell
+ExecStart=/usr/bin/env bash scripts/sgtm-healthcheck.sh
+StandardOutput=journal
+StandardError=journal
