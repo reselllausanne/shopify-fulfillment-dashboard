@@ -39,6 +39,28 @@ export function looksLikeStockxOrderNumber(input: string | null | undefined): bo
 }
 
 /**
+ * Browser lookup already fetched these canonical values from StockX.
+ * Saving can reuse them instead of repeating the expensive multi-account scan.
+ */
+export function hasReusableStockxLookupSnapshot(data: Record<string, unknown> | null | undefined): boolean {
+  if (!data) return false;
+  const orderId = String(data.stockxOrderId ?? "").trim();
+  const purchaseDate = data.stockxPurchaseDate ? new Date(String(data.stockxPurchaseDate)) : null;
+  const rawCost = data.stockxAmount ?? data.supplierCost ?? data.manualCostOverride;
+  const cost =
+    rawCost === null || rawCost === undefined || rawCost === ""
+      ? null
+      : Number(String(rawCost).replace(",", "."));
+  return Boolean(
+    orderId &&
+      purchaseDate &&
+      !Number.isNaN(purchaseDate.getTime()) &&
+      cost !== null &&
+      Number.isFinite(cost)
+  );
+}
+
+/**
  * Resolve a StockX buy by order # using an existing Pro token (no file read).
  */
 export async function resolveStockxBuyByOrderNumberWithToken(

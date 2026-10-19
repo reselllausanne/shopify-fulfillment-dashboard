@@ -11,7 +11,7 @@ type ManualEntryModalProps = {
   context?: "shopify" | "galaxus" | "decathlon";
   /** Galaxus order id (uuid or galaxusOrderId) for StockX lookup API */
   stockxLookupOrderId?: string | null;
-  onSave: (data: any, mode: "create" | "edit") => void;
+  onSave: (data: any, mode: "create" | "edit") => void | Promise<void>;
   onClose: () => void;
 };
 
@@ -28,6 +28,7 @@ export default function GalaxusManualEntryModal({
   const [localData, setLocalData] = useState<any>(initialData);
   const [lookupStatus, setLookupStatus] = useState<string | null>(null);
   const [lookupBusy, setLookupBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [getBuyOrderHash, setGetBuyOrderHash] = useState<string | null>(null);
 
   const readSessionStockxToken = (): string | null => {
@@ -65,6 +66,7 @@ export default function GalaxusManualEntryModal({
       setLocalData(initialData);
       setLookupStatus(null);
       setLookupBusy(false);
+      setSaving(false);
     }
   }, [isOpen, initialData]);
 
@@ -165,6 +167,16 @@ export default function GalaxusManualEntryModal({
   const isGalaxus = context === "galaxus";
   const isDecathlon = context === "decathlon";
   const sourceLabel = isGalaxus ? "Galaxus" : isDecathlon ? "Decathlon" : "Shopify";
+  const save = async () => {
+    if (saving || lookupBusy) return;
+    setSaving(true);
+    try {
+      const token = context === "galaxus" ? readSessionStockxToken() : null;
+      await onSave(token ? { ...localData, stockxToken: token } : localData, mode);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4">
@@ -175,6 +187,7 @@ export default function GalaxusManualEntryModal({
           </h2>
           <button
             onClick={onClose}
+            disabled={saving}
             className="text-gray-500 hover:text-gray-700 text-2xl leading-none"
           >
             ×
@@ -449,21 +462,23 @@ export default function GalaxusManualEntryModal({
         <div className="px-6 py-4 border-t flex justify-end gap-3 bg-gray-50">
           <button
             onClick={onClose}
-            className="px-6 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
+            disabled={saving}
+            className="px-6 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 disabled:opacity-50"
           >
             Cancel
           </button>
           <button
-            onClick={() => {
-              const token = context === "galaxus" ? readSessionStockxToken() : null;
-              onSave(
-                token ? { ...localData, stockxToken: token } : localData,
-                mode
-              );
-            }}
-            className="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+            onClick={() => void save()}
+            disabled={saving || lookupBusy}
+            className="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
           >
-            {mode === "edit" ? "💾 Update Entry (Partial)" : "✅ Save Manual Entry"}
+            {saving
+              ? "Saving…"
+              : lookupBusy
+                ? "Looking up StockX…"
+                : mode === "edit"
+                  ? "💾 Update Entry (Partial)"
+                  : "✅ Save Manual Entry"}
           </button>
         </div>
       </div>

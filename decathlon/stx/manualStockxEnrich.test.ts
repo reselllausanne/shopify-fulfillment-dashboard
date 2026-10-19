@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  hasReusableStockxLookupSnapshot,
   looksLikeStockxOrderNumber,
   normalizeStockxOrderNumberInput,
 } from "@/decathlon/stx/manualStockxEnrich";
@@ -22,6 +23,27 @@ describe("looksLikeStockxOrderNumber", () => {
     expect(looksLikeStockxOrderNumber("")).toBe(false);
     expect(looksLikeStockxOrderNumber("https://stockx.com/x")).toBe(false);
     expect(looksLikeStockxOrderNumber("03 2GJ0")).toBe(false);
+  });
+});
+
+describe("hasReusableStockxLookupSnapshot", () => {
+  it("accepts canonical fields returned by browser lookup", () => {
+    expect(
+      hasReusableStockxLookupSnapshot({
+        stockxOrderId: "buy-123",
+        stockxPurchaseDate: "2026-10-19T12:00:00Z",
+        supplierCost: "214,91",
+      })
+    ).toBe(true);
+  });
+
+  it("requires order id, purchase date, and cost", () => {
+    expect(
+      hasReusableStockxLookupSnapshot({
+        stockxPurchaseDate: "2026-10-19T12:00:00Z",
+        supplierCost: 214.91,
+      })
+    ).toBe(false);
   });
 });
 
