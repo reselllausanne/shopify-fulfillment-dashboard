@@ -40,9 +40,23 @@ export function normalizeSwissPostText(value: unknown): string {
     .trim();
 }
 
+/**
+ * Strip characters Swiss Post's DCAPI name `Pattern` rejects (brackets, commas,
+ * etc.). Mirrors the proven street allow-set: letters, numbers, whitespace and
+ * `. - / ' ’`. Prevents "Pattern" rejections like
+ * `Hitachi Energy Ltd, CHPGS [Dietlikon SV/2657]`.
+ */
+export function sanitizeSwissPostName(value: unknown): string {
+  return normalizeSwissPostText(value)
+    .replace(/[^\p{L}\p{N}\s.\-/'’]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function truncateSwissPostName(value: string, max = SWISS_POST_RECIPIENT_NAME_MAX): string {
-  if (value.length <= max) return value;
-  return value.slice(0, max).trim();
+  const sanitized = sanitizeSwissPostName(value);
+  if (sanitized.length <= max) return sanitized;
+  return sanitized.slice(0, max).trim();
 }
 
 export function isSwissPostBusinessCustomerType(customerType?: string | null): boolean {

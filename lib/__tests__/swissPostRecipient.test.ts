@@ -5,7 +5,32 @@ import {
   buildSwissPostRecipientNameFields,
   galaxusEndCustomerDisplayName,
   sanitizeStreetForSwissPost,
+  sanitizeSwissPostName,
 } from "@/lib/swissPostRecipient";
+
+describe("sanitizeSwissPostName", () => {
+  it("strips brackets / commas rejected by Swiss Post name Pattern", () => {
+    expect(sanitizeSwissPostName("Hitachi Energy Ltd, CHPGS [Dietlikon SV/2657]")).toBe(
+      "Hitachi Energy Ltd CHPGS Dietlikon SV/2657"
+    );
+  });
+
+  it("keeps letters, numbers, spaces and . - / ' ’", () => {
+    expect(sanitizeSwissPostName("O'Brien-Müller 3/4 Inc.")).toBe("O'Brien-Müller 3/4 Inc.");
+  });
+});
+
+describe("company name1 pattern-safety (regression: Galaxus DD label)", () => {
+  it("business name1 drops brackets/commas and stays within 35 chars", () => {
+    const fields = buildSwissPostRecipientNameFields({
+      company: "Hitachi Energy Ltd, CHPGS [Dietlikon SV/2657]",
+      customerType: "company",
+    });
+    expect(fields.name1).not.toMatch(/[\[\],]/);
+    expect(fields.name1.length).toBeLessThanOrEqual(35);
+    expect(fields.name1).toBe("Hitachi Energy Ltd CHPGS Dietlikon");
+  });
+});
 
 describe("buildSwissPostRecipientNameFields", () => {
   it("particulier: splits first/last + personallyAddressed true", () => {
