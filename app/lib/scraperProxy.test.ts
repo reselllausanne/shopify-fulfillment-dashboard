@@ -48,6 +48,8 @@ describe("scraperProxy", () => {
   });
 
   it("returns null when no proxies configured", () => {
+    process.env.SCRAPER_PROXY_FILE = "/tmp/does-not-exist-scraper-proxies.txt";
+    resetScraperProxyPoolCache();
     expect(scraperProxyPool()).toEqual([]);
     expect(nextScraperProxyUrl("haw")).toBeNull();
   });

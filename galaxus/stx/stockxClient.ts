@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import {
   DEFAULT_QUERY,
   STOCKX_GET_BUY_ORDER_OPERATION_NAME,
@@ -13,11 +15,14 @@ import {
   type StockxPersistedHashes,
 } from "@/app/lib/stockxPersistedHashes";
 import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
+import { nextScraperProxyUrl, scraperProxyPool } from "@/app/lib/scraperProxy";
 import {
   GALAXUS_STOCKX_PERSISTED_HASHES_FILE,
   GALAXUS_STOCKX_SESSION_FILE,
   GALAXUS_STOCKX_SESSION_META_FILE,
 } from "@/lib/stockxGalaxusAuth";
+
+const execFileAsync = promisify(execFile);
 
 export type StockxBuyingNode = {
   chainId: string | null;
@@ -125,11 +130,15 @@ const STOCKX_PRO_URL = "https://pro.stockx.com/api/graphql";
 const STOCKX_FALLBACK_SESSION_META_FILE = path.join(process.cwd(), ".data", "stockx-session-meta.json");
 const STOCKX_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
-const STOCKX_RATE_LIMIT_GAP_MS = Number(process.env.STOCKX_RATE_LIMIT_GAP_MS ?? "120");
-const STOCKX_PAGE_GAP_MS = Number(process.env.STOCKX_PAGE_GAP_MS ?? "220");
+const STOCKX_RATE_LIMIT_GAP_MS = Number(process.env.STOCKX_RATE_LIMIT_GAP_MS ?? "180");
+const STOCKX_PAGE_GAP_MS = Number(process.env.STOCKX_PAGE_GAP_MS ?? "280");
 const STOCKX_RETRY_429 = !["0", "false", "no", "off"].includes(
   String(process.env.STOCKX_RETRY_429 ?? "1").trim().toLowerCase()
 );
+/** always (default — scraper LemonProxy pool) | on_429 | off */
+const STOCKX_PROXY_MODE = String(process.env.STOCKX_PROXY_MODE ?? "always")
+  .trim()
+  .toLowerCase();
 let stockxQueue = Promise.resolve();
 let stockxLastCallAt = 0;
 
@@ -312,7 +321,14 @@ export function buyOrderNumbersMatch(stored: string | null | undefined, search: 
 
 export async function fetchRecentStockxBuyingOrders(
   token: string,
-  options?: { first?: number; maxPages?: number; state?: string | null; query?: string | null }
+  options?: {
+    first?: number;
+    maxPages?: number;
+    state?: string | null;
+    query?: string | null;
+    /** Stop requesting further pages once true (e.g. all needed variants seen). */
+    shouldStop?: (nodes: StockxBuyingNode[]) => boolean;
+  }
 ): Promise<StockxBuyingNode[]> {
   const first = Math.max(1, Math.min(options?.first ?? 100, 100));
   const maxPages = Math.max(1, options?.maxPages ?? 4);
@@ -395,6 +411,9 @@ export async function fetchRecentStockxBuyingOrders(
         orderId: node.orderId ?? null,
         orderNumber: node.orderNumber ?? null,
       });
+    }
+    if (typeof options?.shouldStop === "function" && options.shouldStop(out)) {
+      break;
     }
     const pageInfo = buying?.pageInfo;
     const hasNext = Boolean(pageInfo?.hasNextPage);
@@ -653,6 +672,63 @@ export function extractStockxVariantId(
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function stockxProxyEnabled(): boolean {
+  if (STOCKX_PROXY_MODE === "off" || STOCKX_PROXY_MODE === "0" || STOCKX_PROXY_MODE === "false") {
+    return false;
+  }
+  return scraperProxyPool().length > 0 || Boolean(nextScraperProxyUrl("STOCKX"));
+}
+
+type StockxHttpResult = { status: number; raw: string; headers: Headers };
+
+async function stockxPostDirect(
+  url: string,
+  headers: Record<string, string>,
+  body: string
+): Promise<StockxHttpResult> {
+  const res = await fetch(url, { method: "POST", headers, body });
+  const raw = await res.text();
+  return { status: res.status, raw, headers: res.headers };
+}
+
+/** POST GraphQL via residential proxy (curl). Rotates pool per call. */
+async function stockxPostViaProxy(
+  url: string,
+  headers: Record<string, string>,
+  body: string
+): Promise<StockxHttpResult> {
+  const proxy = nextScraperProxyUrl("STOCKX") || nextScraperProxyUrl();
+  if (!proxy) {
+    throw new Error("StockX proxy requested but SCRAPER_PROXY* pool is empty");
+  }
+  const args = [
+    "-sS",
+    "--compressed",
+    "--max-time",
+    "45",
+    "-X",
+    "POST",
+    "--proxy",
+    proxy,
+    "-w",
+    "\n__STOCKX_CURL_HTTP__:%{http_code}",
+  ];
+  for (const [k, v] of Object.entries(headers)) {
+    if (!v) continue;
+    args.push("-H", `${k}: ${v}`);
+  }
+  args.push("--data-binary", body, url);
+  const { stdout } = await execFileAsync("curl", args, {
+    maxBuffer: 25 * 1024 * 1024,
+    encoding: "utf8",
+  });
+  const marker = "\n__STOCKX_CURL_HTTP__:";
+  const idx = stdout.lastIndexOf(marker);
+  const raw = idx >= 0 ? stdout.slice(0, idx) : stdout;
+  const status = idx >= 0 ? Number(stdout.slice(idx + marker.length).trim()) : 0;
+  return { status: Number.isFinite(status) ? status : 0, raw, headers: new Headers() };
 }
 
 async function withStockxRateLimit<T>(fn: () => Promise<T>): Promise<T> {
@@ -1103,17 +1179,29 @@ async function callStockx<T>(
       extraHeaders: options?.headers,
     });
 
+    let preferProxy = STOCKX_PROXY_MODE === "always" && stockxProxyEnabled();
+
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      const res = await withStockxRateLimit(() =>
-        fetch(url, {
-          method: "POST",
-          headers,
-          body,
-        })
+      const useProxy = preferProxy && stockxProxyEnabled();
+      const http = await withStockxRateLimit(() =>
+        useProxy ? stockxPostViaProxy(url, headers, body) : stockxPostDirect(url, headers, body)
       );
-      const raw = await res.text();
-      const transient = isTransientStockxStatus(res.status);
-      const authStatus = res.status === 401 || res.status === 403;
+
+      const raw = http.raw;
+      const status = http.status;
+      const transient = isTransientStockxStatus(status);
+      const authStatus = status === 401 || status === 403;
+      const fakeRes = { status, headers: http.headers } as Response;
+
+      if (
+        status === 429 &&
+        !preferProxy &&
+        STOCKX_PROXY_MODE !== "off" &&
+        stockxProxyEnabled()
+      ) {
+        preferProxy = true;
+        console.warn("[STOCKX] 429 → switching to proxy pool", { operationName, attempt });
+      }
 
       let data: any;
       try {
@@ -1121,13 +1209,13 @@ async function callStockx<T>(
       } catch {
         if (transient && attempt < maxAttempts) {
           const wait =
-            retryAfterMsFromResponse(res) ??
+            retryAfterMsFromResponse(fakeRes) ??
             Math.min(1_500 * 2 ** (attempt - 1), 25_000) + Math.floor(Math.random() * 600);
           await sleepMs(wait);
           continue;
         }
         const parseError = new Error(
-          `StockX non-JSON response (HTTP ${res.status}): ${stockxNonJsonErrorDetail(res, raw, operationName)}`
+          `StockX non-JSON response (HTTP ${status}): ${stockxNonJsonErrorDetail(fakeRes, raw, operationName)}`
         );
         if (authStatus && hasFallbackCandidate) {
           lastError = parseError;
@@ -1136,10 +1224,10 @@ async function callStockx<T>(
         throw parseError;
       }
 
-      if (!res.ok) {
+      if (status < 200 || status >= 300) {
         if (transient && attempt < maxAttempts) {
           const wait =
-            retryAfterMsFromResponse(res) ??
+            retryAfterMsFromResponse(fakeRes) ??
             Math.min(1_500 * 2 ** (attempt - 1), 25_000) + Math.floor(Math.random() * 600);
           await sleepMs(wait);
           continue;
@@ -1147,7 +1235,7 @@ async function callStockx<T>(
         const message =
           (Array.isArray(data?.errors) && data.errors[0]?.message) ||
           data?.error ||
-          `StockX request failed (HTTP ${res.status})`;
+          `StockX request failed (HTTP ${status})`;
         const requestError = new Error(String(message));
         if (authStatus && hasFallbackCandidate) {
           lastError = requestError;
@@ -1164,6 +1252,17 @@ async function callStockx<T>(
         return s.includes("rate") || s.includes("throttl") || s.includes("too many") || /\b429\b/.test(s);
       });
       if (gqlRateLimited) {
+        if (
+          !preferProxy &&
+          STOCKX_PROXY_MODE !== "off" &&
+          stockxProxyEnabled()
+        ) {
+          preferProxy = true;
+          console.warn("[STOCKX] GraphQL rate-limit → switching to proxy pool", {
+            operationName,
+            attempt,
+          });
+        }
         if (STOCKX_RETRY_429 && attempt < maxAttempts) {
           const wait =
             Math.min(2_000 * 2 ** (attempt - 1), 25_000) + Math.floor(Math.random() * 600);

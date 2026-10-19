@@ -8,7 +8,6 @@ import {
 import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
 import {
   extractStockxVariantId,
-  fetchStockxBuyOrderDetailsFull,
   synthesizeBuyOrderDetailsFromListNode,
   type StockxBuyingNode,
 } from "@/galaxus/stx/stockxClient";
@@ -29,20 +28,16 @@ import {
   readGalaxusStockxToken,
 } from "@/lib/stockxGalaxusAuth";
 
-const DETAIL_GAP_MS = Math.max(80, Number(process.env.STOCKX_GALAXUS_BULK_DETAIL_GAP_MS ?? "140"));
-const DETAIL_CONCURRENCY = Math.max(
-  1,
-  Math.min(4, Number(process.env.STOCKX_GALAXUS_BULK_DETAIL_CONCURRENCY ?? "3"))
-);
 const RESERVE_CONCURRENCY = 6;
 const REFRESH_CONCURRENCY = 3;
 const MAX_ORDER_IDS = 200;
-const PENDING_MAX_PAGES = Math.max(2, Math.min(12, Number(process.env.STOCKX_GALAXUS_BULK_PENDING_PAGES ?? "6")));
-const ALL_STATE_MAX_PAGES = Math.max(0, Math.min(6, Number(process.env.STOCKX_GALAXUS_BULK_ALL_STATE_PAGES ?? "3")));
-
-function sleepMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+/** Link path: PENDING list only. Detail/AWB refresh is a separate slower job. */
+const PENDING_MAX_PAGES = Math.max(1, Math.min(12, Number(process.env.STOCKX_GALAXUS_BULK_PENDING_PAGES ?? "4")));
+/** Off by default — parallel ALL-state crawl was the 429 hammer. */
+const ALL_STATE_MAX_PAGES = Math.max(0, Math.min(6, Number(process.env.STOCKX_GALAXUS_BULK_ALL_STATE_PAGES ?? "0")));
+const REFRESH_LINKED = ["1", "true", "yes", "on"].includes(
+  String(process.env.STOCKX_GALAXUS_BULK_REFRESH_LINKED ?? "0").trim().toLowerCase()
+);
 
 function buyKey(node: Pick<StockxBuyingNode, "chainId" | "orderId">): string {
   return `${String(node.chainId ?? "").trim()}::${String(node.orderId ?? "").trim()}`;
@@ -256,21 +251,24 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
     return base;
   }
 
-  const refreshLimiter = createLimiter(REFRESH_CONCURRENCY);
-  await Promise.all(
-    [...needsByOrder.values()]
-      .filter((need) => need.needsLinkedRefresh)
-      .map((need) =>
-        refreshLimiter(async () => {
-          const stats = await refreshLinkedStxUnitsByStoredRefs(token, need.galaxusOrderId);
-          base.refreshedLinked += stats.refreshed;
-          base.awbBackfilled += stats.awbBackfilled;
-          base.etaBackfilled += stats.etaBackfilled;
-          base.settledBackfilled += stats.settledBackfilled;
-          base.errors += stats.failed;
-        })
-      )
-  );
+  // AWB/ETA refresh hits GET_BUY_ORDER per unit — opt-in only (link-first path stays light).
+  if (REFRESH_LINKED) {
+    const refreshLimiter = createLimiter(REFRESH_CONCURRENCY);
+    await Promise.all(
+      [...needsByOrder.values()]
+        .filter((need) => need.needsLinkedRefresh)
+        .map((need) =>
+          refreshLimiter(async () => {
+            const stats = await refreshLinkedStxUnitsByStoredRefs(token, need.galaxusOrderId);
+            base.refreshedLinked += stats.refreshed;
+            base.awbBackfilled += stats.awbBackfilled;
+            base.etaBackfilled += stats.etaBackfilled;
+            base.settledBackfilled += stats.settledBackfilled;
+            base.errors += stats.failed;
+          })
+        )
+    );
+  }
 
   const stillNeedingLink: OrderNeed[] = [];
   for (const need of needsByOrder.values()) {
@@ -302,36 +300,31 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
   let pendingList: StockxBuyingNode[] = [];
   let allStateList: StockxBuyingNode[] = [];
   try {
-    const [pendingRes, allStateRes] = await Promise.all([
-      getCachedStockxBuyingOrders(token, {
-        first: 100,
-        maxPages: PENDING_MAX_PAGES,
-        state: "PENDING",
-      }),
-      ALL_STATE_MAX_PAGES > 0
-        ? getCachedStockxBuyingOrders(token, {
-            first: 100,
-            maxPages: ALL_STATE_MAX_PAGES,
-            state: null,
-          })
-        : Promise.resolve({
-            nodes: [] as StockxBuyingNode[],
-            fromCache: true,
-            durationMs: 0,
-            fetchedAt: Date.now(),
-            pageCount: 0,
-            cacheKey: "skipped",
-          }),
-    ]);
+    // Sequential: never parallel PENDING+ALL (same account → double 429).
+    // Disk/memory cache (5m) = 2nd Bulk click ≈ 0 StockX calls.
+    const pendingRes = await getCachedStockxBuyingOrders(token, {
+      first: 100,
+      maxPages: PENDING_MAX_PAGES,
+      state: "PENDING",
+    });
     pendingList = pendingRes.nodes;
-    allStateList = allStateRes.nodes;
-    console.log("[GALAXUS][STX][BULK] buying lists", {
+    let allStateRes: Awaited<ReturnType<typeof getCachedStockxBuyingOrders>> | null = null;
+    if (ALL_STATE_MAX_PAGES > 0) {
+      allStateRes = await getCachedStockxBuyingOrders(token, {
+        first: 100,
+        maxPages: ALL_STATE_MAX_PAGES,
+        state: null,
+      });
+      allStateList = allStateRes.nodes;
+    }
+    console.log("[GALAXUS][STX][BULK] buying lists (list-only link)", {
       pending: pendingList.length,
       allState: allStateList.length,
       pendingFromCache: pendingRes.fromCache,
-      allStateFromCache: allStateRes.fromCache,
+      pendingSource: pendingRes.cacheSource,
+      allStateFromCache: allStateRes?.fromCache ?? true,
       pendingMs: pendingRes.durationMs,
-      allStateMs: allStateRes.durationMs,
+      allStateMs: allStateRes?.durationMs ?? 0,
     });
   } catch (err: any) {
     return {
@@ -346,49 +339,7 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
   const buys = mergeBuyingLists([pendingList, allStateList]);
   base.fetchedBuys = buys.length;
 
-  type Details =
-    | Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>>
-    | ReturnType<typeof synthesizeBuyOrderDetailsFromListNode>;
-
-  const detailsCache = new Map<string, Details>();
-  let lastDetailCallAt = 0;
-  const detailLimiter = createLimiter(DETAIL_CONCURRENCY);
-
-  const fetchDetails = async (node: StockxBuyingNode): Promise<Details> => {
-    const key = buyKey(node);
-    const cached = detailsCache.get(key);
-    if (cached) return cached;
-    const chainId = String(node.chainId ?? "").trim();
-    const orderId = String(node.orderId ?? "").trim();
-    if (!chainId || !orderId) {
-      const synth = synthesizeBuyOrderDetailsFromListNode(node);
-      detailsCache.set(key, synth);
-      return synth;
-    }
-    return detailLimiter(async () => {
-      const again = detailsCache.get(key);
-      if (again) return again;
-      try {
-        if (DETAIL_GAP_MS > 0) {
-          const now = Date.now();
-          const waitMs = DETAIL_GAP_MS - (now - lastDetailCallAt);
-          if (waitMs > 0) await sleepMs(waitMs);
-          lastDetailCallAt = Date.now();
-        }
-        base.detailCalls += 1;
-        const details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId });
-        if (details?.order) {
-          detailsCache.set(key, details);
-          return details;
-        }
-      } catch {
-        // list synthesize fallback
-      }
-      const synth = synthesizeBuyOrderDetailsFromListNode(node);
-      detailsCache.set(key, synth);
-      return synth;
-    });
-  };
+  type Details = ReturnType<typeof synthesizeBuyOrderDetailsFromListNode>;
 
   type ResolvedBuy = {
     node: StockxBuyingNode;
@@ -396,35 +347,19 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
     details: Details;
   };
   const resolved: ResolvedBuy[] = [];
-  const unresolved: StockxBuyingNode[] = [];
 
+  // List-only: no GET_BUY_ORDER. Variant + amount + ETA come from FetchCurrentBids node.
   for (const node of buys) {
     const fast = extractStockxVariantId(node, null);
-    if (fast) {
-      const supplierVariantId = `stx_${fast}`;
-      if (!pendingVariantIds.has(supplierVariantId)) continue;
-      const listSynth = synthesizeBuyOrderDetailsFromListNode(node);
-      const hasEta = Boolean(listSynth.etaMin || listSynth.etaMax);
-      const details = hasEta ? listSynth : await fetchDetails(node);
-      resolved.push({ node, supplierVariantId, details });
-    } else {
-      unresolved.push(node);
-    }
+    if (!fast) continue;
+    const supplierVariantId = `stx_${fast}`;
+    if (!pendingVariantIds.has(supplierVariantId)) continue;
+    resolved.push({
+      node,
+      supplierVariantId,
+      details: synthesizeBuyOrderDetailsFromListNode(node),
+    });
   }
-
-  const unknownCap = Math.min(unresolved.length, Math.max(80, pendingVariantIds.size * 12));
-  await Promise.all(
-    unresolved.slice(0, unknownCap).map((node) =>
-      detailLimiter(async () => {
-        const details = await fetchDetails(node);
-        const variantId = extractStockxVariantId(node, details.order);
-        if (!variantId) return;
-        const supplierVariantId = `stx_${variantId}`;
-        if (!pendingVariantIds.has(supplierVariantId)) return;
-        resolved.push({ node, supplierVariantId, details });
-      })
-    )
-  );
 
   resolved.sort((a, b) => parsePurchaseMs(a.node) - parsePurchaseMs(b.node));
 

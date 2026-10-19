@@ -11,6 +11,7 @@
  * (same pattern as Reichelt). Without proxies → plain fetch.
  */
 import { execFile } from "node:child_process";
+import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -61,10 +62,26 @@ function normalizeProxyUrl(raw: string): string | null {
   }
 }
 
-function readProxyFileEntries(): string[] {
-  const filePath =
+const DEFAULT_SCRAPER_PROXY_FILE = path.join(process.cwd(), ".data", "reichelt-proxies.txt");
+
+function explicitProxyFile(): string {
+  return (
     String(process.env.SCRAPER_PROXY_FILE ?? "").trim() ||
-    String(process.env.SCRAPER_REI_PROXY_FILE ?? "").trim();
+    String(process.env.SCRAPER_REI_PROXY_FILE ?? "").trim()
+  );
+}
+
+function hasInlineProxyEnv(): boolean {
+  return Boolean(
+    String(process.env.SCRAPER_PROXY_URLS ?? "").trim() ||
+      String(process.env.SCRAPER_REI_PROXY_URLS ?? "").trim() ||
+      String(process.env.SCRAPER_PROXY_URL ?? "").trim() ||
+      String(process.env.SCRAPER_PROXY ?? "").trim() ||
+      String(process.env.SCRAPER_REI_PROXY_URL ?? "").trim()
+  );
+}
+
+function readFileEntries(filePath: string): string[] {
   if (!filePath) return [];
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -74,6 +91,14 @@ function readProxyFileEntries(): string[] {
   } catch {
     return [];
   }
+}
+
+function readProxyFileEntries(): string[] {
+  const explicit = explicitProxyFile();
+  if (explicit) return readFileEntries(explicit);
+  // Inline URL env wins. Default LemonProxy file only when nothing else is set.
+  if (hasInlineProxyEnv()) return [];
+  return readFileEntries(DEFAULT_SCRAPER_PROXY_FILE);
 }
 
 /** Round-robin residential/shared proxy pool. Empty = direct. */

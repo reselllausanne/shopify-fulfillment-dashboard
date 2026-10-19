@@ -1,9 +1,11 @@
 /**
- * In-process TTL cache for StockX buying-list pages.
+ * In-process + disk TTL cache for StockX buying-list pages.
  * Stops match/auto-link/bulk from re-paginating the same PENDING feed
- * on every Galaxus order / scan.
+ * on every Galaxus order / scan / page reload.
  */
 
+import fs from "node:fs/promises";
+import path from "node:path";
 import {
   fetchRecentStockxBuyingOrders,
   type StockxBuyingNode,
@@ -54,8 +56,38 @@ function cacheKey(params: {
 
 export const BUYING_ORDERS_CACHE_TTL_MS = Math.max(
   15_000,
-  Number(process.env.STOCKX_BUYING_CACHE_TTL_MS ?? "120000")
+  Number(process.env.STOCKX_BUYING_CACHE_TTL_MS ?? "300000")
 );
+
+const DISK_CACHE_DIR = path.join(process.cwd(), ".data", "stockx-buying-cache");
+
+function diskSafeKey(key: string): string {
+  return key.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 180);
+}
+
+async function readDiskEntry(key: string): Promise<CacheEntry | null> {
+  try {
+    const file = path.join(DISK_CACHE_DIR, `${diskSafeKey(key)}.json`);
+    const raw = await fs.readFile(file, "utf8");
+    const parsed = JSON.parse(raw) as CacheEntry;
+    if (!parsed || !Array.isArray(parsed.nodes) || !Number.isFinite(parsed.expiresAt)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function writeDiskEntry(key: string, entry: CacheEntry): Promise<void> {
+  try {
+    await fs.mkdir(DISK_CACHE_DIR, { recursive: true });
+    const file = path.join(DISK_CACHE_DIR, `${diskSafeKey(key)}.json`);
+    await fs.writeFile(file, JSON.stringify(entry), "utf8");
+  } catch (err) {
+    console.warn("[STOCKX][BUYING_CACHE] disk write failed", err);
+  }
+}
 
 export type CachedBuyingOrdersResult = {
   nodes: StockxBuyingNode[];
@@ -64,6 +96,7 @@ export type CachedBuyingOrdersResult = {
   durationMs: number;
   pageCount: number;
   cacheKey: string;
+  cacheSource?: "memory" | "disk" | "network";
 };
 
 export async function getCachedStockxBuyingOrders(
@@ -76,6 +109,8 @@ export async function getCachedStockxBuyingOrders(
     /** Bypass TTL and refetch. */
     forceRefresh?: boolean;
     ttlMs?: number;
+    /** Stop paginating early once predicate returns true (network only). */
+    shouldStop?: (nodes: StockxBuyingNode[]) => boolean;
   }
 ): Promise<CachedBuyingOrdersResult> {
   const first = Math.max(1, Math.min(options?.first ?? 100, 100));
@@ -99,7 +134,25 @@ export async function getCachedStockxBuyingOrders(
       durationMs: cached.durationMs,
       pageCount: cached.pageCount,
       cacheKey: key,
+      cacheSource: "memory",
     };
+  }
+
+  // Disk bridge: localhost reload / multi-worker share one crawl for TTL.
+  if (!options?.forceRefresh && !options?.shouldStop) {
+    const disk = await readDiskEntry(key);
+    if (disk && disk.expiresAt > now) {
+      store().set(key, disk);
+      return {
+        nodes: disk.nodes,
+        fromCache: true,
+        fetchedAt: disk.fetchedAt,
+        durationMs: disk.durationMs,
+        pageCount: disk.pageCount,
+        cacheKey: key,
+        cacheSource: "disk",
+      };
+    }
   }
 
   const started = Date.now();
@@ -108,6 +161,7 @@ export async function getCachedStockxBuyingOrders(
     maxPages,
     state,
     query,
+    shouldStop: options?.shouldStop,
   });
   const durationMs = Date.now() - started;
   const entry: CacheEntry = {
@@ -117,7 +171,11 @@ export async function getCachedStockxBuyingOrders(
     pageCount: maxPages,
     durationMs,
   };
-  store().set(key, entry);
+  // Early-stop runs must not poison the full-page cache key.
+  if (!options?.shouldStop) {
+    store().set(key, entry);
+    void writeDiskEntry(key, entry);
+  }
 
   return {
     nodes,
@@ -126,6 +184,7 @@ export async function getCachedStockxBuyingOrders(
     durationMs,
     pageCount: maxPages,
     cacheKey: key,
+    cacheSource: "network",
   };
 }
 

@@ -1070,7 +1070,7 @@ export default function GalaxusDirectDeliveryPage() {
       {error ? <div className="text-sm text-red-600">{error}</div> : null}
       {bulkStockxSyncing ? (
         <div className="text-xs text-gray-500">
-          Shared StockX crawl + link across visible orders (not per-order)…
+          List-only PENDING crawl (cached) + link — no per-buy GET_BUY_ORDER…
         </div>
       ) : null}
 
