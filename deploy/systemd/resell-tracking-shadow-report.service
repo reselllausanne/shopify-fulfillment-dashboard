@@ -1,0 +1,11 @@
+[Unit]
+Description=Resell funnel shadow report (checkout coverage alert)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/resell
+EnvironmentFile=-/etc/default/resell-ads
+ExecStart=/usr/bin/env bash -lc 'docker compose exec -T web npx tsx scripts/tracking-shadow-report.ts --days=14 --alert'
+StandardOutput=journal
+StandardError=journal

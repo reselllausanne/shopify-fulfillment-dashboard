@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly funnel_events purge (G1 retention)
+
+[Timer]
+OnCalendar=Sun *-*-* 03:15:00
+Persistent=true
+Unit=resell-funnel-events-purge.service
+
+[Install]
+WantedBy=timers.target
