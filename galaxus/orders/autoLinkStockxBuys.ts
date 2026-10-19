@@ -7,7 +7,6 @@ import {
 import { applyStockxDetailsToDecathlonMatchFields } from "@/decathlon/stx/manualStockxEnrich";
 import {
   extractStockxVariantId,
-  fetchStockxBuyOrderDetailsFull,
   synthesizeBuyOrderDetailsFromListNode,
   type StockxBuyingNode,
 } from "@/galaxus/stx/stockxClient";
@@ -40,9 +39,10 @@ const AUTO_LINK_PENDING_PAGES = Math.max(
   1,
   Math.min(8, Number(process.env.STOCKX_AUTO_LINK_PENDING_PAGES ?? "4"))
 );
+/** Historical off by default — PENDING covers active buys; HISTORICAL was extra 429 fuel. */
 const AUTO_LINK_HISTORICAL_PAGES = Math.max(
   0,
-  Math.min(4, Number(process.env.STOCKX_AUTO_LINK_HISTORICAL_PAGES ?? "2"))
+  Math.min(4, Number(process.env.STOCKX_AUTO_LINK_HISTORICAL_PAGES ?? "0"))
 );
 
 export type AutoLinkGalaxusStockxBuysOptions = {
@@ -244,16 +244,9 @@ export async function autoLinkUnclaimedStockxBuysForGalaxusOrder(
       const buyOrderId = String(node.orderId ?? "").trim();
       if (!chainId || !buyOrderId) continue;
 
-      let details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>>;
-      try {
-        details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId: buyOrderId });
-        if (!details?.order) {
-          details = synthesizeBuyOrderDetailsFromListNode(node);
-        }
-      } catch {
-        // Same fallback as manual paste: Buying list amount/ETA when GET_BUY_ORDER WAF-blocks.
-        details = synthesizeBuyOrderDetailsFromListNode(node);
-      }
+      // List-only link: buying feed already has variant/amount/ETA. Skip GET_BUY_ORDER
+      // (that call is what 429'd the whole Bulk/Match path).
+      const details = synthesizeBuyOrderDetailsFromListNode(node);
 
       const auto = applyStockxDetailsToDecathlonMatchFields(node, details, {
         matchReasons: ["AUTO_LINK_ON_FETCH"],
