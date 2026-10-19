@@ -19,8 +19,8 @@
  * - non_fashion (Galaxus, 2026-10-13): only "Mode > …" categories + the sport / bag types on
  *   Galaxus's fashion list. Exempt: LEGO, trading cards, WEL, REI allowlist.
  *   GALAXUS_FASHION_ONLY=0 disables.
- * - price_outlier: absurd StockX resale prices (thin asks) — absolute cap or far above
- *   brand retail. Off unless GALAXUS_PRICE_OUTLIER_FILTER=1 (not requested by Galaxus).
+ * - price_outlier: consumer price above GALAXUS_MAX_RETAIL_CHF (default 300, every supplier).
+ *   GALAXUS_PRICE_OUTLIER_FILTER=1 also blocks STX asks far above brand retail.
  *
  * Master + offer skip blocked rows; stock feed pushes QuantityOnStock=0 to delist.
  * Kill switch: GALAXUS_ASSORTMENT_POLICY=0.
@@ -404,9 +404,9 @@ export function galaxusBwzUnknownParcelMaxChf(): number {
   return readNumberEnv("GALAXUS_BWZ_UNKNOWN_PARCEL_MAX_CHF", 100);
 }
 
-/** Absolute consumer price cap for any item. Env: GALAXUS_MAX_RETAIL_CHF. */
+/** Absolute consumer price cap for any item (CHF incl VAT). Env: GALAXUS_MAX_RETAIL_CHF. */
 export function galaxusMaxRetailChf(): number {
-  return readNumberEnv("GALAXUS_MAX_RETAIL_CHF", 5000);
+  return readNumberEnv("GALAXUS_MAX_RETAIL_CHF", 300);
 }
 
 /** Max consumer price / brand retail multiple. Env: GALAXUS_MAX_RETAIL_MULTIPLE. */
@@ -573,9 +573,9 @@ export function galaxusAssortmentBlockReason(
 
   const consumer = estimateGalaxusConsumerPriceChf(input);
   if (consumer != null) {
-    // Bugged prices come from thin StockX asks; other suppliers' list prices are real.
+    if (consumer > galaxusMaxRetailChf()) return "price_outlier";
+    // Optional extra: thin StockX asks far above brand retail.
     if (isGalaxusPriceOutlierFilterEnabled() && PRICE_OUTLIER_SUPPLIER_KEYS.has(supplierKey)) {
-      if (consumer > galaxusMaxRetailChf()) return "price_outlier";
       const retail = Number(input.brandRetailPrice);
       if (Number.isFinite(retail) && retail > 0 && consumer > retail * galaxusMaxRetailMultiple()) {
         return "price_outlier";

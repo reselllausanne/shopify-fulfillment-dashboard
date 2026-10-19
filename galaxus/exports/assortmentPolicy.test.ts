@@ -11,6 +11,8 @@ describe("galaxusAssortmentBlockReason", () => {
     process.env.GALAXUS_FASHION_ONLY = "0";
     process.env.GALAXUS_NER_APPAREL_ONLY = "0";
     process.env.GALAXUS_DISABLED_SUPPLIERS = "";
+    // Isolate shoe / electronics cases from the 300 CHF default cap.
+    process.env.GALAXUS_MAX_RETAIL_CHF = "5000";
   });
 
   afterEach(() => {
@@ -23,6 +25,7 @@ describe("galaxusAssortmentBlockReason", () => {
     delete process.env.GALAXUS_SHOE_CAP_SCOPE;
     delete process.env.GALAXUS_SHOE_CAP_COLLAB_EXEMPT;
     delete process.env.GALAXUS_PRICE_OUTLIER_FILTER;
+    delete process.env.GALAXUS_MAX_RETAIL_CHF;
   });
 
   it("blocks REI storage / IT components but keeps other REI products", () => {
@@ -406,12 +409,57 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBeNull();
   });
 
-  it("keeps absurd StockX prices unless GALAXUS_PRICE_OUTLIER_FILTER=1", () => {
+  it("blocks anything above the absolute cap even when the retail-multiple filter is off", () => {
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_9",
         title: "2019 Pokemon Sun & Moon Team Up Booster Box",
         suggestedRetailInclVatChf: 36179,
+      })
+    ).toBe("price_outlier");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_9b",
+        title: "2019 Pokemon Sun & Moon Team Up Booster Box",
+        suggestedRetailInclVatChf: 4000,
+      })
+    ).toBeNull();
+  });
+
+  it("blocks every supplier above 300 CHF when the cap env is unset", () => {
+    delete process.env.GALAXUS_MAX_RETAIL_CHF;
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_30",
+        title: "LEGO Star Wars Death Star Set 75419",
+        brand: "LEGO",
+        suggestedRetailInclVatChf: 301,
+      })
+    ).toBe("price_outlier");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_31",
+        title: "Supreme Box Logo Hooded Sweatshirt Black",
+        sizeRaw: "L",
+        suggestedRetailInclVatChf: 300,
+      })
+    ).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "NER_30",
+        title: "Nike Dunk Low",
+        brand: "Nike",
+        sizeRaw: "42",
+        purchasePriceExVatChf: 220,
+      })
+    ).toBe("price_outlier");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "NER_31",
+        title: "Nike Dunk Low",
+        brand: "Nike",
+        sizeRaw: "42",
+        purchasePriceExVatChf: 200,
       })
     ).toBeNull();
   });
@@ -457,14 +505,25 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBeNull();
   });
 
-  it("only applies the price-outlier rule to StockX", () => {
-    process.env.GALAXUS_PRICE_OUTLIER_FILTER = "1";
+  it("applies the absolute cap to non-StockX suppliers", () => {
     expect(
       galaxusAssortmentBlockReason({ providerKey: "HAW_2", title: "Ecksofa Leder Cognac", purchasePriceExVatChf: 6000 })
+    ).toBe("price_outlier");
+  });
+
+  it("does not apply the retail-multiple filter outside StockX", () => {
+    process.env.GALAXUS_PRICE_OUTLIER_FILTER = "1";
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "HAW_2",
+        title: "Ecksofa Leder Cognac",
+        purchasePriceExVatChf: 400,
+        brandRetailPrice: 10,
+      })
     ).toBeNull();
   });
 
-  it("keeps apparel regardless of price", () => {
+  it("keeps apparel under the absolute cap", () => {
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_12",
@@ -509,7 +568,13 @@ describe("galaxusAssortmentBlockReason", () => {
 });
 
 describe("galaxusAssortmentBlockReasonForCandidate", () => {
+  afterEach(() => {
+    delete process.env.GALAXUS_MAX_RETAIL_CHF;
+    delete process.env.GALAXUS_STX_SIZE_OUTLIER_RATIO;
+  });
+
   it("reads variant + kickdb product fields from a feed candidate", () => {
+    process.env.GALAXUS_MAX_RETAIL_CHF = "5000";
     expect(
       galaxusAssortmentBlockReasonForCandidate({
         providerKey: "STX_14",
