@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import {
   applyStockxDetailsToDecathlonMatchFields,
+  hasReusableStockxLookupSnapshot,
   looksLikeStockxOrderNumber,
   normalizeStockxOrderNumberInput,
   resolveStockxBuyForManualGalaxus,
@@ -101,7 +102,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       ok: false,
     };
 
-    if (enrichFromStockx && orderNumberInput && looksLikeStockxOrderNumber(orderNumberInput)) {
+    const canReuseBrowserLookup = hasReusableStockxLookupSnapshot(data);
+    if (
+      enrichFromStockx &&
+      !canReuseBrowserLookup &&
+      orderNumberInput &&
+      looksLikeStockxOrderNumber(orderNumberInput)
+    ) {
       stockxEnrich.attempted = true;
       try {
         const overrideToken = normalizeBearer(body?.stockxToken);
