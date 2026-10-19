@@ -1,16 +1,15 @@
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
-import { prisma } from "@/app/lib/prisma";
 import {
   buildStockxOrderClaimIndex,
   findStockxOrderClaim,
   registerStockxOrderClaim,
 } from "@/app/lib/stockxCrossChannelClaims";
-import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
 import {
   extractStockxVariantId,
   synthesizeBuyOrderDetailsFromListNode,
   type StockxBuyingNode,
 } from "@/galaxus/stx/stockxClient";
+import { ensureGalaxusStockxMatchesFromLinkedUnits } from "@/galaxus/orders/galaxusProcurementReconcile";
 import { getCachedStockxBuyingOrders } from "@/galaxus/stx/buyingOrdersCache";
 import { refreshLinkedStxUnitsByStoredRefs } from "@/galaxus/stx/linkedUnitRefresh";
 import {
@@ -35,6 +34,11 @@ const MAX_ORDER_IDS = 200;
 const PENDING_MAX_PAGES = Math.max(1, Math.min(12, Number(process.env.STOCKX_GALAXUS_BULK_PENDING_PAGES ?? "4")));
 /** Off by default — parallel ALL-state crawl was the 429 hammer. */
 const ALL_STATE_MAX_PAGES = Math.max(0, Math.min(6, Number(process.env.STOCKX_GALAXUS_BULK_ALL_STATE_PAGES ?? "0")));
+/** Recent delivered buys. Sequential, after PENDING. */
+const HISTORICAL_MAX_PAGES = Math.max(
+  0,
+  Math.min(4, Number(process.env.STOCKX_GALAXUS_BULK_HISTORICAL_PAGES ?? "2"))
+);
 const REFRESH_LINKED = ["1", "true", "yes", "on"].includes(
   String(process.env.STOCKX_GALAXUS_BULK_REFRESH_LINKED ?? "0").trim().toLowerCase()
 );
@@ -178,30 +182,17 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
     ids.map((orderId) =>
       prepareLimiter(async () => {
         try {
-          await reconcileGalaxusOrderProcurement(orderId, { skipAutoLink: true }).catch(() => null);
           const reservation = await reserveStxPurchaseUnitsForOrder(orderId);
           const status = reservation.status;
           const remainingByVariant = remainingFromStatus(status);
-          const needsLinkedRefresh = status.buckets.some(
-            (bucket) =>
-              bucket.linkedWithEta < bucket.needed || bucket.linkedWithAwb < bucket.needed
-          );
+          const needsLinkedRefresh =
+            REFRESH_LINKED &&
+            status.buckets.some(
+              (bucket) =>
+                bucket.linkedWithEta < bucket.needed || bucket.linkedWithAwb < bucket.needed
+            );
 
-          const prismaAny = prisma as any;
-          const unitsNeedingSettled = await prismaAny.stxPurchaseUnit
-            .count({
-              where: {
-                galaxusOrderId: reservation.galaxusOrderId,
-                supplierVariantId: { startsWith: "stx_" },
-                stockxOrderId: { not: null },
-                stockxSettledAmount: null,
-                cancelledAt: null,
-              },
-            })
-            .catch(() => 0);
-
-          const hasWork =
-            remainingByVariant.size > 0 || needsLinkedRefresh || Number(unitsNeedingSettled) > 0;
+          const hasWork = remainingByVariant.size > 0 || needsLinkedRefresh;
 
           if (!hasWork) {
             base.skippedNoWork += 1;
@@ -224,7 +215,7 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
             galaxusOrderId: reservation.galaxusOrderId,
             orderDateMs: Number.isFinite(orderDateMs) ? orderDateMs : Date.now(),
             remainingByVariant,
-            needsLinkedRefresh: needsLinkedRefresh || Number(unitsNeedingSettled) > 0,
+            needsLinkedRefresh,
             status,
           });
           base.prepared += 1;
@@ -309,7 +300,14 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
     });
     pendingList = pendingRes.nodes;
     let allStateRes: Awaited<ReturnType<typeof getCachedStockxBuyingOrders>> | null = null;
-    if (ALL_STATE_MAX_PAGES > 0) {
+    if (HISTORICAL_MAX_PAGES > 0) {
+      allStateRes = await getCachedStockxBuyingOrders(token, {
+        first: 100,
+        maxPages: HISTORICAL_MAX_PAGES,
+        state: "HISTORICAL",
+      });
+      allStateList = allStateRes.nodes;
+    } else if (ALL_STATE_MAX_PAGES > 0) {
       allStateRes = await getCachedStockxBuyingOrders(token, {
         first: 100,
         maxPages: ALL_STATE_MAX_PAGES,
@@ -450,13 +448,18 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
     await tryLinkBuy(buy);
   }
 
-  const reconcileLimiter = createLimiter(4);
+  // List color reads GalaxusStockxMatch, not the purchase unit.
+  const matchLimiter = createLimiter(6);
   await Promise.all(
-    stillNeedingLink.map((need) =>
-      reconcileLimiter(async () => {
-        await reconcileGalaxusOrderProcurement(need.dbId, { skipAutoLink: true }).catch(() => null);
-      })
-    )
+    stillNeedingLink
+      .filter((need) => (linkedCountByOrder.get(need.galaxusOrderId) ?? 0) > 0)
+      .map((need) =>
+        matchLimiter(async () => {
+          const order = await resolveGalaxusOrderByIdOrRef(need.dbId);
+          if (!order) return;
+          await ensureGalaxusStockxMatchesFromLinkedUnits(order).catch(() => null);
+        })
+      )
   );
 
   for (const need of needsByOrder.values()) {
