@@ -583,7 +583,9 @@ analytics.subscribe("all_custom_events", function (event) {
 });
 
 // ---------- G3: dataLayer (GA4 TEST via web GTM → sGTM). Tag Assistant cannot see this sandbox. ----------
-if (gtmLoad) {
+// IIFE: Shopify pixel editor rejects `function` declarations inside `if` blocks.
+if (gtmLoad)
+  (function () {
   function gtmSid(v) {
     if (v === null || v === undefined) return "";
     const s = String(v);
@@ -977,4 +979,8 @@ if (gtmLoad) {
       event,
     );
   });
+<<<<<<< HEAD
 }
+=======
+  })();
+>>>>>>> 9691346 (fix(tracking): wrap GTM block in IIFE for Shopify pixel editor)
