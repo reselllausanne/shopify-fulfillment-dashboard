@@ -3,12 +3,14 @@ import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 import { rebuildFeedSnapshotFromExports } from "@/galaxus/exports/feedSnapshot";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
 import { runStockPriceSync } from "@/galaxus/jobs/stockSync";
+import { runStxPriceStockRefresh, runStxSync } from "@/galaxus/jobs/stxSync";
 import { claimJob, completeJob, failJob } from "@/galaxus/jobs/queue";
 import { runOpsJob } from "@/galaxus/ops/jobRunner";
 import {
   OPS_GLD_REFRESH_JOB,
   OPS_IMAGE_SYNC_JOB,
   OPS_SNAPSHOT_REBUILD_JOB,
+  OPS_STX_REFRESH_JOB,
 } from "@/galaxus/ops/opsBackgroundJobs";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -16,7 +18,12 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function run() {
   const workerId = process.env.WORKER_ID || `${os.hostname()}-${process.pid}`;
   const pollMs = Math.max(Number(process.env.WORKER_POLL_MS ?? "3000"), 500);
-  const jobTypes = [OPS_IMAGE_SYNC_JOB, OPS_SNAPSHOT_REBUILD_JOB, OPS_GLD_REFRESH_JOB];
+  const jobTypes = [
+    OPS_STX_REFRESH_JOB,
+    OPS_IMAGE_SYNC_JOB,
+    OPS_SNAPSHOT_REBUILD_JOB,
+    OPS_GLD_REFRESH_JOB,
+  ];
   const defaultOrigin =
     resolveAppOriginForPartnerJobs(process.env.GALAXUS_FEED_WORKER_ORIGIN ?? null) ??
     "http://127.0.0.1:3000";
@@ -36,7 +43,12 @@ async function run() {
           typeof payload.origin === "string" && payload.origin.trim()
             ? payload.origin.trim()
             : defaultOrigin;
-        if (jobType === OPS_IMAGE_SYNC_JOB) {
+        if (jobType === OPS_STX_REFRESH_JOB) {
+          const mode = payload.stxRefreshMode === "full" ? "full" : "price";
+          await runOpsJob("stx-refresh", () =>
+            mode === "full" ? runStxSync() : runStxPriceStockRefresh()
+          );
+        } else if (jobType === OPS_IMAGE_SYNC_JOB) {
           await runOpsJob("image-sync", () =>
             runImageSync({
               full: true,

@@ -3,10 +3,10 @@ import { runOpsJob } from "./jobRunner";
 import { listJobDefinitions, updateJobDefinition } from "./jobDefinitions";
 import { checkGalaxusPriceFeedHealth, drainFeedPushQueue } from "./feedPipeline";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
-import { runStxPriceStockRefresh, runStxSync } from "@/galaxus/jobs/stxSync";
 import { runEdiInPipeline } from "./orderPipeline";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
 import { startGldRefreshAsync } from "@/galaxus/ops/gldRefreshPush";
+import { startStxRefreshAsync } from "@/galaxus/ops/stxRefreshPush";
 import type { OpsJobKey } from "./types";
 import { runInventoryReconciliation, runMultiChannelStockSync } from "@/inventory/sync";
 import { runShopifyOrdersSync } from "@/shopify/orders/sync";
@@ -99,10 +99,18 @@ async function executeJob(jobKey: OpsJobKey, origin: string, tickOptions?: OpsTi
     });
   }
   if (jobKey === "stx-refresh") {
+    // Heavy KickDB walk — enqueue ops-background; never run full catalog on web.
     const mode = tickOptions?.stxRefreshMode === "full" ? "full" : "price";
-    return runOpsJob(jobKey, async () =>
-      mode === "full" ? runStxSync() : runStxPriceStockRefresh()
-    );
+    return runOpsJob(jobKey, async () => {
+      const started = await startStxRefreshAsync({ mode });
+      if (!started.ok) {
+        if (started.status === 409) {
+          return { enqueued: false, skipped: "already_queued" as const, mode };
+        }
+        throw new Error(started.error ?? "Failed to enqueue stx-refresh");
+      }
+      return { enqueued: true, accepted: true, mode };
+    });
   }
   if (jobKey === "gld-refresh") {
     // Heavy Golden fetch — enqueue ops-background worker; never run on web.
