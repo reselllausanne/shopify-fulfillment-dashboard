@@ -125,58 +125,11 @@ async function loadInStockStxGtins(): Promise<string[]> {
     { timeout: (LOAD_TIMEOUT_SEC + 30) * 1000, maxWait: 30_000 }
   );
 
-  const out = stale
+  // CLS-only: never-synced NOT EXISTS fill timed out in prod and blocked the cycle.
+  return stale
     .map((r) => String(r.gtin ?? "").trim())
-    .filter((g) => g.length > 0);
-  if (out.length >= limit || MIN_AGE_HOURS <= 0) return out.slice(0, limit);
-
-  // Optional fill: never-synced (no CLS). Separate tx so a slow NOT EXISTS
-  // cannot wipe a successful stale load.
-  try {
-    const have = new Set(out);
-    const fill = await prismaDirect.$transaction(
-      async (tx) => {
-        await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${LOAD_TIMEOUT_SEC}s'`);
-        return tx.$queryRawUnsafe<Array<{ gtin: string }>>(`
-          SELECT DISTINCT sv."gtin" AS gtin
-          FROM "public"."ShopifySyncState" sss
-          INNER JOIN "public"."KickDBProduct" p
-            ON p."kickdbProductId" = sss."kickdbProductId"
-          INNER JOIN "public"."KickDBVariant" kv ON kv."productId" = p."id"
-          INNER JOIN "public"."VariantMapping" m ON m."kickdbVariantId" = kv."id"
-          INNER JOIN "public"."SupplierVariant" sv
-            ON sv."supplierVariantId" = m."supplierVariantId"
-          WHERE sss."syncStatus" = 'synced'
-            AND sss."shopifyProductId" IS NOT NULL
-            AND sv."supplierVariantId" LIKE 'stx_%'
-            AND sv."gtin" IS NOT NULL
-            AND sv."stock" > 0
-            AND coalesce(sv."manualLock", false) = false
-            AND NOT EXISTS (
-              SELECT 1 FROM "public"."ChannelListingState" cls
-              WHERE cls."channel" = 'SHOPIFY'
-                AND cls."providerKey" = sv."providerKey"
-            )
-          ORDER BY sv."gtin"
-          LIMIT ${limit}
-        `);
-      },
-      { timeout: (LOAD_TIMEOUT_SEC + 30) * 1000, maxWait: 30_000 }
-    );
-    for (const row of fill) {
-      const g = String(row.gtin ?? "").trim();
-      if (!g || have.has(g)) continue;
-      have.add(g);
-      out.push(g);
-      if (out.length >= limit) break;
-    }
-  } catch (err: unknown) {
-    console.warn(
-      "[WORKER][SHOPIFY_STX_SYNC] never-synced fill skipped",
-      err instanceof Error ? err.message : err
-    );
-  }
-  return out.slice(0, limit);
+    .filter((g) => g.length > 0)
+    .slice(0, limit);
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
