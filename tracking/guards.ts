@@ -9,7 +9,7 @@
 export type Env = Record<string, string | undefined>;
 
 export const OUTBOUND_LOCKED = {
-  ga4_test: true,
+  ga4_test: false,
   google_ads_secondary: true,
   meta: true,
   tiktok: true,

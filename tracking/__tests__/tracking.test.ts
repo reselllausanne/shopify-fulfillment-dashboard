@@ -67,9 +67,14 @@ function purchase(over: Partial<ShadowPurchase> = {}): ShadowPurchase {
 }
 
 describe("guards", () => {
-  it("every destination is code-locked in phase 1", () => {
+  it("destinations are locked except ga4_test after gate G3", () => {
     for (const dest of Object.keys(OUTBOUND_LOCKED) as Destination[]) {
-      expect(OUTBOUND_LOCKED[dest]).toBe(true);
+      const locked = OUTBOUND_LOCKED[dest];
+      if (dest === "ga4_test") {
+        expect(locked).toBe(false);
+        continue;
+      }
+      expect(locked).toBe(true);
       const gate = destinationGate(dest, FULL_ENV(dest));
       expect(gate.open).toBe(false);
       expect(gate.reasons).toContain("phase-1 code lock");

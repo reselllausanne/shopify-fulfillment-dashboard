@@ -1,7 +1,6 @@
-// PHASE 2 REFERENCE ONLY — DO NOT INSTALL (docs/tracking/TRACKING-PLAN.md, gate G3).
+// REFERENCE ONLY — DO NOT INSTALL. G3 logic lives in docs/tracking/shopify-custom-pixel.js.
 //
-// GTM-in-sandbox loader kept as a reference for the GA4 TEST shadow route. When G3 is approved
-// this logic is merged INTO docs/tracking/shopify-custom-pixel.js (one pixel, never two).
+// Historical GTM-in-sandbox draft (merged 2026-10-20). Keep for diff review only.
 // Container: docs/tracking/phase2/gtm-web-container.json (GA4 TEST placeholder, all tags paused,
 // no Google Ads tags). Hard rule: the web container must never reference the production GA4
 // stream (Simprosys) nor the production Google Ads tag; shadow data goes to a TEST property only.
@@ -21,7 +20,7 @@
 // debug_mode=true est ajouté à tous les events (GA4 > Admin > DebugView) pour la session,
 // et chaque push dataLayer est loggé dans la console (contexte iframe web-pixel).
 
-const GTM_ID = "GTM-XXXXXXX";
+const GTM_ID = "GTM-K9F6S5LN";
 const ITEM_PREFIX = "shopify_CH_";
 const AB_ID_RE = /^[a-z0-9_]{1,40}$/;
 const AB_VARIANT_RE = /^[A-Za-z0-9_-]{1,20}$/;

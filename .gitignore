@@ -26,6 +26,9 @@ yarn-error.log*
 .env
 .env*.local
 
+# Shopify pixel ready copy (embeds FUNNEL_TRACK_KEY from local .env)
+tmp_tracking/
+
 # Cursor MCP with real tokens (use .cursor/mcp.json.example as template)
 .cursor/mcp.json
 
