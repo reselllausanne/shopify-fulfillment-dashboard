@@ -66,18 +66,21 @@ function resolveSupplierKeyPrefix(input: {
 }
 
 /**
- * Delisted rows (XNT, dead/BAE suppliers, off-allowlist suppliers, assortment blocks) are
- * omitted from the stock CSV by default. Set `GALAXUS_STOCK_ZERO_PUSH=1` to emit qty 0
- * rows instead — needed once when newly delisting rows that still have live stock on Galaxus.
+ * Delisted / assortment-blocked rows must emit QuantityOnStock=0 so Galaxus drops the
+ * prior offer — silent omit leaves yesterday's underpriced listing live forever
+ * (STX DualSense 2026-10 incident). Default ON. Set `GALAXUS_STOCK_ZERO_PUSH=0` to omit
+ * instead (legacy). `=1` forces on.
+ *
+ * @deprecated Kept for logs / one-shot scripts that referenced the old cutoff.
  */
 export const GALAXUS_STOCK_ZERO_PUSH_UNTIL = new Date("2026-10-16T01:00:00Z");
 
-export function isGalaxusStockZeroPushEnabled(now: Date = new Date()): boolean {
+export function isGalaxusStockZeroPushEnabled(_now: Date = new Date()): boolean {
   const flag = String(process.env.GALAXUS_STOCK_ZERO_PUSH ?? "").trim();
-  if (flag === "1") return true;
   if (flag === "0") return false;
-  // Rows blocked on 2026-10-15 still have live qty on Galaxus; zero them once before the nightly snapshot.
-  return now < GALAXUS_STOCK_ZERO_PUSH_UNTIL;
+  if (flag === "1") return true;
+  // Default: always emit qty 0 for blocked/delisted rows.
+  return true;
 }
 
 /**
