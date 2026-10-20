@@ -1,4 +1,4 @@
-import { prisma } from "@/app/lib/prisma";
+import { prisma, prismaDirect } from "@/app/lib/prisma";
 import { validateGtin } from "@/app/lib/normalize";
 import { fetchStockxProductByIdOrSlugRaw, extractVariantGtin, extractVariantEan } from "@/galaxus/kickdb/client";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
@@ -39,6 +39,8 @@ type StxSyncResult = {
   shopifySoldoutZeroed?: number;
   /** Shopify Website-stock sizes set back to 1 because StockX has asks again. */
   shopifyStockRestored?: number;
+  /** Products touched this shard (including KickDB fetch failures we rotated past). */
+  productsSeen?: number;
   durationMs: number;
 };
 
@@ -46,6 +48,34 @@ type StxSyncOptions = {
   limitProducts?: number;
   concurrency?: number;
 };
+
+/** Default shard size so one ops-background run finishes in ~1h (not 17h). Env override. */
+function readStxRefreshProductBatch(): number {
+  const n = Number.parseInt(String(process.env.STX_REFRESH_PRODUCT_BATCH ?? "8000"), 10);
+  return Number.isFinite(n) && n > 0 ? n : 8000;
+}
+
+function readStxRefreshConcurrency(): number {
+  const n = Number.parseInt(String(process.env.STX_REFRESH_CONCURRENCY ?? "4"), 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 8) : 4;
+}
+
+/** Session-mode client when available — long bulk writes die on :6543 transaction pooler. */
+function stxDb() {
+  return prismaDirect ?? prisma;
+}
+
+async function bumpKickdbLastFetchedAt(kickdbProductIds: string[], at: Date): Promise<void> {
+  const ids = kickdbProductIds.map((id) => String(id ?? "").trim()).filter(Boolean);
+  if (ids.length === 0) return;
+  const db = stxDb() as any;
+  for (const batch of chunkArray(ids, 500)) {
+    await db.kickDBProduct.updateMany({
+      where: { kickdbProductId: { in: batch } },
+      data: { lastFetchedAt: at },
+    });
+  }
+}
 
 type SelectedOffer = {
   deliveryType: StxDeliveryType;
@@ -776,120 +806,129 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
 
 export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Promise<StxSyncResult> {
   const startedAt = Date.now();
-  const concurrency = Math.max(1, options.concurrency ?? 3);
-  const limitProducts = options.limitProducts ? Math.max(1, options.limitProducts) : null;
+  const concurrency = Math.max(1, options.concurrency ?? readStxRefreshConcurrency());
+  // Always shard unless caller passes an explicit limit (incl. Infinity via huge number).
+  const limitProducts = Math.max(1, options.limitProducts ?? readStxRefreshProductBatch());
   const now = new Date();
+  const db = stxDb() as any;
 
-  const products = await (prisma as any).kickDBProduct.findMany({
+  // Stalest first so hourly shards rotate the whole catalog instead of re-hitting the same head.
+  const products = await db.kickDBProduct.findMany({
     select: { kickdbProductId: true, urlKey: true },
     where: { notFound: false },
-    orderBy: { updatedAt: "desc" },
-    ...(limitProducts ? { take: limitProducts } : {}),
+    orderBy: [
+      { lastFetchedAt: { sort: "asc", nulls: "first" } },
+      { updatedAt: "asc" },
+    ],
+    take: limitProducts,
   });
 
   const limit = createLimiter(concurrency);
-  const parsedRows: ParsedStxRow[] = [];
-
-  const chunks = await Promise.all(
-    products.map((row: any) =>
-      limit(async (): Promise<{
-        processedProducts: number;
-        processedVariants: number;
-        rows: ParsedStxRow[];
-        stockZeroed: number;
-        shopifySoldoutZeroed: number;
-        shopifyStockRestored: number;
-        remapped: number;
-      }> => {
-        const empty = {
-          processedProducts: 0,
-          processedVariants: 0,
-          rows: [],
-          stockZeroed: 0,
-          shopifySoldoutZeroed: 0,
-          shopifyStockRestored: 0,
-          remapped: 0,
-        };
-        const dbProductId = String(row?.kickdbProductId ?? "").trim();
-        const fetchId = kickdbStockxFetchId(row);
-        if (!dbProductId || !fetchId) return empty;
-        let payload: any;
-        try {
-          const res = await fetchStockxProductByIdOrSlugRaw(fetchId);
-          payload = res.product;
-        } catch {
-          return empty;
-        }
-        const remappedResult = await parseStxRefreshRows(payload, dbProductId);
-        const rows = remappedResult.rows;
-        const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-        const skipZeroStock = allowsStxStandardImport(
-          payload,
-          pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey)
-        );
-        const stockZeroed = await zeroStockForStxVariantsNotInEligibleBatch(
-          dbProductId,
-          eligibleIds,
-          now,
-          { skip: skipZeroStock }
-        );
-        const shopify = await syncShopifyStockAfterRefresh(dbProductId, payload, rows, stockZeroed);
-        return {
-          processedProducts: 1,
-          processedVariants: rows.length,
-          rows,
-          stockZeroed,
-          shopifySoldoutZeroed: shopify.zeroed,
-          shopifyStockRestored: shopify.restored,
-          remapped: remappedResult.remapped,
-        };
-      })
-    )
-  );
-
   let processedProducts = 0;
   let processedVariants = 0;
   let stockZeroed = 0;
   let shopifySoldoutZeroed = 0;
   let shopifyStockRestored = 0;
   let remappedToCanonical = 0;
-  for (const c of chunks) {
-    processedProducts += c.processedProducts;
-    processedVariants += c.processedVariants;
-    stockZeroed += c.stockZeroed;
-    shopifySoldoutZeroed += c.shopifySoldoutZeroed;
-    shopifyStockRestored += c.shopifyStockRestored;
-    remappedToCanonical += c.remapped;
-    parsedRows.push(...c.rows);
-  }
-
-  const dedupBySupplierVariantId = new Map<string, ParsedStxRow>();
-  for (const row of parsedRows) {
-    dedupBySupplierVariantId.set(row.supplierVariantId, row);
-  }
-  const rows = Array.from(dedupBySupplierVariantId.values());
-
-  // Nightly lightweight refresh: update only price/stock/deliveryType for existing STX variants.
   let updated = 0;
-  for (const batch of chunkArray(rows, 500)) {
-    updated += await bulkUpdateSupplierVariants(
-      batch.map(stxVariantSyncPatch),
-      now,
-      { updateGtinWhenProvided: false }
+  /** Flush DB writes every wave so a mid-shard crash keeps progress. */
+  const WAVE = 400;
+
+  for (const wave of chunkArray(products, WAVE)) {
+    const waveResults = await Promise.all(
+      wave.map((row: any) =>
+        limit(async (): Promise<{
+          dbProductId: string | null;
+          processedProducts: number;
+          processedVariants: number;
+          rows: ParsedStxRow[];
+          stockZeroed: number;
+          shopifySoldoutZeroed: number;
+          shopifyStockRestored: number;
+          remapped: number;
+        }> => {
+          const empty = {
+            dbProductId: null as string | null,
+            processedProducts: 0,
+            processedVariants: 0,
+            rows: [] as ParsedStxRow[],
+            stockZeroed: 0,
+            shopifySoldoutZeroed: 0,
+            shopifyStockRestored: 0,
+            remapped: 0,
+          };
+          const dbProductId = String(row?.kickdbProductId ?? "").trim();
+          const fetchId = kickdbStockxFetchId(row);
+          if (!dbProductId || !fetchId) return empty;
+          let payload: any;
+          try {
+            const res = await fetchStockxProductByIdOrSlugRaw(fetchId);
+            payload = res.product;
+          } catch {
+            // Rotate past permanent KickDB failures; still mark as touched below.
+            return { ...empty, dbProductId };
+          }
+          const remappedResult = await parseStxRefreshRows(payload, dbProductId);
+          const rows = remappedResult.rows;
+          const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
+          const skipZeroStock = allowsStxStandardImport(
+            payload,
+            pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey)
+          );
+          const zeroed = await zeroStockForStxVariantsNotInEligibleBatch(
+            dbProductId,
+            eligibleIds,
+            now,
+            { skip: skipZeroStock }
+          );
+          const shopify = await syncShopifyStockAfterRefresh(dbProductId, payload, rows, zeroed);
+          return {
+            dbProductId,
+            processedProducts: 1,
+            processedVariants: rows.length,
+            rows,
+            stockZeroed: zeroed,
+            shopifySoldoutZeroed: shopify.zeroed,
+            shopifyStockRestored: shopify.restored,
+            remapped: remappedResult.remapped,
+          };
+        })
+      )
+    );
+
+    const waveRows: ParsedStxRow[] = [];
+    for (const c of waveResults) {
+      processedProducts += c.processedProducts;
+      processedVariants += c.processedVariants;
+      stockZeroed += c.stockZeroed;
+      shopifySoldoutZeroed += c.shopifySoldoutZeroed;
+      shopifyStockRestored += c.shopifyStockRestored;
+      remappedToCanonical += c.remapped;
+      waveRows.push(...c.rows);
+    }
+
+    const dedup = new Map<string, ParsedStxRow>();
+    for (const row of waveRows) dedup.set(row.supplierVariantId, row);
+    for (const batch of chunkArray(Array.from(dedup.values()), 500)) {
+      updated += await bulkUpdateSupplierVariants(batch.map(stxVariantSyncPatch), now, {
+        updateGtinWhenProvided: false,
+      });
+    }
+    // Persist cursor after each wave so retries skip already-rotated products.
+    await bumpKickdbLastFetchedAt(
+      waveResults.map((c) => c.dbProductId).filter((id): id is string => Boolean(id)),
+      now
     );
   }
 
   const durationMs = Date.now() - startedAt;
   console.info("[galaxus][sync:stx-price-stock] done", {
     productsSeen: products.length,
+    batchLimit: limitProducts,
+    concurrency,
     processedProducts,
     processedVariants,
-    eligibleRows: rows.length,
-    insertedCount: 0,
     updatedCount: updated,
-    mappingInserted: 0,
-    mappingUpdated: 0,
-    removedMissingOrIneligible: 0,
     stockZeroed,
     shopifySoldoutZeroed,
     shopifyStockRestored,
@@ -908,6 +947,7 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
     stockZeroed,
     shopifySoldoutZeroed,
     shopifyStockRestored,
+    productsSeen: products.length,
     durationMs,
   };
 }

@@ -160,6 +160,9 @@ services:
       - NODE_OPTIONS=${OPS_BACKGROUND_NODE_OPTIONS:---max-old-space-size=8192}
       - WORKER_POLL_MS=${OPS_BACKGROUND_POLL_MS:-3000}
       - GALAXUS_FEED_WORKER_ORIGIN=${GALAXUS_FEED_WORKER_ORIGIN:-http://127.0.0.1:3000}
+      # STX price/stock shards — keep under ~1h so pooler stays alive.
+      - STX_REFRESH_PRODUCT_BATCH=${STX_REFRESH_PRODUCT_BATCH:-8000}
+      - STX_REFRESH_CONCURRENCY=${STX_REFRESH_CONCURRENCY:-4}
     command: ["npx", "tsx", "scripts/workers/opsBackgroundWorker.ts"]
     volumes:
       - ./.data:/app/.data

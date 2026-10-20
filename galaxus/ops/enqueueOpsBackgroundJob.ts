@@ -4,12 +4,14 @@ import {
   OPS_GLD_REFRESH_JOB,
   OPS_IMAGE_SYNC_JOB,
   OPS_SNAPSHOT_REBUILD_JOB,
+  OPS_STX_REFRESH_JOB,
 } from "@/galaxus/ops/opsBackgroundJobs";
 
 export type OpsBackgroundJobType =
   | typeof OPS_IMAGE_SYNC_JOB
   | typeof OPS_SNAPSHOT_REBUILD_JOB
-  | typeof OPS_GLD_REFRESH_JOB;
+  | typeof OPS_GLD_REFRESH_JOB
+  | typeof OPS_STX_REFRESH_JOB;
 
 export async function countQueuedOpsJobs(jobType: string): Promise<number> {
   return (prisma as any).galaxusJobQueue.count({
@@ -21,6 +23,7 @@ export async function enqueueOpsBackgroundJob(params: {
   jobType: OpsBackgroundJobType;
   origin?: string | null;
   groupKey?: string;
+  payload?: Record<string, unknown>;
 }): Promise<{ ok: boolean; accepted?: boolean; error?: string; status?: number }> {
   const pending = await countQueuedOpsJobs(params.jobType);
   if (pending > 0) {
@@ -29,7 +32,7 @@ export async function enqueueOpsBackgroundJob(params: {
 
   await enqueueJob(
     params.jobType,
-    { origin: params.origin ?? null },
+    { origin: params.origin ?? null, ...(params.payload ?? {}) },
     { groupKey: params.groupKey ?? params.jobType, maxAttempts: 1 }
   );
 

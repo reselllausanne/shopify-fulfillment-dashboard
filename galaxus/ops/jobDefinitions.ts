@@ -10,8 +10,12 @@ export const DEFAULT_JOBS: Array<{
   enabled: boolean;
 }> = [
   { jobKey: "partner-stock-sync", intervalMs: 5 * HOUR_MS, enabled: true }, // physical recovery; THE partner rows skipped unless THE_SUPPLIER_ENABLED=true
-  /** KickDB → STX price/stock; manual runs are always allowed from ops UI. */
-  { jobKey: "stx-refresh", intervalMs: 6 * HOUR_MS, enabled: true },
+  /**
+   * KickDB → STX price/stock shard (ops-background). Default batch ~8k products /
+   * ~45–75 min; hourly ticks rotate the catalog in ~1–1.5 days instead of one
+   * 17h web request that kills the :6543 pooler.
+   */
+  { jobKey: "stx-refresh", intervalMs: 1 * HOUR_MS, enabled: true },
   /** Golden (GLD) assortment price/stock refresh. */
   { jobKey: "gld-refresh", intervalMs: 10 * HOUR_MS, enabled: true },
   { jobKey: "edi-in", intervalMs: 1 * HOUR_MS, enabled: false }, // owned by worker-galaxus-edi (5min direct / 12:05 warehouse)
