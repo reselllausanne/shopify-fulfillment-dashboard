@@ -26,7 +26,7 @@
  *   SHOPIFY_STX_SYNC_PENDING_LIMIT   default 500 (TCG / high stock first)
  *   SHOPIFY_STX_SYNC_LOAD_TIMEOUT    default 300s (pooled statement_timeout is ~2min)
  */
-import { prisma } from "../../app/lib/prisma";
+import { prismaDirect } from "../../app/lib/prisma";
 import {
   loadInStockStxNoGtinSupplierVariantIds,
   syncShopifyStxPricesForGtins,
@@ -77,67 +77,43 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Stale GTINs on Shopify. Uses UNION of indexed gtin/ean joins (not OR) and a
- * raised statement_timeout — the old OR join hit pooled 2min cancel (57014).
+ * Stale GTINs on Shopify. Join via VariantMapping (indexed) on DIRECT_URL —
+ * gtin/ean OR on the transaction pooler keeps hitting statement_timeout (57014).
  */
 async function loadInStockStxGtins(): Promise<string[]> {
   if (MAX_GTINS_PER_CYCLE <= 0) return [];
-  const ageFilter =
+  const ageHaving =
     MIN_AGE_HOURS <= 0
       ? ""
-      : `AND (cls."lastSyncedAt" IS NULL
-            OR cls."lastSyncedAt" < NOW() - (${Math.round(MIN_AGE_HOURS)} * INTERVAL '1 hour'))`;
-  const shopifyJoin = ONLY_ON_SHOPIFY
-    ? `JOIN "public"."ShopifySyncState" sss
-          ON sss."kickdbProductId" = p."kickdbProductId"
-          AND sss."syncStatus" = 'synced'
-          AND sss."shopifyProductId" IS NOT NULL`
+      : `HAVING MIN(cls."lastSyncedAt") IS NULL
+            OR MIN(cls."lastSyncedAt") < NOW() - (${Math.round(MIN_AGE_HOURS)} * INTERVAL '1 hour')`;
+  const shopifyClause = ONLY_ON_SHOPIFY
+    ? `AND sss."syncStatus" = 'synced'
+       AND sss."shopifyProductId" IS NOT NULL`
     : "";
 
-  const rows = await prisma.$transaction(
+  const rows = await prismaDirect.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${LOAD_TIMEOUT_SEC}s'`);
       return tx.$queryRawUnsafe<Array<{ gtin: string }>>(`
-        WITH gtin_hits AS (
-          SELECT sv."gtin" AS gtin, MIN(cls."lastSyncedAt") AS last_synced
-          FROM "public"."SupplierVariant" sv
-          JOIN "public"."KickDBVariant" kv ON kv."gtin" = sv."gtin"
-          JOIN "public"."KickDBProduct" p ON p."id" = kv."productId"
-          ${shopifyJoin}
-          LEFT JOIN "public"."ChannelListingState" cls
-            ON cls."channel" = 'SHOPIFY' AND cls."providerKey" = sv."providerKey"
-          WHERE sv."supplierVariantId" LIKE 'stx_%'
-            AND sv."gtin" IS NOT NULL
-            AND sv."stock" > 0
-            AND coalesce(sv."manualLock", false) = false
-            ${ageFilter}
-          GROUP BY sv."gtin"
-        ),
-        ean_hits AS (
-          SELECT sv."gtin" AS gtin, MIN(cls."lastSyncedAt") AS last_synced
-          FROM "public"."SupplierVariant" sv
-          JOIN "public"."KickDBVariant" kv
-            ON kv."ean" = sv."gtin" AND (kv."gtin" IS NULL OR kv."gtin" <> sv."gtin")
-          JOIN "public"."KickDBProduct" p ON p."id" = kv."productId"
-          ${shopifyJoin}
-          LEFT JOIN "public"."ChannelListingState" cls
-            ON cls."channel" = 'SHOPIFY' AND cls."providerKey" = sv."providerKey"
-          WHERE sv."supplierVariantId" LIKE 'stx_%'
-            AND sv."gtin" IS NOT NULL
-            AND sv."stock" > 0
-            AND coalesce(sv."manualLock", false) = false
-            ${ageFilter}
-          GROUP BY sv."gtin"
-        ),
-        candidates AS (
-          SELECT gtin, last_synced FROM gtin_hits
-          UNION ALL
-          SELECT gtin, last_synced FROM ean_hits
-        )
-        SELECT gtin
-        FROM candidates
-        GROUP BY gtin
-        ORDER BY MIN(last_synced) ASC NULLS FIRST
+        SELECT sv."gtin" AS gtin
+        FROM "public"."SupplierVariant" sv
+        INNER JOIN "public"."VariantMapping" m
+          ON m."supplierVariantId" = sv."supplierVariantId"
+        INNER JOIN "public"."KickDBVariant" kv ON kv."id" = m."kickdbVariantId"
+        INNER JOIN "public"."KickDBProduct" p ON p."id" = kv."productId"
+        INNER JOIN "public"."ShopifySyncState" sss
+          ON sss."kickdbProductId" = p."kickdbProductId"
+        LEFT JOIN "public"."ChannelListingState" cls
+          ON cls."channel" = 'SHOPIFY' AND cls."providerKey" = sv."providerKey"
+        WHERE sv."supplierVariantId" LIKE 'stx_%'
+          AND sv."gtin" IS NOT NULL
+          AND sv."stock" > 0
+          AND coalesce(sv."manualLock", false) = false
+          ${shopifyClause}
+        GROUP BY sv."gtin"
+        ${ageHaving}
+        ORDER BY MIN(cls."lastSyncedAt") ASC NULLS FIRST
         LIMIT ${Math.floor(MAX_GTINS_PER_CYCLE)}
       `);
     },
