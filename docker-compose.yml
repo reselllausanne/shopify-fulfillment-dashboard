@@ -159,6 +159,8 @@ services:
     environment:
       - NODE_OPTIONS=${OPS_BACKGROUND_NODE_OPTIONS:---max-old-space-size=8192}
       - WORKER_POLL_MS=${OPS_BACKGROUND_POLL_MS:-3000}
+      # STX shards ~15–20 min; keep above that so live jobs not marked stale mid-run.
+      - WORKER_STALE_MS=${OPS_BACKGROUND_STALE_MS:-3600000}
       - GALAXUS_FEED_WORKER_ORIGIN=${GALAXUS_FEED_WORKER_ORIGIN:-http://127.0.0.1:3000}
       # STX price/stock shards — keep under ~1h so pooler stays alive.
       - STX_REFRESH_PRODUCT_BATCH=${STX_REFRESH_PRODUCT_BATCH:-8000}
