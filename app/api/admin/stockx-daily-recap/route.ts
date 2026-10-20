@@ -13,9 +13,11 @@ function isLocalCron(req: NextRequest): boolean {
 
 export async function POST(req: NextRequest) {
   try {
-    const role = await getStaffRoleFromRequest(req);
-    if (role !== "admin" && !isLocalCron(req)) {
-      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    if (!isLocalCron(req)) {
+      const role = await getStaffRoleFromRequest(req);
+      if (role !== "admin") {
+        return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+      }
     }
 
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
