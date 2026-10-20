@@ -48,7 +48,7 @@ async function postSlack(text: string): Promise<boolean> {
   }
 }
 
-async function postEmail(subject: string, text: string): Promise<boolean> {
+export async function sendStockxEmail(subject: string, text: string): Promise<boolean> {
   const serverToken = process.env.POSTMARK_SERVER_TOKEN?.trim();
   const from = process.env.POSTMARK_FROM_EMAIL?.trim();
   const to = process.env.STOCKX_ALERT_EMAIL?.trim() || from;
@@ -101,7 +101,10 @@ export async function notifyStockxAuthBroken(params: {
   ]
     .filter((line) => line !== null)
     .join("\n");
-  const [slack, email] = await Promise.all([postSlack(`:rotating_light: ${subject}\n${text}`), postEmail(subject, text)]);
+  const [slack, email] = await Promise.all([
+    postSlack(`:rotating_light: ${subject}\n${text}`),
+    sendStockxEmail(subject, text),
+  ]);
   if (!slack && !email) {
     recentAlerts().delete(key);
     return { sent: false, reason: "no_channel_configured_or_failed" };
