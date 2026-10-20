@@ -164,6 +164,29 @@ async function executeJob(jobKey: OpsJobKey, origin: string, tickOptions?: OpsTi
   throw new Error(`Unknown jobKey ${jobKey}`);
 }
 
+/** Enqueue-only jobs — must run before heavy inline work so cron --max-time 600s cannot starve them. */
+const ENQUEUE_FIRST_JOBS: OpsJobKey[] = ["stx-refresh", "gld-refresh"];
+
+type JobDefRow = {
+  jobKey: string;
+  enabled: boolean;
+  intervalMs: number;
+  lastRunAt: Date | string | null;
+  nextRunAt: Date | string | null;
+  lastError?: string | null;
+};
+
+function sortDefsForTick(defs: JobDefRow[]): JobDefRow[] {
+  const rank = (key: string) => {
+    const i = ENQUEUE_FIRST_JOBS.indexOf(key as OpsJobKey);
+    return i >= 0 ? i : ENQUEUE_FIRST_JOBS.length + 1;
+  };
+  return [...defs].sort((a, b) => {
+    const d = rank(a.jobKey) - rank(b.jobKey);
+    return d !== 0 ? d : a.jobKey.localeCompare(b.jobKey);
+  });
+}
+
 export async function runOpsTick(origin: string, options?: OpsTickOptions) {
   const now = new Date();
   const only = new Set((options?.only ?? []).map((s) => s.trim()).filter(Boolean));
@@ -171,7 +194,7 @@ export async function runOpsTick(origin: string, options?: OpsTickOptions) {
   const force = Boolean(options?.force);
   /** Manual “run this job only” from ops UI: skip pg advisory lock so a second run the same day is not blocked. */
   const skipAdvisoryLock = force && isOnly && only.size === 1;
-  const defs = await listJobDefinitions();
+  const defs = sortDefsForTick((await listJobDefinitions()) as JobDefRow[]);
   const results: Record<string, TickJobResult> = {};
 
   for (const def of defs) {
@@ -180,11 +203,17 @@ export async function runOpsTick(origin: string, options?: OpsTickOptions) {
     if (!shouldConsider) continue;
 
     if (!def.enabled) {
-      results[jobKey] = { due: false, ran: false, skipped: "disabled", nextAt: def.nextRunAt ?? null };
+      results[jobKey] = {
+        due: false,
+        ran: false,
+        skipped: "disabled",
+        nextAt: def.nextRunAt ? new Date(def.nextRunAt).toISOString() : null,
+      };
       continue;
     }
 
-    const nextAt = def.nextRunAt ? new Date(def.nextRunAt) : buildNextAt(def.lastRunAt, def.intervalMs);
+    const lastRunAt = def.lastRunAt ? new Date(def.lastRunAt) : null;
+    const nextAt = def.nextRunAt ? new Date(def.nextRunAt) : buildNextAt(lastRunAt, def.intervalMs);
     const due = force || now >= nextAt;
     if (!due) {
       results[jobKey] = { due: false, ran: false, skipped: "not_due", nextAt: nextAt.toISOString() };

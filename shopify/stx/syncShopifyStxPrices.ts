@@ -681,10 +681,13 @@ export async function loadInStockStxNoGtinSupplierVariantIds(options: {
   onlyOnShopify?: boolean;
   minAgeHours?: number;
   limit?: number;
+  /** Override pooled ~2min cancel — worker passes 300s. */
+  statementTimeoutSec?: number;
 }): Promise<string[]> {
   const onlyOnShopify = options.onlyOnShopify !== false;
   const minAgeHours = Math.max(0, Number(options.minAgeHours ?? 48));
   const limit = Math.max(1, Math.floor(Number(options.limit ?? 500)));
+  const timeoutSec = Math.max(60, Math.floor(Number(options.statementTimeoutSec ?? 300)));
   const shopifyClause = onlyOnShopify
     ? `AND sss."syncStatus" = 'synced'
        AND sss."shopifyProductId" IS NOT NULL`
@@ -694,7 +697,10 @@ export async function loadInStockStxNoGtinSupplierVariantIds(options: {
       ? ""
       : `HAVING MIN(cls."lastSyncedAt") IS NULL
             OR MIN(cls."lastSyncedAt") < NOW() - (${Math.round(minAgeHours)} * INTERVAL '1 hour')`;
-  const rows = await prisma.$queryRawUnsafe<Array<{ supplierVariantId: string }>>(`
+  const rows = await prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${timeoutSec}s'`);
+      return tx.$queryRawUnsafe<Array<{ supplierVariantId: string }>>(`
     SELECT sv."supplierVariantId"
     FROM "public"."SupplierVariant" sv
     INNER JOIN "public"."VariantMapping" m
@@ -723,6 +729,9 @@ export async function loadInStockStxNoGtinSupplierVariantIds(options: {
       MIN(cls."lastSyncedAt") ASC NULLS FIRST
     LIMIT ${limit}
   `);
+    },
+    { timeout: (timeoutSec + 30) * 1000, maxWait: 30_000 }
+  );
   return rows
     .map((r) => String(r.supplierVariantId ?? "").trim())
     .filter((id) => id.startsWith("stx_"));

@@ -29,6 +29,7 @@ export const DEFAULT_JOBS: Array<{
 
 export async function ensureJobDefinitions() {
   const prismaAny = prisma as any;
+  const now = new Date();
   for (const job of DEFAULT_JOBS) {
     await prismaAny.galaxusJobDefinition.upsert({
       where: { jobKey: job.jobKey },
@@ -42,6 +43,24 @@ export async function ensureJobDefinitions() {
         enabled: job.enabled,
       },
     });
+  }
+
+  // Self-heal: a failed 17h web stx-refresh left nextRunAt + lastError stuck while
+  // hourly cron timed out before reaching stx (alpha order). Clear overdue poison.
+  const stx = await prismaAny.galaxusJobDefinition.findUnique({ where: { jobKey: "stx-refresh" } });
+  if (stx?.enabled) {
+    const nextAt = stx.nextRunAt ? new Date(stx.nextRunAt) : null;
+    const intervalMs = Math.max(Number(stx.intervalMs ?? HOUR_MS), HOUR_MS);
+    const overdueMs = nextAt ? now.getTime() - nextAt.getTime() : Number.POSITIVE_INFINITY;
+    const err = String(stx.lastError ?? "");
+    const poisoned =
+      /can't reach database|timed out|P1001|P1017/i.test(err) || overdueMs > 2 * intervalMs;
+    if (poisoned) {
+      await prismaAny.galaxusJobDefinition.update({
+        where: { jobKey: "stx-refresh" },
+        data: { nextRunAt: now, lastError: null },
+      });
+    }
   }
 }
 
