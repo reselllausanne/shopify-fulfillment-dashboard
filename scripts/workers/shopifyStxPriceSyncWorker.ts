@@ -77,49 +77,106 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Stale GTINs on Shopify. Join via VariantMapping (indexed) on DIRECT_URL —
- * gtin/ean OR on the transaction pooler keeps hitting statement_timeout (57014).
+ * Stale GTINs on Shopify.
+ *
+ * Drive from ChannelListingState (age filter) — LEFT JOIN CLS across the full
+ * STX catalog + ORDER BY MIN(lastSyncedAt) hits statement_timeout even on
+ * DIRECT_URL/session pooler. CLS-first stays under ~60s in prod.
  */
 async function loadInStockStxGtins(): Promise<string[]> {
   if (MAX_GTINS_PER_CYCLE <= 0) return [];
-  const ageHaving =
-    MIN_AGE_HOURS <= 0
-      ? ""
-      : `HAVING MIN(cls."lastSyncedAt") IS NULL
-            OR MIN(cls."lastSyncedAt") < NOW() - (${Math.round(MIN_AGE_HOURS)} * INTERVAL '1 hour')`;
+  const limit = Math.floor(MAX_GTINS_PER_CYCLE);
   const shopifyClause = ONLY_ON_SHOPIFY
     ? `AND sss."syncStatus" = 'synced'
        AND sss."shopifyProductId" IS NOT NULL`
     : "";
+  const ageClause =
+    MIN_AGE_HOURS <= 0
+      ? ""
+      : `AND (cls."lastSyncedAt" IS NULL
+            OR cls."lastSyncedAt" < NOW() - (${Math.round(MIN_AGE_HOURS)} * INTERVAL '1 hour'))`;
 
-  const rows = await prismaDirect.$transaction(
+  const stale = await prismaDirect.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${LOAD_TIMEOUT_SEC}s'`);
       return tx.$queryRawUnsafe<Array<{ gtin: string }>>(`
         SELECT sv."gtin" AS gtin
-        FROM "public"."SupplierVariant" sv
+        FROM "public"."ChannelListingState" cls
+        INNER JOIN "public"."SupplierVariant" sv
+          ON sv."providerKey" = cls."providerKey"
         INNER JOIN "public"."VariantMapping" m
           ON m."supplierVariantId" = sv."supplierVariantId"
         INNER JOIN "public"."KickDBVariant" kv ON kv."id" = m."kickdbVariantId"
         INNER JOIN "public"."KickDBProduct" p ON p."id" = kv."productId"
         INNER JOIN "public"."ShopifySyncState" sss
           ON sss."kickdbProductId" = p."kickdbProductId"
-        LEFT JOIN "public"."ChannelListingState" cls
-          ON cls."channel" = 'SHOPIFY' AND cls."providerKey" = sv."providerKey"
-        WHERE sv."supplierVariantId" LIKE 'stx_%'
+        WHERE cls."channel" = 'SHOPIFY'
+          ${ageClause}
+          AND sv."supplierVariantId" LIKE 'stx_%'
           AND sv."gtin" IS NOT NULL
           AND sv."stock" > 0
           AND coalesce(sv."manualLock", false) = false
           ${shopifyClause}
         GROUP BY sv."gtin"
-        ${ageHaving}
         ORDER BY MIN(cls."lastSyncedAt") ASC NULLS FIRST
-        LIMIT ${Math.floor(MAX_GTINS_PER_CYCLE)}
+        LIMIT ${limit}
       `);
     },
     { timeout: (LOAD_TIMEOUT_SEC + 30) * 1000, maxWait: 30_000 }
   );
-  return rows.map((r) => String(r.gtin ?? "").trim()).filter((g) => g.length > 0);
+
+  const out = stale
+    .map((r) => String(r.gtin ?? "").trim())
+    .filter((g) => g.length > 0);
+  if (out.length >= limit || MIN_AGE_HOURS <= 0) return out.slice(0, limit);
+
+  // Optional fill: never-synced (no CLS). Separate tx so a slow NOT EXISTS
+  // cannot wipe a successful stale load.
+  try {
+    const have = new Set(out);
+    const fill = await prismaDirect.$transaction(
+      async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${LOAD_TIMEOUT_SEC}s'`);
+        return tx.$queryRawUnsafe<Array<{ gtin: string }>>(`
+          SELECT DISTINCT sv."gtin" AS gtin
+          FROM "public"."ShopifySyncState" sss
+          INNER JOIN "public"."KickDBProduct" p
+            ON p."kickdbProductId" = sss."kickdbProductId"
+          INNER JOIN "public"."KickDBVariant" kv ON kv."productId" = p."id"
+          INNER JOIN "public"."VariantMapping" m ON m."kickdbVariantId" = kv."id"
+          INNER JOIN "public"."SupplierVariant" sv
+            ON sv."supplierVariantId" = m."supplierVariantId"
+          WHERE sss."syncStatus" = 'synced'
+            AND sss."shopifyProductId" IS NOT NULL
+            AND sv."supplierVariantId" LIKE 'stx_%'
+            AND sv."gtin" IS NOT NULL
+            AND sv."stock" > 0
+            AND coalesce(sv."manualLock", false) = false
+            AND NOT EXISTS (
+              SELECT 1 FROM "public"."ChannelListingState" cls
+              WHERE cls."channel" = 'SHOPIFY'
+                AND cls."providerKey" = sv."providerKey"
+            )
+          ORDER BY sv."gtin"
+          LIMIT ${limit}
+        `);
+      },
+      { timeout: (LOAD_TIMEOUT_SEC + 30) * 1000, maxWait: 30_000 }
+    );
+    for (const row of fill) {
+      const g = String(row.gtin ?? "").trim();
+      if (!g || have.has(g)) continue;
+      have.add(g);
+      out.push(g);
+      if (out.length >= limit) break;
+    }
+  } catch (err: unknown) {
+    console.warn(
+      "[WORKER][SHOPIFY_STX_SYNC] never-synced fill skipped",
+      err instanceof Error ? err.message : err
+    );
+  }
+  return out.slice(0, limit);
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
