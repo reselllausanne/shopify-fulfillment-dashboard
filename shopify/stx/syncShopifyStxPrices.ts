@@ -692,41 +692,35 @@ export async function loadInStockStxNoGtinSupplierVariantIds(options: {
     ? `AND sss."syncStatus" = 'synced'
        AND sss."shopifyProductId" IS NOT NULL`
     : "";
-  const havingClause =
+  const ageClause =
     minAgeHours <= 0
       ? ""
-      : `HAVING MIN(cls."lastSyncedAt") IS NULL
-            OR MIN(cls."lastSyncedAt") < NOW() - (${Math.round(minAgeHours)} * INTERVAL '1 hour')`;
+      : `AND (cls."lastSyncedAt" IS NULL
+            OR cls."lastSyncedAt" < NOW() - (${Math.round(minAgeHours)} * INTERVAL '1 hour'))`;
+  // CLS-first: full-catalog LEFT JOIN + regex ORDER BY times out (57014).
   const rows = await prismaDirect.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${timeoutSec}s'`);
       return tx.$queryRawUnsafe<Array<{ supplierVariantId: string }>>(`
     SELECT sv."supplierVariantId"
-    FROM "public"."SupplierVariant" sv
+    FROM "public"."ChannelListingState" cls
+    INNER JOIN "public"."SupplierVariant" sv
+      ON sv."supplierVariantId" = cls."supplierVariantId"
     INNER JOIN "public"."VariantMapping" m
       ON m."supplierVariantId" = sv."supplierVariantId"
     INNER JOIN "public"."KickDBVariant" kv ON kv."id" = m."kickdbVariantId"
     INNER JOIN "public"."KickDBProduct" p ON p."id" = kv."productId"
     INNER JOIN "public"."ShopifySyncState" sss
       ON sss."kickdbProductId" = p."kickdbProductId"
-    LEFT JOIN "public"."ChannelListingState" cls
-      ON cls."channel" = 'SHOPIFY'
-      AND cls."supplierVariantId" = sv."supplierVariantId"
-    WHERE sv."supplierVariantId" LIKE 'stx_%'
+    WHERE cls."channel" = 'SHOPIFY'
+      ${ageClause}
+      AND sv."supplierVariantId" LIKE 'stx_%'
       AND sv."gtin" IS NULL
       AND sv."stock" > 0
       AND coalesce(sv."manualLock", false) = false
       AND coalesce(sv."standardBuyPrice", sv."price") > 0
       ${shopifyClause}
-    GROUP BY sv."supplierVariantId", sv."supplierProductName", sv."stock"
-    ${havingClause}
-    ORDER BY
-      CASE
-        WHEN sv."supplierProductName" ~* '(pokemon|pokémon|tcg|trading card|booster box|booster pack|elite trainer)'
-        THEN 0 ELSE 1
-      END,
-      sv."stock" DESC,
-      MIN(cls."lastSyncedAt") ASC NULLS FIRST
+    ORDER BY cls."lastSyncedAt" ASC NULLS FIRST, sv."stock" DESC
     LIMIT ${limit}
   `);
     },
