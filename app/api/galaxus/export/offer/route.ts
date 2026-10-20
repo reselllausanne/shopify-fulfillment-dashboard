@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { GALAXUS_PRICE_CURRENCY, GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { toCsv } from "@/galaxus/exports/csv";
-import { getDefaultPricing } from "@/galaxus/exports/pricing";
+import { calcGalaxusStxSellFromSourceCost, getDefaultPricing } from "@/galaxus/exports/pricing";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { accumulateBestCandidates, filterExportCandidates } from "@/galaxus/exports/gtinSelection";
 import {
@@ -272,20 +272,28 @@ export async function GET(request: Request) {
           basePrice: baseForChannel,
           classification: channelClassification,
         });
-    const priceValue =
+    let priceValue =
       channelAdjustedPrice && channelAdjustedPrice > 0
         ? channelAdjustedPrice
         : baseForChannel && baseForChannel > 0
           ? baseForChannel
           : sellPrice;
+    const supplierVariantId = String(variant?.supplierVariantId ?? "");
+    const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
+    // Hard floor: never publish STX PurchasePrice below source buy (stale snapshot / bad lock).
+    if (isStx && Number.isFinite(priceValue) && priceValue > 0) {
+      const buy = parseNumber(variant?.price);
+      if (buy != null && buy > 0 && priceValue < buy) {
+        const floor = calcGalaxusStxSellFromSourceCost(buy);
+        priceValue = floor != null && floor >= buy ? floor : buy;
+      }
+    }
     if (!Number.isFinite(priceValue) || priceValue <= 0) {
       skippedInvalidPrice += 1;
       if (providerKey) skippedProviderKeys.push(providerKey);
       continue;
     }
     const price = Number.isFinite(priceValue) && priceValue > 0 ? priceValue.toFixed(2) : "";
-    const supplierVariantId = String(variant?.supplierVariantId ?? "");
-    const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(variant?.deliveryType ?? "");
     const kickdbProduct = product ?? candidate?.kickdbVariant?.product ?? null;
     const productHandle = String(kickdbProduct?.urlKey ?? "").trim();

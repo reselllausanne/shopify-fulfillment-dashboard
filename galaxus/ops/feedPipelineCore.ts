@@ -76,6 +76,7 @@ function feedTriggerAllowsUpload(triggerSource?: FeedTriggerSource): boolean {
     triggerSource === "decathlon-partner-ship-reconciled" ||
     triggerSource === "partner-sync" ||
     triggerSource === "inventory-sync" ||
+    triggerSource === "stx-refresh" ||
     triggerSource === "scraper"
   );
 }

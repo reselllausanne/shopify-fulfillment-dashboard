@@ -24,6 +24,7 @@ import {
   remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
 import { resolveCanonicalKickdbImageList } from "@/galaxus/kickdb/imageResolver";
+import { scheduleStxRefreshMarketplaceFeedPush } from "@/galaxus/ops/stxRefreshFeedPush";
 
 type StxSyncResult = {
   processedProducts: number;
@@ -831,6 +832,7 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
   let shopifyStockRestored = 0;
   let remappedToCanonical = 0;
   let updated = 0;
+  const dirtySupplierVariantIds = new Set<string>();
   /** Flush DB writes every wave so a mid-shard crash keeps progress. */
   const WAVE = 400;
 
@@ -910,6 +912,7 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
     const dedup = new Map<string, ParsedStxRow>();
     for (const row of waveRows) dedup.set(row.supplierVariantId, row);
     for (const batch of chunkArray(Array.from(dedup.values()), 500)) {
+      for (const row of batch) dirtySupplierVariantIds.add(row.supplierVariantId);
       updated += await bulkUpdateSupplierVariants(batch.map(stxVariantSyncPatch), now, {
         updateGtinWhenProvided: false,
       });
@@ -919,6 +922,10 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
       waveResults.map((c) => c.dbProductId).filter((id): id is string => Boolean(id)),
       now
     );
+  }
+
+  if (dirtySupplierVariantIds.size > 0) {
+    scheduleStxRefreshMarketplaceFeedPush(Array.from(dirtySupplierVariantIds));
   }
 
   const durationMs = Date.now() - startedAt;
@@ -933,6 +940,7 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
     shopifySoldoutZeroed,
     shopifyStockRestored,
     remappedToCanonical,
+    galaxusFeedDirtyKeys: dirtySupplierVariantIds.size,
     durationMs,
   });
 
@@ -1029,6 +1037,10 @@ export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSync
       now,
       { updateGtinWhenProvided: false }
     );
+  }
+
+  if (rows.length > 0) {
+    scheduleStxRefreshMarketplaceFeedPush(rows.map((r) => r.supplierVariantId));
   }
 
   const gtins = rows.map((r) => r.gtin).filter((g): g is string => Boolean(g));
@@ -1182,6 +1194,10 @@ export async function refreshStxProductsByKickdbProductIds(
       now,
       { updateGtinWhenProvided: false }
     );
+  }
+
+  if (rows.length > 0) {
+    scheduleStxRefreshMarketplaceFeedPush(rows.map((r) => r.supplierVariantId));
   }
 
   const durationMs = Date.now() - startedAt;

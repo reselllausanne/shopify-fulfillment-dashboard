@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   isGalaxusCatalogReady,
   isGalaxusSellableStock,
+  isGalaxusStockZeroPushEnabled,
   isXntFeedBlockedBrand,
   resolveGalaxusDirectDeliverySupported,
   shouldForceGalaxusStockZero,
@@ -95,6 +96,25 @@ describe("isXntFeedBlockedBrand", () => {
         supplierBrand: "Le Creuset",
       })
     ).toBe(false);
+  });
+});
+
+describe("isGalaxusStockZeroPushEnabled", () => {
+  const prev = process.env.GALAXUS_STOCK_ZERO_PUSH;
+
+  afterEach(() => {
+    if (prev === undefined) delete process.env.GALAXUS_STOCK_ZERO_PUSH;
+    else process.env.GALAXUS_STOCK_ZERO_PUSH = prev;
+  });
+
+  it("defaults on so assortment blocks emit qty 0", () => {
+    delete process.env.GALAXUS_STOCK_ZERO_PUSH;
+    expect(isGalaxusStockZeroPushEnabled()).toBe(true);
+  });
+
+  it("honors explicit off", () => {
+    process.env.GALAXUS_STOCK_ZERO_PUSH = "0";
+    expect(isGalaxusStockZeroPushEnabled()).toBe(false);
   });
 });
 
