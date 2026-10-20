@@ -1,4 +1,4 @@
-import { prisma } from "@/app/lib/prisma";
+import { prisma, prismaDirect } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { deriveStockxRawAskFromStoredBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
 import {
@@ -697,7 +697,7 @@ export async function loadInStockStxNoGtinSupplierVariantIds(options: {
       ? ""
       : `HAVING MIN(cls."lastSyncedAt") IS NULL
             OR MIN(cls."lastSyncedAt") < NOW() - (${Math.round(minAgeHours)} * INTERVAL '1 hour')`;
-  const rows = await prisma.$transaction(
+  const rows = await prismaDirect.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${timeoutSec}s'`);
       return tx.$queryRawUnsafe<Array<{ supplierVariantId: string }>>(`
