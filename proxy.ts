@@ -68,6 +68,8 @@ const PUBLIC_PATHS = [
   "/api/decathlon/orders/poll",
   // StockX AWB/status cron. Route itself only accepts localhost Host or admin cookie.
   "/api/admin/stockx-awb-sync",
+  // Consolidated StockX daily recap. Same localhost/admin gate.
+  "/api/admin/stockx-daily-recap",
   // Phase 4 orphan reconciliation (physical stock without STX row).
   "/api/inventory/reconcile-orphans",
   "/api/tracking/token",
