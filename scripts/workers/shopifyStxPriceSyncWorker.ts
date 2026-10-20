@@ -189,21 +189,31 @@ async function runOnce(): Promise<void> {
   const startedAt = Date.now();
   let gtins: string[] = [];
   let noGtinSupplierIds: string[] = [];
+  console.info("[WORKER][SHOPIFY_STX_SYNC] cycle load start");
   try {
-    [gtins, noGtinSupplierIds] = await Promise.all([
-      loadInStockStxGtins(),
-      loadInStockStxNoGtinSupplierVariantIds({
-        onlyOnShopify: ONLY_ON_SHOPIFY,
-        minAgeHours: MIN_AGE_HOURS,
-        limit: PENDING_LIMIT,
-        statementTimeoutSec: LOAD_TIMEOUT_SEC,
-      }),
-    ]);
+    gtins = await loadInStockStxGtins();
+    console.info("[WORKER][SHOPIFY_STX_SYNC] gtin load ok", { n: gtins.length, ms: Date.now() - startedAt });
   } catch (err: unknown) {
     console.error(
-      "[WORKER][SHOPIFY_STX_SYNC] load failed",
+      "[WORKER][SHOPIFY_STX_SYNC] gtin load failed",
       err instanceof Error ? err.message : err
     );
+  }
+  try {
+    noGtinSupplierIds = await loadInStockStxNoGtinSupplierVariantIds({
+      onlyOnShopify: ONLY_ON_SHOPIFY,
+      minAgeHours: MIN_AGE_HOURS,
+      limit: PENDING_LIMIT,
+      statementTimeoutSec: LOAD_TIMEOUT_SEC,
+    });
+  } catch (err: unknown) {
+    console.error(
+      "[WORKER][SHOPIFY_STX_SYNC] pending load failed",
+      err instanceof Error ? err.message : err
+    );
+  }
+  if (gtins.length === 0 && noGtinSupplierIds.length === 0) {
+    console.error("[WORKER][SHOPIFY_STX_SYNC] load failed: empty gtin + pending");
     return;
   }
   const batches = chunk(gtins, BATCH_SIZE);
