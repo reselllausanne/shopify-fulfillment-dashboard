@@ -12,4 +12,9 @@ describe("shopify-custom-pixel.js (Shopify editor lint)", () => {
     const bad = lines.filter((line) => /^\s+\?\s/.test(line) || /^\s+:\s/.test(line));
     expect(bad).toEqual([]);
   });
+
+  it("does not declare functions directly inside if blocks (Shopify editor)", () => {
+    const src = readFileSync(PIXEL_PATH, "utf8");
+    expect(src).not.toMatch(/if\s*\([^)]+\)\s*\{\s*\n\s*function\s/m);
+  });
 });
