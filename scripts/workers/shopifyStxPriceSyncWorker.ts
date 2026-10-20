@@ -98,10 +98,8 @@ async function loadInStockStxGtins(): Promise<string[]> {
     async (tx) => {
       await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${LOAD_TIMEOUT_SEC}s'`);
       return tx.$queryRawUnsafe<Array<{ gtin: string }>>(`
-        WITH candidates AS (
-          SELECT DISTINCT ON (sv."gtin")
-            sv."gtin" AS gtin,
-            cls."lastSyncedAt" AS last_synced
+        WITH gtin_hits AS (
+          SELECT sv."gtin" AS gtin, MIN(cls."lastSyncedAt") AS last_synced
           FROM "public"."SupplierVariant" sv
           JOIN "public"."KickDBVariant" kv ON kv."gtin" = sv."gtin"
           JOIN "public"."KickDBProduct" p ON p."id" = kv."productId"
@@ -113,13 +111,10 @@ async function loadInStockStxGtins(): Promise<string[]> {
             AND sv."stock" > 0
             AND coalesce(sv."manualLock", false) = false
             ${ageFilter}
-          ORDER BY sv."gtin", cls."lastSyncedAt" ASC NULLS FIRST
-
-          UNION
-
-          SELECT DISTINCT ON (sv."gtin")
-            sv."gtin" AS gtin,
-            cls."lastSyncedAt" AS last_synced
+          GROUP BY sv."gtin"
+        ),
+        ean_hits AS (
+          SELECT sv."gtin" AS gtin, MIN(cls."lastSyncedAt") AS last_synced
           FROM "public"."SupplierVariant" sv
           JOIN "public"."KickDBVariant" kv
             ON kv."ean" = sv."gtin" AND (kv."gtin" IS NULL OR kv."gtin" <> sv."gtin")
@@ -132,11 +127,17 @@ async function loadInStockStxGtins(): Promise<string[]> {
             AND sv."stock" > 0
             AND coalesce(sv."manualLock", false) = false
             ${ageFilter}
-          ORDER BY sv."gtin", cls."lastSyncedAt" ASC NULLS FIRST
+          GROUP BY sv."gtin"
+        ),
+        candidates AS (
+          SELECT gtin, last_synced FROM gtin_hits
+          UNION ALL
+          SELECT gtin, last_synced FROM ean_hits
         )
         SELECT gtin
         FROM candidates
-        ORDER BY last_synced ASC NULLS FIRST
+        GROUP BY gtin
+        ORDER BY MIN(last_synced) ASC NULLS FIRST
         LIMIT ${Math.floor(MAX_GTINS_PER_CYCLE)}
       `);
     },
