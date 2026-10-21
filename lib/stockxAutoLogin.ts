@@ -57,10 +57,11 @@ async function fillStockxOtp(page: Page, code: string): Promise<boolean> {
 
 async function completeStockxEmailOtp(
   page: Page,
-  requestedAfter: Date
+  requestedAfter: Date,
+  loginEmail: string
 ): Promise<{ completed: boolean; error: string | null }> {
-  console.log("[STOCKX-PW] Waiting for StockX code in Gmail");
-  const result = await waitForStockxEmailOtp({ after: requestedAfter });
+  console.log(`[STOCKX-PW] Waiting for StockX code in Gmail (loginEmail=${loginEmail})`);
+  const result = await waitForStockxEmailOtp({ after: requestedAfter, loginEmail });
   if (!result.code) return { completed: false, error: result.error };
   const filled = await fillStockxOtp(page, result.code);
   if (!filled) return { completed: false, error: "StockX OTP input not found" };
@@ -238,7 +239,7 @@ export async function tryStockxCredentialLogin(
         }
         const text = `${page.url()}\n${(await page.locator("body").innerText().catch(() => "")) || ""}`;
         if (OTP_SCREEN_RE.test(text)) {
-          const otp = await completeStockxEmailOtp(page, emailSubmittedAt);
+          const otp = await completeStockxEmailOtp(page, emailSubmittedAt, email);
           return {
             attempted: true,
             needsOtp: !otp.completed,
@@ -269,7 +270,7 @@ export async function tryStockxCredentialLogin(
     const url = page.url();
     const needsOtp = OTP_SCREEN_RE.test(`${url}\n${bodyText}`);
     if (needsOtp) {
-      const otp = await completeStockxEmailOtp(page, loginSubmittedAt);
+      const otp = await completeStockxEmailOtp(page, loginSubmittedAt, email);
       return {
         attempted: true,
         needsOtp: !otp.completed,
