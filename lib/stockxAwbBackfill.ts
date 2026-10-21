@@ -7,6 +7,7 @@ import {
 } from "@/app/lib/constants";
 import { POST as stockxProxy } from "@/app/api/stockx/route";
 import { sendMilestoneEmailForMatch } from "@/app/lib/notifications/stockxEmail";
+import { enrichOrderMatchFromStockxOrderNumber } from "@/lib/stockxAutoCheckout/enrichAfterLink";
 import {
   markOrderMatchMetafieldsSynced,
   setSupplierOrderMetafields,
@@ -15,6 +16,8 @@ import {
 const DETAIL_DELAY_MS = 400;
 const MAX_CONSECUTIVE_AUTH_FAILURES = 3;
 const CANDIDATE_POOL_MULTIPLIER = 6;
+/** Hourly cron: heal OrderMatches that have 03-… but never got chainId (pre-enrich buys). */
+const ENRICH_MISSING_CHAIN_LIMIT = 20;
 
 export type AwbBackfillItem = {
   shopifyOrderName: string | null;
@@ -28,6 +31,13 @@ export type AwbBackfillItem = {
   error?: string | null;
 };
 
+export type AwbEnrichHealItem = {
+  shopifyOrderName: string | null;
+  stockxOrderNumber: string;
+  ok: boolean;
+  reason: string;
+};
+
 export type AwbBackfillResult = {
   dryRun: boolean;
   scanned: number;
@@ -36,6 +46,10 @@ export type AwbBackfillResult = {
   emailsSent: number;
   authFailures: number;
   abortedReason: string | null;
+  /** Backfill chainId/orderId via order number (no customer email). */
+  enrichHealed: number;
+  enrichFailed: number;
+  enrichItems: AwbEnrichHealItem[];
   items: AwbBackfillItem[];
 };
 
@@ -105,6 +119,97 @@ export async function fetchBuyOrder(token: string, chainId: string, orderId: str
 }
 
 /**
+ * Buys linked with order number only (auto-checkout before enrich, or enrich failed).
+ * AWB fetch needs chainId+orderId — heal these first (no customer email).
+ */
+export async function selectMissingChainIdCandidates(args: {
+  since: Date;
+  limit: number;
+}) {
+  const pool = await prisma.orderMatch.findMany({
+    where: {
+      stockxOrderNumber: { startsWith: "0" },
+      shopifyCreatedAt: { gte: args.since },
+      OR: [{ stockxChainId: null }, { stockxOrderId: null }],
+      NOT: { stockxStatus: { in: ["CANCELLED", "REFUNDED"] } },
+    },
+    select: {
+      id: true,
+      shopifyOrderName: true,
+      stockxOrderNumber: true,
+      stockxChainId: true,
+      stockxOrderId: true,
+    },
+    orderBy: { shopifyCreatedAt: "desc" },
+    take: Math.max(args.limit * 3, args.limit),
+  });
+
+  return pool
+    .filter((row) => isRealStockxBuyRef(row.stockxOrderNumber))
+    .slice(0, args.limit);
+}
+
+/**
+ * Resolve missing stockxChainId/stockxOrderId from StockX buying list by order number.
+ * Reuses enrichAfterLink — does NOT send customer email.
+ */
+export async function enrichMissingChainIdCandidates(args: {
+  since: Date;
+  limit?: number;
+  dryRun?: boolean;
+}): Promise<{
+  attempted: number;
+  enriched: number;
+  failed: number;
+  items: AwbEnrichHealItem[];
+}> {
+  const limit = Math.min(
+    Math.max(Number(args.limit ?? ENRICH_MISSING_CHAIN_LIMIT) || ENRICH_MISSING_CHAIN_LIMIT, 1),
+    50
+  );
+  const candidates = await selectMissingChainIdCandidates({ since: args.since, limit });
+  const items: AwbEnrichHealItem[] = [];
+  let enriched = 0;
+  let failed = 0;
+
+  for (const [index, row] of candidates.entries()) {
+    const stockxOrderNumber = String(row.stockxOrderNumber || "").trim();
+    const label = {
+      shopifyOrderName: row.shopifyOrderName,
+      stockxOrderNumber,
+    };
+
+    if (args.dryRun) {
+      items.push({ ...label, ok: true, reason: "dry_run" });
+      continue;
+    }
+
+    try {
+      const result = await enrichOrderMatchFromStockxOrderNumber({
+        orderMatchId: row.id,
+        stockxOrderNumber,
+      });
+      items.push({ ...label, ok: result.ok, reason: result.reason });
+      if (result.ok) enriched += 1;
+      else failed += 1;
+    } catch (error: any) {
+      failed += 1;
+      items.push({
+        ...label,
+        ok: false,
+        reason: error?.message || "enrich_threw",
+      });
+    }
+
+    if (index + 1 < candidates.length) {
+      await sleep(DETAIL_DELAY_MS);
+    }
+  }
+
+  return { attempted: candidates.length, enriched, failed, items };
+}
+
+/**
  * In-transit StockX buys: missing AWB first (warehouse scan), then rows that already have
  * tracking but still need status/milestone emails until the warehouse fulfills them.
  */
@@ -167,6 +272,20 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
   const includeFulfilled = Boolean(options.includeFulfilled ?? false);
 
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // Heal backlog: orderNumber present but chainId/orderId missing (skipped by selectAwbCandidates).
+  // Cap per run so hourly cron drains without blowing StockX rate limits. No customer email.
+  const enrichHeal = await enrichMissingChainIdCandidates({
+    since,
+    limit: ENRICH_MISSING_CHAIN_LIMIT,
+    dryRun,
+  });
+  if (enrichHeal.attempted > 0) {
+    console.log(
+      `[STOCKX-AWB] enrich missing chainId: attempted=${enrichHeal.attempted} ok=${enrichHeal.enriched} fail=${enrichHeal.failed}`
+    );
+  }
+
   const candidates = await selectAwbCandidates({ since, limit, includeFulfilled });
 
   const items: AwbBackfillItem[] = [];
@@ -338,6 +457,9 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
     emailsSent,
     authFailures,
     abortedReason,
+    enrichHealed: dryRun ? 0 : enrichHeal.enriched,
+    enrichFailed: dryRun ? 0 : enrichHeal.failed,
+    enrichItems: enrichHeal.items,
     items,
   };
 }

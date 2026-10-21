@@ -26,7 +26,10 @@ export type GalaxusAwbBackfillItem = AwbBackfillItem & {
   deliveryType?: string | null;
 };
 
-export type GalaxusAwbBackfillResult = Omit<AwbBackfillResult, "items" | "emailsSent"> & {
+export type GalaxusAwbBackfillResult = Omit<
+  AwbBackfillResult,
+  "items" | "emailsSent" | "enrichHealed" | "enrichFailed" | "enrichItems"
+> & {
   emailsSent: number;
   items: GalaxusAwbBackfillItem[];
 };
