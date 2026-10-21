@@ -63,10 +63,20 @@ function normalizeTrackingUrl(raw: string | null | undefined): string | null {
  * Push supplier.* order metafields on a Shopify order (StockX #, status, ETA, cost, AWB).
  * Best-effort helper used by save-match, auto-checkout link, and AWB/status cron.
  */
+/** Accept GID or bare numeric Shopify order id. */
+export function toShopifyOrderGid(raw: string): string {
+  const id = String(raw ?? "").trim();
+  if (!id) return "";
+  if (id.startsWith("gid://shopify/Order/")) return id;
+  if (/^\d+$/.test(id)) return `gid://shopify/Order/${id}`;
+  if (id.startsWith("gid://")) return id;
+  return id;
+}
+
 export async function setSupplierOrderMetafields(
   input: SupplierOrderMetafieldsInput
 ): Promise<SupplierOrderMetafieldsResult> {
-  const shopifyOrderId = String(input.shopifyOrderId ?? "").trim();
+  const shopifyOrderId = toShopifyOrderGid(String(input.shopifyOrderId ?? "").trim());
   const stockxOrderNumber = String(input.stockxOrderNumber ?? "").trim();
 
   if (!shopifyOrderId || !stockxOrderNumber) {
