@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
+import { runStxAwbResync } from "@/galaxus/jobs/stxAwbResync";
+import { runGalaxusStockxAutoLinkSweep } from "@/galaxus/orders/autoLinkSweep";
 import { runDecathlonAwbBackfill } from "@/lib/decathlonAwbBackfill";
 import { runGalaxusAwbBackfill } from "@/lib/galaxusAwbBackfill";
-import { runGalaxusStockxAutoLinkSweep } from "@/galaxus/orders/autoLinkSweep";
 import { runAwbBackfill } from "@/lib/stockxAwbBackfill";
-import { canRefreshStockxAccount, refreshStockxToken } from "@/lib/stockxSessionRefresh";
 import { notifyStockxAuthBroken } from "@/lib/stockxAuthAlert";
-import { readServerStockxToken, stockxTokenExpiresAt } from "@/lib/stockxServerToken";
 import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
+import { canRefreshStockxAccount, refreshStockxToken } from "@/lib/stockxSessionRefresh";
+import { readServerStockxToken, stockxTokenExpiresAt } from "@/lib/stockxServerToken";
 import { listStockxAccountTokens } from "@/lib/stockxToken";
 
 const GALAXUS_EXPIRY_WARN_MS = 2 * 60 * 60 * 1000;
@@ -23,8 +24,12 @@ function isLocalCron(req: NextRequest): boolean {
 }
 
 /**
+ * Hourly cron path (scripts/stockx-awb-cron.sh → this route):
+ * 1. Refresh StockX session/token (default + Galaxus accounts)
+ * 2. Match new Galaxus STX buys (auto-link sweep)
+ * 3. Enrich missing chainId + pull AWB/status for Shopify / Galaxus / Decathlon matches
+ *
  * Runs inside the web process so Playwright can use the entrypoint Xvfb display.
- * Cron should hit this over localhost instead of `docker compose exec npx tsx …`.
  */
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
@@ -36,7 +41,8 @@ export async function POST(req: NextRequest) {
 
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const forceRefresh = Boolean(body?.forceRefresh ?? false);
-    const days = Number(body?.days ?? 21);
+    // 45d window: recent matched buys that still need AWB / chainId (cron, not historical dump).
+    const days = Number(body?.days ?? 45);
     const limit = Number(body?.limit ?? 60);
     const dryRun = Boolean(body?.dryRun ?? false);
 
@@ -45,7 +51,7 @@ export async function POST(req: NextRequest) {
         ? Promise.resolve(null)
         : runGalaxusStockxAutoLinkSweep({
             days: Number(body?.galaxusAutoLinkDays ?? 30),
-            budgetMs: Math.max(30_000, 600_000 - (Date.now() - startedAt)),
+            budgetMs: Math.max(30_000, 480_000 - (Date.now() - startedAt)),
           }).catch((err: any) => ({ ok: false, error: String(err?.message ?? err) }));
     const runAutoLinkSweep = async () => {
       const res: any = await runAutoLinkSweepRaw();
@@ -98,7 +104,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Match new Galaxus STX buys first so AWB pass can fill them same hour.
+    const galaxusAutoLink = await runAutoLinkSweep();
+
     const shared = { token, days, limit, dryRun, includeFulfilled: false as const };
+    // Shopify: enrich missing chainId (order# only) then pull AWB/status. Shopify link itself
+    // happens at auto-checkout; cron heals enrich + AWB for already-linked OrderMatches.
     const shopify = await runAwbBackfill(shared);
     // Galaxus buys live on a separate StockX account; without its bearer their AWBs never fill.
     const extraTokens = (await listStockxAccountTokens())
@@ -107,7 +118,14 @@ export async function POST(req: NextRequest) {
     const galaxus = await runGalaxusAwbBackfill({ ...shared, extraTokens });
     const decathlon = await runDecathlonAwbBackfill(shared);
 
-    const galaxusAutoLink = await runAutoLinkSweep();
+    let stxResync: Awaited<ReturnType<typeof runStxAwbResync>> | null = null;
+    if (!dryRun) {
+      try {
+        stxResync = await runStxAwbResync({ token, tokens: extraTokens });
+      } catch (error: any) {
+        console.warn("[STOCKX-AWB-SYNC] stx-resync failed:", error?.message ?? error);
+      }
+    }
 
     const abortedReason =
       shopify.abortedReason || galaxus.abortedReason || decathlon.abortedReason || null;
@@ -133,6 +151,7 @@ export async function POST(req: NextRequest) {
       galaxus,
       decathlon,
       galaxusAutoLink,
+      stxResync,
       scanned: shopify.scanned + galaxus.scanned + decathlon.scanned,
       candidates: shopify.candidates + galaxus.candidates + decathlon.candidates,
       updated: shopify.updated + galaxus.updated + decathlon.updated,

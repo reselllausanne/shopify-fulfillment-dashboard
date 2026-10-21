@@ -219,21 +219,26 @@ export async function selectGalaxusAwbCandidates(args: {
     }
   }
 
-  const open = stockxRows
-    .filter((row) => {
-      const lineId = String(row.galaxusOrderLineId ?? "").trim();
-      // Direct-delivery matches may lack ShipmentItem coverage data → keep them.
-      const dt = String(row.order?.deliveryType ?? "").toLowerCase();
-      if (dt === "direct_delivery") return true;
-      return !lineId || !closedLineIds.has(lineId);
-    })
-    .map((row) => ({
-      ...row,
-      deliveryType: row.order?.deliveryType ?? null,
-    }));
+  const ranked = stockxRows.map((row) => ({
+    ...row,
+    deliveryType: row.order?.deliveryType ?? null,
+  }));
+  const isOpen = (row: (typeof ranked)[number]) => {
+    const lineId = String(row.galaxusOrderLineId ?? "").trim();
+    // Direct-delivery matches may lack ShipmentItem coverage data → keep them.
+    const dt = String(row.order?.deliveryType ?? "").toLowerCase();
+    if (dt === "direct_delivery") return true;
+    return !lineId || !closedLineIds.has(lineId);
+  };
+  const open = ranked.filter(isOpen);
+  // Closed/historical lines still missing AWB (skipped link / late AWB) stay in the queue.
+  const closedMissingAwb = args.includeFulfilled
+    ? []
+    : ranked.filter((row) => !isOpen(row) && !row.stockxAwb);
 
   return [
     ...open.filter((row) => !row.stockxAwb),
+    ...closedMissingAwb,
     ...open.filter((row) => Boolean(row.stockxAwb)),
   ].slice(0, args.limit);
 }

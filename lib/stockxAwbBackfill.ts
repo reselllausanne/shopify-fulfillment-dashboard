@@ -17,7 +17,7 @@ const DETAIL_DELAY_MS = 400;
 const MAX_CONSECUTIVE_AUTH_FAILURES = 3;
 const CANDIDATE_POOL_MULTIPLIER = 6;
 /** Hourly cron: heal OrderMatches that have 03-… but never got chainId (pre-enrich buys). */
-const ENRICH_MISSING_CHAIN_LIMIT = 20;
+const ENRICH_MISSING_CHAIN_LIMIT = 40;
 
 export type AwbBackfillItem = {
   shopifyOrderName: string | null;
@@ -59,6 +59,8 @@ export type AwbBackfillOptions = {
   limit?: number;
   dryRun?: boolean;
   includeFulfilled?: boolean;
+  /** Cap for missing-chainId enrich pass (default 40). */
+  enrichLimit?: number;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -165,7 +167,7 @@ export async function enrichMissingChainIdCandidates(args: {
 }> {
   const limit = Math.min(
     Math.max(Number(args.limit ?? ENRICH_MISSING_CHAIN_LIMIT) || ENRICH_MISSING_CHAIN_LIMIT, 1),
-    50
+    80
   );
   const candidates = await selectMissingChainIdCandidates({ since: args.since, limit });
   const items: AwbEnrichHealItem[] = [];
@@ -254,10 +256,15 @@ export async function selectAwbCandidates(args: {
           })
         ).map((row) => row.shopifyOrderId)
   );
-  // Missing AWB first so warehouse scans stay unblocked; then status refresh for the rest.
+  // Missing AWB first (incl. fulfilled/historical matches we previously skipped).
+  // Then open rows that already have tracking (status / milestone refresh).
   const open = pool.filter((row) => !fulfilledIds.has(row.shopifyOrderId));
+  const fulfilledMissingAwb = args.includeFulfilled
+    ? []
+    : pool.filter((row) => fulfilledIds.has(row.shopifyOrderId) && !row.stockxAwb);
   return [
     ...open.filter((row) => !row.stockxAwb),
+    ...fulfilledMissingAwb,
     ...open.filter((row) => Boolean(row.stockxAwb)),
   ].slice(0, args.limit);
 }
@@ -270,6 +277,13 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
   const limit = Math.min(Math.max(Number(options.limit ?? 40) || 40, 1), 200);
   const dryRun = Boolean(options.dryRun ?? false);
   const includeFulfilled = Boolean(options.includeFulfilled ?? false);
+  const enrichLimit = Math.min(
+    Math.max(
+      Number(options.enrichLimit ?? ENRICH_MISSING_CHAIN_LIMIT) || ENRICH_MISSING_CHAIN_LIMIT,
+      1
+    ),
+    80
+  );
 
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
@@ -277,7 +291,7 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
   // Cap per run so hourly cron drains without blowing StockX rate limits. No customer email.
   const enrichHeal = await enrichMissingChainIdCandidates({
     since,
-    limit: ENRICH_MISSING_CHAIN_LIMIT,
+    limit: enrichLimit,
     dryRun,
   });
   if (enrichHeal.attempted > 0) {
@@ -400,6 +414,7 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
       }
 
       // Status emails used to fire only on dashboard save-match; cron must advance them too.
+      // emailedAt / lastMilestoneKey gates prevent reblast on rematch.
       let emailSent = false;
       let emailSkipped: string | null = null;
       try {
