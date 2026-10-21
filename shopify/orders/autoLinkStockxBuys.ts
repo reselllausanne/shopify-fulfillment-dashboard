@@ -24,9 +24,56 @@ import {
 import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
 import { getCachedStockxBuyingOrders } from "@/galaxus/stx/buyingOrdersCache";
 import type { StockxBuyingNode } from "@/galaxus/stx/stockxClient";
-import { shopifyGraphQL } from "@/lib/shopifyAdmin";
+import { shopifyGraphQL, type ShopifyGraphQLResult } from "@/lib/shopifyAdmin";
 import { resolveStockxBearerToken } from "@/lib/stockxToken";
 import { setSupplierOrderMetafields, markOrderMatchMetafieldsSynced } from "@/shopify/orders/setSupplierMetafields";
+
+type UnmatchedOrdersQuery = {
+  orders: {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    edges: Array<{
+      node: {
+        id: string;
+        name: string;
+        createdAt: string;
+        displayFinancialStatus: string | null;
+        displayFulfillmentStatus: string | null;
+        cancelledAt: string | null;
+        customer: {
+          email: string | null;
+          firstName: string | null;
+          lastName: string | null;
+        } | null;
+        lineItems: {
+          edges: Array<{
+            node: {
+              id: string;
+              title: string;
+              variantTitle: string | null;
+              sku: string | null;
+              quantity: number;
+              currentQuantity: number | null;
+              originalUnitPriceSet: {
+                shopMoney: { amount: string; currencyCode: string };
+              };
+              image: { url: string | null } | null;
+              variant: {
+                selectedOptions: Array<{ name: string; value: string }> | null;
+              } | null;
+            };
+          }>;
+        };
+      };
+    }>;
+  } | null;
+};
+
+async function fetchUnmatchedOrdersPage(
+  query: string,
+  cursor: string | null
+): Promise<ShopifyGraphQLResult<UnmatchedOrdersQuery>> {
+  return shopifyGraphQL<UnmatchedOrdersQuery>(query, { cursor });
+}
 
 const PENDING_PAGES = Math.max(
   1,
@@ -278,46 +325,6 @@ async function fetchUnmatchedShopifyLines(days: number, maxLines: number): Promi
     matches.map((m) => gidToNumericId(String(m.shopifyLineItemId)))
   );
 
-  type UnmatchedOrdersQuery = {
-    orders: {
-      pageInfo: { hasNextPage: boolean; endCursor: string | null };
-      edges: Array<{
-        node: {
-          id: string;
-          name: string;
-          createdAt: string;
-          displayFinancialStatus: string | null;
-          displayFulfillmentStatus: string | null;
-          cancelledAt: string | null;
-          customer: {
-            email: string | null;
-            firstName: string | null;
-            lastName: string | null;
-          } | null;
-          lineItems: {
-            edges: Array<{
-              node: {
-                id: string;
-                title: string;
-                variantTitle: string | null;
-                sku: string | null;
-                quantity: number;
-                currentQuantity: number | null;
-                originalUnitPriceSet: {
-                  shopMoney: { amount: string; currencyCode: string };
-                };
-                image: { url: string | null } | null;
-                variant: {
-                  selectedOptions: Array<{ name: string; value: string }> | null;
-                } | null;
-              };
-            }>;
-          };
-        };
-      }>;
-    } | null;
-  };
-
   const query = `
     query ShopifyAutoLinkUnmatched($cursor: String) {
       orders(
@@ -363,12 +370,12 @@ async function fetchUnmatchedShopifyLines(days: number, maxLines: number): Promi
   let ordersScanned = 0;
 
   for (;;) {
-    const gqlRes = await shopifyGraphQL<UnmatchedOrdersQuery>(query, { cursor });
+    const gqlRes = await fetchUnmatchedOrdersPage(query, cursor);
     const errors = gqlRes.errors;
     if (errors?.length) {
       throw new Error(errors.map((e) => e.message).join("; "));
     }
-    const page = gqlRes.data?.orders;
+    const page = gqlRes.data.orders;
     if (!page) break;
 
     for (const edge of page.edges ?? []) {
