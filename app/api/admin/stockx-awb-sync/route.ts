@@ -137,6 +137,8 @@ export async function POST(req: NextRequest) {
       candidates: shopify.candidates + galaxus.candidates + decathlon.candidates,
       updated: shopify.updated + galaxus.updated + decathlon.updated,
       emailsSent: shopify.emailsSent,
+      enrichHealed: shopify.enrichHealed,
+      enrichFailed: shopify.enrichFailed,
       authFailures: shopify.authFailures + galaxus.authFailures + decathlon.authFailures,
       abortedReason,
       items: [

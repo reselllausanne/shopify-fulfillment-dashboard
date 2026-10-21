@@ -18,7 +18,10 @@ export type DecathlonAwbBackfillItem = AwbBackfillItem & {
   decathlonOrderId: string | null;
 };
 
-export type DecathlonAwbBackfillResult = Omit<AwbBackfillResult, "items" | "emailsSent"> & {
+export type DecathlonAwbBackfillResult = Omit<
+  AwbBackfillResult,
+  "items" | "emailsSent" | "enrichHealed" | "enrichFailed" | "enrichItems"
+> & {
   emailsSent: number;
   items: DecathlonAwbBackfillItem[];
 };

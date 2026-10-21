@@ -159,7 +159,7 @@ async function main(): Promise<void> {
     includeFulfilled: false,
   });
   console.log(
-    `[STOCKX-AWB-SYNC] shopify candidates=${shopifyResult.candidates} updated=${shopifyResult.updated} emailsSent=${shopifyResult.emailsSent}`
+    `[STOCKX-AWB-SYNC] shopify candidates=${shopifyResult.candidates} updated=${shopifyResult.updated} emailsSent=${shopifyResult.emailsSent} enrichHealed=${shopifyResult.enrichHealed} enrichFailed=${shopifyResult.enrichFailed}`
   );
   console.log(
     `[STOCKX-AWB-SYNC] galaxus candidates=${galaxusResult.candidates} updated=${galaxusResult.updated}`
