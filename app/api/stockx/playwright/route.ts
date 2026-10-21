@@ -213,7 +213,6 @@ export async function POST(req: NextRequest) {
     const waitForUserClose = Boolean(body?.waitForUserClose ?? false);
     const waitForCloseMs = Math.min(Number(body?.waitForCloseMs || 120000), 600000);
     const autoNavigateRequested = Boolean(body?.autoNavigate ?? false);
-    const autoNavigate = autoNavigateRequested && headless;
     const startUrl = String(body?.startUrl || "https://stockx.com/login");
     const reuseTokenFile = Boolean(body?.reuseTokenFile ?? true);
     const persistent = Boolean(body?.persistent ?? false);
@@ -221,6 +220,8 @@ export async function POST(req: NextRequest) {
     const allowProfileReset = Boolean(body?.allowProfileReset ?? true);
     // Unattended cron can fill STOCKX_EMAIL/PASSWORD from env when the session is cold.
     const autoLogin = Boolean(body?.autoLogin ?? false);
+    // Headed cron refreshes also need kick navigations (was headless-only before).
+    const autoNavigate = autoNavigateRequested && (headless || autoLogin);
     const userDataDir = String(
       body?.userDataDir || path.join(process.cwd(), ".data", "stockx-profile")
     );
@@ -458,16 +459,48 @@ export async function POST(req: NextRequest) {
       const failure = req.failure();
       requestFails.push(`${url} :: ${failure?.errorText || "failed"}`);
     });
-    // Warm stockx.com first so cf_clearance can land before accounts.stockx.com login.
+    // Cookie-first remint: hit buying/orders with the persistent profile before /login.
+    // /login re-triggers Cloudflare Turnstile even when cookies would still mint a bearer.
     if (autoLogin) {
       try {
         await page.goto("https://stockx.com/", { waitUntil: "domcontentloaded", timeout: 45000 });
-        await page.waitForTimeout(4000);
-      } catch {
-        // continue to startUrl
+        await page.waitForTimeout(2500);
+        await page.goto("https://stockx.com/buying/orders", {
+          waitUntil: "domcontentloaded",
+          timeout: 45000,
+        });
+        const cookieDeadline = Date.now() + 12_000;
+        while (!capturedToken && Date.now() < cookieDeadline) {
+          await page.waitForTimeout(1000);
+          if (capturedToken) break;
+          try {
+            const dump = await page.evaluate(() => {
+              const out: Record<string, string | null> = {};
+              for (const key of Object.keys(localStorage)) out[key] = localStorage.getItem(key);
+              return out;
+            });
+            const fromStorage = extractTokenFromStorage(dump);
+            if (fromStorage) {
+              capturedToken = fromStorage;
+              break;
+            }
+          } catch {
+            // ignore storage probe failures
+          }
+        }
+        if (capturedToken) {
+          console.log("[STOCKX-PW] Cookie-first remint succeeded (persistent session)");
+        } else {
+          console.log("[STOCKX-PW] Cookie-first remint missed; falling back to credential login");
+        }
+      } catch (err: any) {
+        console.warn("[STOCKX-PW] Cookie-first remint navigation failed", err?.message || err);
       }
     }
-    await page.goto(startUrl, { waitUntil: "domcontentloaded" });
+
+    if (!capturedToken) {
+      await page.goto(startUrl, { waitUntil: "domcontentloaded" });
+    }
     const currentUrl = page.url();
     const pageTitle = await page.title().catch(() => "");
     // Soft Cloudflare / Turnstile pages often auto-pass on headed Xvfb — wait instead of aborting.
@@ -512,7 +545,7 @@ export async function POST(req: NextRequest) {
       );
     }
     try {
-      await page.waitForURL(/stockx\.com\/(login|account|profile|browse)/i, {
+      await page.waitForURL(/stockx\.com\/(login|account|profile|browse|buying)/i, {
         timeout: 15000,
       });
     } catch {
@@ -526,6 +559,13 @@ export async function POST(req: NextRequest) {
         body?.credentialsAccount === "galaxus" ? "galaxus" : "default"
       );
       if (creds) {
+        // Credential fill needs the Auth0/login wall — only open it when cookies failed.
+        if (!/accounts\.stockx\.com|stockx\.com\/login/i.test(page.url())) {
+          await page.goto("https://stockx.com/login", {
+            waitUntil: "domcontentloaded",
+            timeout: 45000,
+          }).catch(() => undefined);
+        }
         console.log("[STOCKX-PW] Attempting credential auto-login");
         const result = await tryStockxCredentialLogin(page, creds);
         autoLoginNeedsOtp = result.needsOtp;
@@ -564,7 +604,11 @@ export async function POST(req: NextRequest) {
         if (now - lastKick > 15000) {
           lastKick = now;
           try {
-            await page.goto(startUrl, { waitUntil: "domcontentloaded" });
+            // Prefer buying/orders so a still-valid session emits Authorization headers.
+            const kickUrl = autoLogin
+              ? "https://stockx.com/buying/orders"
+              : startUrl;
+            await page.goto(kickUrl, { waitUntil: "domcontentloaded" });
           } catch {
             // ignore navigation errors
           }
