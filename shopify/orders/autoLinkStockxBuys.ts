@@ -5,7 +5,8 @@
  * Shopify StockX account only, match unmatched paid Shopify lines via
  * `matchShopifyToSupplier`, persist HIGH-confidence links only.
  *
- * Medium / low / ambiguous → skip (no wrong links). No customer email here —
+ * Medium / low / ambiguous → skip auto-write (no wrong links). Medium → ops
+ * email (deduped) so yellow lines can be linked by hand. No customer email —
  * AWB/enrich cron advances milestones with lastMilestoneKey gates (no reblast).
  */
 import { prisma } from "@/app/lib/prisma";
@@ -26,6 +27,10 @@ import { getCachedStockxBuyingOrders } from "@/galaxus/stx/buyingOrdersCache";
 import type { StockxBuyingNode } from "@/galaxus/stx/stockxClient";
 import { shopifyGraphQL, type ShopifyGraphQLResult } from "@/lib/shopifyAdmin";
 import { resolveStockxBearerToken } from "@/lib/stockxToken";
+import {
+  emailShopifyStockxMediumCandidates,
+  type MediumMatchEmailItem,
+} from "@/shopify/orders/emailMediumCandidates";
 import { setSupplierOrderMetafields, markOrderMatchMetafieldsSynced } from "@/shopify/orders/setSupplierMetafields";
 
 type UnmatchedOrdersQuery = {
@@ -114,6 +119,9 @@ export type ShopifyStockxAutoLinkResult = {
   skippedNoCost: number;
   skippedClaimed: number;
   budgetExhausted: boolean;
+  mediumEmailed: number;
+  mediumEmailDeduped: number;
+  mediumEmailSent: boolean;
   items: Array<{
     shopifyOrderName: string;
     shopifyLineItemId: string;
@@ -168,11 +176,12 @@ export function normalizeStockxBuyingNodeForShopifyMatch(
       variantAny?.traits?.size ||
       variantAny?.sizeChart?.baseSize ||
       null;
+  const urlKey = String(productAny?.urlKey ?? productAny?.url_key ?? "").trim() || null;
   const skuKey = String(
     variantAny?.styleId ??
       variantAny?.model ??
       productAny?.styleId ??
-      productAny?.urlKey ??
+      urlKey ??
       productAny?.model ??
       ""
   );
@@ -199,6 +208,7 @@ export function normalizeStockxBuyingNodeForShopifyMatch(
     productVariantId: String(variantAny?.id ?? "").trim() || undefined,
     awb: (n as any).awb ?? null,
     trackingUrl: (n as any).trackingUrl ?? null,
+    urlKey,
   };
 }
 
@@ -227,8 +237,50 @@ export type AutoLinkPick = {
   suggestedCost: number;
 };
 
+export type AutoLinkReviewCandidate = {
+  line: UnmatchedShopifyLine;
+  supplier: NormalizedSupplierOrder;
+  score: number;
+  reasons: string[];
+  timeDiffHours: number;
+  confidence: "medium" | "low";
+  suggestedCost: number | null;
+};
+
+function suggestedCostFromSupplier(supplier: NormalizedSupplierOrder): number | null {
+  if (typeof supplier.offerAmount === "number" && supplier.offerAmount > 0) {
+    return supplier.offerAmount;
+  }
+  if (typeof supplier.totalTTC === "number" && supplier.totalTTC > 0) {
+    return supplier.totalTTC;
+  }
+  return null;
+}
+
+function toMediumEmailItem(c: AutoLinkReviewCandidate): MediumMatchEmailItem {
+  return {
+    shopifyOrderName: c.line.orderName,
+    shopifyLineItemId: toLineItemGid(c.line.lineItemId),
+    shopifyTitle: c.line.title,
+    shopifySku: c.line.sku,
+    shopifySizeEU: c.line.sizeEU,
+    stockxOrderNumber: c.supplier.supplierOrderNumber,
+    stockxOrderId: c.supplier.orderId,
+    stockxTitle: c.supplier.productTitle,
+    stockxSizeEU: c.supplier.sizeEU,
+    stockxSkuKey: c.supplier.skuKey,
+    score: c.score,
+    confidence: c.confidence,
+    reasons: c.reasons,
+    timeDiffHours: c.timeDiffHours,
+    suggestedCost: c.suggestedCost,
+    urlKey: c.supplier.urlKey ?? null,
+  };
+}
+
 /**
  * FIFO over Shopify lines; reserve HIGH StockX buys so one buy → one line.
+ * Medium/low collected for ops email (not reserved — human decides).
  * Pure helper for tests — no I/O.
  */
 export function pickHighConfidenceShopifyStockxLinks(input: {
@@ -237,6 +289,8 @@ export function pickHighConfidenceShopifyStockxLinks(input: {
   usedSupplierNumbers: Set<string>;
 }): {
   picks: AutoLinkPick[];
+  mediumCandidates: AutoLinkReviewCandidate[];
+  lowCandidates: AutoLinkReviewCandidate[];
   mediumSkipped: number;
   lowSkipped: number;
   noneSkipped: number;
@@ -248,6 +302,8 @@ export function pickHighConfidenceShopifyStockxLinks(input: {
   );
 
   const picks: AutoLinkPick[] = [];
+  const mediumCandidates: AutoLinkReviewCandidate[] = [];
+  const lowCandidates: AutoLinkReviewCandidate[] = [];
   let mediumSkipped = 0;
   let lowSkipped = 0;
   let noneSkipped = 0;
@@ -266,20 +322,33 @@ export function pickHighConfidenceShopifyStockxLinks(input: {
     }
     if (best.confidence === "medium") {
       mediumSkipped += 1;
+      mediumCandidates.push({
+        line,
+        supplier: best.supplierOrder,
+        score: Number(best.score) || 0,
+        reasons: best.reasons ?? [],
+        timeDiffHours: Number(best.timeDiffHours) || 0,
+        confidence: "medium",
+        suggestedCost: suggestedCostFromSupplier(best.supplierOrder),
+      });
       continue;
     }
     if (best.confidence !== "high") {
       lowSkipped += 1;
+      lowCandidates.push({
+        line,
+        supplier: best.supplierOrder,
+        score: Number(best.score) || 0,
+        reasons: best.reasons ?? [],
+        timeDiffHours: Number(best.timeDiffHours) || 0,
+        confidence: "low",
+        suggestedCost: suggestedCostFromSupplier(best.supplierOrder),
+      });
       continue;
     }
 
     const supplier = best.supplierOrder;
-    const suggestedCost =
-      typeof supplier.offerAmount === "number" && supplier.offerAmount > 0
-        ? supplier.offerAmount
-        : typeof supplier.totalTTC === "number" && supplier.totalTTC > 0
-          ? supplier.totalTTC
-          : null;
+    const suggestedCost = suggestedCostFromSupplier(supplier);
 
     if (
       !shouldAutoApplyShopifyStockxMatch({
@@ -303,7 +372,15 @@ export function pickHighConfidenceShopifyStockxLinks(input: {
     });
   }
 
-  return { picks, mediumSkipped, lowSkipped, noneSkipped, skippedNoCost };
+  return {
+    picks,
+    mediumCandidates,
+    lowCandidates,
+    mediumSkipped,
+    lowSkipped,
+    noneSkipped,
+    skippedNoCost,
+  };
 }
 
 async function fetchUnmatchedShopifyLines(days: number, maxLines: number): Promise<{
@@ -495,6 +572,9 @@ export async function runShopifyStockxAutoLinkSweep(
     skippedNoCost: 0,
     skippedClaimed: 0,
     budgetExhausted: false,
+    mediumEmailed: 0,
+    mediumEmailDeduped: 0,
+    mediumEmailSent: false,
     items: [],
   };
 
@@ -546,12 +626,19 @@ export async function runShopifyStockxAutoLinkSweep(
     }
   }
 
-  const { picks, mediumSkipped, lowSkipped, noneSkipped, skippedNoCost } =
-    pickHighConfidenceShopifyStockxLinks({
-      lines,
-      supplierOrders: normalized,
-      usedSupplierNumbers,
-    });
+  const {
+    picks,
+    mediumCandidates,
+    lowCandidates,
+    mediumSkipped,
+    lowSkipped,
+    noneSkipped,
+    skippedNoCost,
+  } = pickHighConfidenceShopifyStockxLinks({
+    lines,
+    supplierOrders: normalized,
+    usedSupplierNumbers,
+  });
 
   result.mediumSkipped = mediumSkipped;
   result.lowSkipped = lowSkipped;
@@ -718,6 +805,27 @@ export async function runShopifyStockxAutoLinkSweep(
     } catch (err: any) {
       console.warn(
         `[SHOPIFY][STX][AUTO_LINK] failed ${pick.line.orderName}:`,
+        err?.message ?? err
+      );
+    }
+  }
+
+  // Yellow (medium): ops email once per line↔buy (7d dedupe). HIGH stays silent.
+  if (mediumCandidates.length > 0) {
+    try {
+      const mail = await emailShopifyStockxMediumCandidates(
+        mediumCandidates.map(toMediumEmailItem),
+        {
+          lowBrief: lowCandidates.map(toMediumEmailItem),
+          dryRun,
+        }
+      );
+      result.mediumEmailed = mail.mediumEmailed;
+      result.mediumEmailDeduped = mail.mediumDeduped;
+      result.mediumEmailSent = mail.sent;
+    } catch (err: any) {
+      console.warn(
+        "[SHOPIFY][STX][AUTO_LINK] medium ops email failed:",
         err?.message ?? err
       );
     }
