@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { orderMatchHasLocalStockLotIdField, prisma } from "@/app/lib/prisma";
 import { hashStockXStates, StockXState } from "@/app/lib/stockxTracking";
 import { detectMilestone, isStockxInboundDeliveryMilestone } from "@/app/lib/stockxStatus";
+import { decideMilestoneEmail } from "@/app/lib/notifications/milestoneEmailGate";
 import { getMailer } from "@/app/lib/mailer";
 import { tryApplyResellFromReturnedStock } from "@/shopify/returns/resellFromReturnedStock";
 import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
@@ -10,7 +11,7 @@ import {
   markOrderMatchMetafieldsSynced,
   setSupplierOrderMetafields,
 } from "@/shopify/orders/setSupplierMetafields";
-// Auto-send is disabled by default; only manual send should deliver emails.
+/** Auto-send on new milestones only; rematch uses emailedAt / lastMilestoneKey gate. */
 const AUTO_SEND_EMAILS = true;
 // Date handling helpers live in this file
 export const runtime = "nodejs";
@@ -136,26 +137,32 @@ async function upsertMilestoneEventAndMaybeEmail(opts: {
   const milestone = detectMilestone(opts.checkoutType, opts.states, opts.match.stockxOrderNumber || null);
   const milestoneKey = milestone?.key || null;
 
-  if (!milestoneKey || milestoneKey === opts.previousLastMilestoneKey) {
-    return;
-  }
-  if (isStockxInboundDeliveryMilestone(milestoneKey)) {
+  const preGate = decideMilestoneEmail({
+    milestoneKey,
+    previousLastMilestoneKey: opts.previousLastMilestoneKey,
+    isInboundDeliveryMilestone: Boolean(
+      milestoneKey && isStockxInboundDeliveryMilestone(milestoneKey)
+    ),
+    emailedAt: null,
+    autoSendEmails: AUTO_SEND_EMAILS,
+  });
+  if (!preGate.shouldUpsertEvent) {
     return;
   }
 
   // Upsert event so we can retry sending if needed (no dupes)
   const event = await prisma.stockXStatusEvent.upsert({
     where: {
-      orderMatchId_milestoneKey: { orderMatchId: opts.match.id, milestoneKey },
+      orderMatchId_milestoneKey: { orderMatchId: opts.match.id, milestoneKey: milestoneKey! },
     },
     create: {
       orderMatchId: opts.match.id,
-      milestoneKey,
-      milestoneTitle: milestone?.title || milestoneKey,
+      milestoneKey: milestoneKey!,
+      milestoneTitle: milestone?.title || milestoneKey!,
       statesHash: opts.statesHash || "",
     },
     update: {
-      milestoneTitle: milestone?.title || milestoneKey,
+      milestoneTitle: milestone?.title || milestoneKey!,
       statesHash: opts.statesHash || "",
     },
     select: {
@@ -164,9 +171,17 @@ async function upsertMilestoneEventAndMaybeEmail(opts: {
     },
   });
 
-  if (event.emailedAt) return;
-  if (!AUTO_SEND_EMAILS) {
-    console.log("[EMAIL] Auto send disabled; event recorded but not delivered");
+  const sendGate = decideMilestoneEmail({
+    milestoneKey,
+    previousLastMilestoneKey: opts.previousLastMilestoneKey,
+    isInboundDeliveryMilestone: false,
+    emailedAt: event.emailedAt,
+    autoSendEmails: AUTO_SEND_EMAILS,
+  });
+  if (!sendGate.shouldSend) {
+    if (sendGate.reason === "auto_send_disabled") {
+      console.log("[EMAIL] Auto send disabled; event recorded but not delivered");
+    }
     return;
   }
 

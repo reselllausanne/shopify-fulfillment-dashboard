@@ -1386,6 +1386,16 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     }
   };
 
+  /** Soft keep-current: re-restore DB links into current Shopify rows (greens without Match all). */
+  const refreshMatchesFromDb = async () => {
+    if (!shopifyItems.length) return;
+    try {
+      await runMatching(shopifyItems, { restoreSaved: true });
+    } catch (err) {
+      console.warn("[MATCHING] soft DB refresh failed", err);
+    }
+  };
+
   return {
     shopifyItems,
     matchResults,
@@ -1411,6 +1421,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     setManualFetchOrder,
     manualFetchLoading,
     loadShopifyOrders,
+    refreshMatchesFromDb,
     loadExchangeOrderByName,
     clearManualOverrides,
     handleManualMatch,

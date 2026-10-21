@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSoftPageRefresh } from "@/app/hooks/useSoftPageRefresh";
 import { dedupeById } from "@/galaxus/_lib/dedupeById";
 
 type OrderListItem = {
@@ -190,6 +191,14 @@ export default function LogisticsDirectDeliveryPage() {
   useEffect(() => {
     void loadOrders({ selectFirstIfEmpty: true });
   }, [loadOrders]);
+
+  const softRefreshLinked = useCallback(async () => {
+    await loadOrders({ force: true });
+    const id = selectedOrderIdRef.current;
+    if (id) await loadOrderDetail(id, { force: true });
+  }, [loadOrders, loadOrderDetail]);
+
+  useSoftPageRefresh(softRefreshLinked, { intervalMs: 30_000 });
 
   useEffect(() => {
     if (!selectedOrderId) {
