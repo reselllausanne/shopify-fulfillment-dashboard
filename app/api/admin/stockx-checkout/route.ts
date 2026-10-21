@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
+import { runStockxAutoEasyAndEmailRest } from "@/lib/stockxAutoCheckout/runAutoBatch";
 import {
   confirmStockxCheckout,
   getStockxCheckoutState,
   previewStockxCheckout,
+  runStockxAutoCheckoutForOrder,
 } from "@/lib/stockxCheckout";
 
 export const runtime = "nodejs";
@@ -40,6 +42,7 @@ export async function POST(req: NextRequest) {
       const preview = await previewStockxCheckout({
         orderName,
         slug: body.slug ? String(body.slug) : null,
+        lineItemId: body.lineItemId ? String(body.lineItemId) : null,
       });
       return NextResponse.json({ ok: true, preview });
     }
@@ -55,6 +58,33 @@ export async function POST(req: NextRequest) {
       }
       const result = await confirmStockxCheckout({ previewId, confirmTotalChf });
       return NextResponse.json({ ...result }, { status: result.ok ? 200 : 409 });
+    }
+
+    if (action === "auto_one") {
+      const orderName = String(body.orderName ?? "").trim();
+      if (!orderName) {
+        return NextResponse.json({ ok: false, error: "Missing orderName" }, { status: 400 });
+      }
+      const result = await runStockxAutoCheckoutForOrder({
+        orderName,
+        slug: body.slug ? String(body.slug) : null,
+        lineItemId: body.lineItemId ? String(body.lineItemId) : null,
+        dryRun: Boolean(body.dryRun),
+      });
+      return NextResponse.json({ ok: true, result });
+    }
+
+    if (action === "auto_easy_email_rest") {
+      const orderNames = Array.isArray(body.orderNames)
+        ? body.orderNames.map((n) => String(n))
+        : undefined;
+      const summary = await runStockxAutoEasyAndEmailRest({
+        days: body.days != null ? Number(body.days) : undefined,
+        orderNames,
+        dryRun: Boolean(body.dryRun),
+        maxOrders: body.maxOrders != null ? Number(body.maxOrders) : undefined,
+      });
+      return NextResponse.json({ ok: true, summary });
     }
 
     return NextResponse.json({ ok: false, error: "Unknown action" }, { status: 400 });

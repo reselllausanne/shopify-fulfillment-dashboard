@@ -3,10 +3,33 @@ import path from "node:path";
 import { chromium, type Page } from "playwright";
 import { prisma } from "@/app/lib/prisma";
 import { stockxAccountFiles } from "@/lib/stockxSessionRefresh";
+import {
+  chooseLane,
+  classifyLaneLabel,
+  marginOk,
+  moneyToNumber,
+  parseLaneCardsFromText,
+} from "@/lib/stockxAutoCheckout/chooseLane";
+import {
+  detectShopifyExpress,
+  desiredStockxLaneFromShopify,
+} from "@/lib/stockxAutoCheckout/detectShopifyExpress";
+import {
+  buildStockxBuyUrl,
+  convertEuToUs,
+  inferBrandFromTitle,
+} from "@/lib/stockxAutoCheckout/sizeUsFallback";
+import { linkStockxBuyToShopify } from "@/lib/stockxAutoCheckout/linkAfterBuy";
+import {
+  MAX_ALL_IN_CHF,
+  type StockxDesiredLane,
+  type StockxLaneCard,
+  type StockxNeedsHumanPayload,
+  type StockxNeedsHumanReason,
+} from "@/lib/stockxAutoCheckout/types";
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 const STATE_FILE = path.join(DATA_DIR, "stockx-checkout-state.json");
-const MAX_ALL_IN_CHF = 250;
 
 export type StockxCheckoutPreview = {
   previewId: string;
@@ -16,11 +39,15 @@ export type StockxCheckoutPreview = {
   title: string;
   sku: string;
   sizeEU: string;
+  sizeUS: string | null;
   saleChf: number | null;
   slug: string;
   productUrl: string;
   buyUrl: string | null;
+  desiredLane: StockxDesiredLane;
+  shopifyExpress: boolean;
   lane: "STANDARD" | "EXPRESS" | "UNKNOWN";
+  lanes: StockxLaneCard[];
   itemChf: number | null;
   feesChf: number | null;
   shippingChf: number | null;
@@ -28,6 +55,7 @@ export type StockxCheckoutPreview = {
   eta: string | null;
   payButton: string | null;
   withinCap: boolean;
+  marginOk: boolean;
   maxAllInChf: number;
   screenshotRel: string;
   screenshotDataUrl: string | null;
@@ -45,13 +73,6 @@ type StoredState = {
     error: string | null;
   } | null;
 };
-
-function moneyToNumber(raw: string | null | undefined): number | null {
-  if (!raw) return null;
-  const cleaned = raw.replace(/[^\d,.-]/g, "").replace(/\s/g, "").replace(",", ".");
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
-}
 
 function extractChfAmounts(text: string): number[] {
   const out: number[] = [];
@@ -86,60 +107,179 @@ async function dismissNoise(page: Page) {
   }
 }
 
-async function selectSizeEu(page: Page, sizeEU: string) {
+async function selectSizeEuOrUs(
+  page: Page,
+  sizeEU: string,
+  sizeUS: string | null
+): Promise<{ ok: boolean; used: "EU" | "US" | null }> {
   const size = sizeEU.replace(/^EU\s*/i, "").trim();
-  await page.getByRole("button", { name: /Taille/i }).first().click({ timeout: 8000 }).catch(() => undefined);
+  await page.getByRole("button", { name: /Taille|Size/i }).first().click({ timeout: 8000 }).catch(() => undefined);
   await page.waitForTimeout(700);
+
   const euTab = page.getByRole("button", { name: /^EU$/ }).first();
-  if (await euTab.isVisible({ timeout: 1000 }).catch(() => false)) await euTab.click();
-  await page.waitForTimeout(400);
-  const re = new RegExp(`^EU\\s*${size.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\s*2\\/3)`);
-  const exact = page.locator("button").filter({ hasText: re }).first();
-  if (await exact.count()) {
-    await exact.click();
-    return true;
+  const hasEuTab = await euTab.isVisible({ timeout: 1000 }).catch(() => false);
+  if (hasEuTab) {
+    await euTab.click();
+    await page.waitForTimeout(400);
+    const re = new RegExp(`^EU\\s*${size.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\s*2\\/3)`);
+    const exact = page.locator("button").filter({ hasText: re }).first();
+    if (await exact.count()) {
+      await exact.click();
+      return { ok: true, used: "EU" };
+    }
+    // loose EU click
+    const loose = page
+      .locator("button")
+      .filter({ hasText: new RegExp(`EU\\s*${size.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i") })
+      .first();
+    if (await loose.isVisible({ timeout: 800 }).catch(() => false)) {
+      await loose.click();
+      return { ok: true, used: "EU" };
+    }
   }
-  return false;
+
+  if (!sizeUS) return { ok: false, used: null };
+
+  const usTab = page.getByRole("button", { name: /^US$/ }).first();
+  if (await usTab.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await usTab.click();
+    await page.waitForTimeout(400);
+  }
+  const usRe = new RegExp(
+    `^(US\\s*)?${sizeUS.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+    "i"
+  );
+  const usBtn = page.locator("button").filter({ hasText: usRe }).first();
+  if (await usBtn.count()) {
+    await usBtn.click();
+    return { ok: true, used: "US" };
+  }
+  return { ok: false, used: null };
 }
 
 async function clickBuyNow(page: Page) {
-  for (const b of [
-    page.getByRole("button", { name: /^Acheter maintenant$/i }),
+  const candidates = [
     page.getByRole("button", { name: /Acheter maintenant/i }),
-    page.getByRole("button", { name: /^Buy Now$/i }),
-  ]) {
-    const el = b.last();
+    page.getByRole("link", { name: /Acheter maintenant/i }),
+    page.getByRole("button", { name: /Buy Now/i }),
+    page.getByRole("link", { name: /Buy Now/i }),
+    page.locator("button,a,[role=button]").filter({ hasText: /Acheter maintenant|Buy Now/i }),
+    page.locator('[data-testid*="buy" i]'),
+  ];
+  for (const loc of candidates) {
+    const el = loc.last();
     if (await el.isVisible({ timeout: 1500 }).catch(() => false)) {
-      await el.click();
-      return true;
+      const disabled = await el.isDisabled().catch(() => false);
+      if (!disabled) {
+        await el.click();
+        return true;
+      }
     }
   }
-  return false;
+  const clicked = await page.evaluate(() => {
+    const nodes = Array.from(document.querySelectorAll("button,a,[role=button]"));
+    const hit = nodes.find((n) =>
+      /acheter maintenant|buy now/i.test((n.textContent || "").replace(/\s+/g, " "))
+    );
+    if (!hit) return false;
+    (hit as HTMLElement).click();
+    return true;
+  });
+  return !!clicked;
 }
 
-async function chooseStandardLane(page: Page) {
-  // Prefer Standard ask lane; Express is usually the much higher second option.
-  const body = await page.locator("body").innerText().catch(() => "");
-  const amounts = extractChfAmounts(body);
-  const candidates = amounts.filter((n) => n > 20 && n < MAX_ALL_IN_CHF).sort((a, b) => a - b);
-  const target = candidates[0];
-  if (target != null) {
-    const label = String(target).replace(".", "[,.]");
-    const card = page
-      .locator("button,label,div[role=button],div[role=radio]")
-      .filter({ hasText: new RegExp(label) })
-      .first();
-    if (await card.isVisible({ timeout: 2500 }).catch(() => false)) {
-      await card.click().catch(() => undefined);
-      return { lane: "STANDARD" as const, target };
+async function clickReviewOrder(page: Page): Promise<boolean> {
+  const byTestId = page.locator('[data-testid="checkout-confirm-button"]').first();
+  if (await byTestId.isVisible({ timeout: 6000 }).catch(() => false)) {
+    await byTestId.scrollIntoViewIfNeeded().catch(() => undefined);
+    await byTestId.click({ force: true });
+    return true;
+  }
+  const byRole = page
+    .getByRole("button", { name: /Vérifier la commande|Confirm and continue|Review Order/i })
+    .first();
+  if (await byRole.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await byRole.click({ force: true });
+    return true;
+  }
+  return page.evaluate(() => {
+    const el =
+      document.querySelector('[data-testid="checkout-confirm-button"]') ||
+      Array.from(document.querySelectorAll("button")).find((b) =>
+        /vérifier la commande|confirm and continue|review order/i.test(
+          (b.textContent || "").replace(/\s+/g, " ")
+        )
+      );
+    if (!el) return false;
+    (el as HTMLElement).click();
+    return true;
+  });
+}
+
+async function parseLanesFromPage(page: Page): Promise<StockxLaneCard[]> {
+  const fromDom = await page.evaluate(() => {
+    const nodes = Array.from(
+      document.querySelectorAll("button,label,div[role=button],div[role=radio],div[role=option]")
+    );
+    const out: Array<{ rawLabel: string; totalChf: number; eta: string | null }> = [];
+    for (const node of nodes) {
+      const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+      if (!/\b(Standard|Express|Xpress)\b/i.test(text)) continue;
+      if (!/\d/.test(text) || !/CHF/i.test(text)) continue;
+      const labelMatch = text.match(/\b(Standard|Express|Xpress)\b/i);
+      const priceMatch = text.match(/(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
+      if (!labelMatch || !priceMatch) continue;
+      const cleaned = priceMatch[1].replace(/[^\d,.-]/g, "").replace(/\s/g, "").replace(",", ".");
+      const totalChf = Number(cleaned);
+      if (!Number.isFinite(totalChf)) continue;
+      const etaMatch = text.match(/(?:d['’]ici le|by|ETA)\s*([^·|]{3,40})/i);
+      out.push({
+        rawLabel: labelMatch[1],
+        totalChf,
+        eta: etaMatch?.[1]?.trim() || null,
+      });
     }
+    return out;
+  });
+
+  if (fromDom.length) {
+    const seen = new Set<string>();
+    return fromDom
+      .map((row) => ({
+        label: classifyLaneLabel(row.rawLabel),
+        rawLabel: row.rawLabel,
+        totalChf: row.totalChf,
+        eta: row.eta,
+      }))
+      .filter((lane) => {
+        const key = `${lane.label}:${lane.totalChf.toFixed(2)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
   }
-  const standard = page.getByRole("button", { name: /Standard/i }).first();
-  if (await standard.isVisible({ timeout: 1000 }).catch(() => false)) {
-    await standard.click().catch(() => undefined);
-    return { lane: "STANDARD" as const, target: target ?? null };
+
+  const body = await page.locator("body").innerText().catch(() => "");
+  return parseLaneCardsFromText(body);
+}
+
+async function clickLaneCard(page: Page, lane: StockxLaneCard): Promise<boolean> {
+  const label = String(lane.totalChf).replace(".", "[,.]");
+  const card = page
+    .locator("button,label,div[role=button],div[role=radio]")
+    .filter({ hasText: new RegExp(`\\b${lane.rawLabel}\\b`, "i") })
+    .filter({ hasText: new RegExp(label) })
+    .first();
+  if (await card.isVisible({ timeout: 2500 }).catch(() => false)) {
+    await card.click().catch(() => undefined);
+    return true;
   }
-  return { lane: "UNKNOWN" as const, target: target ?? null };
+  const byName = page.getByRole("button", { name: new RegExp(lane.rawLabel, "i") }).first();
+  if (await byName.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await byName.click().catch(() => undefined);
+    return true;
+  }
+  return false;
 }
 
 async function resolveSlugFromSku(sku: string): Promise<string | null> {
@@ -156,9 +296,28 @@ async function resolveSlugFromSku(sku: string): Promise<string | null> {
   return product?.urlKey?.trim() || null;
 }
 
-async function loadShopifyLine(orderName: string) {
+type ShopifyLineCtx = {
+  shopifyOrderId: string | null;
+  orderName: string;
+  shopifyLineItemId: string | null;
+  title: string;
+  sku: string;
+  sizeEU: string;
+  saleChf: number | null;
+  createdAt: string | null;
+  customerEmail: string | null;
+  deliveryMode: string | null;
+  deliveryModeLabel: string | null;
+  shippingLineTitles: string[];
+  isStorePickup: boolean;
+  physicalStockQty: number | null;
+};
+
+async function loadShopifyLine(
+  orderName: string,
+  lineItemId?: string | null
+): Promise<ShopifyLineCtx> {
   const name = orderName.startsWith("#") ? orderName : `#${orderName}`;
-  // Lazy import keeps this module usable from scripts without pulling the full route graph twice.
   const { POST } = await import("@/app/api/shopify/order-by-name/route");
   const res = await POST(
     new Request("http://local/api/shopify/order-by-name", {
@@ -168,50 +327,43 @@ async function loadShopifyLine(orderName: string) {
     }) as any
   );
   const json: any = await res.json();
-  const line = Array.isArray(json?.lineItems) ? json.lineItems[0] : null;
-  if (!line) throw new Error(`Shopify order ${name} not found or empty`);
+  const lines: any[] = Array.isArray(json?.lineItems) ? json.lineItems : [];
+  if (!lines.length) throw new Error(`Shopify order ${name} not found or empty`);
+
+  let line = lines[0];
+  if (lineItemId) {
+    const hit = lines.find((l) => String(l.lineItemId) === String(lineItemId));
+    if (hit) line = hit;
+  }
+
   return {
+    shopifyOrderId: String(line.shopifyOrderId || line.orderId || "") || null,
     orderName: String(line.orderName || name),
     shopifyLineItemId: String(line.lineItemId || "") || null,
     title: String(line.title || ""),
     sku: String(line.sku || "").trim(),
     sizeEU: String(line.sizeEU || line.variantTitle || "").replace(/^EU\s*/i, "EU ").trim() || "EU ?",
     saleChf: moneyToNumber(String(line.totalPrice ?? line.price ?? "")),
+    createdAt: line.createdAt ? String(line.createdAt) : null,
+    customerEmail: line.customerEmail ? String(line.customerEmail) : null,
+    deliveryMode: line.deliveryMode ?? null,
+    deliveryModeLabel: line.deliveryModeLabel ?? null,
+    shippingLineTitles: [],
+    isStorePickup: Boolean(line.isStorePickup),
+    physicalStockQty:
+      line.physicalStockQty != null && Number.isFinite(Number(line.physicalStockQty))
+        ? Number(line.physicalStockQty)
+        : null,
   };
 }
 
-export async function getStockxCheckoutState() {
-  return readState();
-}
-
-/**
- * Opens the Shopify StockX profile, selects size, forces Standard lane, stops on
- * "Passer commande" without clicking it.
- */
-export async function previewStockxCheckout(options: {
-  orderName: string;
-  slug?: string | null;
-  maxAllInChf?: number;
-}): Promise<StockxCheckoutPreview> {
-  const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
-  const shopify = await loadShopifyLine(options.orderName);
-  const slug = (options.slug || (await resolveSlugFromSku(shopify.sku)) || "").trim();
-  if (!slug) throw new Error(`No StockX slug for SKU ${shopify.sku}`);
-
-  const sizeNum = shopify.sizeEU.replace(/^EU\s*/i, "").trim();
-  const productUrl = `https://stockx.com/fr-fr/${slug}`;
+async function launchStockxContext() {
   const files = stockxAccountFiles("default");
   if (!process.env.DISPLAY) process.env.DISPLAY = ":99";
-
   for (const lockName of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
     await fs.rm(path.join(files.profileDir, lockName), { force: true }).catch(() => undefined);
     await fs.rm(path.join(files.profileDir, "Default", lockName), { force: true }).catch(() => undefined);
   }
-
-  const previewId = `preview_${Date.now().toString(36)}`;
-  const shotRel = `stockx-checkout-${previewId}.png`;
-  const shotAbs = path.join(DATA_DIR, shotRel);
-
   const ctx = await chromium.launchPersistentContext(files.profileDir, {
     headless: false,
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"],
@@ -220,25 +372,88 @@ export async function previewStockxCheckout(options: {
     viewport: { width: 1440, height: 1100 },
   });
   const page = ctx.pages()[0] || (await ctx.newPage());
+  return { ctx, page };
+}
+
+function parseCheckoutTotals(text: string) {
+  const amounts = extractChfAmounts(text);
+  const totalMatch = text.match(/Total\s+(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
+  const totalChf = moneyToNumber(totalMatch?.[1] ?? null) ?? amounts[amounts.length - 1] ?? null;
+  const itemMatch = text.match(/Prix d['’]achat\s+(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
+  const feeMatch = text.match(/Traitement[^\d]*(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
+  const shipMatch = text.match(/Livraison[^\d]*(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
+  const etaMatch = text.match(/Recevez votre commande d['’]ici le\s*([^\n]+)/i);
+  return {
+    totalChf,
+    itemChf: moneyToNumber(itemMatch?.[1] ?? null),
+    feesChf: moneyToNumber(feeMatch?.[1] ?? null),
+    shippingChf: moneyToNumber(shipMatch?.[1] ?? null),
+    eta: etaMatch?.[1]?.trim() || null,
+  };
+}
+
+export async function getStockxCheckoutState() {
+  return readState();
+}
+
+/**
+ * Opens the Shopify StockX profile, selects size, picks desired lane (from Shopify Express),
+ * stops on "Passer commande" without clicking it.
+ */
+export async function previewStockxCheckout(options: {
+  orderName: string;
+  slug?: string | null;
+  lineItemId?: string | null;
+  maxAllInChf?: number;
+  /** Force lane; default from Shopify Express detection. */
+  desiredLane?: StockxDesiredLane | null;
+}): Promise<StockxCheckoutPreview> {
+  const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
+  const shopify = await loadShopifyLine(options.orderName, options.lineItemId);
+  const shopifyExpress = detectShopifyExpress({
+    deliveryMode: shopify.deliveryMode,
+    deliveryModeLabel: shopify.deliveryModeLabel,
+    shippingLineTitles: shopify.shippingLineTitles,
+  });
+  const desiredLane =
+    options.desiredLane || desiredStockxLaneFromShopify(shopifyExpress);
+
+  const slug = (options.slug || (await resolveSlugFromSku(shopify.sku)) || "").trim();
+  if (!slug) throw new Error(`No StockX slug for SKU ${shopify.sku}`);
+
+  const sizeNum = shopify.sizeEU.replace(/^EU\s*/i, "").trim();
+  const sizeUS = convertEuToUs(shopify.sizeEU, {
+    title: shopify.title,
+    brand: inferBrandFromTitle(shopify.title),
+  });
+  const productUrl = buildStockxBuyUrl(slug, sizeUS);
+
+  const previewId = `preview_${Date.now().toString(36)}`;
+  const shotRel = `stockx-checkout-${previewId}.png`;
+  const shotAbs = path.join(DATA_DIR, shotRel);
+
+  const { ctx, page } = await launchStockxContext();
 
   try {
     await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForTimeout(3500);
     await dismissNoise(page);
-    const sized = await selectSizeEu(page, shopify.sizeEU);
-    if (!sized) throw new Error(`Size ${shopify.sizeEU} not selectable`);
+    const sized = await selectSizeEuOrUs(page, shopify.sizeEU, sizeUS);
+    if (!sized.ok) throw new Error(`Size ${shopify.sizeEU} (US ${sizeUS || "?"}) not selectable`);
     await page.waitForTimeout(1200);
     await dismissNoise(page);
     if (!(await clickBuyNow(page))) throw new Error("Buy Now button not found");
     await page.waitForTimeout(4500);
     await dismissNoise(page);
 
-    const lanePick = await chooseStandardLane(page);
-    await page.waitForTimeout(1000);
+    const lanes = await parseLanesFromPage(page);
+    const pick = chooseLane(desiredLane, lanes, maxAllInChf);
+    if (pick.ok) {
+      await clickLaneCard(page, pick.lane);
+      await page.waitForTimeout(1000);
+    }
 
-    const review = page.getByRole("button", { name: /Vérifier la commande|Review Order/i }).first();
-    if (await review.isVisible({ timeout: 6000 }).catch(() => false)) {
-      await review.click();
+    if (await clickReviewOrder(page)) {
       await page.waitForTimeout(4500);
     }
 
@@ -249,14 +464,8 @@ export async function previewStockxCheckout(options: {
       : null;
 
     const text = await page.locator("body").innerText().catch(() => "");
-    const amounts = extractChfAmounts(text);
-    // Prefer explicit "Total … 86,74 CHF" block when present.
-    const totalMatch = text.match(/Total\s+(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
-    const totalChf = moneyToNumber(totalMatch?.[1] ?? null) ?? amounts[amounts.length - 1] ?? null;
-    const itemMatch = text.match(/Prix d['’]achat\s+(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
-    const feeMatch = text.match(/Traitement[^\d]*(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
-    const shipMatch = text.match(/Livraison[^\d]*(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
-    const etaMatch = text.match(/Recevez votre commande d['’]ici le\s*([^\n]+)/i);
+    const totals = parseCheckoutTotals(text);
+    const totalChf = totals.totalChf ?? (pick.ok ? pick.lane.totalChf : null);
 
     await page.screenshot({ path: shotAbs, fullPage: true }).catch(() => undefined);
     let screenshotDataUrl: string | null = null;
@@ -275,18 +484,23 @@ export async function previewStockxCheckout(options: {
       title: shopify.title,
       sku: shopify.sku,
       sizeEU: `EU ${sizeNum}`,
+      sizeUS,
       saleChf: shopify.saleChf,
       slug,
       productUrl,
       buyUrl: page.url(),
-      lane: lanePick.lane,
-      itemChf: moneyToNumber(itemMatch?.[1] ?? null),
-      feesChf: moneyToNumber(feeMatch?.[1] ?? null),
-      shippingChf: moneyToNumber(shipMatch?.[1] ?? null),
+      desiredLane,
+      shopifyExpress,
+      lane: pick.ok ? pick.lane.label : "UNKNOWN",
+      lanes,
+      itemChf: totals.itemChf,
+      feesChf: totals.feesChf,
+      shippingChf: totals.shippingChf,
       totalChf,
-      eta: etaMatch?.[1]?.trim() || null,
+      eta: totals.eta || (pick.ok ? pick.lane.eta ?? null : null),
       payButton: payText,
       withinCap: totalChf != null && totalChf <= maxAllInChf,
+      marginOk: marginOk(shopify.saleChf, totalChf),
       maxAllInChf,
       screenshotRel: shotRel,
       screenshotDataUrl,
@@ -294,7 +508,6 @@ export async function previewStockxCheckout(options: {
     };
 
     const state = await readState();
-    // Do not persist the heavy data-URL screenshot in state JSON.
     state.preview = { ...preview, screenshotDataUrl: null };
     await writeState(state);
     return preview;
@@ -305,7 +518,7 @@ export async function previewStockxCheckout(options: {
 
 /**
  * Confirms a previous preview by re-opening the buy URL and clicking Place Order.
- * Requires exact total match + total <= cap.
+ * Requires exact total match + total <= cap. Re-selects desired lane (never Express unless preview was Express).
  */
 export async function confirmStockxCheckout(options: {
   previewId: string;
@@ -344,21 +557,7 @@ export async function confirmStockxCheckout(options: {
     return { ok: false, stockxOrderNumber: null, totalChf: preview.totalChf, error: "Missing buy URL" };
   }
 
-  const files = stockxAccountFiles("default");
-  if (!process.env.DISPLAY) process.env.DISPLAY = ":99";
-  for (const lockName of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
-    await fs.rm(path.join(files.profileDir, lockName), { force: true }).catch(() => undefined);
-    await fs.rm(path.join(files.profileDir, "Default", lockName), { force: true }).catch(() => undefined);
-  }
-
-  const ctx = await chromium.launchPersistentContext(files.profileDir, {
-    headless: false,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"],
-    locale: "fr-CH",
-    timezoneId: "Europe/Zurich",
-    viewport: { width: 1440, height: 1100 },
-  });
-  const page = ctx.pages()[0] || (await ctx.newPage());
+  const { ctx, page } = await launchStockxContext();
   let stockxOrderNumber: string | null = null;
   let error: string | null = null;
 
@@ -366,16 +565,17 @@ export async function confirmStockxCheckout(options: {
     await page.goto(preview.buyUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForTimeout(4000);
     await dismissNoise(page);
-    await chooseStandardLane(page);
-    const review = page.getByRole("button", { name: /Vérifier la commande|Review Order/i }).first();
-    if (await review.isVisible({ timeout: 4000 }).catch(() => false)) {
-      await review.click();
+
+    const lanes = await parseLanesFromPage(page);
+    const pick = chooseLane(preview.desiredLane || "STANDARD", lanes, preview.maxAllInChf);
+    if (pick.ok) await clickLaneCard(page, pick.lane);
+
+    if (await clickReviewOrder(page)) {
       await page.waitForTimeout(4000);
     }
 
     const text = await page.locator("body").innerText().catch(() => "");
-    const totalMatch = text.match(/Total\s+(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
-    const liveTotal = moneyToNumber(totalMatch?.[1] ?? null);
+    const liveTotal = parseCheckoutTotals(text).totalChf;
     if (liveTotal == null || Math.abs(liveTotal - preview.totalChf) > 0.5) {
       error = `Live total changed (preview ${preview.totalChf}, live ${liveTotal})`;
     } else {
@@ -415,8 +615,366 @@ export async function confirmStockxCheckout(options: {
     ok: result.ok,
     error,
   };
-  // Invalidate preview after confirm attempt so a double-click cannot rebuy.
   state.preview = null;
   await writeState(state);
   return result;
+}
+
+export type StockxAutoCheckoutResult = {
+  kind: "easy_buy" | "needs_human" | "skipped";
+  reason?: StockxNeedsHumanReason;
+  detail?: string | null;
+  stockxOrderNumber?: string | null;
+  totalChf?: number | null;
+  link?: { orderMatchId: string | null; metafieldsOk: boolean } | null;
+  needsHuman?: StockxNeedsHumanPayload | null;
+};
+
+function needsHumanBase(
+  shopify: ShopifyLineCtx,
+  extras: Partial<StockxNeedsHumanPayload> & {
+    reason: StockxNeedsHumanReason;
+    desiredLane: StockxDesiredLane;
+  }
+): StockxNeedsHumanPayload {
+  return {
+    shopifyOrderName: shopify.orderName,
+    shopifyOrderId: shopify.shopifyOrderId,
+    shopifyLineItemId: shopify.shopifyLineItemId,
+    title: shopify.title,
+    sku: shopify.sku,
+    saleChf: shopify.saleChf,
+    slug: extras.slug ?? null,
+    productUrl: extras.productUrl ?? null,
+    buyUrl: extras.buyUrl ?? null,
+    sizeEU: shopify.sizeEU,
+    sizeUS: extras.sizeUS ?? null,
+    desiredLane: extras.desiredLane,
+    lanes: extras.lanes ?? [],
+    recommended: extras.recommended ?? null,
+    reason: extras.reason,
+    detail: extras.detail ?? null,
+  };
+}
+
+/**
+ * Easy path: Playwright buy + OrderMatch + metafields when rules clear.
+ * Ambiguous / hard → needs_human payload (caller emails).
+ */
+export async function runStockxAutoCheckoutForOrder(options: {
+  orderName: string;
+  lineItemId?: string | null;
+  slug?: string | null;
+  maxAllInChf?: number;
+  /** When true, do not click Place Order (dry run classification + preview). */
+  dryRun?: boolean;
+}): Promise<StockxAutoCheckoutResult> {
+  const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
+  let shopify: ShopifyLineCtx;
+  try {
+    shopify = await loadShopifyLine(options.orderName, options.lineItemId);
+  } catch (e: any) {
+    return {
+      kind: "needs_human",
+      reason: "setup",
+      detail: e?.message || String(e),
+      needsHuman: {
+        shopifyOrderName: options.orderName,
+        shopifyOrderId: null,
+        shopifyLineItemId: options.lineItemId ?? null,
+        title: "",
+        sku: "",
+        saleChf: null,
+        slug: null,
+        productUrl: null,
+        buyUrl: null,
+        sizeEU: "?",
+        sizeUS: null,
+        desiredLane: "STANDARD",
+        lanes: [],
+        recommended: null,
+        reason: "setup",
+        detail: e?.message || String(e),
+      },
+    };
+  }
+
+  if (shopify.isStorePickup) {
+    const nh = needsHumanBase(shopify, { reason: "pickup", desiredLane: "STANDARD" });
+    return { kind: "skipped", reason: "pickup", needsHuman: nh };
+  }
+  if (shopify.physicalStockQty != null && shopify.physicalStockQty > 0) {
+    const nh = needsHumanBase(shopify, { reason: "physical_stock", desiredLane: "STANDARD" });
+    return { kind: "skipped", reason: "physical_stock", needsHuman: nh };
+  }
+
+  if (shopify.shopifyLineItemId) {
+    const existing = await prisma.orderMatch.findUnique({
+      where: { shopifyLineItemId: shopify.shopifyLineItemId },
+      select: { id: true, stockxOrderNumber: true },
+    });
+    if (existing?.stockxOrderNumber) {
+      const nh = needsHumanBase(shopify, {
+        reason: "already_matched",
+        desiredLane: "STANDARD",
+        detail: existing.stockxOrderNumber,
+      });
+      return { kind: "skipped", reason: "already_matched", needsHuman: nh };
+    }
+  }
+
+  const shopifyExpress = detectShopifyExpress({
+    deliveryMode: shopify.deliveryMode,
+    deliveryModeLabel: shopify.deliveryModeLabel,
+  });
+  const desiredLane = desiredStockxLaneFromShopify(shopifyExpress);
+
+  const slug = (options.slug || (await resolveSlugFromSku(shopify.sku)) || "").trim();
+  if (!slug) {
+    const nh = needsHumanBase(shopify, { reason: "slug", desiredLane });
+    return { kind: "needs_human", reason: "slug", needsHuman: nh };
+  }
+
+  const sizeUS = convertEuToUs(shopify.sizeEU, {
+    title: shopify.title,
+    brand: inferBrandFromTitle(shopify.title),
+  });
+  const productUrl = buildStockxBuyUrl(slug, sizeUS);
+
+  const { ctx, page } = await launchStockxContext();
+  try {
+    await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForTimeout(3500);
+    await dismissNoise(page);
+
+    const sized = await selectSizeEuOrUs(page, shopify.sizeEU, sizeUS);
+    if (!sized.ok) {
+      const nh = needsHumanBase(shopify, {
+        reason: "size_us_map",
+        desiredLane,
+        slug,
+        productUrl,
+        sizeUS,
+        buyUrl: productUrl,
+        detail: sizeUS ? `EU+US select failed (US ${sizeUS})` : "EU select failed + no US map",
+      });
+      return { kind: "needs_human", reason: "size_us_map", needsHuman: nh };
+    }
+
+    await page.waitForTimeout(1000);
+    if (!(await clickBuyNow(page))) {
+      const nh = needsHumanBase(shopify, {
+        reason: "bot_fail",
+        desiredLane,
+        slug,
+        productUrl,
+        sizeUS,
+        buyUrl: page.url(),
+        detail: "Buy Now not found",
+      });
+      return { kind: "needs_human", reason: "bot_fail", needsHuman: nh };
+    }
+    await page.waitForTimeout(4500);
+    await dismissNoise(page);
+
+    const lanes = await parseLanesFromPage(page);
+    const pick = chooseLane(desiredLane, lanes, maxAllInChf);
+    if (!pick.ok) {
+      const cheapest =
+        [...lanes].sort((a, b) => a.totalChf - b.totalChf)[0] ?? null;
+      const nh = needsHumanBase(shopify, {
+        reason: pick.reason,
+        desiredLane,
+        slug,
+        productUrl,
+        sizeUS,
+        buyUrl: page.url(),
+        lanes,
+        recommended: cheapest,
+      });
+      return { kind: "needs_human", reason: pick.reason, needsHuman: nh };
+    }
+
+    await clickLaneCard(page, pick.lane);
+    await page.waitForTimeout(800);
+
+    if (!(await clickReviewOrder(page))) {
+      const nh = needsHumanBase(shopify, {
+        reason: "bot_fail",
+        desiredLane,
+        slug,
+        productUrl,
+        sizeUS,
+        buyUrl: page.url(),
+        lanes,
+        recommended: pick.lane,
+        detail: "Review/confirm button missing",
+      });
+      return { kind: "needs_human", reason: "bot_fail", needsHuman: nh };
+    }
+    await page.waitForTimeout(4500);
+
+    const text = await page.locator("body").innerText().catch(() => "");
+    const totals = parseCheckoutTotals(text);
+    const totalChf = totals.totalChf ?? pick.lane.totalChf;
+
+    if (totalChf == null || totalChf > maxAllInChf) {
+      const nh = needsHumanBase(shopify, {
+        reason: "cap",
+        desiredLane,
+        slug,
+        productUrl,
+        sizeUS,
+        buyUrl: page.url(),
+        lanes,
+        recommended: pick.lane,
+        detail: `total ${totalChf}`,
+      });
+      return { kind: "needs_human", reason: "cap", needsHuman: nh };
+    }
+
+    if (Math.abs(totalChf - pick.lane.totalChf) > 0.5) {
+      const nh = needsHumanBase(shopify, {
+        reason: "price_moved",
+        desiredLane,
+        slug,
+        productUrl,
+        sizeUS,
+        buyUrl: page.url(),
+        lanes,
+        recommended: pick.lane,
+        detail: `lane ${pick.lane.totalChf} → total ${totalChf}`,
+      });
+      return { kind: "needs_human", reason: "price_moved", needsHuman: nh };
+    }
+
+    if (!marginOk(shopify.saleChf, totalChf)) {
+      const nh = needsHumanBase(shopify, {
+        reason: "margin",
+        desiredLane,
+        slug,
+        productUrl,
+        sizeUS,
+        buyUrl: page.url(),
+        lanes,
+        recommended: pick.lane,
+        detail: `sale ${shopify.saleChf} vs total ${totalChf}`,
+      });
+      return { kind: "needs_human", reason: "margin", needsHuman: nh };
+    }
+
+    const pay = page.getByRole("button", { name: /Passer commande|Place Order/i }).first();
+    if (!(await pay.isVisible({ timeout: 8000 }).catch(() => false))) {
+      const nh = needsHumanBase(shopify, {
+        reason: "bot_fail",
+        desiredLane,
+        slug,
+        productUrl,
+        sizeUS,
+        buyUrl: page.url(),
+        lanes,
+        recommended: pick.lane,
+        detail: "Place Order missing",
+      });
+      return { kind: "needs_human", reason: "bot_fail", needsHuman: nh };
+    }
+
+    if (options.dryRun) {
+      return {
+        kind: "easy_buy",
+        totalChf,
+        detail: "dry_run — would pay",
+        needsHuman: null,
+      };
+    }
+
+    await pay.click();
+    await page.waitForTimeout(8000);
+    const after = `${page.url()}\n${await page.locator("body").innerText().catch(() => "")}`;
+    const orderMatch =
+      after.match(/\b(0[1-3]-[A-Z0-9]{8,})\b/) ||
+      after.match(/numéro de commande[^\n]*([0-9A-Z-]{8,})/i);
+    const stockxOrderNumber = orderMatch?.[1] ?? null;
+    if (!stockxOrderNumber) {
+      const nh = needsHumanBase(shopify, {
+        reason: "bot_fail",
+        desiredLane,
+        slug,
+        productUrl,
+        sizeUS,
+        buyUrl: page.url(),
+        lanes,
+        recommended: pick.lane,
+        detail: "Paid but no StockX order number parsed — check VNC / account",
+      });
+      return { kind: "needs_human", reason: "bot_fail", needsHuman: nh };
+    }
+
+    // 01- = Express, 03- = Standard — reject Express number if Shopify was Standard
+    if (!shopifyExpress && stockxOrderNumber.startsWith("01-")) {
+      const nh = needsHumanBase(shopify, {
+        reason: "wrong_lane_only",
+        desiredLane,
+        slug,
+        productUrl,
+        sizeUS,
+        buyUrl: page.url(),
+        lanes,
+        recommended: pick.lane,
+        detail: `Got Express order ${stockxOrderNumber} on Standard Shopify`,
+      });
+      return { kind: "needs_human", reason: "wrong_lane_only", needsHuman: nh };
+    }
+
+    const checkoutType = stockxOrderNumber.startsWith("01-")
+      ? "EXPRESS"
+      : stockxOrderNumber.startsWith("03-")
+        ? "STANDARD"
+        : desiredLane;
+
+    let link: { orderMatchId: string | null; metafieldsOk: boolean } | null = null;
+    if (shopify.shopifyOrderId && shopify.shopifyLineItemId) {
+      const linked = await linkStockxBuyToShopify({
+        shopifyOrderId: shopify.shopifyOrderId,
+        shopifyOrderName: shopify.orderName,
+        shopifyLineItemId: shopify.shopifyLineItemId,
+        shopifyCreatedAt: shopify.createdAt,
+        shopifyProductTitle: shopify.title,
+        shopifySku: shopify.sku,
+        shopifySizeEU: shopify.sizeEU,
+        shopifyTotalPrice: shopify.saleChf ?? 0,
+        shopifyCustomerEmail: shopify.customerEmail,
+        stockxOrderNumber,
+        stockxProductName: shopify.title,
+        stockxSizeEU: shopify.sizeEU,
+        stockxSkuKey: shopify.sku,
+        supplierCost: totalChf,
+        desiredLane,
+        stockxCheckoutType: checkoutType,
+      });
+      link = { orderMatchId: linked.orderMatchId, metafieldsOk: linked.metafieldsOk };
+    }
+
+    return {
+      kind: "easy_buy",
+      stockxOrderNumber,
+      totalChf,
+      link,
+      needsHuman: null,
+    };
+  } catch (e: any) {
+    const nh = needsHumanBase(shopify, {
+      reason: "bot_fail",
+      desiredLane: desiredStockxLaneFromShopify(
+        detectShopifyExpress({
+          deliveryMode: shopify.deliveryMode,
+          deliveryModeLabel: shopify.deliveryModeLabel,
+        })
+      ),
+      detail: e?.message || String(e),
+    });
+    return { kind: "needs_human", reason: "bot_fail", detail: e?.message, needsHuman: nh };
+  } finally {
+    await ctx.close().catch(() => undefined);
+  }
 }

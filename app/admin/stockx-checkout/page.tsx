@@ -43,9 +43,10 @@ export default function StockxCheckoutPage() {
   const [confirmTotal, setConfirmTotal] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [lastConfirm, setLastConfirm] = useState<LastConfirm | null>(null);
-  const [busy, setBusy] = useState<"preview" | "confirm" | null>(null);
+  const [busy, setBusy] = useState<"preview" | "confirm" | "auto" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [showScreen, setShowScreen] = useState(false);
+  const [autoSummary, setAutoSummary] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -140,6 +141,41 @@ export default function StockxCheckoutPage() {
     }
   };
 
+  const runAutoBatch = async () => {
+    if (
+      !window.confirm(
+        "Auto-buy easy StockX cases (cap 250 CHF, lane from Shopify Express) and email hard cases to ops?\nCharges card for clear cases only."
+      )
+    ) {
+      return;
+    }
+    setBusy("auto");
+    setMessage(null);
+    setAutoSummary(null);
+    setShowScreen(true);
+    try {
+      const res = await fetch("/api/admin/stockx-checkout", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "auto_easy_email_rest", days: 14, maxOrders: 10 }),
+      });
+      const data = await res.json();
+      if (!data?.ok) {
+        setMessage(data?.error || "Auto batch failed");
+      } else {
+        const s = data.summary;
+        setAutoSummary(
+          `scanned ${s.scannedOrders} · attempted ${s.attempted} · bought ${s.bought} · email ${s.emailed} (sent=${s.emailSent}) · skipped ${s.skipped}`
+        );
+        setMessage(`Auto batch done — bought ${s.bought}, needs human ${s.emailed}`);
+      }
+    } catch (e: any) {
+      setMessage(e?.message || "Network error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const canConfirm =
     Boolean(preview?.payButton) &&
     Boolean(preview?.withinCap) &&
@@ -152,9 +188,9 @@ export default function StockxCheckoutPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">StockX checkout</h1>
           <p className="mt-1 text-sm text-gray-600">
-            Preview goes to <strong>Passer commande</strong> without paying. Confirm is a separate
-            click and must retype the exact total. Cap {preview?.maxAllInChf ?? 250} CHF all-in.
-            Standard lane preferred over Express.
+            Preview → Passer commande (no pay). Confirm retypes total. Cap{" "}
+            {preview?.maxAllInChf ?? 250} CHF. Lane from Shopify Express detection — never buy
+            StockX Express unless Shopify Express. Auto: easy buy + email rest.
           </p>
         </div>
 
@@ -186,6 +222,13 @@ export default function StockxCheckoutPage() {
               {busy === "preview" ? "Preview running…" : "1. Preview (no pay)"}
             </button>
             <button
+              className="rounded bg-indigo-800 px-4 py-2 text-sm text-white disabled:opacity-50"
+              disabled={busy != null}
+              onClick={() => void runAutoBatch()}
+            >
+              {busy === "auto" ? "Auto running…" : "Auto easy + email rest"}
+            </button>
+            <button
               className="rounded border px-4 py-2 text-sm"
               onClick={() => setShowScreen((v) => !v)}
             >
@@ -195,6 +238,9 @@ export default function StockxCheckoutPage() {
               StockX login
             </a>
           </div>
+          {autoSummary && (
+            <p className="text-xs text-gray-600 font-mono">{autoSummary}</p>
+          )}
         </div>
 
         {message && (
