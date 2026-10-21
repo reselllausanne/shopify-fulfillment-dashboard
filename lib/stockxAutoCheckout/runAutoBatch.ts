@@ -1,6 +1,8 @@
 import { prisma } from "@/app/lib/prisma";
 import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
 import { emailStockxNeedsHuman } from "@/lib/stockxAutoCheckout/emailNeedsHuman";
+import { dryRunPlan, getBuyLagDays } from "@/lib/stockxAutoCheckout/queue";
+import type { StockxBuyQueuePlan } from "@/lib/stockxAutoCheckout/queue";
 import type { StockxNeedsHumanPayload } from "@/lib/stockxAutoCheckout/types";
 import { STOCKX_NEEDS_HUMAN_REASON_FR } from "@/lib/stockxAutoCheckout/types";
 import {
@@ -25,28 +27,43 @@ export type AutoBatchSummary = {
   dryRun: boolean;
   items: AutoBatchItemResult[];
   needsHuman: StockxNeedsHumanPayload[];
+  /** Cashflow queue plan used (null when orderNames override / legacy days scan). */
+  queue: StockxBuyQueuePlan | null;
 };
 
 /**
- * Unmatched Shopify orders (recent) → auto easy buys + email hard cases.
+ * Unmatched Shopify orders → auto easy buys + email hard cases.
+ * Default: cashflow buy queue (current Zurich month, lag days, oldest sell-day cohort).
  * Skips physical stock / pickup / package protection / already matched.
+ * Success buys are NOT emailed (fail / needs_human only).
  */
 export async function runStockxAutoEasyAndEmailRest(options?: {
+  /** @deprecated Prefer cashflow queue. Kept for explicit wide scans when useQueue=false. */
   days?: number;
   orderNames?: string[];
   dryRun?: boolean;
   maxOrders?: number;
+  /** Default true: month + lag + oldest cohort. false = legacy recent-days scan. */
+  useQueue?: boolean;
+  lagDays?: number;
 }): Promise<AutoBatchSummary> {
-  const days = Math.min(60, Math.max(1, Math.floor(options?.days ?? 14)));
   const maxOrders = Math.min(40, Math.max(1, Math.floor(options?.maxOrders ?? 15)));
   const dryRun = Boolean(options?.dryRun);
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const useQueue = options?.useQueue !== false;
+  const lagDays = options?.lagDays ?? getBuyLagDays();
 
   let orderNames: string[] = (options?.orderNames ?? [])
     .map((n) => (String(n).startsWith("#") ? String(n) : `#${n}`))
     .filter(Boolean);
 
-  if (!orderNames.length) {
+  let queue: StockxBuyQueuePlan | null = null;
+
+  if (!orderNames.length && useQueue) {
+    queue = await dryRunPlan({ lagDays });
+    orderNames = queue.orderNamesIfRunNow.slice(0, maxOrders);
+  } else if (!orderNames.length) {
+    const days = Math.min(60, Math.max(1, Math.floor(options?.days ?? 14)));
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const orders = await prisma.shopifyOrder.findMany({
       where: { createdAt: { gte: since }, cancelledAt: null },
       select: { shopifyOrderId: true, orderName: true, netSalesChf: true },
@@ -61,8 +78,6 @@ export async function runStockxAutoEasyAndEmailRest(options?: {
       },
       select: { shopifyOrderName: true, shopifyOrderId: true, shopifyLineItemId: true },
     });
-    // Keep orders that still may have unmatched lines (no match on order name/id at all,
-    // or multi-line — we re-check per line in checkout).
     const fullyCovered = new Set(
       matched.map((m) => m.shopifyOrderName).filter(Boolean) as string[]
     );
@@ -118,7 +133,7 @@ export async function runStockxAutoEasyAndEmailRest(options?: {
   const emailable = needsHuman.filter(
     (n) => !["pickup", "physical_stock", "already_matched"].includes(n.reason)
   );
-  // Dry-run: never email (preview only). Live: Postmark via sendStockxEmail.
+  // Dry-run: never email. Live: needs_human / bot_fail only — never success spam.
   const emailResult = dryRun
     ? { sent: false, count: emailable.length }
     : await emailStockxNeedsHuman(emailable);
@@ -133,6 +148,7 @@ export async function runStockxAutoEasyAndEmailRest(options?: {
     dryRun,
     items,
     needsHuman: emailable,
+    queue,
   };
 
   await saveStockxLastAutoBatch({
