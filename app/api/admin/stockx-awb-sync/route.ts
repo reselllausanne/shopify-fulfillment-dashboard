@@ -10,6 +10,7 @@ import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
 import { canRefreshStockxAccount, refreshStockxToken } from "@/lib/stockxSessionRefresh";
 import { readServerStockxToken, stockxTokenExpiresAt } from "@/lib/stockxServerToken";
 import { listStockxAccountTokens } from "@/lib/stockxToken";
+import { runShopifyStockxAutoLinkSweep } from "@/shopify/orders/autoLinkStockxBuys";
 
 const GALAXUS_EXPIRY_WARN_MS = 2 * 60 * 60 * 1000;
 
@@ -26,7 +27,7 @@ function isLocalCron(req: NextRequest): boolean {
 /**
  * Hourly cron path (scripts/stockx-awb-cron.sh → this route):
  * 1. Refresh StockX session/token (default + Galaxus accounts)
- * 2. Match new Galaxus STX buys (auto-link sweep)
+ * 2. Match new StockX buys → Galaxus + Shopify (HIGH-confidence auto-link)
  * 3. Enrich missing chainId + pull AWB/status for Shopify / Galaxus / Decathlon matches
  *
  * Runs inside the web process so Playwright can use the entrypoint Xvfb display.
@@ -46,20 +47,42 @@ export async function POST(req: NextRequest) {
     const limit = Number(body?.limit ?? 60);
     const dryRun = Boolean(body?.dryRun ?? false);
 
-    const runAutoLinkSweepRaw = () =>
+    const remainingBudgetMs = () => Math.max(30_000, 480_000 - (Date.now() - startedAt));
+
+    const runGalaxusAutoLinkRaw = () =>
       dryRun || body?.skipGalaxusAutoLink === true
         ? Promise.resolve(null)
         : runGalaxusStockxAutoLinkSweep({
             days: Number(body?.galaxusAutoLinkDays ?? 30),
-            budgetMs: Math.max(30_000, 480_000 - (Date.now() - startedAt)),
+            budgetMs: remainingBudgetMs(),
           }).catch((err: any) => ({ ok: false, error: String(err?.message ?? err) }));
-    const runAutoLinkSweep = async () => {
-      const res: any = await runAutoLinkSweepRaw();
+    const runGalaxusAutoLink = async () => {
+      const res: any = await runGalaxusAutoLinkRaw();
       if (res && res.ok === false && res.error === "no_stockx_token" && Number(res.candidateOrders ?? 0) > 0) {
         await notifyStockxAuthBroken({
           account: "all",
           error: "Galaxus auto-link sweep found no valid StockX token",
           pendingGalaxusOrders: Number(res.candidateOrders ?? 0),
+        }).catch(() => undefined);
+      }
+      return res;
+    };
+
+    const runShopifyAutoLinkRaw = () =>
+      dryRun || body?.skipShopifyAutoLink === true
+        ? Promise.resolve(null)
+        : runShopifyStockxAutoLinkSweep({
+            days: Number(body?.shopifyAutoLinkDays ?? 30),
+            maxLines: Number(body?.shopifyAutoLinkLimit ?? 200),
+            dryRun,
+            budgetMs: remainingBudgetMs(),
+          }).catch((err: any) => ({ ok: false, error: String(err?.message ?? err) }));
+    const runShopifyAutoLink = async () => {
+      const res: any = await runShopifyAutoLinkRaw();
+      if (res && res.ok === false && res.error === "no_stockx_token" && Number(res.unmatchedLines ?? 0) > 0) {
+        await notifyStockxAuthBroken({
+          account: "default",
+          error: "Shopify auto-link sweep found no valid StockX token",
         }).catch(() => undefined);
       }
       return res;
@@ -90,8 +113,9 @@ export async function POST(req: NextRequest) {
     const token = refresh.token ?? (await readServerStockxToken())?.token ?? null;
 
     if (!token) {
-      // Sweep uses every valid account token (e.g. Galaxus file), not only the dashboard one.
-      const galaxusAutoLink = await runAutoLinkSweep();
+      // Galaxus sweep can still use Galaxus-file token; Shopify needs default account.
+      const galaxusAutoLink = await runGalaxusAutoLink();
+      const shopifyAutoLink = await runShopifyAutoLink();
       return NextResponse.json(
         {
           ok: false,
@@ -99,17 +123,18 @@ export async function POST(req: NextRequest) {
           needsManualLogin: refresh.needsManualLogin,
           refresh,
           galaxusAutoLink,
+          shopifyAutoLink,
         },
         { status: 401 }
       );
     }
 
-    // Match new Galaxus STX buys first so AWB pass can fill them same hour.
-    const galaxusAutoLink = await runAutoLinkSweep();
+    // Match new STX buys first so AWB pass can fill them same hour.
+    const galaxusAutoLink = await runGalaxusAutoLink();
+    const shopifyAutoLink = await runShopifyAutoLink();
 
     const shared = { token, days, limit, dryRun, includeFulfilled: false as const };
-    // Shopify: enrich missing chainId (order# only) then pull AWB/status. Shopify link itself
-    // happens at auto-checkout; cron heals enrich + AWB for already-linked OrderMatches.
+    // Shopify: newly linked OrderMatches (above) + enrich missing chainId + AWB/status.
     const shopify = await runAwbBackfill(shared);
     // Galaxus buys live on a separate StockX account; without its bearer their AWBs never fill.
     const extraTokens = (await listStockxAccountTokens())
@@ -151,6 +176,7 @@ export async function POST(req: NextRequest) {
       galaxus,
       decathlon,
       galaxusAutoLink,
+      shopifyAutoLink,
       stxResync,
       scanned: shopify.scanned + galaxus.scanned + decathlon.scanned,
       candidates: shopify.candidates + galaxus.candidates + decathlon.candidates,
