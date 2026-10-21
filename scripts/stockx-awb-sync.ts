@@ -91,7 +91,7 @@ async function main(): Promise<void> {
   // Headed Chromium on the container Xvfb needs this even outside the Next.js process.
   if (!process.env.DISPLAY) process.env.DISPLAY = ":99";
 
-  const days = arg("days", 21);
+  const days = arg("days", 45);
   const limit = arg("limit", 60);
   const dryRun = flag("dry-run");
   const forceRefresh = flag("force-refresh");

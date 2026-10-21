@@ -176,8 +176,14 @@ export async function selectDecathlonAwbCandidates(args: {
   }
 
   const open = stockxRows.filter((row) => !fulfilledIds.has(String(row.decathlonOrderId)));
+  const fulfilledMissingAwb = args.includeFulfilled
+    ? []
+    : stockxRows.filter(
+        (row) => fulfilledIds.has(String(row.decathlonOrderId)) && !row.stockxAwb
+      );
   return [
     ...open.filter((row) => !row.stockxAwb),
+    ...fulfilledMissingAwb,
     ...open.filter((row) => Boolean(row.stockxAwb)),
   ].slice(0, args.limit);
 }

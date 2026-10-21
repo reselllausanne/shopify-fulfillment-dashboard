@@ -10,14 +10,14 @@
 #   bash scripts/stockx-awb-cron.sh --force-refresh
 #
 # Env overrides:
-#   STOCKX_AWB_DAYS     default 21
+#   STOCKX_AWB_DAYS     default 45 (recent matches needing AWB/chainId)
 #   STOCKX_AWB_LIMIT    default 60
 #   STOCKX_AWB_BASE_URL default http://127.0.0.1:3000
 #   STOCKX_AWB_LOG_DIR  default /var/log/resell
 #
 set -euo pipefail
 
-DAYS="${STOCKX_AWB_DAYS:-21}"
+DAYS="${STOCKX_AWB_DAYS:-45}"
 LIMIT="${STOCKX_AWB_LIMIT:-60}"
 BASE_URL="${STOCKX_AWB_BASE_URL:-http://127.0.0.1:3000}"
 LOG_DIR="${STOCKX_AWB_LOG_DIR:-/var/log/resell}"
