@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
+import { dryRunPlan, getBuyLagDays } from "@/lib/stockxAutoCheckout/queue";
 import { runStockxAutoEasyAndEmailRest } from "@/lib/stockxAutoCheckout/runAutoBatch";
 import {
   confirmStockxCheckout,
@@ -17,12 +18,41 @@ async function requireAdmin(req: NextRequest) {
   return role === "admin";
 }
 
+function serializeQueuePlan(plan: Awaited<ReturnType<typeof dryRunPlan>>) {
+  return {
+    timezone: plan.timezone,
+    lagDays: plan.lagDays,
+    monthKey: plan.monthKey,
+    todayKey: plan.todayKey,
+    cutoffSellDateKey: plan.cutoffSellDateKey,
+    oldestUnlinkedSellDateKey: plan.oldestUnlinkedSellDateKey,
+    oldestUnlinkedOrderName: plan.oldestUnlinkedOrderName,
+    unlinkedThisMonthCount: plan.unlinkedThisMonth.length,
+    lagEligibleCount: plan.lagEligible.length,
+    cohortSellDateKey: plan.cohortSellDateKey,
+    cohortCount: plan.cohort.length,
+    orderNamesIfRunNow: plan.orderNamesIfRunNow,
+    cohort: plan.cohort.map((o) => ({
+      orderName: o.orderName,
+      sellDateKey: o.sellDateKey,
+      createdAt: o.createdAt.toISOString(),
+      netSalesChf: o.netSalesChf,
+    })),
+  };
+}
+
 export async function GET(req: NextRequest) {
   if (!(await requireAdmin(req))) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
   const state = await getStockxCheckoutState();
-  return NextResponse.json({ ok: true, ...state });
+  let queue = null;
+  try {
+    queue = serializeQueuePlan(await dryRunPlan({ lagDays: getBuyLagDays() }));
+  } catch (e: any) {
+    console.error("[STOCKX-CHECKOUT] queue plan failed", e?.message || e);
+  }
+  return NextResponse.json({ ok: true, ...state, queue });
 }
 
 export async function POST(req: NextRequest) {
@@ -74,6 +104,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, result });
     }
 
+    if (action === "queue_plan" || action === "dry_run_plan") {
+      const lagDays =
+        body.lagDays != null ? Number(body.lagDays) : getBuyLagDays();
+      const plan = await dryRunPlan({
+        lagDays: Number.isFinite(lagDays) ? lagDays : getBuyLagDays(),
+      });
+      return NextResponse.json({ ok: true, queue: serializeQueuePlan(plan) });
+    }
+
     if (action === "auto_easy_email_rest") {
       const orderNames = Array.isArray(body.orderNames)
         ? body.orderNames.map((n) => String(n))
@@ -84,13 +123,22 @@ export async function POST(req: NextRequest) {
         body.dryRun === "true" ||
         body.previewOnly === true ||
         body.previewOnly === "true";
+      const useQueue = body.useQueue !== false && body.useQueue !== "false";
       const summary = await runStockxAutoEasyAndEmailRest({
         days: body.days != null ? Number(body.days) : undefined,
         orderNames,
         dryRun,
         maxOrders: body.maxOrders != null ? Number(body.maxOrders) : undefined,
+        useQueue,
+        lagDays: body.lagDays != null ? Number(body.lagDays) : undefined,
       });
-      return NextResponse.json({ ok: true, summary });
+      return NextResponse.json({
+        ok: true,
+        summary: {
+          ...summary,
+          queue: summary.queue ? serializeQueuePlan(summary.queue) : null,
+        },
+      });
     }
 
     return NextResponse.json({ ok: false, error: "Unknown action" }, { status: 400 });

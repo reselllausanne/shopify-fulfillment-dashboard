@@ -61,8 +61,37 @@ type LastAutoBatch = {
   }>;
 };
 
+type QueuePlan = {
+  timezone: string;
+  lagDays: number;
+  monthKey: string;
+  todayKey: string;
+  cutoffSellDateKey: string;
+  oldestUnlinkedSellDateKey: string | null;
+  oldestUnlinkedOrderName: string | null;
+  unlinkedThisMonthCount: number;
+  lagEligibleCount: number;
+  cohortSellDateKey: string | null;
+  cohortCount: number;
+  orderNamesIfRunNow: string[];
+  cohort: Array<{
+    orderName: string;
+    sellDateKey: string;
+    createdAt: string;
+    netSalesChf: number;
+  }>;
+};
+
 const VNC_URL =
   "/stockx-vnc/vnc.html?autoconnect=1&resize=scale&reconnect=1&path=stockx-vnc/websockify";
+
+function initialOrderFromUrl(): string {
+  if (typeof window === "undefined") return "#7541";
+  const q = new URLSearchParams(window.location.search);
+  const order = q.get("order")?.trim();
+  if (!order) return "#7541";
+  return order.startsWith("#") ? order : `#${order}`;
+}
 
 export default function StockxCheckoutPage() {
   const [orderName, setOrderName] = useState("#7541");
@@ -71,10 +100,15 @@ export default function StockxCheckoutPage() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [lastConfirm, setLastConfirm] = useState<LastConfirm | null>(null);
   const [lastAutoBatch, setLastAutoBatch] = useState<LastAutoBatch | null>(null);
+  const [queue, setQueue] = useState<QueuePlan | null>(null);
   const [busy, setBusy] = useState<"preview" | "confirm" | "auto" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [showScreen, setShowScreen] = useState(false);
   const [autoDryRun, setAutoDryRun] = useState(true);
+
+  useEffect(() => {
+    setOrderName(initialOrderFromUrl());
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -84,6 +118,7 @@ export default function StockxCheckoutPage() {
         setPreview(data.preview ?? null);
         setLastConfirm(data.lastConfirm ?? null);
         setLastAutoBatch(data.lastAutoBatch ?? null);
+        setQueue(data.queue ?? null);
         if (data.preview?.totalChf != null) setConfirmTotal(String(data.preview.totalChf));
       }
     } catch {
@@ -171,9 +206,12 @@ export default function StockxCheckoutPage() {
   };
 
   const runAutoBatch = async () => {
+    const cohortHint = queue?.orderNamesIfRunNow?.length
+      ? `\nQueue: ${queue.cohortSellDateKey} → ${queue.orderNamesIfRunNow.join(", ")}`
+      : "\nQueue: (aucune cohort lag-eligible ce mois)";
     const confirmMsg = autoDryRun
-      ? "DRY-RUN: classify easy buys + hard cases (no Place Order, no ops email)?"
-      : "LIVE: auto-buy easy StockX cases (cap 250 CHF) and email hard cases?\nCharges card for clear cases.";
+      ? `DRY-RUN: cashflow queue (lag ${queue?.lagDays ?? 5}j) — classify only, no pay/email?${cohortHint}`
+      : `LIVE: buy easy StockX for oldest lag-eligible sell-day cohort (cap 250). Email needs_human only.${cohortHint}`;
     if (!window.confirm(confirmMsg)) return;
     setBusy("auto");
     setMessage(null);
@@ -184,8 +222,8 @@ export default function StockxCheckoutPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           action: "auto_easy_email_rest",
-          days: 14,
-          maxOrders: 10,
+          useQueue: true,
+          maxOrders: 40,
           dryRun: autoDryRun,
         }),
       });
@@ -194,6 +232,7 @@ export default function StockxCheckoutPage() {
         setMessage(data?.error || "Auto batch failed");
       } else {
         const s = data.summary;
+        if (s.queue) setQueue(s.queue);
         setLastAutoBatch({
           at: new Date().toISOString(),
           dryRun: Boolean(s.dryRun),
@@ -222,10 +261,13 @@ export default function StockxCheckoutPage() {
             desiredLane: n.desiredLane,
           })),
         });
+        const qNote = s.queue?.cohortSellDateKey
+          ? ` · cohort ${s.queue.cohortSellDateKey} (${s.queue.cohortCount} cmd)`
+          : "";
         setMessage(
           s.dryRun
-            ? `Dry-run done — would buy ${s.bought}, needs human ${s.emailed}, skipped ${s.skipped}`
-            : `Auto batch done — bought ${s.bought}, emailed ${s.emailed} (sent=${s.emailSent}), skipped ${s.skipped}`
+            ? `Dry-run done — would buy ${s.bought}, needs human ${s.emailed}, skipped ${s.skipped}${qNote}`
+            : `Auto batch done — bought ${s.bought}, emailed ${s.emailed} (sent=${s.emailSent}), skipped ${s.skipped}${qNote}`
         );
       }
       await load();
@@ -250,9 +292,38 @@ export default function StockxCheckoutPage() {
           <p className="mt-1 text-sm text-gray-600">
             Preview → Passer commande (no pay). Confirm retypes total. Cap{" "}
             {preview?.maxAllInChf ?? 250} CHF. Lane from Shopify Express — never buy StockX
-            Express unless Shopify Express. Auto: easy buy + email rest (dry-run default).
+            Express unless Shopify Express. Auto: cashflow queue (oldest lag-eligible sell day)
+            + email needs_human only.
           </p>
         </div>
+
+        {queue && (
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4 space-y-2 text-sm">
+            <div className="font-semibold text-indigo-950">Buy queue (cashflow)</div>
+            <div className="text-xs text-indigo-900 font-mono space-y-1">
+              <div>
+                mois {queue.monthKey} · today {queue.todayKey} ({queue.timezone}) · lag{" "}
+                {queue.lagDays}j · cutoff sell ≤ {queue.cutoffSellDateKey}
+              </div>
+              <div>
+                unlinked ce mois: {queue.unlinkedThisMonthCount} · lag-eligible:{" "}
+                {queue.lagEligibleCount}
+              </div>
+              <div>
+                plus ancienne unlinked:{" "}
+                {queue.oldestUnlinkedOrderName || "—"} (
+                {queue.oldestUnlinkedSellDateKey || "—"})
+              </div>
+              <div>
+                si run now → cohort {queue.cohortSellDateKey || "—"} ·{" "}
+                {queue.cohortCount} cmd:{" "}
+                {queue.orderNamesIfRunNow.length
+                  ? queue.orderNamesIfRunNow.join(", ")
+                  : "(aucune)"}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="rounded-lg border bg-white p-4 space-y-3">
           <label className="block text-sm">
@@ -299,8 +370,8 @@ export default function StockxCheckoutPage() {
               {busy === "auto"
                 ? "Auto running…"
                 : autoDryRun
-                  ? "Auto dry-run"
-                  : "Auto LIVE + email rest"}
+                  ? "Auto dry-run (queue)"
+                  : "Auto LIVE queue + email rest"}
             </button>
             <button
               className="rounded border px-4 py-2 text-sm"

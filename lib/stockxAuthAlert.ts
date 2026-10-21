@@ -48,12 +48,24 @@ async function postSlack(text: string): Promise<boolean> {
   }
 }
 
-export async function sendStockxEmail(subject: string, text: string): Promise<boolean> {
+export async function sendStockxEmail(
+  subject: string,
+  text: string,
+  html?: string | null
+): Promise<boolean> {
   const serverToken = process.env.POSTMARK_SERVER_TOKEN?.trim();
   const from = process.env.POSTMARK_FROM_EMAIL?.trim();
   const to = process.env.STOCKX_ALERT_EMAIL?.trim() || from;
   if (!serverToken || !from || !to) return false;
   try {
+    const payload: Record<string, string> = {
+      From: from,
+      To: to,
+      Subject: subject,
+      TextBody: text,
+      MessageStream: process.env.POSTMARK_MESSAGE_STREAM?.trim() || "outbound",
+    };
+    if (html) payload.HtmlBody = html;
     const res = await fetch("https://api.postmarkapp.com/email", {
       method: "POST",
       headers: {
@@ -61,13 +73,7 @@ export async function sendStockxEmail(subject: string, text: string): Promise<bo
         "content-type": "application/json",
         "X-Postmark-Server-Token": serverToken,
       },
-      body: JSON.stringify({
-        From: from,
-        To: to,
-        Subject: subject,
-        TextBody: text,
-        MessageStream: process.env.POSTMARK_MESSAGE_STREAM?.trim() || "outbound",
-      }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       console.error("[STOCKX][AUTH-ALERT] Postmark failed", res.status, (await res.text()).slice(0, 200));
