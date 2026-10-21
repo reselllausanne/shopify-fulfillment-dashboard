@@ -38,6 +38,8 @@ export interface NormalizedSupplierOrder {
   productVariantId?: string; // Optional: for pricing queries (for workers)
   awb?: string | null; // ✅ Air Waybill / tracking number (from Query B)
   trackingUrl?: string | null; // ✅ Full tracking URL (from Query B)
+  /** StockX product slug for ops / buy links (not used in scoring). */
+  urlKey?: string | null;
   stockxCheckoutType?: string | null;
   stockxStates?: any | null;
   localStockLot?: AvailableLocalStockLot | null;

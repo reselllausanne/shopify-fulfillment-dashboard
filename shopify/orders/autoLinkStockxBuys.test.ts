@@ -225,14 +225,22 @@ describe("pickHighConfidenceShopifyStockxLinks", () => {
       offerAmount: 100,
     });
 
-    const { picks, mediumSkipped, lowSkipped } = pickHighConfidenceShopifyStockxLinks({
-      lines: [line],
-      supplierOrders: [a, b],
-      usedSupplierNumbers: new Set(),
-    });
+    const { picks, mediumSkipped, lowSkipped, mediumCandidates } =
+      pickHighConfidenceShopifyStockxLinks({
+        lines: [line],
+        supplierOrders: [a, b],
+        usedSupplierNumbers: new Set(),
+      });
 
     // Ambiguity inside matchShopifyToSupplier downgrades HIGH → medium.
     expect(picks).toHaveLength(0);
     expect(mediumSkipped + lowSkipped).toBeGreaterThanOrEqual(1);
+    expect(mediumCandidates.length + lowSkipped).toBeGreaterThanOrEqual(1);
+    if (mediumCandidates.length) {
+      expect(mediumCandidates[0].confidence).toBe("medium");
+      expect(["03-A", "03-B"]).toContain(
+        mediumCandidates[0].supplier.supplierOrderNumber
+      );
+    }
   });
 });
