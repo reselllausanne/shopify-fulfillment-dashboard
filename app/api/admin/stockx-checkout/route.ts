@@ -78,10 +78,16 @@ export async function POST(req: NextRequest) {
       const orderNames = Array.isArray(body.orderNames)
         ? body.orderNames.map((n) => String(n))
         : undefined;
+      // dryRun / previewOnly → classify + stop before Place Order (no charge, no ops email).
+      const dryRun =
+        body.dryRun === true ||
+        body.dryRun === "true" ||
+        body.previewOnly === true ||
+        body.previewOnly === "true";
       const summary = await runStockxAutoEasyAndEmailRest({
         days: body.days != null ? Number(body.days) : undefined,
         orderNames,
-        dryRun: Boolean(body.dryRun),
+        dryRun,
         maxOrders: body.maxOrders != null ? Number(body.maxOrders) : undefined,
       });
       return NextResponse.json({ ok: true, summary });

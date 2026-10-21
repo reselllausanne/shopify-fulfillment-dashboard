@@ -62,6 +62,33 @@ export type StockxCheckoutPreview = {
   snippet: string;
 };
 
+export type StockxLastAutoBatch = {
+  at: string;
+  dryRun: boolean;
+  scannedOrders: number;
+  attempted: number;
+  bought: number;
+  emailed: number;
+  skipped: number;
+  emailSent: boolean;
+  boughtItems: Array<{
+    orderName: string;
+    lineItemId: string | null;
+    stockxOrderNumber?: string | null;
+    totalChf?: number | null;
+    detail?: string | null;
+  }>;
+  emailedItems: Array<{
+    orderName: string;
+    lineItemId: string | null;
+    reason: string;
+    reasonFr: string;
+    title: string;
+    saleChf: number | null;
+    desiredLane: string;
+  }>;
+};
+
 type StoredState = {
   preview: StockxCheckoutPreview | null;
   lastConfirm: {
@@ -72,6 +99,7 @@ type StoredState = {
     ok: boolean;
     error: string | null;
   } | null;
+  lastAutoBatch?: StockxLastAutoBatch | null;
 };
 
 function extractChfAmounts(text: string): number[] {
@@ -86,9 +114,33 @@ function extractChfAmounts(text: string): number[] {
 async function readState(): Promise<StoredState> {
   try {
     const raw = await fs.readFile(STATE_FILE, "utf8");
-    return JSON.parse(raw) as StoredState;
+    const parsed = JSON.parse(raw) as StoredState;
+    return {
+      preview: parsed.preview ?? null,
+      lastConfirm: parsed.lastConfirm ?? null,
+      lastAutoBatch: parsed.lastAutoBatch ?? null,
+    };
   } catch {
-    return { preview: null, lastConfirm: null };
+    return { preview: null, lastConfirm: null, lastAutoBatch: null };
+  }
+}
+
+export async function saveStockxLastAutoBatch(batch: StockxLastAutoBatch): Promise<void> {
+  const state = await readState();
+  state.lastAutoBatch = batch;
+  await writeState(state);
+}
+
+async function captureAutoScreenshot(page: Page, tag: string): Promise<string | null> {
+  const safe = tag.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80);
+  const rel = `stockx-auto-${safe}-${Date.now().toString(36)}.png`;
+  const abs = path.join(DATA_DIR, rel);
+  try {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await page.screenshot({ path: abs, fullPage: true });
+    return rel;
+  } catch {
+    return null;
   }
 }
 
@@ -336,6 +388,10 @@ async function loadShopifyLine(
     if (hit) line = hit;
   }
 
+  const shippingLineTitles = Array.isArray(line.shippingLineTitles)
+    ? line.shippingLineTitles.map((t: unknown) => String(t || "")).filter(Boolean)
+    : [];
+
   return {
     shopifyOrderId: String(line.shopifyOrderId || line.orderId || "") || null,
     orderName: String(line.orderName || name),
@@ -348,7 +404,7 @@ async function loadShopifyLine(
     customerEmail: line.customerEmail ? String(line.customerEmail) : null,
     deliveryMode: line.deliveryMode ?? null,
     deliveryModeLabel: line.deliveryModeLabel ?? null,
-    shippingLineTitles: [],
+    shippingLineTitles,
     isStorePickup: Boolean(line.isStorePickup),
     physicalStockQty:
       line.physicalStockQty != null && Number.isFinite(Number(line.physicalStockQty))
@@ -359,20 +415,33 @@ async function loadShopifyLine(
 
 async function launchStockxContext() {
   const files = stockxAccountFiles("default");
+  // VPS Xvfb / VNC: without DISPLAY Chromium dies. Default :99 like stockx login.
   if (!process.env.DISPLAY) process.env.DISPLAY = ":99";
   for (const lockName of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
     await fs.rm(path.join(files.profileDir, lockName), { force: true }).catch(() => undefined);
     await fs.rm(path.join(files.profileDir, "Default", lockName), { force: true }).catch(() => undefined);
   }
-  const ctx = await chromium.launchPersistentContext(files.profileDir, {
-    headless: false,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"],
-    locale: "fr-CH",
-    timezoneId: "Europe/Zurich",
-    viewport: { width: 1440, height: 1100 },
-  });
-  const page = ctx.pages()[0] || (await ctx.newPage());
-  return { ctx, page };
+  try {
+    const ctx = await chromium.launchPersistentContext(files.profileDir, {
+      headless: false,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-blink-features=AutomationControlled",
+      ],
+      locale: "fr-CH",
+      timezoneId: "Europe/Zurich",
+      viewport: { width: 1440, height: 1100 },
+    });
+    const page = ctx.pages()[0] || (await ctx.newPage());
+    return { ctx, page };
+  } catch (e: any) {
+    const msg = e?.message || String(e);
+    throw new Error(
+      `StockX browser launch failed (DISPLAY=${process.env.DISPLAY}, profile=${files.profileDir}): ${msg}. ` +
+        "On VPS ensure Xvfb/VNC on :99 and no stuck Chromium holding the profile lock."
+    );
+  }
 }
 
 function parseCheckoutTotals(text: string) {
@@ -654,6 +723,7 @@ function needsHumanBase(
     recommended: extras.recommended ?? null,
     reason: extras.reason,
     detail: extras.detail ?? null,
+    screenshotRel: extras.screenshotRel ?? null,
   };
 }
 
@@ -726,6 +796,7 @@ export async function runStockxAutoCheckoutForOrder(options: {
   const shopifyExpress = detectShopifyExpress({
     deliveryMode: shopify.deliveryMode,
     deliveryModeLabel: shopify.deliveryModeLabel,
+    shippingLineTitles: shopify.shippingLineTitles,
   });
   const desiredLane = desiredStockxLaneFromShopify(shopifyExpress);
 
@@ -741,38 +812,48 @@ export async function runStockxAutoCheckoutForOrder(options: {
   });
   const productUrl = buildStockxBuyUrl(slug, sizeUS);
 
-  const { ctx, page } = await launchStockxContext();
+  let ctx: Awaited<ReturnType<typeof launchStockxContext>>["ctx"] | null = null;
   try {
+    const launched = await launchStockxContext();
+    ctx = launched.ctx;
+    const { page } = launched;
+
+    const fail = async (
+      reason: StockxNeedsHumanReason,
+      extras: Partial<StockxNeedsHumanPayload> & { detail?: string | null }
+    ): Promise<StockxAutoCheckoutResult> => {
+      const shot = await captureAutoScreenshot(
+        page,
+        `${shopify.orderName}-${reason}`
+      );
+      const nh = needsHumanBase(shopify, {
+        reason,
+        desiredLane,
+        slug,
+        productUrl,
+        sizeUS,
+        buyUrl: page.url(),
+        screenshotRel: shot,
+        ...extras,
+      });
+      return { kind: "needs_human", reason, detail: extras.detail, needsHuman: nh };
+    };
+
     await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForTimeout(3500);
     await dismissNoise(page);
 
     const sized = await selectSizeEuOrUs(page, shopify.sizeEU, sizeUS);
     if (!sized.ok) {
-      const nh = needsHumanBase(shopify, {
-        reason: "size_us_map",
-        desiredLane,
-        slug,
-        productUrl,
-        sizeUS,
+      return fail("size_us_map", {
         buyUrl: productUrl,
         detail: sizeUS ? `EU+US select failed (US ${sizeUS})` : "EU select failed + no US map",
       });
-      return { kind: "needs_human", reason: "size_us_map", needsHuman: nh };
     }
 
     await page.waitForTimeout(1000);
     if (!(await clickBuyNow(page))) {
-      const nh = needsHumanBase(shopify, {
-        reason: "bot_fail",
-        desiredLane,
-        slug,
-        productUrl,
-        sizeUS,
-        buyUrl: page.url(),
-        detail: "Buy Now not found",
-      });
-      return { kind: "needs_human", reason: "bot_fail", needsHuman: nh };
+      return fail("bot_fail", { detail: "Buy Now not found" });
     }
     await page.waitForTimeout(4500);
     await dismissNoise(page);
@@ -782,35 +863,18 @@ export async function runStockxAutoCheckoutForOrder(options: {
     if (!pick.ok) {
       const cheapest =
         [...lanes].sort((a, b) => a.totalChf - b.totalChf)[0] ?? null;
-      const nh = needsHumanBase(shopify, {
-        reason: pick.reason,
-        desiredLane,
-        slug,
-        productUrl,
-        sizeUS,
-        buyUrl: page.url(),
-        lanes,
-        recommended: cheapest,
-      });
-      return { kind: "needs_human", reason: pick.reason, needsHuman: nh };
+      return fail(pick.reason, { lanes, recommended: cheapest });
     }
 
     await clickLaneCard(page, pick.lane);
     await page.waitForTimeout(800);
 
     if (!(await clickReviewOrder(page))) {
-      const nh = needsHumanBase(shopify, {
-        reason: "bot_fail",
-        desiredLane,
-        slug,
-        productUrl,
-        sizeUS,
-        buyUrl: page.url(),
+      return fail("bot_fail", {
         lanes,
         recommended: pick.lane,
         detail: "Review/confirm button missing",
       });
-      return { kind: "needs_human", reason: "bot_fail", needsHuman: nh };
     }
     await page.waitForTimeout(4500);
 
@@ -819,71 +883,46 @@ export async function runStockxAutoCheckoutForOrder(options: {
     const totalChf = totals.totalChf ?? pick.lane.totalChf;
 
     if (totalChf == null || totalChf > maxAllInChf) {
-      const nh = needsHumanBase(shopify, {
-        reason: "cap",
-        desiredLane,
-        slug,
-        productUrl,
-        sizeUS,
-        buyUrl: page.url(),
+      return fail("cap", {
         lanes,
         recommended: pick.lane,
         detail: `total ${totalChf}`,
       });
-      return { kind: "needs_human", reason: "cap", needsHuman: nh };
     }
 
     if (Math.abs(totalChf - pick.lane.totalChf) > 0.5) {
-      const nh = needsHumanBase(shopify, {
-        reason: "price_moved",
-        desiredLane,
-        slug,
-        productUrl,
-        sizeUS,
-        buyUrl: page.url(),
+      return fail("price_moved", {
         lanes,
         recommended: pick.lane,
         detail: `lane ${pick.lane.totalChf} → total ${totalChf}`,
       });
-      return { kind: "needs_human", reason: "price_moved", needsHuman: nh };
     }
 
     if (!marginOk(shopify.saleChf, totalChf)) {
-      const nh = needsHumanBase(shopify, {
-        reason: "margin",
-        desiredLane,
-        slug,
-        productUrl,
-        sizeUS,
-        buyUrl: page.url(),
+      return fail("margin", {
         lanes,
         recommended: pick.lane,
         detail: `sale ${shopify.saleChf} vs total ${totalChf}`,
       });
-      return { kind: "needs_human", reason: "margin", needsHuman: nh };
     }
 
     const pay = page.getByRole("button", { name: /Passer commande|Place Order/i }).first();
     if (!(await pay.isVisible({ timeout: 8000 }).catch(() => false))) {
-      const nh = needsHumanBase(shopify, {
-        reason: "bot_fail",
-        desiredLane,
-        slug,
-        productUrl,
-        sizeUS,
-        buyUrl: page.url(),
+      return fail("bot_fail", {
         lanes,
         recommended: pick.lane,
         detail: "Place Order missing",
       });
-      return { kind: "needs_human", reason: "bot_fail", needsHuman: nh };
     }
 
     if (options.dryRun) {
+      const shot = await captureAutoScreenshot(page, `${shopify.orderName}-dryrun`);
       return {
         kind: "easy_buy",
         totalChf,
-        detail: "dry_run — would pay",
+        detail: shot
+          ? `dry_run — would pay (shot .data/${shot})`
+          : "dry_run — would pay",
         needsHuman: null,
       };
     }
@@ -896,34 +935,20 @@ export async function runStockxAutoCheckoutForOrder(options: {
       after.match(/numéro de commande[^\n]*([0-9A-Z-]{8,})/i);
     const stockxOrderNumber = orderMatch?.[1] ?? null;
     if (!stockxOrderNumber) {
-      const nh = needsHumanBase(shopify, {
-        reason: "bot_fail",
-        desiredLane,
-        slug,
-        productUrl,
-        sizeUS,
-        buyUrl: page.url(),
+      return fail("bot_fail", {
         lanes,
         recommended: pick.lane,
         detail: "Paid but no StockX order number parsed — check VNC / account",
       });
-      return { kind: "needs_human", reason: "bot_fail", needsHuman: nh };
     }
 
     // 01- = Express, 03- = Standard — reject Express number if Shopify was Standard
     if (!shopifyExpress && stockxOrderNumber.startsWith("01-")) {
-      const nh = needsHumanBase(shopify, {
-        reason: "wrong_lane_only",
-        desiredLane,
-        slug,
-        productUrl,
-        sizeUS,
-        buyUrl: page.url(),
+      return fail("wrong_lane_only", {
         lanes,
         recommended: pick.lane,
         detail: `Got Express order ${stockxOrderNumber} on Standard Shopify`,
       });
-      return { kind: "needs_human", reason: "wrong_lane_only", needsHuman: nh };
     }
 
     const checkoutType = stockxOrderNumber.startsWith("01-")
@@ -951,6 +976,7 @@ export async function runStockxAutoCheckoutForOrder(options: {
         supplierCost: totalChf,
         desiredLane,
         stockxCheckoutType: checkoutType,
+        estimatedDelivery: totals.eta,
       });
       link = { orderMatchId: linked.orderMatchId, metafieldsOk: linked.metafieldsOk };
     }
@@ -965,16 +991,14 @@ export async function runStockxAutoCheckoutForOrder(options: {
   } catch (e: any) {
     const nh = needsHumanBase(shopify, {
       reason: "bot_fail",
-      desiredLane: desiredStockxLaneFromShopify(
-        detectShopifyExpress({
-          deliveryMode: shopify.deliveryMode,
-          deliveryModeLabel: shopify.deliveryModeLabel,
-        })
-      ),
+      desiredLane,
+      slug,
+      productUrl,
+      sizeUS,
       detail: e?.message || String(e),
     });
     return { kind: "needs_human", reason: "bot_fail", detail: e?.message, needsHuman: nh };
   } finally {
-    await ctx.close().catch(() => undefined);
+    await ctx?.close().catch(() => undefined);
   }
 }

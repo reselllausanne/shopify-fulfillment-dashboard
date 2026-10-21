@@ -2,8 +2,10 @@ import { prisma } from "@/app/lib/prisma";
 import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
 import { emailStockxNeedsHuman } from "@/lib/stockxAutoCheckout/emailNeedsHuman";
 import type { StockxNeedsHumanPayload } from "@/lib/stockxAutoCheckout/types";
+import { STOCKX_NEEDS_HUMAN_REASON_FR } from "@/lib/stockxAutoCheckout/types";
 import {
   runStockxAutoCheckoutForOrder,
+  saveStockxLastAutoBatch,
   type StockxAutoCheckoutResult,
 } from "@/lib/stockxCheckout";
 
@@ -20,6 +22,7 @@ export type AutoBatchSummary = {
   emailed: number;
   skipped: number;
   emailSent: boolean;
+  dryRun: boolean;
   items: AutoBatchItemResult[];
   needsHuman: StockxNeedsHumanPayload[];
 };
@@ -36,6 +39,7 @@ export async function runStockxAutoEasyAndEmailRest(options?: {
 }): Promise<AutoBatchSummary> {
   const days = Math.min(60, Math.max(1, Math.floor(options?.days ?? 14)));
   const maxOrders = Math.min(40, Math.max(1, Math.floor(options?.maxOrders ?? 15)));
+  const dryRun = Boolean(options?.dryRun);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
   let orderNames: string[] = (options?.orderNames ?? [])
@@ -62,8 +66,6 @@ export async function runStockxAutoEasyAndEmailRest(options?: {
     const fullyCovered = new Set(
       matched.map((m) => m.shopifyOrderName).filter(Boolean) as string[]
     );
-    // Prefer orders with zero matches; also allow named list. For multi-line unmatched,
-    // include if net > 0 and not every line matched — simple heuristic: no match row for name.
     orderNames = orders
       .filter((o) => Number(o.netSalesChf ?? 0) > 0 && !fullyCovered.has(o.orderName))
       .map((o) => o.orderName)
@@ -98,7 +100,7 @@ export async function runStockxAutoEasyAndEmailRest(options?: {
       const result = await runStockxAutoCheckoutForOrder({
         orderName,
         lineItemId,
-        dryRun: options?.dryRun,
+        dryRun,
       });
       items.push({ orderName, lineItemId, result });
 
@@ -116,16 +118,51 @@ export async function runStockxAutoEasyAndEmailRest(options?: {
   const emailable = needsHuman.filter(
     (n) => !["pickup", "physical_stock", "already_matched"].includes(n.reason)
   );
-  const emailResult = await emailStockxNeedsHuman(emailable);
+  // Dry-run: never email (preview only). Live: Postmark via sendStockxEmail.
+  const emailResult = dryRun
+    ? { sent: false, count: emailable.length }
+    : await emailStockxNeedsHuman(emailable);
 
-  return {
+  const summary: AutoBatchSummary = {
     scannedOrders: orderNames.length,
     attempted: items.length,
     bought,
     emailed: emailable.length,
     skipped,
     emailSent: emailResult.sent,
+    dryRun,
     items,
     needsHuman: emailable,
   };
+
+  await saveStockxLastAutoBatch({
+    at: new Date().toISOString(),
+    dryRun,
+    scannedOrders: summary.scannedOrders,
+    attempted: summary.attempted,
+    bought: summary.bought,
+    emailed: summary.emailed,
+    skipped: summary.skipped,
+    emailSent: summary.emailSent,
+    boughtItems: items
+      .filter((i) => i.result.kind === "easy_buy")
+      .map((i) => ({
+        orderName: i.orderName,
+        lineItemId: i.lineItemId,
+        stockxOrderNumber: i.result.stockxOrderNumber ?? null,
+        totalChf: i.result.totalChf ?? null,
+        detail: i.result.detail ?? null,
+      })),
+    emailedItems: emailable.map((n) => ({
+      orderName: n.shopifyOrderName,
+      lineItemId: n.shopifyLineItemId,
+      reason: n.reason,
+      reasonFr: STOCKX_NEEDS_HUMAN_REASON_FR[n.reason] || n.reason,
+      title: n.title,
+      saleChf: n.saleChf,
+      desiredLane: n.desiredLane,
+    })),
+  });
+
+  return summary;
 }

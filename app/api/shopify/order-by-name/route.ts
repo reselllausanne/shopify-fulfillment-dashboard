@@ -250,6 +250,11 @@ export async function POST(req: Request) {
         isStorePickup: pickupInfo.isStorePickup,
         pickupLocation: pickupInfo.locationName,
         pickupLabel: pickupInfo.label,
+        // Fallback for StockX Express detect when line `_delivery` missing.
+        shippingLineTitles: orderShippingLines
+          .filter((s: { isRemoved?: boolean }) => !s.isRemoved)
+          .map((s: { title?: string | null }) => s.title)
+          .filter(Boolean),
       });
     }
 

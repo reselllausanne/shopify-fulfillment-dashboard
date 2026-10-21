@@ -89,6 +89,23 @@ describe("parseLaneCardsFromText", () => {
     expect(parsed.some((l) => l.label === "STANDARD" && l.totalChf === 86.74)).toBe(true);
     expect(parsed.some((l) => l.label === "EXPRESS" && l.totalChf === 142)).toBe(true);
   });
+
+  it("parses stacked multiline cards (2–3 prices)", () => {
+    const text = `
+Standard
+Livraison 5-7 jours ouvrés
+86,74 CHF
+Express
+Recevez d'ici le 24 oct.
+142,00 CHF
+Xpress
+199,50 CHF
+    `;
+    const parsed = parseLaneCardsFromText(text);
+    expect(parsed.find((l) => l.label === "STANDARD")?.totalChf).toBe(86.74);
+    expect(parsed.find((l) => l.rawLabel === "Express")?.totalChf).toBe(142);
+    expect(parsed.find((l) => l.rawLabel === "Xpress")?.totalChf).toBe(199.5);
+  });
 });
 
 describe("marginOk", () => {
