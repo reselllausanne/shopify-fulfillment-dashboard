@@ -214,6 +214,10 @@ export async function enrichMissingChainIdCandidates(args: {
 /**
  * In-transit StockX buys: missing AWB first (warehouse scan), then rows that already have
  * tracking but still need status/milestone emails until the warehouse fulfills them.
+ *
+ * Already-matched refresh only — never re-runs matchShopifyToSupplier / THRESHOLD_HOURS.
+ * Buy↔sale delay and first-link age gates do not apply here (only `since` lookback +
+ * not already CANCELLED/REFUNDED).
  */
 export async function selectAwbCandidates(args: {
   since: Date;
