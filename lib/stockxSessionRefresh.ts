@@ -157,8 +157,9 @@ export async function refreshStockxToken(
       allowProfileReset: false,
       // Only Chromium is installed in the container image.
       browser: "chromium",
-      // Login page first so credential fill can run; then we navigate to buying/orders.
-      startUrl: "https://stockx.com/login",
+      // Cookie-first: reuse the persistent profile on buying/orders. Going to /login first
+      // forces Cloudflare Turnstile even when the session cookies are still valid.
+      startUrl: "https://stockx.com/buying/orders",
       maxWaitMs: Math.min(Number(options.maxWaitMs ?? 240000), 300000),
       sessionFile: files.sessionFile,
       sessionMetaFile: files.sessionMetaFile,
