@@ -20,16 +20,20 @@ export function moneyToNumber(raw: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Parse Standard / Express / Xpress cards + CHF from checkout body text. */
+/** Parse Standard / Express / Xpress cards + CHF from checkout body text (1–3 prices). */
 export function parseLaneCardsFromText(text: string): StockxLaneCard[] {
   const out: StockxLaneCard[] = [];
+  // Allow short newlines between label and CHF (StockX cards often stack).
   const re =
-    /\b(Standard|Express|Xpress)\b[^\n]{0,120}?(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/gi;
+    /\b(Standard|Express|Xpress)\b[\s\S]{0,160}?(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/gi;
   for (const match of text.matchAll(re)) {
     const rawLabel = String(match[1] || "").trim();
     const totalChf = moneyToNumber(match[2]);
     if (totalChf == null || totalChf <= 0) continue;
-    const around = text.slice(Math.max(0, (match.index ?? 0) - 40), (match.index ?? 0) + 160);
+    // Reject if another lane keyword sits between label and this CHF (wrong pair).
+    const between = String(match[0] || "").slice(rawLabel.length);
+    if (/\b(Standard|Express|Xpress)\b/i.test(between)) continue;
+    const around = text.slice(Math.max(0, (match.index ?? 0) - 40), (match.index ?? 0) + 200);
     const etaMatch = around.match(
       /(?:Recevez|Arriv|ETA|d['’]ici le|by)\s*([^\n.]{3,40})/i
     );

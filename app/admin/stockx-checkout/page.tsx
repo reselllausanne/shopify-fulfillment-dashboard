@@ -34,6 +34,33 @@ type LastConfirm = {
   error: string | null;
 };
 
+type LastAutoBatch = {
+  at: string;
+  dryRun: boolean;
+  scannedOrders: number;
+  attempted: number;
+  bought: number;
+  emailed: number;
+  skipped: number;
+  emailSent: boolean;
+  boughtItems: Array<{
+    orderName: string;
+    lineItemId: string | null;
+    stockxOrderNumber?: string | null;
+    totalChf?: number | null;
+    detail?: string | null;
+  }>;
+  emailedItems: Array<{
+    orderName: string;
+    lineItemId: string | null;
+    reason: string;
+    reasonFr: string;
+    title: string;
+    saleChf: number | null;
+    desiredLane: string;
+  }>;
+};
+
 const VNC_URL =
   "/stockx-vnc/vnc.html?autoconnect=1&resize=scale&reconnect=1&path=stockx-vnc/websockify";
 
@@ -43,10 +70,11 @@ export default function StockxCheckoutPage() {
   const [confirmTotal, setConfirmTotal] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [lastConfirm, setLastConfirm] = useState<LastConfirm | null>(null);
+  const [lastAutoBatch, setLastAutoBatch] = useState<LastAutoBatch | null>(null);
   const [busy, setBusy] = useState<"preview" | "confirm" | "auto" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [showScreen, setShowScreen] = useState(false);
-  const [autoSummary, setAutoSummary] = useState<string | null>(null);
+  const [autoDryRun, setAutoDryRun] = useState(true);
 
   const load = useCallback(async () => {
     try {
@@ -55,6 +83,7 @@ export default function StockxCheckoutPage() {
       if (data?.ok) {
         setPreview(data.preview ?? null);
         setLastConfirm(data.lastConfirm ?? null);
+        setLastAutoBatch(data.lastAutoBatch ?? null);
         if (data.preview?.totalChf != null) setConfirmTotal(String(data.preview.totalChf));
       }
     } catch {
@@ -142,33 +171,64 @@ export default function StockxCheckoutPage() {
   };
 
   const runAutoBatch = async () => {
-    if (
-      !window.confirm(
-        "Auto-buy easy StockX cases (cap 250 CHF, lane from Shopify Express) and email hard cases to ops?\nCharges card for clear cases only."
-      )
-    ) {
-      return;
-    }
+    const confirmMsg = autoDryRun
+      ? "DRY-RUN: classify easy buys + hard cases (no Place Order, no ops email)?"
+      : "LIVE: auto-buy easy StockX cases (cap 250 CHF) and email hard cases?\nCharges card for clear cases.";
+    if (!window.confirm(confirmMsg)) return;
     setBusy("auto");
     setMessage(null);
-    setAutoSummary(null);
     setShowScreen(true);
     try {
       const res = await fetch("/api/admin/stockx-checkout", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "auto_easy_email_rest", days: 14, maxOrders: 10 }),
+        body: JSON.stringify({
+          action: "auto_easy_email_rest",
+          days: 14,
+          maxOrders: 10,
+          dryRun: autoDryRun,
+        }),
       });
       const data = await res.json();
       if (!data?.ok) {
         setMessage(data?.error || "Auto batch failed");
       } else {
         const s = data.summary;
-        setAutoSummary(
-          `scanned ${s.scannedOrders} · attempted ${s.attempted} · bought ${s.bought} · email ${s.emailed} (sent=${s.emailSent}) · skipped ${s.skipped}`
+        setLastAutoBatch({
+          at: new Date().toISOString(),
+          dryRun: Boolean(s.dryRun),
+          scannedOrders: s.scannedOrders,
+          attempted: s.attempted,
+          bought: s.bought,
+          emailed: s.emailed,
+          skipped: s.skipped,
+          emailSent: s.emailSent,
+          boughtItems: (s.items || [])
+            .filter((i: any) => i.result?.kind === "easy_buy")
+            .map((i: any) => ({
+              orderName: i.orderName,
+              lineItemId: i.lineItemId,
+              stockxOrderNumber: i.result?.stockxOrderNumber,
+              totalChf: i.result?.totalChf,
+              detail: i.result?.detail,
+            })),
+          emailedItems: (s.needsHuman || []).map((n: any) => ({
+            orderName: n.shopifyOrderName,
+            lineItemId: n.shopifyLineItemId,
+            reason: n.reason,
+            reasonFr: n.detail ? `${n.reason}: ${n.detail}` : n.reason,
+            title: n.title,
+            saleChf: n.saleChf,
+            desiredLane: n.desiredLane,
+          })),
+        });
+        setMessage(
+          s.dryRun
+            ? `Dry-run done — would buy ${s.bought}, needs human ${s.emailed}, skipped ${s.skipped}`
+            : `Auto batch done — bought ${s.bought}, emailed ${s.emailed} (sent=${s.emailSent}), skipped ${s.skipped}`
         );
-        setMessage(`Auto batch done — bought ${s.bought}, needs human ${s.emailed}`);
       }
+      await load();
     } catch (e: any) {
       setMessage(e?.message || "Network error");
     } finally {
@@ -189,8 +249,8 @@ export default function StockxCheckoutPage() {
           <h1 className="text-2xl font-bold text-gray-900">StockX checkout</h1>
           <p className="mt-1 text-sm text-gray-600">
             Preview → Passer commande (no pay). Confirm retypes total. Cap{" "}
-            {preview?.maxAllInChf ?? 250} CHF. Lane from Shopify Express detection — never buy
-            StockX Express unless Shopify Express. Auto: easy buy + email rest.
+            {preview?.maxAllInChf ?? 250} CHF. Lane from Shopify Express — never buy StockX
+            Express unless Shopify Express. Auto: easy buy + email rest (dry-run default).
           </p>
         </div>
 
@@ -213,6 +273,14 @@ export default function StockxCheckoutPage() {
               placeholder="adidas-handball-spezial-fox-brown-clear-sky"
             />
           </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={autoDryRun}
+              onChange={(e) => setAutoDryRun(e.target.checked)}
+            />
+            Auto dry-run (no pay, no ops email)
+          </label>
           <div className="flex flex-wrap gap-2">
             <button
               className="rounded bg-black px-4 py-2 text-sm text-white disabled:opacity-50"
@@ -222,11 +290,17 @@ export default function StockxCheckoutPage() {
               {busy === "preview" ? "Preview running…" : "1. Preview (no pay)"}
             </button>
             <button
-              className="rounded bg-indigo-800 px-4 py-2 text-sm text-white disabled:opacity-50"
+              className={`rounded px-4 py-2 text-sm text-white disabled:opacity-50 ${
+                autoDryRun ? "bg-slate-700" : "bg-indigo-800"
+              }`}
               disabled={busy != null}
               onClick={() => void runAutoBatch()}
             >
-              {busy === "auto" ? "Auto running…" : "Auto easy + email rest"}
+              {busy === "auto"
+                ? "Auto running…"
+                : autoDryRun
+                  ? "Auto dry-run"
+                  : "Auto LIVE + email rest"}
             </button>
             <button
               className="rounded border px-4 py-2 text-sm"
@@ -238,14 +312,52 @@ export default function StockxCheckoutPage() {
               StockX login
             </a>
           </div>
-          {autoSummary && (
-            <p className="text-xs text-gray-600 font-mono">{autoSummary}</p>
-          )}
         </div>
 
         {message && (
           <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             {message}
+          </div>
+        )}
+
+        {lastAutoBatch && (
+          <div className="rounded-lg border bg-white p-4 space-y-2 text-sm">
+            <div className="font-semibold">
+              Last auto {lastAutoBatch.dryRun ? "(dry-run)" : "(live)"} — {lastAutoBatch.at}
+            </div>
+            <div className="text-xs text-gray-600 font-mono">
+              scanned {lastAutoBatch.scannedOrders} · attempted {lastAutoBatch.attempted} · bought{" "}
+              {lastAutoBatch.bought} · email {lastAutoBatch.emailed} (sent=
+              {String(lastAutoBatch.emailSent)}) · skipped {lastAutoBatch.skipped}
+            </div>
+            {lastAutoBatch.boughtItems?.length > 0 && (
+              <div>
+                <div className="font-medium text-green-800">Bought / would buy</div>
+                <ul className="mt-1 list-disc pl-5 text-xs space-y-1">
+                  {lastAutoBatch.boughtItems.map((b, i) => (
+                    <li key={`${b.orderName}-${i}`}>
+                      {b.orderName} · {b.totalChf ?? "?"} CHF ·{" "}
+                      {b.stockxOrderNumber || b.detail || "—"}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {lastAutoBatch.emailedItems?.length > 0 && (
+              <div>
+                <div className="font-medium text-amber-800">
+                  Needs human {lastAutoBatch.dryRun ? "(not emailed in dry-run)" : ""}
+                </div>
+                <ul className="mt-1 list-disc pl-5 text-xs space-y-1">
+                  {lastAutoBatch.emailedItems.map((e, i) => (
+                    <li key={`${e.orderName}-${e.reason}-${i}`}>
+                      {e.orderName} · {e.title?.slice(0, 40)} · lane {e.desiredLane} ·{" "}
+                      {e.reasonFr || e.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
 

@@ -6,10 +6,56 @@ import { detectMilestone, isStockxInboundDeliveryMilestone } from "@/app/lib/sto
 import { getMailer } from "@/app/lib/mailer";
 import { tryApplyResellFromReturnedStock } from "@/shopify/returns/resellFromReturnedStock";
 import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
+import {
+  markOrderMatchMetafieldsSynced,
+  setSupplierOrderMetafields,
+} from "@/shopify/orders/setSupplierMetafields";
 // Auto-send is disabled by default; only manual send should deliver emails.
 const AUTO_SEND_EMAILS = true;
 // Date handling helpers live in this file
 export const runtime = "nodejs";
+
+/** Best-effort Shopify supplier.* metafields after OrderMatch write. */
+async function syncSupplierMetafieldsForMatch(match: {
+  id: string;
+  shopifyOrderId: string;
+  stockxOrderNumber: string | null;
+  stockxStatus?: string | null;
+  stockxEstimatedDelivery?: Date | null;
+  supplierCost?: number | string | { toString(): string } | null;
+  marginAmount?: number | string | { toString(): string } | null;
+  marginPercent?: number | string | { toString(): string } | null;
+  stockxAwb?: string | null;
+  stockxTrackingUrl?: string | null;
+}): Promise<boolean> {
+  const stockxOrderNumber = String(match.stockxOrderNumber ?? "").trim();
+  const shopifyOrderId = String(match.shopifyOrderId ?? "").trim();
+  if (!stockxOrderNumber || !shopifyOrderId) return false;
+
+  const result = await setSupplierOrderMetafields({
+    shopifyOrderId,
+    stockxOrderNumber,
+    stockxStatus: match.stockxStatus ?? null,
+    estimatedDelivery: match.stockxEstimatedDelivery ?? null,
+    supplierCost: match.supplierCost ?? null,
+    marginAmount: match.marginAmount ?? null,
+    marginPercent: match.marginPercent ?? null,
+    trackingNumber: match.stockxAwb ?? null,
+    trackingUrl: match.stockxTrackingUrl ?? null,
+    skipDuplicateCheck: true,
+  });
+
+  if (result.ok) {
+    await markOrderMatchMetafieldsSynced(match.id);
+    return true;
+  }
+
+  console.error(
+    `[DB] Shopify metafields failed for ${match.id}:`,
+    result.error || "unknown"
+  );
+  return false;
+}
 
 type EmailMatch = {
   id: string;
@@ -263,6 +309,8 @@ export async function POST(req: Request) {
     const existingMatch = await prisma.orderMatch.findUnique({
       where: { shopifyLineItemId },
       select: {
+        id: true,
+        shopifyOrderId: true,
         stockxOrderNumber: true,
         stockxChainId: true,
         stockxOrderId: true,
@@ -277,6 +325,9 @@ export async function POST(req: Request) {
         stockxStatesHash: true,
         lastMilestoneKey: true,
         shopifyMetafieldsSynced: true,
+        supplierCost: true,
+        marginAmount: true,
+        marginPercent: true,
         manualCaseStatus: true,
         manualRevenueAdjustment: true,
         manualCostOverride: true,
@@ -453,8 +504,41 @@ export async function POST(req: Request) {
         });
       }
 
+      // Keep supplier.status / ETA / AWB metafields fresh on tracking-only saves.
+      let metafieldsSynced = existingMatch.shopifyMetafieldsSynced || false;
+      if (Object.keys(trackingUpdate).length > 0 || !metafieldsSynced) {
+        metafieldsSynced = await syncSupplierMetafieldsForMatch({
+          id: existingMatch.id,
+          shopifyOrderId: existingMatch.shopifyOrderId,
+          stockxOrderNumber: finalStockxOrderNumber || existingMatch.stockxOrderNumber,
+          stockxStatus: (trackingUpdate.stockxStatus as string | undefined) || finalStockxStatus || existingMatch.stockxStatus,
+          stockxEstimatedDelivery:
+            (trackingUpdate.stockxEstimatedDelivery as Date | undefined) ||
+            parsedEstimatedDelivery ||
+            existingMatch.stockxEstimatedDelivery,
+          supplierCost: existingMatch.supplierCost,
+          marginAmount: existingMatch.marginAmount,
+          marginPercent: existingMatch.marginPercent,
+          stockxAwb:
+            (trackingUpdate.stockxAwb as string | undefined) ||
+            resolvedAwb ||
+            existingMatch.stockxAwb,
+          stockxTrackingUrl:
+            (trackingUpdate.stockxTrackingUrl as string | undefined) ||
+            resolvedTrackingUrl ||
+            existingMatch.stockxTrackingUrl,
+        });
+      }
+
       return NextResponse.json(
-        { success: true, match: { ...existingMatch, ...trackingUpdate } },
+        {
+          success: true,
+          match: {
+            ...existingMatch,
+            ...trackingUpdate,
+            shopifyMetafieldsSynced: metafieldsSynced,
+          },
+        },
         { status: 200 }
       );
     }
@@ -486,14 +570,9 @@ export async function POST(req: Request) {
       );
     })();
 
-    const resolvedMetafieldsSynced =
-      typeof shopifyMetafieldsSynced === "boolean" ? shopifyMetafieldsSynced : undefined;
-    const resolvedMetafieldsSetAt =
-      typeof shopifyMetafieldsSynced === "boolean"
-        ? shopifyMetafieldsSynced
-          ? new Date()
-          : null
-        : undefined;
+    // Metafield sync happens after upsert — never trust client "synced" flag.
+    const resolvedMetafieldsSynced = false;
+    const resolvedMetafieldsSetAt = null as Date | null;
 
     const hasManualOverrides =
       !!existingMatch?.manualCaseStatus ||
@@ -622,8 +701,8 @@ export async function POST(req: Request) {
         manualCostOverride: resolvedManualCostOverride,
         manualNote: resolvedManualNote,
         ...(localStockLotField ? { localStockLotId: localStockLotId || null } : {}),
-        shopifyMetafieldsSynced: shopifyMetafieldsSynced || false,
-        shopifyMetafieldsSetAt: shopifyMetafieldsSynced ? new Date() : null,
+        shopifyMetafieldsSynced: false,
+        shopifyMetafieldsSetAt: null,
         customerTrackingToken: crypto.randomUUID(),
       },
     });
@@ -660,7 +739,23 @@ export async function POST(req: Request) {
       statesHash: (match.stockxStatesHash as string | null) || null,
     });
 
-    return NextResponse.json({ success: true, match }, { status: 200 });
+    const metafieldsSynced = await syncSupplierMetafieldsForMatch({
+      id: match.id,
+      shopifyOrderId: match.shopifyOrderId,
+      stockxOrderNumber: match.stockxOrderNumber,
+      stockxStatus: match.stockxStatus,
+      stockxEstimatedDelivery: match.stockxEstimatedDelivery,
+      supplierCost: match.supplierCost,
+      marginAmount: match.marginAmount,
+      marginPercent: match.marginPercent,
+      stockxAwb: match.stockxAwb,
+      stockxTrackingUrl: match.stockxTrackingUrl,
+    });
+
+    return NextResponse.json(
+      { success: true, match: { ...match, shopifyMetafieldsSynced: metafieldsSynced } },
+      { status: 200 }
+    );
   } catch (error: any) {
     console.error("[DB] Error saving match:", error);
     return NextResponse.json(

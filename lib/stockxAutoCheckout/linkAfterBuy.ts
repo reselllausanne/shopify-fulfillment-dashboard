@@ -1,16 +1,10 @@
 import { prisma } from "@/app/lib/prisma";
-import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
 import type { StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
-
-const METAFIELDS_MUTATION = /* GraphQL */ `
-mutation SetOrderMetafields($metafields: [MetafieldsSetInput!]!) {
-  metafieldsSet(metafields: $metafields) {
-    metafields { id namespace key type value }
-    userErrors { field message }
-  }
-}
-`;
+import {
+  markOrderMatchMetafieldsSynced,
+  setSupplierOrderMetafields,
+} from "@/shopify/orders/setSupplierMetafields";
 
 export type LinkAfterBuyInput = {
   shopifyOrderId: string;
@@ -31,6 +25,7 @@ export type LinkAfterBuyInput = {
   desiredLane: StockxDesiredLane;
   /** StockX checkoutType string when known (STANDARD / EXPRESS). */
   stockxCheckoutType?: string | null;
+  estimatedDelivery?: string | Date | null;
 };
 
 /**
@@ -138,56 +133,21 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
 
   let metafieldsOk = false;
   try {
-    const metafields = [
-      {
-        ownerId: shopifyOrderId,
-        namespace: "supplier",
-        key: "order_number",
-        type: "single_line_text_field",
-        value: stockxOrderNumber,
-      },
-      {
-        ownerId: shopifyOrderId,
-        namespace: "supplier",
-        key: "status",
-        type: "single_line_text_field",
-        value: "ORDERED",
-      },
-      {
-        ownerId: shopifyOrderId,
-        namespace: "supplier",
-        key: "total_cost",
-        type: "number_decimal",
-        value: String(cost),
-      },
-      {
-        ownerId: shopifyOrderId,
-        namespace: "supplier",
-        key: "margin_amount",
-        type: "number_decimal",
-        value: String(marginAmount),
-      },
-      {
-        ownerId: shopifyOrderId,
-        namespace: "supplier",
-        key: "margin_percent",
-        type: "number_decimal",
-        value: String(Number(marginPercent.toFixed(2))),
-      },
-    ];
-    const { data, errors } = await shopifyGraphQL<{
-      metafieldsSet: {
-        metafields: unknown[];
-        userErrors: { message: string }[];
-      };
-    }>(METAFIELDS_MUTATION, { metafields });
-    const userErrors = data?.metafieldsSet?.userErrors ?? [];
-    metafieldsOk = !errors?.length && userErrors.length === 0;
+    const meta = await setSupplierOrderMetafields({
+      shopifyOrderId,
+      stockxOrderNumber,
+      stockxStatus: "ORDERED",
+      estimatedDelivery: input.estimatedDelivery ?? null,
+      supplierCost: cost,
+      marginAmount,
+      marginPercent: Number(marginPercent.toFixed(2)),
+      skipDuplicateCheck: true,
+    });
+    metafieldsOk = meta.ok;
     if (metafieldsOk) {
-      await prisma.orderMatch.update({
-        where: { id: match.id },
-        data: { shopifyMetafieldsSynced: true, shopifyMetafieldsSetAt: new Date() },
-      });
+      await markOrderMatchMetafieldsSynced(match.id);
+    } else if (meta.error) {
+      console.error("[STOCKX-AUTO] set metafields failed:", meta.error);
     }
   } catch (e) {
     console.error("[STOCKX-AUTO] set metafields failed", e);

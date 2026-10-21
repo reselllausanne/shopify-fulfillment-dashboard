@@ -46,4 +46,23 @@ export type StockxNeedsHumanPayload = {
   recommended: StockxLaneCard | null;
   reason: StockxNeedsHumanReason;
   detail?: string | null;
+  /** Filename under `.data/` on VPS (ops: open admin StockX checkout / VNC). */
+  screenshotRel?: string | null;
+};
+
+/** French ops copy for email / admin UI. */
+export const STOCKX_NEEDS_HUMAN_REASON_FR: Record<StockxNeedsHumanReason, string> = {
+  oos: "Rupture / aucune lane parsée",
+  multi_price: "Plusieurs prix pour la lane demandée — choix ambigu",
+  wrong_lane_only: "Seule l'autre lane (Express vs Standard) est dispo sous plafond",
+  cap: "Prix all-in au-dessus du plafond 250 CHF",
+  size_us_map: "Taille EU/US non sélectionnable",
+  price_moved: "Prix changé entre lane et écran Passer commande",
+  bot_fail: "Échec bot (bouton / parsing / numéro commande)",
+  setup: "Setup / commande Shopify introuvable",
+  margin: "Marge négative (vente < total StockX)",
+  slug: "Slug StockX introuvable pour ce SKU",
+  already_matched: "Déjà matché (StockX lié)",
+  physical_stock: "Stock physique magasin — skip auto",
+  pickup: "Retrait magasin — skip auto",
 };

@@ -7,6 +7,10 @@ import {
 } from "@/app/lib/constants";
 import { POST as stockxProxy } from "@/app/api/stockx/route";
 import { sendMilestoneEmailForMatch } from "@/app/lib/notifications/stockxEmail";
+import {
+  markOrderMatchMetafieldsSynced,
+  setSupplierOrderMetafields,
+} from "@/shopify/orders/setSupplierMetafields";
 
 const DETAIL_DELAY_MS = 400;
 const MAX_CONSECUTIVE_AUTH_FAILURES = 3;
@@ -126,6 +130,9 @@ export async function selectAwbCandidates(args: {
       stockxOrderId: true,
       stockxAwb: true,
       stockxStatesHash: true,
+      supplierCost: true,
+      marginAmount: true,
+      marginPercent: true,
     },
     orderBy: { shopifyCreatedAt: "desc" },
     take: args.includeFulfilled ? args.limit : args.limit * CANDIDATE_POOL_MULTIPLIER,
@@ -241,6 +248,37 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
             : {}),
         },
       });
+
+      // Keep Shopify supplier.* metafields (status / ETA / AWB) in sync with StockX.
+      if (candidate.shopifyOrderId && candidate.stockxOrderNumber) {
+        try {
+          const meta = await setSupplierOrderMetafields({
+            shopifyOrderId: candidate.shopifyOrderId,
+            stockxOrderNumber: String(candidate.stockxOrderNumber),
+            stockxStatus,
+            estimatedDelivery,
+            supplierCost: candidate.supplierCost,
+            marginAmount: candidate.marginAmount,
+            marginPercent: candidate.marginPercent,
+            trackingNumber: awb,
+            trackingUrl,
+            skipDuplicateCheck: true,
+          });
+          if (meta.ok) {
+            await markOrderMatchMetafieldsSynced(candidate.id);
+          } else if (meta.error) {
+            console.error(
+              `[STOCKX-AWB] metafields ${candidate.shopifyOrderName}:`,
+              meta.error
+            );
+          }
+        } catch (metaErr: any) {
+          console.error(
+            `[STOCKX-AWB] metafields ${candidate.shopifyOrderName}:`,
+            metaErr?.message || metaErr
+          );
+        }
+      }
 
       // Status emails used to fire only on dashboard save-match; cron must advance them too.
       let emailSent = false;
