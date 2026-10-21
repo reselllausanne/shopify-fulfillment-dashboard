@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSoftPageRefresh } from "@/app/hooks/useSoftPageRefresh";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
 import { PhysicalStockBadge, PhysicalStockHintText } from "@/app/components/PhysicalStockBadge";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
@@ -513,6 +514,13 @@ export default function WarehouseBulkPage() {
   useEffect(() => {
     void loadOrders();
   }, []);
+
+  const softRefreshLinked = useCallback(async () => {
+    await loadOrders({ force: true });
+    if (selectedOrderId) await loadDetail(selectedOrderId, { force: true });
+  }, [selectedOrderId]);
+
+  useSoftPageRefresh(softRefreshLinked, { intervalMs: 30_000 });
 
   useEffect(() => {
     void loadDetail(selectedOrderId);

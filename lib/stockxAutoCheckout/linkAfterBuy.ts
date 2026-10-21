@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
 import type { StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
+import { enrichOrderMatchFromStockxOrderNumber } from "@/lib/stockxAutoCheckout/enrichAfterLink";
 import {
   markOrderMatchMetafieldsSynced,
   setSupplierOrderMetafields,
@@ -36,13 +37,22 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
   ok: boolean;
   orderMatchId: string | null;
   metafieldsOk: boolean;
+  enrichOk: boolean;
+  enrichReason: string | null;
   error: string | null;
 }> {
   const stockxOrderNumber = String(input.stockxOrderNumber || "").trim();
   const shopifyLineItemId = String(input.shopifyLineItemId || "").trim();
   const shopifyOrderId = String(input.shopifyOrderId || "").trim();
   if (!stockxOrderNumber || !shopifyLineItemId || !shopifyOrderId) {
-    return { ok: false, orderMatchId: null, metafieldsOk: false, error: "Missing ids" };
+    return {
+      ok: false,
+      orderMatchId: null,
+      metafieldsOk: false,
+      enrichOk: false,
+      enrichReason: null,
+      error: "Missing ids",
+    };
   }
 
   const sale = Number(input.shopifyTotalPrice) || 0;
@@ -65,6 +75,8 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
       ok: false,
       orderMatchId: null,
       metafieldsOk: false,
+      enrichOk: false,
+      enrichReason: null,
       error: `StockX ${stockxOrderNumber} already linked to ${existingOther.shopifyOrderName}`,
     };
   }
@@ -154,5 +166,34 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
     metafieldsOk = false;
   }
 
-  return { ok: true, orderMatchId: match.id, metafieldsOk, error: null };
+  // Best-effort: resolve chainId/orderId/states from StockX buying list by 03-…
+  // so AWB cron can track. No customer email here (emailedAt gate on milestones).
+  let enrichOk = false;
+  let enrichReason: string | null = null;
+  try {
+    const enriched = await enrichOrderMatchFromStockxOrderNumber({
+      orderMatchId: match.id,
+      stockxOrderNumber,
+    });
+    enrichOk = enriched.ok;
+    enrichReason = enriched.reason;
+    if (!enriched.ok) {
+      console.warn(
+        `[STOCKX-AUTO] enrich after link failed for ${stockxOrderNumber}:`,
+        enriched.reason
+      );
+    }
+  } catch (e: any) {
+    enrichReason = e?.message || "enrich_threw";
+    console.error("[STOCKX-AUTO] enrich after link threw", e);
+  }
+
+  return {
+    ok: true,
+    orderMatchId: match.id,
+    metafieldsOk,
+    enrichOk,
+    enrichReason,
+    error: null,
+  };
 }

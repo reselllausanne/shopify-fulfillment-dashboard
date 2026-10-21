@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useSoftPageRefresh } from "@/app/hooks/useSoftPageRefresh";
 import AuthenticationCard from "@/app/components/AuthenticationCard";
 import QueryControls from "@/app/components/QueryControls";
 import FetchActions from "@/app/components/FetchActions";
@@ -209,8 +210,9 @@ export default function Home() {
   const [goatDebugResult, setGoatDebugResult] = useState<string | null>(null);
   const [stockxLoginLoading, setStockxLoginLoading] = useState(false);
 
-  const loadFromDB = async () => {
-    setDbLoading(true);
+  const loadFromDB = async (opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    if (!silent) setDbLoading(true);
     try {
       const res = await getJson<any>("/api/db/matches");
       if (!res.ok) {
@@ -218,12 +220,16 @@ export default function Home() {
       }
       setDbMatches(res.data.matches || []);
       console.log(`[DB] Loaded ${res.data.matches?.length || 0} matches from DB`);
-      alert(`✅ Loaded ${res.data.matches?.length || 0} matches from database`);
+      if (!silent) {
+        alert(`✅ Loaded ${res.data.matches?.length || 0} matches from database`);
+      }
     } catch (error: any) {
       console.error("[DB] Error loading matches:", error);
-      alert(`❌ Error loading from DB:\n\n${error.message}`);
+      if (!silent) {
+        alert(`❌ Error loading from DB:\n\n${error.message}`);
+      }
     } finally {
-      setDbLoading(false);
+      if (!silent) setDbLoading(false);
     }
   };
 
@@ -442,11 +448,22 @@ export default function Home() {
     applyManualOverride,
     loadExchangeOrderByName,
     refreshDbMatchesTracking,
+    refreshMatchesFromDb,
   } = useMatching({
     enrichedOrders,
     orders,
     pricingByOrder,
-    reloadDb: loadFromDB,
+    reloadDb: () => loadFromDB({ silent: false }),
+  });
+
+  const softRefreshMatches = useCallback(async () => {
+    await loadFromDB({ silent: true });
+    await refreshMatchesFromDb();
+  }, [refreshMatchesFromDb]);
+
+  useSoftPageRefresh(softRefreshMatches, {
+    intervalMs: 30_000,
+    enabled: matchResults.length > 0,
   });
 
   const autoSetAllHighMatchesAndRefresh = async () => {

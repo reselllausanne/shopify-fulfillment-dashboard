@@ -957,7 +957,11 @@ export async function runStockxAutoCheckoutForOrder(options: {
         ? "STANDARD"
         : desiredLane;
 
-    let link: { orderMatchId: string | null; metafieldsOk: boolean } | null = null;
+    let link: {
+      orderMatchId: string | null;
+      metafieldsOk: boolean;
+      enrichOk?: boolean;
+    } | null = null;
     if (shopify.shopifyOrderId && shopify.shopifyLineItemId) {
       const linked = await linkStockxBuyToShopify({
         shopifyOrderId: shopify.shopifyOrderId,
@@ -978,7 +982,11 @@ export async function runStockxAutoCheckoutForOrder(options: {
         stockxCheckoutType: checkoutType,
         estimatedDelivery: totals.eta,
       });
-      link = { orderMatchId: linked.orderMatchId, metafieldsOk: linked.metafieldsOk };
+      link = {
+        orderMatchId: linked.orderMatchId,
+        metafieldsOk: linked.metafieldsOk,
+        enrichOk: linked.enrichOk,
+      };
     }
 
     return {
