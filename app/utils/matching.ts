@@ -305,6 +305,7 @@ export function matchResultFromDbSaved(
   };
 }
 
+/** UI / SKU-override window only — does NOT gate HIGH confidence (see confidence below). */
 const THRESHOLD_HOURS = 96; // 4 days (default)
 const SKU_EXACT_AUTO_THRESHOLD_HOURS = 168; // 7 days for exact SKU delayed fulfillment flows
 
@@ -1147,13 +1148,16 @@ export function matchShopifyToSupplier(
       }
     }
 
+    // Flag for UI only ("X days apart"). Must NOT block HIGH auto-link.
+    // Mega-old never-matched Shopify lines are gated by auto-link `days` lookback,
+    // not by buy↔sale delay. AWB/enrich/status updates never call this scorer.
     const overThreshold = timeDiffHours > effectiveThresholdHours;
 
-    // Determine confidence
+    // Confidence: hard filters (name/size/causal, optional SKU override) already passed.
+    // Time proximity ranks candidates + FIFO ties; it must not downgrade HIGH→medium.
+    // Ambiguity (top2 close scores) still downgrades to medium below.
     let confidence: "high" | "medium" | "low";
-    if (score >= 140 && !overThreshold) confidence = "high"; // name+size+time<24h+sku
-    else if (score >= 120 && !overThreshold) confidence = "high"; // name+size+time<48h
-    else if (score >= 100) confidence = "medium"; // name+size match but time>4d
+    if (score >= 100) confidence = "high";
     else confidence = "low";
 
     candidates.push({

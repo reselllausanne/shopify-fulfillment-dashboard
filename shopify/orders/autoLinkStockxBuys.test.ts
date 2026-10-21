@@ -199,6 +199,36 @@ describe("pickHighConfidenceShopifyStockxLinks", () => {
     expect(noneSkipped).toBe(1);
   });
 
+  it("auto-picks unique match even when buy is >4d after sale (no time-threshold block)", () => {
+    const line = shopifyLine({
+      orderName: "#2004",
+      lineItemId: "li-4",
+      title: "Nike Dunk Low Retro White",
+      sku: "DD1391-100",
+      sizeEU: "42",
+      createdAt: "2026-10-01T10:00:00Z",
+    });
+    const delayed = buy({
+      supplierOrderNumber: "03-DELAYED",
+      // ~6 days later — previously overThreshold → medium, now HIGH if unique
+      purchaseDate: "2026-10-07T12:00:00Z",
+      productTitle: "Nike Dunk Low Retro White",
+      skuKey: "DD1391-100",
+      sizeEU: "42",
+      offerAmount: 130,
+    });
+
+    const { picks, mediumSkipped } = pickHighConfidenceShopifyStockxLinks({
+      lines: [line],
+      supplierOrders: [delayed],
+      usedSupplierNumbers: new Set(),
+    });
+
+    expect(picks).toHaveLength(1);
+    expect(picks[0].supplier.supplierOrderNumber).toBe("03-DELAYED");
+    expect(mediumSkipped).toBe(0);
+  });
+
   it("does not auto-link when two identical buys make match ambiguous", () => {
     const line = shopifyLine({
       orderName: "#2003",

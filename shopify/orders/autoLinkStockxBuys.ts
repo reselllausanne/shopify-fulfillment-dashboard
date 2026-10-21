@@ -5,6 +5,14 @@
  * Shopify StockX account only, match unmatched paid Shopify lines via
  * `matchShopifyToSupplier`, persist HIGH-confidence links only.
  *
+ * FIRST LINK only (never-matched lines):
+ * - Age gate = Shopify order `days` lookback (default 30) — mega-old unmatched stay out.
+ * - Causal (buy ≥ sale) still hard-required inside matchShopifyToSupplier.
+ * - Buy↔sale delay no longer downgrades HIGH→medium (time ranks only).
+ *
+ * UPDATES on already-matched rows (AWB / status / enrich / chainId) do NOT go through
+ * this matcher — see `lib/stockxAwbBackfill.ts` / enrichAfterLink. No sale↔buy delay.
+ *
  * Medium / low / ambiguous → skip auto-write (no wrong links). Medium → ops
  * email (deduped) so yellow lines can be linked by hand. No customer email —
  * AWB/enrich cron advances milestones with lastMilestoneKey gates (no reblast).
