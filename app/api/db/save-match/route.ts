@@ -184,6 +184,8 @@ async function upsertMilestoneEventAndMaybeEmail(opts: {
     }
     return;
   }
+  // Gate only sends when milestoneKey is set; narrow for TS (blocked #179 VPS build).
+  if (!milestoneKey) return;
 
   const mailer = getMailer();
   const overrideTo = (process.env.POSTMARK_OVERRIDE_TO || "").trim();
