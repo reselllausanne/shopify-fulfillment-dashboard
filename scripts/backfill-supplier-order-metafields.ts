@@ -4,6 +4,7 @@
  * Usage:
  *   npx tsx scripts/backfill-supplier-order-metafields.ts [--days=90] [--limit=500] [--dry-run]
  */
+import "dotenv/config";
 import { prisma } from "@/app/lib/prisma";
 import {
   markOrderMatchMetafieldsSynced,
@@ -30,16 +31,9 @@ async function main() {
   const rows = await prisma.orderMatch.findMany({
     where: {
       shopifyOrderId: { not: "" },
-      stockxOrderNumber: { not: null },
+      // Real StockX buy refs (same heuristic as AWB backfill).
+      stockxOrderNumber: { startsWith: "0" },
       shopifyCreatedAt: { gte: since },
-      NOT: {
-        OR: [
-          { stockxOrderNumber: { startsWith: "MANUAL-" } },
-          { stockxOrderNumber: { startsWith: "ESS-" } },
-          { stockxOrderNumber: { startsWith: "LOCAL-" } },
-          { stockxOrderNumber: { startsWith: "GOAT-" } },
-        ],
-      },
     },
     select: {
       id: true,
