@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
         );
       }
       const result = await confirmStockxCheckout({ previewId, confirmTotalChf });
-      return NextResponse.json({ ok: result.ok, ...result }, { status: result.ok ? 200 : 409 });
+      return NextResponse.json({ ...result }, { status: result.ok ? 200 : 409 });
     }
 
     return NextResponse.json({ ok: false, error: "Unknown action" }, { status: 400 });
