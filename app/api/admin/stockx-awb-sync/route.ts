@@ -42,6 +42,8 @@ export async function POST(req: NextRequest) {
 
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const forceRefresh = Boolean(body?.forceRefresh ?? false);
+    // Cron splits remint from AWB so a hung backfill cannot starve token refresh.
+    const refreshOnly = Boolean(body?.refreshOnly ?? false);
     // 45d window: recent matched buys that still need AWB / chainId (cron, not historical dump).
     const days = Number(body?.days ?? 45);
     const limit = Number(body?.limit ?? 60);
@@ -50,7 +52,7 @@ export async function POST(req: NextRequest) {
     const remainingBudgetMs = () => Math.max(30_000, 480_000 - (Date.now() - startedAt));
 
     const runGalaxusAutoLinkRaw = () =>
-      dryRun || body?.skipGalaxusAutoLink === true
+      dryRun || refreshOnly || body?.skipGalaxusAutoLink === true
         ? Promise.resolve(null)
         : runGalaxusStockxAutoLinkSweep({
             days: Number(body?.galaxusAutoLinkDays ?? 30),
@@ -69,7 +71,7 @@ export async function POST(req: NextRequest) {
     };
 
     const runShopifyAutoLinkRaw = () =>
-      dryRun || body?.skipShopifyAutoLink === true
+      dryRun || refreshOnly || body?.skipShopifyAutoLink === true
         ? Promise.resolve(null)
         : runShopifyStockxAutoLinkSweep({
             days: Number(body?.shopifyAutoLinkDays ?? 30),
@@ -111,6 +113,34 @@ export async function POST(req: NextRequest) {
       }).catch(() => undefined);
     }
     const token = refresh.token ?? (await readServerStockxToken())?.token ?? null;
+
+    if (refreshOnly) {
+      const ok = Boolean(refresh.ok || galaxusRefresh?.ok);
+      return NextResponse.json(
+        {
+          ok,
+          refreshOnly: true,
+          refresh: {
+            ok: refresh.ok,
+            reused: refresh.reused,
+            expiresAt: refresh.expiresAt?.toISOString() ?? null,
+            needsManualLogin: refresh.needsManualLogin,
+            error: refresh.error,
+          },
+          galaxusRefresh: galaxusRefresh
+            ? {
+                ok: galaxusRefresh.ok,
+                reused: galaxusRefresh.reused,
+                expiresAt: galaxusRefresh.expiresAt?.toISOString() ?? null,
+                error: galaxusRefresh.error,
+              }
+            : null,
+          needsManualLogin: Boolean(refresh.needsManualLogin || (!galaxusRefresh?.ok && galaxusExpiringSoon)),
+          error: ok ? null : refresh.error || galaxusRefresh?.error || "StockX refresh failed",
+        },
+        { status: ok ? 200 : 401 }
+      );
+    }
 
     if (!token) {
       // Galaxus sweep can still use Galaxus-file token; Shopify needs default account.
