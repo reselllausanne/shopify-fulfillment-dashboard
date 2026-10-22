@@ -5,6 +5,10 @@
 # Hits the web process over localhost so Playwright can reuse the entrypoint Xvfb
 # display (true headless is blocked by Cloudflare).
 #
+# Order matters: remint first (own curl budget), then AWB/backfill. Previously a hung
+# AWB HTTP call (--max-time 780) could leave overnight force-refresh with an empty body
+# even when Chromium had already spent minutes on login.
+#
 # Usage:
 #   bash scripts/stockx-awb-cron.sh
 #   bash scripts/stockx-awb-cron.sh --force-refresh
@@ -40,8 +44,21 @@ fi
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] START stockx-awb-sync days=$DAYS limit=$LIMIT forceRefresh=$FORCE_REFRESH" | tee -a "$LOG_FILE"
 
-BODY=$(printf '{"days":%s,"limit":%s,"forceRefresh":%s}' "$DAYS" "$LIMIT" "$FORCE_REFRESH")
+# 1) Token remint only — always runs, even when forceRefresh=false (near-expiry path inside API).
+REFRESH_BODY=$(printf '{"forceRefresh":%s,"refreshOnly":true}' "$FORCE_REFRESH")
+set +e
+REFRESH_HTTP=$(curl -sS -o /tmp/stockx-awb-refresh-body.json -w "%{http_code}" \
+  -X POST "$BASE_URL/api/admin/stockx-awb-sync" \
+  -H "content-type: application/json" \
+  -d "$REFRESH_BODY" \
+  --max-time 560)
+REFRESH_CURL=$?
+set -e
+REFRESH_RESP="$(cat /tmp/stockx-awb-refresh-body.json 2>/dev/null || true)"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] refresh http=$REFRESH_HTTP curl=$REFRESH_CURL resp=${REFRESH_RESP:0:800}" | tee -a "$LOG_FILE"
 
+# 2) AWB / auto-link / status — never force remint again (tokens just written above).
+BODY=$(printf '{"days":%s,"limit":%s,"forceRefresh":false}' "$DAYS" "$LIMIT")
 set +e
 HTTP=$(curl -sS -o /tmp/stockx-awb-sync-body.json -w "%{http_code}" \
   -X POST "$BASE_URL/api/admin/stockx-awb-sync" \
@@ -52,15 +69,20 @@ CURL_STATUS=$?
 set -e
 
 RESP="$(cat /tmp/stockx-awb-sync-body.json 2>/dev/null || true)"
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] http=$HTTP curl=$CURL_STATUS resp=${RESP:0:800}" | tee -a "$LOG_FILE"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] awb http=$HTTP curl=$CURL_STATUS resp=${RESP:0:800}" | tee -a "$LOG_FILE"
+
+if [[ "$REFRESH_CURL" -ne 0 || "$REFRESH_HTTP" != "200" ]]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=1 (refresh failed)" | tee -a "$LOG_FILE"
+  exit 1
+fi
 
 if [[ "$CURL_STATUS" -ne 0 ]]; then
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=1 (curl failed)" | tee -a "$LOG_FILE"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=1 (awb curl failed; refresh ok)" | tee -a "$LOG_FILE"
   exit 1
 fi
 
 if [[ "$HTTP" != "200" ]]; then
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=1 (http $HTTP)" | tee -a "$LOG_FILE"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=1 (awb http $HTTP; refresh ok)" | tee -a "$LOG_FILE"
   exit 1
 fi
 
