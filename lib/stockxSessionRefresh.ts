@@ -10,6 +10,11 @@ import {
   GALAXUS_STOCKX_TOKEN_FILE,
   readGalaxusStockxToken,
 } from "@/lib/stockxGalaxusAuth";
+import {
+  stockxBrowserProxyMode,
+  stockxPlaywrightProxyAvailable,
+} from "@/lib/stockxPlaywrightProxy";
+import { remintStockxTokenViaProxy } from "@/lib/stockxProxyRemint";
 import { stockxTokenExpiresAt } from "@/lib/stockxServerToken";
 import {
   readStoredRefreshToken,
@@ -218,6 +223,32 @@ export async function refreshStockxToken(
   if (!process.env.DISPLAY) {
     process.env.DISPLAY = ":99";
   }
+
+  // STOCKX_BROWSER_PROXY_MODE=always → residential proxy remint first (skip cold VPS IP).
+  if (stockxBrowserProxyMode() === "always" && stockxPlaywrightProxyAvailable()) {
+    console.log(`[STOCKX-REFRESH] proxy-first remint account=${account}`);
+    const proxyFirst = await remintStockxTokenViaProxy({
+      account,
+      maxWaitMs: Math.min(Number(options.maxWaitMs ?? 240000), 420000),
+    });
+    if (proxyFirst.ok && proxyFirst.token) {
+      await markWarmToken(account).catch(() => undefined);
+      return {
+        ok: true,
+        token: proxyFirst.token,
+        reused: false,
+        expiresAt: proxyFirst.expiresAt,
+        profileReset: false,
+        needsManualLogin: false,
+        error: null,
+        reason: remintReason,
+      };
+    }
+    console.warn(
+      `[STOCKX-REFRESH] proxy-first failed account=${account}: ${proxyFirst.error} — falling back to warm/direct`
+    );
+  }
+
   const request = new NextRequest("http://internal/api/stockx/playwright", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -258,10 +289,44 @@ export async function refreshStockxToken(
     payload = { error: error?.message || "Playwright refresh crashed" };
   }
 
-  const token = typeof payload?.token === "string" ? payload.token : null;
+  let token = typeof payload?.token === "string" ? payload.token : null;
   const profileReset = Boolean(payload?.reset);
-  const expiresAt = token ? stockxTokenExpiresAt(token) : null;
-  const stillFresh = Boolean(expiresAt && expiresAt.getTime() - Date.now() > 60_000);
+  let expiresAt = token ? stockxTokenExpiresAt(token) : null;
+  let stillFresh = Boolean(expiresAt && expiresAt.getTime() - Date.now() > 60_000);
+
+  // Path 2: residential proxy + Auth0 cookies (CF stripped). VPS IP often stuck on Turnstile;
+  // LemonProxy / STOCKX_PROXY_* can remint without a human click when SSO cookies are still valid.
+  const proxyMode = stockxBrowserProxyMode();
+  const tryProxy =
+    proxyMode !== "off" &&
+    stockxPlaywrightProxyAvailable() &&
+    (proxyMode === "always" || !token || !stillFresh);
+
+  if (tryProxy && (!token || !stillFresh)) {
+    console.log(
+      `[STOCKX-REFRESH] direct/warm remint failed — trying residential proxy remint account=${account}`
+    );
+    const proxyResult = await remintStockxTokenViaProxy({
+      account,
+      maxWaitMs: Math.min(Number(options.maxWaitMs ?? 240000), 420000),
+    });
+    if (proxyResult.ok && proxyResult.token) {
+      await markWarmToken(account).catch(() => undefined);
+      return {
+        ok: true,
+        token: proxyResult.token,
+        reused: false,
+        expiresAt: proxyResult.expiresAt,
+        profileReset: false,
+        needsManualLogin: false,
+        error: null,
+        reason: remintReason,
+      };
+    }
+    console.warn(
+      `[STOCKX-REFRESH] proxy remint failed account=${account}: ${proxyResult.error} proxy=${proxyResult.proxyLabel}`
+    );
+  }
 
   if (!token || !stillFresh) {
     await restoreAuthFiles(snapshot);
@@ -278,7 +343,7 @@ export async function refreshStockxToken(
       error,
       reason: "failed",
     };
-    // Alert only after cookie + warm + silent Auth0 paths failed (playwright already exhausted).
+    // Alert only after cookie + warm + silent Auth0 + proxy paths failed.
     await notifyStockxAuthBroken({ account, error: result.error }).catch(() => undefined);
     return result;
   }
