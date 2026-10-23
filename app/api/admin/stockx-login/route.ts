@@ -60,12 +60,13 @@ export async function POST(req: NextRequest) {
   });
 
   if (login.blockedBy) {
+    const status = await getStockxLoginStatus(account);
     return NextResponse.json(
       {
         ok: false,
         error: login.error,
-        login,
-        ...(await getStockxLoginStatus(account)),
+        ...status,
+        login, // prefer start() payload (includes blockedBy)
       },
       { status: 409 }
     );
