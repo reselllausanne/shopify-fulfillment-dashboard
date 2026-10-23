@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ensureServerCheckoutCompleted } from "@/app/lib/funnel/serverPurchase";
 import {
   processOrdersPaidPayload,
   verifyShopifyWebhookHmac,
@@ -63,6 +64,16 @@ export async function POST(req: Request) {
     });
   }
 
+  let funnelBackup: Awaited<ReturnType<typeof ensureServerCheckoutCompleted>> | null = null;
+  try {
+    funnelBackup = await ensureServerCheckoutCompleted(payload);
+  } catch (err: unknown) {
+    console.error("[shopify][webhook][orders-paid] funnel backup failed", {
+      orderId,
+      error: err instanceof Error ? err.message : err,
+    });
+  }
+
   console.info("[shopify][webhook][orders-paid] processed", {
     topic,
     shop,
@@ -72,6 +83,7 @@ export async function POST(req: Request) {
     gtins: gtins.length,
     changed: results.filter((r) => r.changed).length,
     errors: results.filter((r) => r.error).length,
+    funnelBackup,
   });
 
   return NextResponse.json({
@@ -79,6 +91,7 @@ export async function POST(req: Request) {
     orderId,
     gtins: gtins.length,
     results,
+    funnelBackup,
   });
 }
 
