@@ -168,7 +168,8 @@ async function remintOnceViaProxy(opts: {
         console.warn(`[STOCKX-PROXY-REMINT] goto: ${e?.message || e}`)
       );
 
-    const sitUntil = Date.now() + maxWaitMs;
+    const startedAt = Date.now();
+    const sitUntil = startedAt + maxWaitMs;
     let lastLog = 0;
     while (!captured && Date.now() < sitUntil) {
       const url = page.url();
@@ -183,6 +184,13 @@ async function remintOnceViaProxy(opts: {
       if (/^error$/i.test(title.trim()) || /\baccess denied\b/i.test(body)) {
         stockxHardBlock = true;
         console.warn(`[STOCKX-PROXY-REMINT] hard block title=${title} — rotate proxy`);
+        break;
+      }
+      // Turnstile not clearing on this sticky → rotate (don't burn full maxWaitMs).
+      if (cf && Date.now() - startedAt > 45_000) {
+        console.warn(
+          `[STOCKX-PROXY-REMINT] Turnstile stuck >45s on ${proxy.label} — rotate sticky`
+        );
         break;
       }
       if (Date.now() - lastLog > 15_000) {
@@ -270,7 +278,7 @@ export async function remintStockxTokenViaProxy(options: {
       token: null,
       expiresAt: null,
       proxyLabel: null,
-      error: "No STOCKX_PROXY_* / SCRAPER_PROXY pool configured",
+      error: "No STOCKX_PROXY_FILE / STOCKX_PROXY_* / SCRAPER_PROXY pool configured",
       stuckOnTurnstile: false,
     };
   }
@@ -304,8 +312,8 @@ export async function remintStockxTokenViaProxy(options: {
         ? options.proxy
         : nextStockxPlaywrightProxy();
     if (!proxy) break;
-    // Shorter sit per attempt when rotating — don't burn 4min × 3 on hard 403.
-    const perAttemptMs = Math.min(maxWaitMs, attempt === 0 ? maxWaitMs : 90_000);
+    // Shorter sit per attempt when rotating — don't burn 4min × N on 403/Turnstile.
+    const perAttemptMs = Math.min(maxWaitMs, attempt === 0 ? Math.min(maxWaitMs, 90_000) : 60_000);
     last = await remintOnceViaProxy({
       account,
       proxy,
@@ -314,7 +322,15 @@ export async function remintStockxTokenViaProxy(options: {
       tokenFile,
     });
     if (last.ok) return last;
-    if (!last.error?.includes("403/Error")) break;
+    // Rotate LemonPrime stickies on hard 403 or Turnstile — not only first sticky.
+    const rotate =
+      Boolean(last.stuckOnTurnstile) ||
+      Boolean(last.error?.includes("403/Error")) ||
+      Boolean(last.error?.includes("pool may be blocked"));
+    if (!rotate) break;
+    console.warn(
+      `[STOCKX-PROXY-REMINT] attempt=${attempt + 1}/${maxAttempts} fail=${last.error} — next sticky`
+    );
   }
   return last;
 }

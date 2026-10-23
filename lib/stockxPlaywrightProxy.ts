@@ -1,16 +1,18 @@
 /**
- * Residential proxy for StockX Playwright remint (LemonProxy / SCRAPER pool).
+ * Residential proxy for StockX Playwright remint (LemonPrime / LemonProxy).
  *
- * Env (any one is enough):
- *   STOCKX_PROXY_SERVER=http://host:port   (+ optional USER/PASS)
- *   STOCKX_PROXY_URL=http://user:pass@host:port
- *   STOCKX_PROXY_USERNAME / STOCKX_PROXY_PASSWORD
- *   Or reuse scraper pool: SCRAPER_PROXY_FILE / SCRAPER_PROXY_URLS (same as GraphQL)
+ * Env priority:
+ *   1. STOCKX_PROXY_FILE / STOCKX_PROXY_URLS — multi-line sticky pool (round-robin)
+ *   2. STOCKX_PROXY / STOCKX_PROXY_URL / STOCKX_PROXY_SERVER (+ USER/PASS)
+ *   3. Fallback: SCRAPER_PROXY_FILE / SCRAPER_PROXY_URLS (shared Reichelt pool)
  *
  * Mode:
  *   STOCKX_BROWSER_PROXY_MODE=off | on_fail | always
  *   default on_fail — try direct/warm first, then proxy remint
+ *
+ * STOCKX_PROXY_FILE is StockX-only; does not touch SCRAPER_PROXY_FILE.
  */
+import fs from "node:fs";
 import { nextScraperProxyUrl, scraperProxyPool } from "@/app/lib/scraperProxy";
 
 export type PlaywrightProxyConfig = {
@@ -69,6 +71,101 @@ export function parsePlaywrightProxyUrl(raw: string): PlaywrightProxyConfig | nu
   return null;
 }
 
+function splitProxyEntries(raw: string): string[] {
+  return raw
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function normalizePoolEntry(raw: string): string | null {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+  try {
+    if (/^https?:\/\//i.test(s)) {
+      const u = new URL(s);
+      if (!u.hostname) return null;
+      return u.toString();
+    }
+    const parts = s.split(":");
+    if (parts.length >= 4) {
+      const [host, port, user, ...rest] = parts;
+      const pass = rest.join(":");
+      if (!host || !port) return null;
+      return new URL(
+        `http://${encodeURIComponent(user!)}:${encodeURIComponent(pass)}@${host}:${port}`
+      ).toString();
+    }
+    if (parts.length === 2) {
+      return new URL(`http://${parts[0]}:${parts[1]}`).toString();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+let stockxPoolCache: string[] | null = null;
+let stockxPoolCursor = 0;
+
+function readStockxProxyFileEntries(): string[] {
+  const filePath = String(process.env.STOCKX_PROXY_FILE ?? "").trim();
+  if (!filePath) return [];
+  try {
+    if (!fs.existsSync(filePath)) return [];
+    return splitProxyEntries(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * StockX-dedicated sticky pool from STOCKX_PROXY_FILE / STOCKX_PROXY_URLS.
+ * Empty → caller falls through to single STOCKX_PROXY_* or SCRAPER pool.
+ */
+export function stockxProxyFilePool(): string[] {
+  if (stockxPoolCache) return stockxPoolCache;
+  const multi = String(process.env.STOCKX_PROXY_URLS ?? "").trim();
+  const rawEntries = [
+    ...readStockxProxyFileEntries(),
+    ...(multi ? splitProxyEntries(multi) : []),
+  ];
+  const seen = new Set<string>();
+  stockxPoolCache = [];
+  for (const entry of rawEntries) {
+    const url = normalizePoolEntry(entry);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    stockxPoolCache.push(url);
+  }
+  return stockxPoolCache;
+}
+
+/** Reset StockX file-pool cache (tests). */
+export function resetStockxProxyFilePoolCache(): void {
+  stockxPoolCache = null;
+  stockxPoolCursor = 0;
+}
+
+function nextFromStockxFilePool(preferCountry?: string): PlaywrightProxyConfig | null {
+  const pool = stockxProxyFilePool();
+  if (!pool.length) return null;
+
+  const prefer = (preferCountry || process.env.STOCKX_PROXY_COUNTRY || "ch")
+    .trim()
+    .toLowerCase();
+  let candidates = pool;
+  if (prefer) {
+    const matched = pool.filter((u) => u.toLowerCase().includes(`country-${prefer}`));
+    if (matched.length) candidates = matched;
+  }
+
+  // Round-robin within preferred slice (sticky sessions are distinct URLs).
+  const idx = stockxPoolCursor % candidates.length;
+  stockxPoolCursor += 1;
+  return parsePlaywrightProxyUrl(candidates[idx]!);
+}
+
 function fromExplicitEnv(): PlaywrightProxyConfig | null {
   const url =
     String(process.env.STOCKX_PROXY_URL ?? "").trim() ||
@@ -99,12 +196,15 @@ function fromExplicitEnv(): PlaywrightProxyConfig | null {
 }
 
 /**
- * Prefer CH sticky sessions for StockX browser remint (store is CH; DE LemonProxy
- * often gets stockx.com 403 Error). Falls back to any pool entry.
+ * Prefer STOCKX_PROXY_FILE stickies (rotate), else single STOCKX_PROXY_*, else
+ * SCRAPER_PROXY_FILE pool. CH sticky preferred when country tag present.
  */
 export function nextStockxPlaywrightProxy(opts?: {
   preferCountry?: string;
 }): PlaywrightProxyConfig | null {
+  const fromFile = nextFromStockxFilePool(opts?.preferCountry);
+  if (fromFile) return fromFile;
+
   const explicit = fromExplicitEnv();
   if (explicit) return explicit;
 
@@ -130,5 +230,7 @@ export function nextStockxPlaywrightProxy(opts?: {
 
 export function stockxPlaywrightProxyAvailable(): boolean {
   if (stockxBrowserProxyMode() === "off") return false;
-  return Boolean(fromExplicitEnv() || scraperProxyPool().length > 0);
+  return Boolean(
+    stockxProxyFilePool().length > 0 || fromExplicitEnv() || scraperProxyPool().length > 0
+  );
 }
