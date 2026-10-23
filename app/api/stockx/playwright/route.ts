@@ -575,6 +575,46 @@ export async function POST(req: NextRequest) {
 
     let autoLoginNeedsOtp = false;
     let autoLoginError: string | null = null;
+    // Session cookies look logged-in but bearer not minted yet — keep kicking buying/orders.
+    // Going to /login here kills a recoverable Auth0 session behind Turnstile.
+    if (autoLogin && !capturedToken && cookieWarm === "authenticated") {
+      console.log("[STOCKX-PW] Authenticated UI without bearer — waiting for silent remint");
+      const silentDeadline = Date.now() + 90_000;
+      while (!capturedToken && Date.now() < silentDeadline) {
+        try {
+          await page.goto("https://stockx.com/buying/orders", {
+            waitUntil: "domcontentloaded",
+            timeout: 30000,
+          });
+        } catch {
+          // ignore
+        }
+        await page.waitForTimeout(3000);
+        try {
+          const dump = await page.evaluate(() => {
+            const out: Record<string, string | null> = {};
+            for (const key of Object.keys(localStorage)) out[key] = localStorage.getItem(key);
+            return out;
+          });
+          const fromStorage = acceptFreshBearer(extractTokenFromStorage(dump));
+          if (fromStorage) capturedToken = fromStorage;
+        } catch {
+          // ignore
+        }
+        if (!capturedToken) {
+          try {
+            const cookies = (await context.cookies()) as Array<{ name: string; value: string }>;
+            const fromCookies = extractTokenFromCookies(cookies);
+            if (fromCookies) capturedToken = fromCookies;
+          } catch {
+            // ignore
+          }
+        }
+      }
+      if (capturedToken) {
+        console.log("[STOCKX-PW] Silent remint succeeded after authenticated wait");
+      }
+    }
     if (autoLogin && !capturedToken) {
       const creds = stockxCredentialsFromEnv(
         body?.credentialsAccount === "galaxus" ? "galaxus" : "default"
