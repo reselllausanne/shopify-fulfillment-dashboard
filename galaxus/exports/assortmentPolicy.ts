@@ -23,6 +23,7 @@
  *   REI allowlist exempt (curated prior sales — Jetson / GB10 / etc. sit above the fashion cap).
  *   LEGO kind exempt (Art / Icons sets routinely 300–500+ MSRP; fashion cap is for apparel).
  *   GALAXUS_PRICE_OUTLIER_FILTER=1 also blocks STX asks far above brand retail.
+ * - Per-SKU fashion / supplier-disabled holes: galaxusAssortmentExceptions.ts (Tali mail dump).
  *
  * Master + offer skip blocked rows; stock feed pushes QuantityOnStock=0 to delist.
  * Kill switch: GALAXUS_ASSORTMENT_POLICY=0.
@@ -34,6 +35,11 @@ import { bwzShipChfFromManualNote, isBwzUnshippableNote } from "@/app/lib/bwzPar
 import { isGalaxusReiAllowlistEnabled, isReiGalaxusAllowlisted } from "@/galaxus/exports/reiGalaxusAllowlist";
 import { galaxusCategoryBlocklistCategory, isGalaxusManuallyBlocked } from "@/galaxus/exports/galaxusManualBlocklist";
 import { isGalaxusNerApparelOnlyEnabled, isNerApparelOrShoe } from "@/galaxus/exports/nerApparelOnly";
+import {
+  galaxusCategoryBlockExemptProviderKeys,
+  galaxusDisabledSupplierExemptProviderKeys,
+  galaxusFashionExemptProviderKeys,
+} from "@/galaxus/exports/galaxusAssortmentExceptions";
 
 export type GalaxusAssortmentBlockReason =
   | "electronics"
@@ -156,12 +162,14 @@ const FASHION_EXTRA_LEAVES = new Set([
 ]);
 /** Non-fashion kept on purpose: LEGO, trading cards (Pokémon), collectible consoles / controllers. */
 const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>(["lego", "tradingcard", "console", "controller"]);
-/** Non-fashion rows kept because they sold on Galaxus. */
-const FASHION_EXEMPT_PROVIDER_KEYS = new Set([
-  "STX_041604418976", // Stanley Chocolate Flowstate Quencher 40oz
-]);
+/** Non-fashion keep holes — ledger in galaxusAssortmentExceptions.ts. */
+const FASHION_EXEMPT_PROVIDER_KEYS = galaxusFashionExemptProviderKeys();
 /** WEL kept whole; REI is already narrowed by reiGalaxusAllowlist. */
 const FASHION_EXEMPT_SUPPLIERS = new Set(["wel", "rei"]);
+/** BWZ (etc.) delist holes — same ledger. */
+const DISABLED_SUPPLIER_EXEMPT_PROVIDER_KEYS = galaxusDisabledSupplierExemptProviderKeys();
+/** Category cleanup blocklist holes — same ledger. */
+const CATEGORY_BLOCK_EXEMPT_PROVIDER_KEYS = galaxusCategoryBlockExemptProviderKeys();
 const FASHION_UNKNOWN_KIND_SUPPLIERS = new Set(["stx", "ner", "the", "gld"]);
 const APPAREL_SIZE_RE = /^(?:[2-5]?X{0,3}[SL]|XS|M|\d{2,3}(?:\/\d{2,3})?\s*cm)$/i;
 const APPAREL_TEXT_RE =
@@ -534,9 +542,22 @@ export function galaxusAssortmentBlockReason(
 ): GalaxusAssortmentBlockReason | null {
   if (!isGalaxusAssortmentPolicyEnabled()) return null;
   if (isGalaxusManuallyBlocked(input.providerKey)) return "manual_block";
-  if (galaxusCategoryBlocklistCategory(input.providerKey)) return "category_block";
+  const providerKeyNorm = String(input.providerKey ?? "")
+    .trim()
+    .toUpperCase();
+  if (
+    galaxusCategoryBlocklistCategory(input.providerKey) &&
+    !CATEGORY_BLOCK_EXEMPT_PROVIDER_KEYS.has(providerKeyNorm)
+  ) {
+    return "category_block";
+  }
   const supplierKey = resolveAssortmentSupplierKey(input);
-  if (galaxusDisabledSuppliers().has(supplierKey)) return "supplier_disabled";
+  if (
+    galaxusDisabledSuppliers().has(supplierKey) &&
+    !DISABLED_SUPPLIER_EXEMPT_PROVIDER_KEYS.has(providerKeyNorm)
+  ) {
+    return "supplier_disabled";
+  }
   if (supplierKey === "ner" && isGalaxusNerApparelOnlyEnabled() && !isNerApparelOrShoe(input)) {
     return "ner_not_apparel";
   }
