@@ -464,6 +464,27 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBeNull();
   });
 
+  it("keeps REI allowlisted high-ticket sellers above the absolute cap", () => {
+    delete process.env.GALAXUS_MAX_RETAIL_CHF;
+    delete process.env.GALAXUS_REI_ALLOWLIST;
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "REI_0812674025278",
+        gtin: "0812674025278",
+        title: "NVIDIA Kit NVIDIA Jetson Orin Nano Super Dev., 67 TOPS, 8 Go DDR5",
+        brand: "NVIDIA",
+        purchasePriceExVatChf: 646.5,
+      })
+    ).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "REI_9999999999999",
+        title: "Random REI gadget",
+        purchasePriceExVatChf: 646.5,
+      })
+    ).toBe("rei_not_allowlisted");
+  });
+
   it("blocks absurd prices when the outlier filter is on", () => {
     process.env.GALAXUS_PRICE_OUTLIER_FILTER = "1";
     expect(
