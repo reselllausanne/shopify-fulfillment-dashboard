@@ -316,6 +316,15 @@ export async function POST(req: NextRequest) {
         }
       }
       await fs.mkdir(userDataDir, { recursive: true });
+      // Interactive login / operator reclaim: drop zombie Chromiums on this profile first.
+      // Never wipe cookies here — only process kill + Singleton* files.
+      if (Boolean(body?.killExistingProfileBrowser)) {
+        const { killChromeForUserDataDir } = await import("@/lib/stockxBrowserProcess");
+        const killed = await killChromeForUserDataDir(userDataDir);
+        if (killed > 0) {
+          console.log(`[STOCKX-PW] Killed ${killed} Chromium pid(s) on ${userDataDir}`);
+        }
+      }
       // Stale Chromium Singleton* files from a crashed cron leave the profile unusable.
       for (const lockName of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
         try {
@@ -348,18 +357,48 @@ export async function POST(req: NextRequest) {
         if (!isPersistentProfileLockError(error)) {
           throw error;
         }
-        persistentFallback = true;
-        console.warn("[STOCKX-PW] Persistent profile busy; fallback to ephemeral context");
-        browser =
-          browserType === "chromium"
-            ? await chromium.launch(launchOptions)
-            : await firefox.launch(launchOptions);
-        context = await createEphemeralContext({
-          browser,
-          sessionFile,
-          userAgent,
-          forceLogin,
-        });
+        // One retry after killing whoever holds the profile (avoids "Profile error" zombies).
+        try {
+          const { killChromeForUserDataDir } = await import("@/lib/stockxBrowserProcess");
+          const killed = await killChromeForUserDataDir(userDataDir);
+          console.warn(
+            `[STOCKX-PW] Persistent profile busy; killed ${killed} pid(s), retrying launch`
+          );
+          if (browserType === "chromium") {
+            context = await chromium.launchPersistentContext(userDataDir, {
+              ...launchOptions,
+              locale: "fr-FR",
+              timezoneId: "Europe/Paris",
+              userAgent,
+            });
+          } else {
+            context = await firefox.launchPersistentContext(userDataDir, {
+              ...launchOptions,
+              locale: "fr-FR",
+              timezoneId: "Europe/Paris",
+              userAgent,
+            });
+          }
+          browser = context.browser();
+          usedPersistentContext = true;
+          console.log("[STOCKX-PW] Using persistent context after lock reclaim");
+        } catch (retryError: any) {
+          persistentFallback = true;
+          console.warn(
+            "[STOCKX-PW] Persistent profile still busy after reclaim; fallback to ephemeral context",
+            retryError?.message || retryError
+          );
+          browser =
+            browserType === "chromium"
+              ? await chromium.launch(launchOptions)
+              : await firefox.launch(launchOptions);
+          context = await createEphemeralContext({
+            browser,
+            sessionFile,
+            userAgent,
+            forceLogin,
+          });
+        }
       }
     } else {
       browser =
