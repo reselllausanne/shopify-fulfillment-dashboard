@@ -20,6 +20,7 @@ import {
   type PrintStationProbeStatus,
 } from "@/app/lib/printStationClient";
 import PrintStationWizard from "./PrintStationWizard";
+import InStockShipPanel from "./InStockShipPanel";
 import type { PrintStationConfig } from "@/lib/printStation";
 
 type ScanStatus = "FOUND" | "NOT_FOUND" | "UNMATCHED" | "ERROR";
@@ -2567,8 +2568,19 @@ export default function ScanPage() {
     return "bg-gray-50 border-gray-200 text-gray-800";
   }, [result?.status]);
 
+  const pickInStockGtin = (gtin: string) => {
+    const next = String(gtin ?? "").trim();
+    if (!next) return;
+    setCode(next);
+    setFulfillResult(null);
+    closeSuggestions();
+    // Preview only — same as typeahead. Operator confirms / scans physical unit.
+    void handleSubmit(next, { fromSuggestion: true });
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
+      <InStockShipPanel onPickGtin={pickInStockGtin} />
       <div className="w-full max-w-3xl relative">
         <div className="absolute right-0 top-0 flex items-center gap-2 flex-wrap justify-end max-w-[75%]">
           <a

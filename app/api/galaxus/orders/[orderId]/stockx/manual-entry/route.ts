@@ -184,7 +184,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
 
     const resolvedPurchaseDate =
       parseMaybeDate(data.stockxPurchaseDate) ?? a.stockxPurchaseDate ?? existing?.stockxPurchaseDate ?? null;
-    if (looksLikeStockxOrderNumber(stockxOrderNumberFinal)) {
+    // Causality only for real StockX buys — not MANUAL-/LOCAL-/custom supplier refs.
+    const isRealStockxBuy =
+      looksLikeStockxOrderNumber(stockxOrderNumberFinal) &&
+      !isLocalOrManualStockxRef(stockxOrderNumberFinal);
+    if (isRealStockxBuy) {
       // Real StockX refs require a purchase date so causality can be enforced.
       // Missing date used to skip the gate and attach pre-sale buys.
       if (!resolvedPurchaseDate) {
@@ -192,7 +196,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
           {
             ok: false,
             error:
-              "StockX purchase date missing — cannot verify buy is after Galaxus sale. Enrich from StockX or enter purchase date.",
+              "StockX purchase date missing — cannot verify buy is after Galaxus sale. Enrich from StockX or enter purchase date. For local/other supplier stock: leave StockX order # empty (or use a non-StockX ref).",
             reason: "stockx_purchase_date_required",
             galaxusOrderDate: order.orderDate,
           },
