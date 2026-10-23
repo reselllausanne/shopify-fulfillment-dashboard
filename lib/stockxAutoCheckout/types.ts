@@ -16,6 +16,7 @@ export type StockxNeedsHumanReason =
   | "oos"
   | "multi_price"
   | "wrong_lane_only"
+  | "express_unparsed"
   | "cap"
   | "size_us_map"
   | "price_moved"
@@ -55,6 +56,8 @@ export const STOCKX_NEEDS_HUMAN_REASON_FR: Record<StockxNeedsHumanReason, string
   oos: "Rupture / aucune lane parsée",
   multi_price: "Plusieurs prix pour la lane demandée — choix ambigu",
   wrong_lane_only: "Seule l'autre lane (Express vs Standard) est dispo sous plafond",
+  express_unparsed:
+    "Plusieurs prix livraison visibles mais Express non parsé — abort (fail closed)",
   cap: "Prix all-in au-dessus du plafond 250 CHF",
   size_us_map: "Taille EU/US non sélectionnable",
   price_moved: "Prix changé entre lane et écran Passer commande",

@@ -6,9 +6,19 @@ import {
   type StockxNeedsHumanReason,
 } from "@/lib/stockxAutoCheckout/types";
 
+/** Galaxus DD CSAT: Express if live margin vs sell > 5%. */
+export const GALAXUS_CSAT_MIN_MARGIN = 0.05;
+
+/** Ignore bare ask scraps; checkout all-in lanes are typically ≥ this. */
+export const LANE_MIN_ALL_IN_CHF = 80;
+
+/** Require decimals — bare `\d{1,3}` alone matches "86" from "86,74 CHF" and drops under min. */
+const MONEY_RE = String.raw`(\d{1,3}(?:[’'\s]\d{3})*[.,]\d{2})`;
+const LANE_LABEL_RE = String.raw`(Standard|Express|Xpress|Fastest)`;
+
 export function classifyLaneLabel(raw: string): StockxLaneLabel {
   const t = String(raw || "").toLowerCase();
-  if (/\b(express|xpress)\b/.test(t)) return "EXPRESS";
+  if (/\b(express|xpress|fastest)\b/.test(t)) return "EXPRESS";
   if (/\bstandard\b/.test(t)) return "STANDARD";
   return "UNKNOWN";
 }
@@ -20,43 +30,156 @@ export function moneyToNumber(raw: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Parse Standard / Express / Xpress cards + CHF from checkout body text (1–3 prices). */
+export function laneMarginPct(sellChf: number, allInChf: number): number {
+  if (!(sellChf > 0) || !(allInChf > 0)) return Number.NEGATIVE_INFINITY;
+  return (sellChf - allInChf) / sellChf;
+}
+
+export function extractCheckoutSubtotalChf(text: string): number | null {
+  const patterns = [
+    new RegExp(String.raw`Subtotal\s+CHF\s*${MONEY_RE}`, "i"),
+    new RegExp(String.raw`Subtotal\s*${MONEY_RE}\s*CHF`, "i"),
+    new RegExp(String.raw`Total(?:\s*Price)?\s+CHF\s*${MONEY_RE}`, "i"),
+    new RegExp(String.raw`Total(?:\s*Price)?\s*${MONEY_RE}\s*CHF`, "i"),
+    new RegExp(String.raw`Total\s*à\s*payer\s*${MONEY_RE}\s*CHF`, "i"),
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    const n = moneyToNumber(m?.[1] ?? null);
+    if (n != null && n >= LANE_MIN_ALL_IN_CHF) return n;
+  }
+  return null;
+}
+
+export function laneMatchesSubtotal(
+  lane: StockxLaneCard,
+  subtotalChf: number | null,
+  tolChf = 0.51
+): boolean {
+  if (subtotalChf == null) return false;
+  return Math.abs(subtotalChf - lane.totalChf) <= tolChf;
+}
+
+function pushLane(
+  out: StockxLaneCard[],
+  seen: Set<string>,
+  rawLabel: string,
+  totalChf: number,
+  eta: string | null = null
+): void {
+  let label = classifyLaneLabel(rawLabel);
+  if (label === "UNKNOWN" && /^fastest$/i.test(rawLabel)) label = "EXPRESS";
+  if (label === "UNKNOWN") return;
+  if (!(totalChf >= LANE_MIN_ALL_IN_CHF)) return;
+  const key = `${label}:${totalChf.toFixed(2)}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  out.push({ label, rawLabel, totalChf, eta });
+}
+
+/** en-GB often shows date rows + "CHF 122.13" without Standard/Express words. */
+function parseDateTierLanes(text: string): StockxLaneCard[] {
+  const dateRows: Array<{ eta: string; totalChf: number }> = [];
+  const dateRe = new RegExp(
+    String.raw`((?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)?\s*\d{1,2}\s+[A-Za-z]+(?:\s*[–—-]\s*\d{1,2}\s+[A-Za-z]+)?)\s*\n?\s*CHF\s*${MONEY_RE}`,
+    "gi"
+  );
+  for (const m of text.matchAll(dateRe)) {
+    const totalChf = moneyToNumber(m[2]);
+    if (totalChf == null || totalChf < LANE_MIN_ALL_IN_CHF) continue;
+    dateRows.push({ eta: String(m[1] || "").replace(/\s+/g, " ").trim(), totalChf });
+  }
+  // Dedup by price (keep first eta)
+  const byPrice = new Map<string, { eta: string; totalChf: number }>();
+  for (const row of dateRows) {
+    const k = row.totalChf.toFixed(2);
+    if (!byPrice.has(k)) byPrice.set(k, row);
+  }
+  const tiers = [...byPrice.values()].sort((a, b) => a.totalChf - b.totalChf);
+  const out: StockxLaneCard[] = [];
+  const seen = new Set<string>();
+  if (tiers.length >= 1) {
+    pushLane(out, seen, "Standard", tiers[0]!.totalChf, tiers[0]!.eta);
+  }
+  if (tiers.length >= 2) {
+    // Mid tier ≈ Express/Xpress; last alone if only 2
+    const exp = tiers.length >= 3 ? tiers[1]! : tiers[tiers.length - 1]!;
+    pushLane(out, seen, "Express", exp.totalChf, exp.eta);
+  }
+  if (tiers.length >= 3) {
+    const last = tiers[tiers.length - 1]!;
+    pushLane(out, seen, "Fastest", last.totalChf, last.eta);
+  }
+  return out;
+}
+
+/**
+ * Parse Standard / Express / Xpress / Fastest cards + CHF from checkout body.
+ * Supports FR "122,13 CHF", en-GB "CHF 122.13", stacked cards, date-only tiers.
+ */
 export function parseLaneCardsFromText(text: string): StockxLaneCard[] {
   const out: StockxLaneCard[] = [];
-  // Allow short newlines between label and CHF (StockX cards often stack).
-  const re =
-    /\b(Standard|Express|Xpress)\b[\s\S]{0,160}?(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/gi;
-  for (const match of text.matchAll(re)) {
+  const seen = new Set<string>();
+
+  // Label then amount (CHF suffix or prefix)
+  const namedRe = new RegExp(
+    String.raw`\b${LANE_LABEL_RE}\b[\s\S]{0,200}?(?:CHF\s*)?${MONEY_RE}(?:\s*CHF)?`,
+    "gi"
+  );
+  for (const match of text.matchAll(namedRe)) {
     const rawLabel = String(match[1] || "").trim();
     const totalChf = moneyToNumber(match[2]);
     if (totalChf == null || totalChf <= 0) continue;
-    // Reject if another lane keyword sits between label and this CHF (wrong pair).
     const between = String(match[0] || "").slice(rawLabel.length);
-    if (/\b(Standard|Express|Xpress)\b/i.test(between)) continue;
+    if (new RegExp(String.raw`\b${LANE_LABEL_RE}\b`, "i").test(between)) continue;
     const around = text.slice(Math.max(0, (match.index ?? 0) - 40), (match.index ?? 0) + 200);
     const etaMatch = around.match(
       /(?:Recevez|Arriv|ETA|d['’]ici le|by)\s*([^\n.]{3,40})/i
     );
-    out.push({
-      label: classifyLaneLabel(rawLabel),
-      rawLabel,
-      totalChf,
-      eta: etaMatch?.[1]?.trim() || null,
-    });
+    pushLane(out, seen, rawLabel, totalChf, etaMatch?.[1]?.trim() || null);
   }
-  // Dedupe identical label+price
-  const seen = new Set<string>();
-  return out.filter((lane) => {
-    const key = `${lane.label}:${lane.totalChf.toFixed(2)}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+
+  // Date-only shipping rows (en-GB) — merge without clobbering named labels
+  for (const lane of parseDateTierLanes(text)) {
+    pushLane(out, seen, lane.rawLabel, lane.totalChf, lane.eta ?? null);
+  }
+
+  return out;
+}
+
+/** Distinct all-in shipping prices in body (for fail-closed when Express unlabeled). */
+export function countDistinctShippingTierInText(
+  text: string,
+  maxAllInChf: number = MAX_ALL_IN_CHF
+): number {
+  const prices = new Set<string>();
+  const dateRe = new RegExp(String.raw`CHF\s*${MONEY_RE}`, "gi");
+  for (const m of text.matchAll(dateRe)) {
+    const n = moneyToNumber(m[1]);
+    if (n != null && n >= LANE_MIN_ALL_IN_CHF && n <= maxAllInChf) {
+      prices.add(n.toFixed(2));
+    }
+  }
+  const suffixRe = new RegExp(String.raw`${MONEY_RE}\s*CHF`, "gi");
+  for (const m of text.matchAll(suffixRe)) {
+    const n = moneyToNumber(m[1]);
+    if (n != null && n >= LANE_MIN_ALL_IN_CHF && n <= maxAllInChf) {
+      prices.add(n.toFixed(2));
+    }
+  }
+  return prices.size;
 }
 
 export type ChooseLaneResult =
   | { ok: true; lane: StockxLaneCard }
-  | { ok: false; reason: Extract<StockxNeedsHumanReason, "oos" | "multi_price" | "wrong_lane_only" | "cap">; lane: null };
+  | {
+      ok: false;
+      reason: Extract<
+        StockxNeedsHumanReason,
+        "oos" | "multi_price" | "wrong_lane_only" | "cap" | "express_unparsed"
+      >;
+      lane: null;
+    };
 
 /**
  * Pick StockX ask lane. Never returns Express when desired=STANDARD.
@@ -93,6 +216,93 @@ export function chooseLane(
   return { ok: true, lane };
 }
 
+export type ChooseGalaxusLaneResult =
+  | { ok: true; lane: StockxLaneCard; reason: string }
+  | {
+      ok: false;
+      reason: "no_lane_under_cap" | "margin_abort" | "express_unparsed";
+      detail: string;
+    };
+
+/**
+ * Galaxus DD / CSAT lane pick (LIVE prices only):
+ * - Express if margin > 5% vs sell
+ * - Standard only if Express missing or Express margin dead
+ * - Fail closed when ≥2 shipping tiers visible but Express not parsed
+ */
+export function chooseLaneByCsAtMargin(
+  sellChf: number,
+  lanes: StockxLaneCard[],
+  options?: {
+    maxAllInChf?: number;
+    minMargin?: number;
+    /** Distinct CHF tiers seen in raw checkout text (optional fail-closed signal). */
+    shippingTierInText?: number;
+  }
+): ChooseGalaxusLaneResult {
+  const maxAllInChf = options?.maxAllInChf ?? MAX_ALL_IN_CHF;
+  const minMargin = options?.minMargin ?? GALAXUS_CSAT_MIN_MARGIN;
+
+  const under = lanes
+    .filter(
+      (l) =>
+        l.totalChf >= LANE_MIN_ALL_IN_CHF &&
+        l.totalChf <= maxAllInChf &&
+        (l.label === "EXPRESS" || l.label === "STANDARD")
+    )
+    .sort((a, b) => a.totalChf - b.totalChf);
+
+  if (!under.length) {
+    return { ok: false, reason: "no_lane_under_cap", detail: `sell=${sellChf}` };
+  }
+
+  const exp = under.filter((l) => l.label === "EXPRESS")[0];
+  const std = under.filter((l) => l.label === "STANDARD")[0];
+  const tiers =
+    options?.shippingTierInText ??
+    new Set(under.map((l) => l.totalChf.toFixed(2))).size;
+
+  // Fail closed: multi-tier UI but Express never labeled/parsed
+  if (!exp && tiers >= 2) {
+    return {
+      ok: false,
+      reason: "express_unparsed",
+      detail: `tiers=${tiers} std=${std?.totalChf ?? "n/a"} sell=${sellChf}`,
+    };
+  }
+
+  if (exp) {
+    const expMargin = laneMarginPct(sellChf, exp.totalChf);
+    if (expMargin > minMargin) {
+      return {
+        ok: true,
+        lane: exp,
+        reason: `EXP margin ${(expMargin * 100).toFixed(1)}%>${(minMargin * 100).toFixed(0)}%`,
+      };
+    }
+  }
+
+  if (std) {
+    const stdMargin = laneMarginPct(sellChf, std.totalChf);
+    if (stdMargin > minMargin) {
+      return {
+        ok: true,
+        lane: std,
+        reason: `STD margin ${(stdMargin * 100).toFixed(1)}%>${(minMargin * 100).toFixed(0)}% (EXP ${
+          exp ? `${(laneMarginPct(sellChf, exp.totalChf) * 100).toFixed(1)}%` : "missing"
+        })`,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    reason: "margin_abort",
+    detail: `exp=${exp?.totalChf ?? "n/a"} std=${std?.totalChf ?? "n/a"} sell=${sellChf}`,
+  };
+}
+
+/** Shopify auto path: sale ≥ total (not Galaxus 5% CSAT). */
 export function marginOk(saleChf: number | null, totalChf: number | null): boolean {
   if (saleChf == null || totalChf == null) return false;
   return saleChf + 0.001 >= totalChf;

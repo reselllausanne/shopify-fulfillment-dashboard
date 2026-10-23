@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   chooseLane,
+  chooseLaneByCsAtMargin,
   classifyLaneLabel,
+  countDistinctShippingTierInText,
+  extractCheckoutSubtotalChf,
+  laneMatchesSubtotal,
+  laneMarginPct,
   marginOk,
   parseLaneCardsFromText,
 } from "@/lib/stockxAutoCheckout/chooseLane";
@@ -16,9 +21,10 @@ const lanes = (rows: Array<[string, number]>): StockxLaneCard[] =>
   }));
 
 describe("classifyLaneLabel", () => {
-  it("maps Express / Xpress / Standard", () => {
+  it("maps Express / Xpress / Fastest / Standard", () => {
     expect(classifyLaneLabel("Express")).toBe("EXPRESS");
     expect(classifyLaneLabel("Xpress")).toBe("EXPRESS");
+    expect(classifyLaneLabel("Fastest")).toBe("EXPRESS");
     expect(classifyLaneLabel("Standard")).toBe("STANDARD");
   });
 });
@@ -105,6 +111,96 @@ Xpress
     expect(parsed.find((l) => l.label === "STANDARD")?.totalChf).toBe(86.74);
     expect(parsed.find((l) => l.rawLabel === "Express")?.totalChf).toBe(142);
     expect(parsed.find((l) => l.rawLabel === "Xpress")?.totalChf).toBe(199.5);
+  });
+
+  it("parses en-GB CHF prefix + Fastest", () => {
+    const text = `
+Standard
+CHF 125.12
+Express
+CHF 128.44
+Fastest
+CHF 199.00
+    `;
+    const parsed = parseLaneCardsFromText(text);
+    expect(parsed.find((l) => l.label === "STANDARD")?.totalChf).toBe(125.12);
+    expect(parsed.find((l) => l.rawLabel === "Express")?.totalChf).toBe(128.44);
+    expect(parsed.some((l) => l.rawLabel === "Fastest" && l.label === "EXPRESS")).toBe(true);
+  });
+
+  it("parses en-GB date-only cards into Standard + Express", () => {
+    const text = `
+Choose shipping
+Friday 24 Oct – Monday 27 Oct
+CHF 125.12
+Tuesday 21 Oct – Wednesday 22 Oct
+CHF 128.44
+Subtotal
+CHF 125.12
+    `;
+    const parsed = parseLaneCardsFromText(text);
+    expect(parsed.find((l) => l.label === "STANDARD")?.totalChf).toBe(125.12);
+    expect(parsed.find((l) => l.label === "EXPRESS")?.totalChf).toBe(128.44);
+    expect(countDistinctShippingTierInText(text)).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("chooseLaneByCsAtMargin", () => {
+  it("picks Express when margin >5% even if only ~+4 CHF vs Standard", () => {
+    // sell 149.54, std 125.12, exp 128.44 → Express margin ~14%
+    const result = chooseLaneByCsAtMargin(
+      149.54,
+      lanes([
+        ["Standard", 125.12],
+        ["Express", 128.44],
+      ])
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.lane.label).toBe("EXPRESS");
+      expect(result.lane.totalChf).toBe(128.44);
+      expect(laneMarginPct(149.54, 128.44)).toBeGreaterThan(0.05);
+    }
+  });
+
+  it("falls to Standard only when Express margin dead", () => {
+    const result = chooseLaneByCsAtMargin(
+      130,
+      lanes([
+        ["Standard", 100],
+        ["Express", 128], // margin ~1.5%
+      ])
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("STANDARD");
+  });
+
+  it("fail closed when multi-tier text but Express missing from parse", () => {
+    const result = chooseLaneByCsAtMargin(149.54, lanes([["Standard", 125.12]]), {
+      shippingTierInText: 2,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("express_unparsed");
+  });
+
+  it("allows Standard when Express truly missing (single tier)", () => {
+    const result = chooseLaneByCsAtMargin(149.54, lanes([["Standard", 125.12]]), {
+      shippingTierInText: 1,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("STANDARD");
+  });
+});
+
+describe("subtotal verify", () => {
+  it("extracts en-GB Subtotal", () => {
+    expect(extractCheckoutSubtotalChf("Subtotal\nCHF 128.44\nTotal Price CHF 128.44")).toBe(128.44);
+  });
+
+  it("laneMatchesSubtotal", () => {
+    const lane = lanes([["Express", 128.44]])[0]!;
+    expect(laneMatchesSubtotal(lane, 128.44)).toBe(true);
+    expect(laneMatchesSubtotal(lane, 125.12)).toBe(false);
   });
 });
 
