@@ -24,13 +24,22 @@ function arg(name: string): string | undefined {
 
 const pct = (n: number, d: number) => (d > 0 ? Math.round((1000 * n) / d) / 10 : null);
 
-type DayRow = { day: string; orders: bigint; tracked: bigint };
+type DayRow = {
+  day: string;
+  orders: bigint;
+  tracked: bigint;
+  tracked_pixel: bigint;
+  tracked_server: bigint;
+  tracked_server_only: bigint;
+};
 type OrderRow = {
   oid: string;
   name: string;
   created: Date;
   total: number;
   tracked: boolean;
+  tracked_pixel: boolean;
+  tracked_server: boolean;
   completions: bigint;
   consent_marketing: boolean | null;
   has_gclid: boolean;
@@ -74,10 +83,19 @@ async function main() {
        AND e.created_at >= ${since} - interval '2 days'
       GROUP BY s.oid
     ),
-    completions AS (SELECT oid, COUNT(*) AS n FROM fe WHERE oid IS NOT NULL GROUP BY oid)
+    completions AS (
+      SELECT oid,
+             COUNT(*) AS n,
+             bool_or(COALESCE(pixel_version, '') <> 'server.orders_paid') AS has_pixel,
+             bool_or(pixel_version = 'server.orders_paid') AS has_server
+      FROM fe WHERE oid IS NOT NULL GROUP BY oid
+    )
     SELECT o."shopifyOrderId" AS oid, o."orderName" AS name, o."createdAt" AS created,
            o."totalSalesChf"::float AS total,
-           (c.oid IS NOT NULL) AS tracked, COALESCE(c.n, 0) AS completions,
+           (c.oid IS NOT NULL) AS tracked,
+           COALESCE(c.has_pixel, false) AS tracked_pixel,
+           COALESCE(c.has_server, false) AS tracked_server,
+           COALESCE(c.n, 0) AS completions,
            se.consent_marketing, COALESCE(se.has_gclid, false) AS has_gclid,
            COALESCE(se.has_gbraid_wbraid, false) AS has_gbraid_wbraid,
            COALESCE(se.has_fbclid, false) AS has_fbclid, COALESCE(se.has_ttclid, false) AS has_ttclid,
@@ -91,15 +109,24 @@ async function main() {
 
   const byDay = await prisma.$queryRaw<DayRow[]>`
     WITH fe AS (
-      SELECT DISTINCT COALESCE(order_id, props->>'orderId') AS oid
+      SELECT COALESCE(order_id, props->>'orderId') AS oid, pixel_version
       FROM public.funnel_events
       WHERE event_name = 'checkout_completed' AND created_at >= ${since} - interval '2 days'
+    ),
+    by_oid AS (
+      SELECT oid,
+             bool_or(COALESCE(pixel_version, '') <> 'server.orders_paid') AS has_pixel,
+             bool_or(pixel_version = 'server.orders_paid') AS has_server
+      FROM fe WHERE oid IS NOT NULL GROUP BY oid
     )
     SELECT to_char(o."createdAt" AT TIME ZONE 'Europe/Zurich', 'YYYY-MM-DD') AS day,
            COUNT(*) AS orders,
-           COUNT(fe.oid) AS tracked
+           COUNT(fe.oid) AS tracked,
+           COUNT(*) FILTER (WHERE fe.has_pixel) AS tracked_pixel,
+           COUNT(*) FILTER (WHERE fe.has_server) AS tracked_server,
+           COUNT(*) FILTER (WHERE fe.has_server AND NOT fe.has_pixel) AS tracked_server_only
     FROM "ShopifyOrder" o
-    LEFT JOIN fe ON 'gid://shopify/Order/' || fe.oid = o."shopifyOrderId"
+    LEFT JOIN by_oid fe ON 'gid://shopify/Order/' || fe.oid = o."shopifyOrderId"
     WHERE o."createdAt" >= ${since} AND o."cancelledAt" IS NULL
     GROUP BY 1 ORDER BY 1
   `;
@@ -125,6 +152,9 @@ async function main() {
 
   const total = orders.length;
   const tracked = orders.filter((o) => o.tracked);
+  const trackedPixel = orders.filter((o) => o.tracked_pixel);
+  const trackedServer = orders.filter((o) => o.tracked_server);
+  const trackedServerOnly = orders.filter((o) => o.tracked_server && !o.tracked_pixel);
   const dupes = orders.filter((o) => Number(o.completions) > 1);
   const withConsent = tracked.filter((o) => o.consent_marketing === true);
   const profits = orders.map((o) => profitByOrder.get(o.oid)).filter((p) => p && p.costComplete);
@@ -151,6 +181,15 @@ async function main() {
     shopifyOrders: total,
     trackedOrders: tracked.length,
     coveragePct: pct(tracked.length, total),
+    coverageSources: {
+      pixel: trackedPixel.length,
+      pixelPct: pct(trackedPixel.length, total),
+      serverOrdersPaid: trackedServer.length,
+      serverOrdersPaidPct: pct(trackedServer.length, total),
+      serverOnly: trackedServerOnly.length,
+      serverOnlyPct: pct(trackedServerOnly.length, total),
+      note: "pixel = checkout_completed with pixel_version != server.orders_paid; serverOnly = webhook backup only",
+    },
     duplicateCompletions: dupes.length,
     trackedWithMarketingConsentPct: pct(withConsent.length, tracked.length),
     clickIdShareAmongConsented: {
@@ -185,6 +224,9 @@ async function main() {
       orders: Number(d.orders),
       tracked: Number(d.tracked),
       coveragePct: pct(Number(d.tracked), Number(d.orders)),
+      pixel: Number(d.tracked_pixel),
+      server: Number(d.tracked_server),
+      serverOnly: Number(d.tracked_server_only),
     })),
     untrackedSample: orders
       .filter((o) => !o.tracked)
@@ -195,12 +237,19 @@ async function main() {
   if (asJson) console.log(JSON.stringify(summary, null, 2));
   else {
     console.log(`Shadow reconciliation last ${days}d — Shopify orders=${total}, tracked=${tracked.length} (${summary.coveragePct ?? "-"}%), duplicate completions=${dupes.length}`);
+    console.log(
+      `coverage sources: pixel=${trackedPixel.length} (${summary.coverageSources.pixelPct ?? "-"}%), server.orders_paid=${trackedServer.length} (${summary.coverageSources.serverOrdersPaidPct ?? "-"}%), server-only=${trackedServerOnly.length} (${summary.coverageSources.serverOnlyPct ?? "-"}%)`,
+    );
     console.log(`marketing consent among tracked: ${summary.trackedWithMarketingConsentPct ?? "-"}%  click ids among consented:`, summary.clickIdShareAmongConsented);
     console.log("sources:", summary.sourceOfTrackedOrders);
     console.log("internal CM2 (not sent):", summary.internalProfit);
     console.log("A/B tracked orders:", summary.abTrackedOrders);
-    console.log("\nday         orders tracked coverage");
-    for (const d of summary.byDay) console.log(`${d.day}  ${String(d.orders).padStart(6)} ${String(d.tracked).padStart(7)} ${String(d.coveragePct ?? "-").padStart(7)}%`);
+    console.log("\nday         orders tracked coverage  pixel server srvOnly");
+    for (const d of summary.byDay) {
+      console.log(
+        `${d.day}  ${String(d.orders).padStart(6)} ${String(d.tracked).padStart(7)} ${String(d.coveragePct ?? "-").padStart(7)}%  ${String(d.pixel).padStart(5)} ${String(d.server).padStart(6)} ${String(d.serverOnly).padStart(7)}`,
+      );
+    }
     if (summary.untrackedSample.length) console.log("\nuntracked (latest):", summary.untrackedSample);
   }
 
