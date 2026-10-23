@@ -20,6 +20,7 @@
  *   Galaxus's fashion list. Exempt: LEGO, trading cards, WEL, REI allowlist.
  *   GALAXUS_FASHION_ONLY=0 disables.
  * - price_outlier: consumer price above GALAXUS_MAX_RETAIL_CHF (default 300, every supplier).
+ *   REI allowlist exempt (curated prior sales — Jetson / GB10 / etc. sit above the fashion cap).
  *   GALAXUS_PRICE_OUTLIER_FILTER=1 also blocks STX asks far above brand retail.
  *
  * Master + offer skip blocked rows; stock feed pushes QuantityOnStock=0 to delist.
@@ -573,7 +574,13 @@ export function galaxusAssortmentBlockReason(
 
   const consumer = estimateGalaxusConsumerPriceChf(input);
   if (consumer != null) {
-    if (consumer > galaxusMaxRetailChf()) return "price_outlier";
+    const reiAllowlisted =
+      supplierKey === "rei" &&
+      isGalaxusReiAllowlistEnabled() &&
+      (isReiGalaxusAllowlisted(input.providerKey) ||
+        isReiGalaxusAllowlisted(input.gtin ? `REI_${String(input.gtin).trim()}` : null));
+    // Fashion-oriented absolute cap; REI allowlist already curates high-ticket prior sellers.
+    if (!reiAllowlisted && consumer > galaxusMaxRetailChf()) return "price_outlier";
     // Optional extra: thin StockX asks far above brand retail.
     if (isGalaxusPriceOutlierFilterEnabled() && PRICE_OUTLIER_SUPPLIER_KEYS.has(supplierKey)) {
       const retail = Number(input.brandRetailPrice);
