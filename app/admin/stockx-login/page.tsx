@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 const VNC_URL =
-  "/stockx-vnc/vnc.html?autoconnect=1&resize=scale&reconnect=1&path=stockx-vnc/websockify";
+  "/stockx-vnc/vnc.html?autoconnect=1&resize=scale&reconnect=1&password=1234&path=stockx-vnc/websockify";
 
 type LoginStatus = {
   login: {
@@ -197,8 +197,8 @@ export default function StockxLoginPage() {
         {showScreen && (
           <div className="space-y-2">
             <div className="text-xs text-gray-600">
-              Password is the VNC password. On a phone, use the noVNC side panel to open the
-              keyboard.{" "}
+              VNC password is <span className="font-mono">1234</span> (autofilled). On a phone, use
+              the noVNC side panel to open the keyboard.{" "}
               <a className="text-indigo-600 underline" href={VNC_URL} target="_blank" rel="noreferrer">
                 Open full screen
               </a>

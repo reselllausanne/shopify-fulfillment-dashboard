@@ -83,7 +83,7 @@ type QueuePlan = {
 };
 
 const VNC_URL =
-  "/stockx-vnc/vnc.html?autoconnect=1&resize=scale&reconnect=1&path=stockx-vnc/websockify";
+  "/stockx-vnc/vnc.html?autoconnect=1&resize=scale&reconnect=1&password=1234&path=stockx-vnc/websockify";
 
 function initialOrderFromUrl(): string {
   if (typeof window === "undefined") return "#7541";

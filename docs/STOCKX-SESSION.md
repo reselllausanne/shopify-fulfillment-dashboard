@@ -19,7 +19,7 @@ Deploy does **not** wipe profiles: `docker-compose.yml` bind-mounts `./.data:/ap
 
 ## One manual login when alert fires
 
-Phone: `/admin/stockx-login` (and `?account=galaxus` for the second account) → complete Turnstile/OTP once in noVNC. After that, proactive keep-alive should remint without you.
+Phone: `/admin/stockx-login` (and `?account=galaxus` for the second account) → complete Turnstile/OTP once in noVNC (VNC password `1234`, autofilled in the viewer URL). After that, proactive keep-alive should remint without you.
 
 ## Headless vs headed
 
