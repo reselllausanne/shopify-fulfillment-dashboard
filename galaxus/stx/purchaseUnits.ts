@@ -1,5 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { sameGtinKey } from "@/galaxus/orders/gtinKey";
+import { resolveSupplierVariantIdFromGalaxusListingKey } from "@/galaxus/exports/listingAlias";
 import {
   galaxusLineWarehouseStockHint,
   isGalaxusStxSupplierLine,
@@ -116,16 +117,34 @@ export async function resolveStxNeedsFromGtinQuantities(gtinQty: Map<string, num
   }
 
   const needs: StxNeed[] = [];
+  const unresolved: Array<{ norm: string; qty: number }> = [];
   for (const [gtinKey, qty] of gtinQty.entries()) {
     const norm = normalizeGtinKey(gtinKey);
     if (!norm || qty <= 0) continue;
     const mapping = bestByNorm.get(norm);
     const supplierVariantId = String(mapping?.supplierVariantId ?? "").trim();
-    if (!supplierVariantId.startsWith("stx_")) continue;
+    if (supplierVariantId.startsWith("stx_")) {
+      needs.push({
+        gtin: norm,
+        supplierVariantId,
+        needed: qty,
+      });
+      continue;
+    }
+    unresolved.push({ norm, qty });
+  }
+
+  // Ghost Galaxus listing GTINs (pre-remap ProviderKey) still resolve via CLS.
+  for (const item of unresolved) {
+    const fromListing = await resolveSupplierVariantIdFromGalaxusListingKey({
+      gtin: item.norm,
+      providerKey: `STX_${item.norm}`,
+    });
+    if (!fromListing?.startsWith("stx_")) continue;
     needs.push({
-      gtin: norm,
-      supplierVariantId,
-      needed: qty,
+      gtin: item.norm,
+      supplierVariantId: fromListing,
+      needed: item.qty,
     });
   }
   return needs;
@@ -135,15 +154,22 @@ export async function resolveStxNeedsFromGtinQuantities(gtinQty: Map<string, num
 export async function resolveSupplierVariantIdForGalaxusLine(line: {
   supplierVariantId?: unknown;
   gtin?: unknown;
+  providerKey?: unknown;
   quantity?: unknown;
 }): Promise<string | null> {
   const sv = String(line?.supplierVariantId ?? "").trim();
   if (sv.startsWith("stx_")) return sv;
   const norm = normalizeGtinKey(typeof line?.gtin === "string" ? line.gtin : "");
   const qty = Math.max(1, Math.round(Number(line?.quantity ?? 1)));
-  if (!norm) return null;
-  const needs = await resolveStxNeedsFromGtinQuantities(new Map([[norm, qty]]));
-  return needs[0]?.supplierVariantId ?? null;
+  if (norm) {
+    const needs = await resolveStxNeedsFromGtinQuantities(new Map([[norm, qty]]));
+    if (needs[0]?.supplierVariantId) return needs[0].supplierVariantId;
+  }
+  const fromListing = await resolveSupplierVariantIdFromGalaxusListingKey({
+    gtin: norm || null,
+    providerKey: typeof line?.providerKey === "string" ? line.providerKey : null,
+  });
+  return fromListing?.startsWith("stx_") ? fromListing : null;
 }
 
 function isUnknownCancelledAtArg(error: any): boolean {

@@ -3,6 +3,10 @@ import { prisma } from "@/app/lib/prisma";
 import { toCsv } from "@/galaxus/exports/csv";
 import { accumulateBestCandidates, filterExportCandidates } from "@/galaxus/exports/gtinSelection";
 import {
+  applyListingAliasToCandidates,
+  loadGalaxusListingIdentities,
+} from "@/galaxus/exports/listingAlias";
+import {
   buildGalaxusAlternativeStockRows,
   filterAlternativeProducts,
   loadAlternativeProductsForExport,
@@ -225,7 +229,7 @@ export async function GET(request: Request) {
     seenProviderKeys.add(key);
     return true;
   });
-  const { valid: exportCandidates, invalidSupplierVariantIds } = filterExportCandidates(uniqueCandidates);
+  const { valid: filteredCandidates, invalidSupplierVariantIds } = filterExportCandidates(uniqueCandidates);
   if (invalidSupplierVariantIds.length > 0) {
     return NextResponse.json(
       {
@@ -235,6 +239,23 @@ export async function GET(request: Request) {
       },
       { status: 409 }
     );
+  }
+
+  // Remapped GTINs: keep updating the ProviderKey Galaxus already ingested (no re-ingest).
+  const listingIdentities = await loadGalaxusListingIdentities(
+    filteredCandidates.map((c: any) => ({
+      supplierVariantId: c?.variant?.supplierVariantId ?? c?.mapping?.supplierVariantId,
+      providerKey: c?.providerKey,
+    }))
+  );
+  const { candidates: exportCandidates, supersededProviderKeys } = applyListingAliasToCandidates(
+    filteredCandidates,
+    listingIdentities
+  );
+  const pushZeroRowsEarly = isGalaxusStockZeroPushEnabled();
+  for (const supersededKey of supersededProviderKeys) {
+    if (!pushZeroRowsEarly || !supersededKey) continue;
+    rows.push(buildForceZeroStockRow(supersededKey, null, null, "listing-alias-superseded"));
   }
 
   const stxGtins = Array.from(

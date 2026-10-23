@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toCsv } from "@/galaxus/exports/csv";
 import { accumulateBestCandidates, filterExportCandidates } from "@/galaxus/exports/gtinSelection";
+import { loadGalaxusListingIdentities } from "@/galaxus/exports/listingAlias";
 import {
   buildGalaxusAlternativeMasterRows,
   filterAlternativeProducts,
@@ -336,7 +337,7 @@ export async function GET(request: Request) {
   } while (all && lastBatch === pageSize);
 
   const candidates = dedupeCandidatesByProviderKey(Array.from(bestByGtin.values()));
-  const { valid: exportCandidates, invalidSupplierVariantIds } = filterExportCandidates(candidates);
+  const { valid: filteredCandidates, invalidSupplierVariantIds } = filterExportCandidates(candidates);
   if (invalidSupplierVariantIds.length > 0 && !report) {
     return NextResponse.json(
       {
@@ -347,6 +348,20 @@ export async function GET(request: Request) {
       { status: 409 }
     );
   }
+  // Do not publish a *new* master identity after GTIN remap — Galaxus already has
+  // the old ProviderKey. Stock/offer keep that listing alive via listingAlias.
+  const listingIdentities = await loadGalaxusListingIdentities(
+    filteredCandidates.map((c: any) => ({
+      supplierVariantId: c?.variant?.supplierVariantId ?? c?.mapping?.supplierVariantId,
+      providerKey: c?.providerKey,
+    }))
+  );
+  const exportCandidates = filteredCandidates.filter((c: any) => {
+    const svId = String(c?.variant?.supplierVariantId ?? c?.mapping?.supplierVariantId ?? "").trim();
+    const identity = svId ? listingIdentities.get(svId) : undefined;
+    if (!identity?.isAlias) return true;
+    return String(c?.providerKey ?? "") === identity.listingProviderKey;
+  });
   if (report) {
     return NextResponse.json({
       ok: true,
