@@ -431,8 +431,9 @@ describe("galaxusAssortmentBlockReason", () => {
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_30",
-        title: "LEGO Star Wars Death Star Set 75419",
-        brand: "LEGO",
+        title: "Supreme Box Logo Hooded Sweatshirt Black",
+        sizeRaw: "L",
+        brand: "Supreme",
         suggestedRetailInclVatChf: 301,
       })
     ).toBe("price_outlier");
@@ -460,6 +461,19 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "Nike",
         sizeRaw: "42",
         purchasePriceExVatChf: 200,
+      })
+    ).toBeNull();
+  });
+
+
+  it("keeps LEGO Art sets above the absolute fashion cap", () => {
+    delete process.env.GALAXUS_MAX_RETAIL_CHF;
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_5702018066386",
+        title: "LEGO Art: Gustav Klimt The Kiss Set #31221",
+        brand: "LEGO",
+        suggestedRetailInclVatChf: 407.55,
       })
     ).toBeNull();
   });
