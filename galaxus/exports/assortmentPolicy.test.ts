@@ -99,6 +99,20 @@ describe("galaxusAssortmentBlockReason", () => {
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
   });
 
+  it("keeps exempt BWZ Lansinoh SKUs despite BWZ delist + fashion-only", () => {
+    delete process.env.GALAXUS_DISABLED_SUPPLIERS;
+    delete process.env.GALAXUS_FASHION_ONLY;
+    for (const providerKey of ["BWZ_5060420232721", "BWZ_5060420233353"]) {
+      expect(
+        galaxusAssortmentBlockReason({
+          providerKey,
+          title: "Lansinoh cream",
+          suggestedRetailInclVatChf: 20,
+        })
+      ).toBeNull();
+    }
+  });
+
   it("NER: keeps clothing and shoes only", () => {
     delete process.env.GALAXUS_NER_APPAREL_ONLY;
     for (const input of [
