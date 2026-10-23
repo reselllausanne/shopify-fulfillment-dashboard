@@ -95,15 +95,17 @@ export async function notifyStockxAuthBroken(params: {
   if (!shouldSend(key)) return { sent: false, reason: "deduped" };
   const subject = `[Resell] StockX token DEAD (${params.account}) — auto-link + AWB stopped`;
   const text = [
-    `StockX account "${params.account}" has no valid bearer and auto-login failed.`,
+    `StockX account "${params.account}" has no valid bearer after cookie/silent-Auth0/warm-CDP paths failed.`,
     `Error: ${String(params.error ?? "unknown").slice(0, 300)}`,
     params.pendingGalaxusOrders != null
       ? `Galaxus orders waiting for StockX auto-link: ${params.pendingGalaxusOrders}`
       : null,
     "",
     "Until fixed: no Galaxus auto-link, no AWB on scan, parcels show NOT_FOUND.",
-    "Fix from your phone (log in once, then hourly refresh reuses the session):",
+    "Action (once): open phone login, pass Turnstile if shown — do NOT re-type password if already logged-in SSO.",
+    "Then leave warm daemon / keep-alive running; hourly remint attaches via CDP (no cold Turnstile).",
     `${loginPageBaseUrl()}/admin/stockx-login${params.account === "galaxus" ? "?account=galaxus" : ""}`,
+    `VNC: ${loginPageBaseUrl()}/stockx-vnc/vnc.html?autoconnect=1&password=1234&path=stockx-vnc/websockify`,
     `At: ${new Date().toISOString()}`,
   ]
     .filter((line) => line !== null)

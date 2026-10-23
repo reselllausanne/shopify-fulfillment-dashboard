@@ -18,6 +18,18 @@ import {
   waitForCookieSessionWarm,
   type StockxCookieWarm,
 } from "@/lib/stockxAutoLogin";
+import {
+  trySilentAuth0CodeRemint,
+  writeStockxTokenFile,
+} from "@/lib/stockxSilentAuth0";
+import {
+  connectWarmBrowser,
+  markWarmKeepAlive,
+  markWarmToken,
+  stockxCdpPort,
+  writeWarmState,
+  type StockxWarmAccount,
+} from "@/lib/stockxWarmBrowser";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -208,6 +220,7 @@ const createEphemeralContext = async ({
 export async function POST(req: NextRequest) {
   let cleanupBrowser: Browser | null = null;
   let cleanupContext: BrowserContext | null = null;
+  let skipWarmClose = false;
   try {
     const body = await req.json().catch(() => ({}));
     const forceHeadless = ["1", "true", "yes"].includes(
@@ -247,6 +260,12 @@ export async function POST(req: NextRequest) {
       body?.userAgent ||
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
     );
+    const credentialsAccount: StockxWarmAccount =
+      body?.credentialsAccount === "galaxus" ? "galaxus" : "default";
+    const useWarmCdp = Boolean(body?.useWarmCdp ?? false);
+    const leaveWarm = Boolean(body?.leaveWarm ?? false);
+    const silentAuth0 = Boolean(body?.silentAuth0 ?? autoLogin);
+    const cdpPort = stockxCdpPort(credentialsAccount);
 
     await ensureSessionDir(sessionFile);
     await ensureSessionDir(sessionMetaFile);
@@ -302,11 +321,28 @@ export async function POST(req: NextRequest) {
     };
 
     let browser: Browser | null = null;
-    let context: BrowserContext;
+    let context!: BrowserContext;
     let usedPersistentContext = false;
     let persistentFallback = false;
+    let attachedWarmCdp = false;
+    let leftWarm = false;
 
-    if (persistent) {
+    // Vacation path: attach to long-lived Chromium instead of cold launch (Turnstile).
+    if (useWarmCdp && persistent && browserType === "chromium" && !forceLogin) {
+      const warm = await connectWarmBrowser(credentialsAccount);
+      if (warm) {
+        browser = warm.browser;
+        context = warm.context;
+        usedPersistentContext = true;
+        attachedWarmCdp = true;
+        leftWarm = true; // never close a shared warm browser from a remint request
+        skipWarmClose = true;
+        await markWarmKeepAlive(credentialsAccount).catch(() => undefined);
+        console.log(`[STOCKX-PW] Using warm CDP context account=${credentialsAccount}`);
+      }
+    }
+
+    if (!attachedWarmCdp && persistent) {
       if (forceLogin) {
         try {
           await fs.rm(userDataDir, { recursive: true, force: true });
@@ -334,25 +370,48 @@ export async function POST(req: NextRequest) {
           // ignore
         }
       }
+      const warmLaunchOptions = {
+        ...launchOptions,
+        args: [
+          ...(launchOptions.args || []),
+          ...(leaveWarm && browserType === "chromium"
+            ? [`--remote-debugging-port=${cdpPort}`, "--remote-debugging-address=127.0.0.1"]
+            : []),
+        ],
+      };
       try {
         if (browserType === "chromium") {
           context = await chromium.launchPersistentContext(userDataDir, {
-            ...launchOptions,
+            ...warmLaunchOptions,
             locale: "fr-FR",
-            timezoneId: "Europe/Paris",
+            timezoneId: "Europe/Zurich",
             userAgent,
           });
         } else {
           context = await firefox.launchPersistentContext(userDataDir, {
             ...launchOptions,
             locale: "fr-FR",
-            timezoneId: "Europe/Paris",
+            timezoneId: "Europe/Zurich",
             userAgent,
           });
         }
         browser = context.browser();
         usedPersistentContext = true;
         console.log("[STOCKX-PW] Using persistent context");
+        if (leaveWarm && browserType === "chromium") {
+          await writeWarmState({
+            account: credentialsAccount,
+            cdpUrl: `http://127.0.0.1:${cdpPort}`,
+            port: cdpPort,
+            profileDir: userDataDir,
+            pid: process.pid,
+            startedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }).catch(() => undefined);
+          leftWarm = true;
+          skipWarmClose = true;
+          console.log(`[STOCKX-PW] leaveWarm CDP :${cdpPort}`);
+        }
       } catch (error: any) {
         if (!isPersistentProfileLockError(error)) {
           throw error;
@@ -366,23 +425,55 @@ export async function POST(req: NextRequest) {
           );
           if (browserType === "chromium") {
             context = await chromium.launchPersistentContext(userDataDir, {
-              ...launchOptions,
+              ...warmLaunchOptions,
               locale: "fr-FR",
-              timezoneId: "Europe/Paris",
+              timezoneId: "Europe/Zurich",
               userAgent,
             });
           } else {
             context = await firefox.launchPersistentContext(userDataDir, {
               ...launchOptions,
               locale: "fr-FR",
-              timezoneId: "Europe/Paris",
+              timezoneId: "Europe/Zurich",
               userAgent,
             });
           }
           browser = context.browser();
           usedPersistentContext = true;
           console.log("[STOCKX-PW] Using persistent context after lock reclaim");
+          if (leaveWarm && browserType === "chromium") {
+            await writeWarmState({
+              account: credentialsAccount,
+              cdpUrl: `http://127.0.0.1:${cdpPort}`,
+              port: cdpPort,
+              profileDir: userDataDir,
+              pid: process.pid,
+              startedAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            }).catch(() => undefined);
+            leftWarm = true;
+            skipWarmClose = true;
+          }
         } catch (retryError: any) {
+          // Never fall back to ephemeral when Auth0 cookies live in the session file —
+          // that path burns credential /login without SSO and fails Turnstile.
+          let sessionHasAuth0 = false;
+          try {
+            const raw = await fs.readFile(sessionFile, "utf8");
+            const parsed = JSON.parse(raw) as { cookies?: Array<{ name?: string; domain?: string }> };
+            sessionHasAuth0 = (parsed.cookies || []).some(
+              (c) =>
+                (c.name === "auth0" || c.name === "auth0_compat" || c.name === "did") &&
+                String(c.domain || "").includes("stockx")
+            );
+          } catch {
+            sessionHasAuth0 = false;
+          }
+          if (sessionHasAuth0 || autoLogin) {
+            throw new Error(
+              `StockX profile locked after reclaim; Auth0 session present — refusing ephemeral fallback. ${retryError?.message || retryError}`
+            );
+          }
           persistentFallback = true;
           console.warn(
             "[STOCKX-PW] Persistent profile still busy after reclaim; fallback to ephemeral context",
@@ -400,7 +491,7 @@ export async function POST(req: NextRequest) {
           });
         }
       }
-    } else {
+    } else if (!attachedWarmCdp) {
       browser =
         browserType === "chromium"
           ? await chromium.launch(launchOptions)
@@ -690,6 +781,35 @@ export async function POST(req: NextRequest) {
       await logAuthCookieSummary("post-silent");
       if (capturedToken) {
         console.log("[STOCKX-PW] Silent remint succeeded after soft Auth0 wait");
+      } else if (hasAuth0Session && silentAuth0) {
+        // Path: Auth0 prompt=none authorize (no /login) once CF is not blocking the page.
+        const titleNow = await page.title().catch(() => "");
+        const bodyNow = (await page.locator("body").innerText().catch(() => "")) || "";
+        const stillCf =
+          /just a moment|un instant|vérification de sécurité|cf-turnstile|__cf_chl/i.test(
+            `${titleNow}\n${bodyNow}\n${page.url()}`
+          );
+        if (!stillCf) {
+          console.log("[STOCKX-PW] Trying Auth0 silent authorize (prompt=none)");
+          const silent = await trySilentAuth0CodeRemint(page, { timeoutMs: 45_000 });
+          if (silent.token) {
+            capturedToken = `Bearer ${silent.token}`;
+            console.log("[STOCKX-PW] Auth0 silent authorize minted bearer");
+            if (tokenFile && silent.refreshToken) {
+              await writeStockxTokenFile(tokenFile, silent.token, {
+                refreshToken: silent.refreshToken,
+                source: "silent-auth0",
+              }).catch(() => undefined);
+            }
+          } else {
+            console.warn(`[STOCKX-PW] Auth0 silent authorize missed: ${silent.error}`);
+          }
+        }
+        if (!capturedToken) {
+          autoLoginError =
+            "Auth0 cookies valid but JWT not reminted (Turnstile/cold). Auth0 SSO kept — no /login. Open /admin/stockx-login once OR wait for warm CDP keep-alive.";
+          console.warn(`[STOCKX-PW] ${autoLoginError}`);
+        }
       } else if (hasAuth0Session) {
         autoLoginError =
           "Auth0/session cookies still present but JWT was not reminted (Turnstile/cold browser). Do NOT burn /login — use /admin/stockx-login once.";
@@ -853,18 +973,25 @@ export async function POST(req: NextRequest) {
       } catch {
         // ignore html capture failures
       }
-      // Without this the browser keeps the process alive and a cron run never exits.
-      try {
-        if (usedPersistentContext) {
-          await context.close();
-        } else {
-          await browser?.close();
+      // Without this the browser keeps the process alive and a cron run never exits —
+      // unless leaveWarm / CDP attach (vacation daemon must stay up).
+      if (!leftWarm) {
+        try {
+          if (usedPersistentContext) {
+            await context.close();
+          } else {
+            await browser?.close();
+          }
+        } catch {
+          // ignore close failures
         }
-      } catch {
-        // ignore close failures
+        cleanupContext = null;
+        cleanupBrowser = null;
+      } else {
+        cleanupContext = null;
+        cleanupBrowser = null;
+        console.log("[STOCKX-PW] leaveWarm — browser kept open after failed remint (CF sit)");
       }
-      cleanupContext = null;
-      cleanupBrowser = null;
       return NextResponse.json(
         {
           ok: false,
@@ -874,6 +1001,8 @@ export async function POST(req: NextRequest) {
               ? `StockX token not found (${autoLoginError}).`
               : "StockX token not found. Login may be incomplete.",
           needsOtp: autoLoginNeedsOtp,
+          leftWarm,
+          attachedWarmCdp,
           debug: {
             lastUrl: page.url(),
             screenshotPath,
@@ -936,8 +1065,10 @@ export async function POST(req: NextRequest) {
       const tokenPayload = {
         token: stripBearer(capturedToken),
         updatedAt: new Date().toISOString(),
+        source: attachedWarmCdp ? "warm-cdp" : leaveWarm ? "leave-warm" : "playwright",
       };
       await fs.writeFile(tokenFile, `${JSON.stringify(tokenPayload, null, 2)}\n`, "utf8");
+      await markWarmToken(credentialsAccount).catch(() => undefined);
     }
     const existingHashes = await readStockxPersistedHashes(persistedHashesFile);
     const mergedHashes = {
@@ -946,7 +1077,11 @@ export async function POST(req: NextRequest) {
     };
     await writeStockxPersistedHashes(mergedHashes, persistedHashesFile);
 
-    if (usedPersistentContext) {
+    if (leftWarm) {
+      cleanupContext = null;
+      cleanupBrowser = null;
+      console.log("[STOCKX-PW] leaveWarm — browser kept open after success");
+    } else if (usedPersistentContext) {
       await context.close();
       cleanupContext = null;
       cleanupBrowser = null;
@@ -964,6 +1099,8 @@ export async function POST(req: NextRequest) {
       tokenFile: tokenFile ?? null,
       persistedHashesFile,
       persistentFallback,
+      leftWarm,
+      attachedWarmCdp,
       captured: {
         deviceId: capturedDeviceId,
         sessionId: capturedSessionId,
@@ -974,9 +1111,10 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     try {
-      if (cleanupContext) {
+      // Never kill a shared warm CDP browser on request errors.
+      if (!skipWarmClose && cleanupContext) {
         await cleanupContext.close();
-      } else if (cleanupBrowser) {
+      } else if (!skipWarmClose && cleanupBrowser) {
         await cleanupBrowser.close();
       }
     } catch {
