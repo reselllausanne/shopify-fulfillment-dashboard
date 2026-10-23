@@ -177,8 +177,12 @@ async function listGalaxusShipFromStock(): Promise<InStockShipItem[]> {
 
   if (!matches.length) return [];
 
-  const orderDbIds = Array.from(new Set(matches.map((m: any) => String(m.order.id))));
-  const orderRefs = Array.from(new Set(matches.map((m: any) => String(m.order.galaxusOrderId))));
+  const orderDbIds: string[] = Array.from(
+    new Set(matches.map((m: any) => String(m.order.id)).filter(Boolean))
+  );
+  const orderRefs: string[] = Array.from(
+    new Set(matches.map((m: any) => String(m.order.galaxusOrderId)).filter(Boolean))
+  );
   const fullOrders = await prisma.galaxusOrder.findMany({
     where: { id: { in: orderDbIds } },
     select: {
@@ -202,7 +206,7 @@ async function listGalaxusShipFromStock(): Promise<InStockShipItem[]> {
   ]);
   const coverage = computeShipmentCoverageForOrders(fullOrders, existingItems, delrShipmentIds);
 
-  const gtins = matches
+  const gtins: string[] = matches
     .map((m: any) => text(m.orderLine?.gtin) ?? text(m.galaxusGtin))
     .filter((g: string | null): g is string => Boolean(g));
   const locationByNorm = await loadPhysicalLocationByGtin(gtins);
