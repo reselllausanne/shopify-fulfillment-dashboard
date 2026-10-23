@@ -13,10 +13,12 @@ type LoginStatus = {
     ok: boolean | null;
     error: string | null;
     profileReset: boolean;
+    blockedBy?: string | null;
   };
   hasProfile: boolean;
   token: { source: string; expiresAt: string | null } | null;
   otherAccountRunning: boolean;
+  otherAccountLabel: string | null;
 };
 
 function formatRemaining(expiresAt: string | null): string {
@@ -66,6 +68,7 @@ export default function StockxLoginPage() {
           hasProfile: data.hasProfile,
           token: data.token,
           otherAccountRunning: Boolean(data.otherAccountRunning),
+          otherAccountLabel: data.otherAccountLabel ?? null,
         });
       }
     } catch {
@@ -90,7 +93,7 @@ export default function StockxLoginPage() {
       });
       const data = await res.json();
       setMessage(data?.ok ? note : `${data?.error ?? "Failed"}`);
-      if (data?.ok && body.action !== "refresh") setShowScreen(true);
+      if (data?.ok && body.action !== "refresh" && body.action !== "stop") setShowScreen(true);
       await loadStatus();
     } catch (error: any) {
       setMessage(error?.message || "Network error");
@@ -100,7 +103,10 @@ export default function StockxLoginPage() {
   };
 
   const token = status?.token;
-  const running = (status?.login.running ?? false) || (status?.otherAccountRunning ?? false);
+  const thisRunning = status?.login.running ?? false;
+  const otherRunning = status?.otherAccountRunning ?? false;
+  const browserBusy = thisRunning || otherRunning;
+  const otherLabel = status?.otherAccountLabel ?? "the other account";
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
@@ -109,7 +115,7 @@ export default function StockxLoginPage() {
           <h1 className="text-2xl font-bold text-gray-900">StockX login</h1>
           <p className="mt-1 text-sm text-gray-600">
             Logs in inside the server browser, so the bearer is stored on the VPS and the hourly AWB
-            sync keeps working. Usable from a phone.
+            sync keeps working. Usable from a phone. One VNC screen — one account at a time.
           </p>
         </div>
 
@@ -148,15 +154,21 @@ export default function StockxLoginPage() {
             <span>
               Login browser:{" "}
               <strong>
-                {status?.otherAccountRunning
-                  ? "busy with the other account"
-                  : running
+                {otherRunning
+                  ? `busy with ${otherLabel}`
+                  : thisRunning
                     ? "running — log in below"
                     : "idle"}
               </strong>
             </span>
           </div>
-          {status?.login.error && !running && (
+          {otherRunning && (
+            <div className="mt-2 text-xs text-amber-800">
+              Shared server display is showing {otherLabel}. Finish that Cloudflare checkbox there,
+              or Stop browser / Take over to free the screen for {ACCOUNT_LABELS[account]}.
+            </div>
+          )}
+          {status?.login.error && !browserBusy && (
             <div className="mt-2 text-xs text-red-700">Last attempt: {status.login.error}</div>
           )}
           {message && <div className="mt-2 text-xs text-gray-700">{message}</div>}
@@ -165,14 +177,37 @@ export default function StockxLoginPage() {
         <div className="flex flex-wrap gap-3">
           <button
             onClick={() => post({ action: "start" }, "Browser started — log in on the screen below.")}
-            disabled={busy || running}
+            disabled={busy || browserBusy}
             className="rounded bg-indigo-600 px-4 py-3 text-white disabled:bg-gray-400"
           >
-            {running ? "Login browser running" : "Start login browser"}
+            {thisRunning ? "Login browser running" : "Start login browser"}
+          </button>
+          {otherRunning && (
+            <button
+              onClick={() =>
+                post(
+                  { action: "start", force: true },
+                  `Took over from ${otherLabel} — complete Turnstile for ${ACCOUNT_LABELS[account]}.`
+                )
+              }
+              disabled={busy}
+              className="rounded bg-amber-600 px-4 py-3 text-white disabled:bg-gray-400"
+            >
+              Take over for this account
+            </button>
+          )}
+          <button
+            onClick={() =>
+              post({ action: "stop", all: true }, "Stopped all login browsers. Profiles kept.")
+            }
+            disabled={busy || !browserBusy}
+            className="rounded border border-gray-400 px-4 py-3 text-gray-800 disabled:opacity-50"
+          >
+            Stop browser
           </button>
           <button
             onClick={() => post({ action: "refresh" }, "Token refreshed from the saved profile.")}
-            disabled={busy || running}
+            disabled={busy || browserBusy}
             className="rounded bg-gray-800 px-4 py-3 text-white disabled:bg-gray-400"
           >
             Refresh token now
@@ -181,7 +216,7 @@ export default function StockxLoginPage() {
             onClick={() =>
               post({ action: "start", reset: true }, "Profile wiped — log in from scratch below.")
             }
-            disabled={busy || running}
+            disabled={busy || browserBusy}
             className="rounded border border-red-300 px-4 py-3 text-red-700 disabled:opacity-50"
           >
             Reset profile & login
@@ -214,7 +249,8 @@ export default function StockxLoginPage() {
         <div className="rounded-lg border bg-white p-4 text-xs text-gray-600">
           Server has StockX email/password stored. After you pass Cloudflare (and OTP if asked),
           the form auto-fills. Then open <span className="font-mono">buying/orders</span> so the
-          bearer is captured. Hourly/6h jobs reuse that session afterward.
+          bearer is captured. Hourly/6h jobs reuse that session afterward. Do not start both
+          accounts at once — Cloudflare + one Chromium profile per account need a free display.
         </div>
       </div>
     </div>

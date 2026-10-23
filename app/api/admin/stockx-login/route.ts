@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
-import { getStockxLoginStatus, startInteractiveStockxLogin } from "@/lib/stockxLoginSession";
+import {
+  getStockxLoginStatus,
+  startInteractiveStockxLogin,
+  stopInteractiveStockxLogin,
+} from "@/lib/stockxLoginSession";
 import { parseStockxRefreshAccount, refreshStockxToken } from "@/lib/stockxSessionRefresh";
 
 export const runtime = "nodejs";
@@ -39,6 +43,33 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const login = startInteractiveStockxLogin({ reset: Boolean(body?.reset), account });
+  if (action === "stop") {
+    const scope = body?.all === true || body?.account === "all" ? "all" : account;
+    const result = await stopInteractiveStockxLogin({ account: scope });
+    return NextResponse.json({
+      ok: true,
+      ...result,
+      ...(await getStockxLoginStatus(account)),
+    });
+  }
+
+  const login = await startInteractiveStockxLogin({
+    reset: Boolean(body?.reset),
+    account,
+    force: Boolean(body?.force),
+  });
+
+  if (login.blockedBy) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: login.error,
+        login,
+        ...(await getStockxLoginStatus(account)),
+      },
+      { status: 409 }
+    );
+  }
+
   return NextResponse.json({ ok: true, login });
 }
