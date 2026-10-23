@@ -1,10 +1,9 @@
-// Shopify custom pixel — resell-lausanne.ch first-party shadow tracking (Phase 1)
+// Shopify custom pixel — resell-lausanne.ch (G1 funnel + G3 GA4 TEST via sGTM)
 //
-// THE single custom pixel of the store (replaces the funnel / GTM / Google-variant drafts).
-// Phase 1 = observation only: events go to OUR endpoint (funnel_events table) and nowhere else.
-// No Google / Meta / TikTok / Klaviyo calls, no third-party script, no cookies written.
-// Simprosys (app pixel) stays the only sender to GA4 G-828PXC8REN / Google Ads AW-11152326139.
-// See docs/tracking/TRACKING-PLAN.md (gates G1..G6) before adding any outbound destination.
+// THE single custom pixel of the store. Always POSTs to our funnel endpoint (G1).
+// G3 (gate approved): loads web GTM → https://sgtm.resell-lausanne.ch → GA4 TEST property only.
+// Simprosys stays the only sender to production GA4 G-828PXC8REN / Google Ads AW-11152326139.
+// See docs/tracking/TRACKING-PLAN.md and docs/tracking/G3-RUNBOOK.md.
 //
 // Install: Shopify Admin > Settings > Customer events > Add custom pixel > paste this file.
 // Permission: "Required" + Analytics only (NOT marketing / sale of data). Then Save + Connect.
@@ -45,7 +44,10 @@
 
 const ENDPOINT = "__FUNNEL_ENDPOINT__";
 const TRACK_KEY = "__FUNNEL_TRACK_KEY__";
-const PIXEL_VERSION = "2026-10-15.p3";
+const GTM_ID = "GTM-K9F6S5LN";
+const PIXEL_VERSION = "2026-10-20.g3";
+const GTM_ITEM_PREFIX = "shopify_CH_";
+const GTM_MAX_LIST_ITEMS = 20;
 const CLICK_KEYS = ["gclid", "gbraid", "wbraid", "fbclid", "ttclid", "msclkid"];
 const CLICK_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const CLICK_STORE_KEY = "rl_clk";
@@ -87,7 +89,60 @@ const EXPRESS_RE = /express|priority|prioritaire|24\s?h|next.?day|same.?day|a-po
 const MAX_BATCH = 20;
 const FLUSH_DELAY_MS = 200;
 
-// ---------- consent ----------
+// ---------- consent (+ Consent Mode v2 for GTM / GA4 TEST) ----------
+window.dataLayer = window.dataLayer || [];
+function gtag() {
+  window.dataLayer.push(arguments);
+}
+function gtmConsentState(cp) {
+  const analytics = !!(cp && cp.analyticsProcessingAllowed);
+  const marketing = !!(cp && cp.marketingAllowed);
+  return {
+    analytics_storage: analytics ? "granted" : "denied",
+    ad_storage: marketing ? "granted" : "denied",
+    ad_user_data: marketing ? "granted" : "denied",
+    ad_personalization: marketing ? "granted" : "denied",
+  };
+}
+gtag("consent", "default", {
+  analytics_storage: "denied",
+  ad_storage: "denied",
+  ad_user_data: "denied",
+  ad_personalization: "denied",
+  functionality_storage: "denied",
+  personalization_storage: "denied",
+  security_storage: "granted",
+  wait_for_update: 500,
+});
+gtag("set", "ads_data_redaction", true);
+gtag("set", "url_passthrough", true);
+
+function gtmPageContext(ctx) {
+  const doc = (ctx && ctx.document) || {};
+  const loc = doc.location || {};
+  return {
+    page_location: loc.href || undefined,
+    page_referrer: doc.referrer || undefined,
+    page_title: doc.title || undefined,
+  };
+}
+let gtmDebugMode = false;
+try {
+  gtmDebugMode = /[?&]rl_debug=1\b/.test((init.context.document.location.search || ""));
+} catch (_) {}
+try {
+  window.dataLayer.push(Object.assign({ rs_pixel: "gtm" }, gtmPageContext(init && init.context)));
+} catch (_) {}
+const gtmLoad =
+  /^GTM-[A-Z0-9]+$/.test(GTM_ID) && GTM_ID !== "GTM-XXXXXXX" && GTM_ID !== "GTM-PLACEHOLDER";
+if (gtmLoad) {
+  window.dataLayer.push({ "gtm.start": new Date().getTime(), event: "gtm.js" });
+  const gtmScript = document.createElement("script");
+  gtmScript.async = true;
+  gtmScript.src = "https://www.googletagmanager.com/gtm.js?id=" + GTM_ID;
+  document.head.appendChild(gtmScript);
+}
+
 let analyticsAllowed = true;
 let marketingAllowed = null;
 let saleOfDataAllowed = null;
@@ -97,6 +152,9 @@ function applyConsent(cp) {
   if (typeof cp.analyticsProcessingAllowed === "boolean") analyticsAllowed = cp.analyticsProcessingAllowed;
   if (typeof cp.marketingAllowed === "boolean") marketingAllowed = cp.marketingAllowed;
   if (typeof cp.saleOfDataAllowed === "boolean") saleOfDataAllowed = cp.saleOfDataAllowed;
+  try {
+    gtag("consent", "update", gtmConsentState(cp));
+  } catch (_) {}
   if (marketingAllowed === false) {
     clicks = null;
     try {
@@ -523,3 +581,406 @@ analytics.subscribe("all_custom_events", function (event) {
     }[event.name] || event.name;
   handle(event, fromCustom(event.name, event.customData), name).catch(function () {});
 });
+
+// ---------- G3: dataLayer (GA4 TEST via web GTM → sGTM). Tag Assistant cannot see this sandbox. ----------
+// IIFE: Shopify pixel editor rejects `function` declarations inside `if` blocks.
+if (gtmLoad)
+  (function () {
+  function gtmSid(v) {
+    if (v === null || v === undefined) return "";
+    const s = String(v);
+    const i = s.lastIndexOf("/");
+    return i >= 0 ? s.slice(i + 1) : s;
+  }
+  function gtmNum(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  function gtmAmount(m) {
+    return m && m.amount !== undefined && m.amount !== null ? gtmNum(m.amount) : undefined;
+  }
+  function gtmItemId(pid, vid) {
+    pid = gtmSid(pid);
+    vid = gtmSid(vid);
+    return /^\d+$/.test(pid) && /^\d+$/.test(vid) ? GTM_ITEM_PREFIX + pid + "_" + vid : undefined;
+  }
+  function gtmClean(o) {
+    for (const k of Object.keys(o)) if (o[k] === undefined || o[k] === null || o[k] === "") delete o[k];
+    return o;
+  }
+  function gtmItemFromVariant(v, quantity, extra) {
+    if (!v) return null;
+    const p = v.product || {};
+    const id = gtmItemId(p.id, v.id);
+    if (!id) return null;
+    return gtmClean(
+      Object.assign(
+        {
+          item_id: id,
+          item_name: p.title,
+          item_brand: p.vendor,
+          item_category: p.type,
+          item_variant: v.title,
+          price: gtmAmount(v.price),
+          quantity: quantity || 1,
+        },
+        extra || {},
+      ),
+    );
+  }
+  function gtmItemsFromLines(lines, key) {
+    return (Array.isArray(lines) ? lines : [])
+      .map(function (l) {
+        return gtmItemFromVariant(l && l[key], l && l.quantity);
+      })
+      .filter(Boolean);
+  }
+  function gtmAdsItems(items) {
+    return items.map(function (i) {
+      return { id: i.item_id, google_business_vertical: "retail" };
+    });
+  }
+  let gtmAbMap = null;
+  async function gtmGetAb() {
+    if (gtmAbMap) return gtmAbMap;
+    gtmAbMap = {};
+    try {
+      const raw = await browser.localStorage.getItem("rl_ab");
+      if (raw) gtmAbMap = JSON.parse(raw) || {};
+    } catch (_) {}
+    try {
+      if (!gtmDebugMode) gtmDebugMode = (await browser.sessionStorage.getItem("rl_debug")) === "1";
+      else await browser.sessionStorage.setItem("rl_debug", "1");
+    } catch (_) {}
+    return gtmAbMap;
+  }
+  async function gtmUpdateAb(next) {
+    if (abString(next) === abString(gtmAbMap)) return;
+    gtmAbMap = next;
+    try {
+      await browser.localStorage.setItem("rl_ab", JSON.stringify(next));
+    } catch (_) {}
+  }
+  let gtmChain = Promise.resolve();
+  function gtmSerial(fn) {
+    gtmChain = gtmChain.then(fn).catch(function () {});
+    return gtmChain;
+  }
+  function gtmPush(eventName, params, ecommerce, event) {
+    return gtmSerial(function () {
+      return gtmPushNow(eventName, params, ecommerce, event);
+    });
+  }
+  async function gtmPushNow(eventName, params, ecommerce, event) {
+    if (!analyticsAllowed) return;
+    await gtmGetAb();
+    const msg = Object.assign(
+      { event: eventName, ab: abString(gtmAbMap) || undefined, debug_mode: gtmDebugMode || undefined },
+      gtmPageContext(event && event.context),
+      params || {},
+    );
+    gtmClean(msg);
+    msg.ecommerce = ecommerce || null;
+    window.dataLayer.push({ ecommerce: null });
+    if (gtmDebugMode) console.log("[rl-gtm]", eventName, msg);
+    window.dataLayer.push(msg);
+  }
+  function gtmCheckoutEcommerce(c) {
+    c = c || {};
+    const items = gtmItemsFromLines(c.lineItems, "variant");
+    const discount = (Array.isArray(c.discountApplications) ? c.discountApplications : [])
+      .map(function (d) {
+        return d && d.title;
+      })
+      .filter(Boolean)
+      .join(",");
+    return gtmClean({
+      currency: c.currencyCode || (c.totalPrice && c.totalPrice.currencyCode),
+      value: gtmAmount(c.totalPrice),
+      coupon: discount || undefined,
+      items: items,
+    });
+  }
+  function gtmCustomItem(d) {
+    const id = gtmItemId(d.productId, d.variantId);
+    if (!id) return null;
+    return gtmClean({ item_id: id, item_variant: d.size, price: gtmNum(d.price), quantity: 1 });
+  }
+  function gtmCustomParams(d) {
+    return {
+      product_id: gtmSid(d.productId) || undefined,
+      variant_id: gtmSid(d.variantId) || undefined,
+      item_id: gtmItemId(d.productId, d.variantId),
+      size: d.size !== undefined && d.size !== null ? String(d.size) : undefined,
+      lane: d.lane,
+      price: gtmNum(d.price),
+      value: gtmNum(d.price),
+      currency: d.currency || "CHF",
+      source: d.source,
+    };
+  }
+  async function gtmSyncAbFrom(name, d) {
+    await gtmGetAb();
+    let next = typeof d.ab === "string" && d.ab ? parseAbString(d.ab) : Object.assign({}, gtmAbMap);
+    if (
+      name === "ab_assigned" &&
+      AB_ID_RE.test(String(d.experiment || "")) &&
+      AB_VARIANT_RE.test(String(d.variant || ""))
+    ) {
+      next[String(d.experiment)] = String(d.variant);
+    }
+    if (name === "ab_upsell_assigned" && AB_VARIANT_RE.test(String(d.variant || ""))) next.upsell = String(d.variant);
+    await gtmUpdateAb(next);
+  }
+  function gtmSub(name, handler) {
+    analytics.subscribe(name, function (event) {
+      const d = event.customData || {};
+      gtmSerial(function () {
+        return gtmSyncAbFrom(name, d).then(function () {
+          return handler(d, event);
+        });
+      });
+    });
+  }
+
+  analytics.subscribe("page_viewed", function (event) {
+    gtmPush("page_view", {}, null, event).catch(function () {});
+  });
+  analytics.subscribe("product_viewed", function (event) {
+    const v = event.data && event.data.productVariant;
+    const item = gtmItemFromVariant(v);
+    const items = item ? [item] : [];
+    gtmPush(
+      "view_item",
+      { ads_items: gtmAdsItems(items) },
+      gtmClean({ currency: v && v.price && v.price.currencyCode, value: gtmAmount(v && v.price), items: items }),
+      event,
+    ).catch(function () {});
+  });
+  analytics.subscribe("collection_viewed", function (event) {
+    const col = (event.data && event.data.collection) || {};
+    const items = (col.productVariants || [])
+      .slice(0, GTM_MAX_LIST_ITEMS)
+      .map(function (v, i) {
+        return gtmItemFromVariant(v, 1, { index: i, item_list_name: col.title });
+      })
+      .filter(Boolean);
+    gtmPush(
+      "view_item_list",
+      { ads_items: gtmAdsItems(items) },
+      gtmClean({ item_list_id: gtmSid(col.id) || undefined, item_list_name: col.title, items: items }),
+      event,
+    ).catch(function () {});
+  });
+  analytics.subscribe("search_submitted", function (event) {
+    const r = (event.data && event.data.searchResult) || {};
+    const items = (r.productVariants || [])
+      .slice(0, GTM_MAX_LIST_ITEMS)
+      .map(function (v) {
+        return gtmItemFromVariant(v);
+      })
+      .filter(Boolean);
+    gtmPush(
+      "search",
+      { search_term: String(r.query || "").slice(0, 100), ads_items: gtmAdsItems(items) },
+      null,
+      event,
+    ).catch(function () {});
+  });
+  let gtmLastAtcId = "";
+  analytics.subscribe("product_added_to_cart", function (event) {
+    if (event.id && event.id === gtmLastAtcId) return;
+    gtmLastAtcId = event.id || "";
+    const line = (event.data && event.data.cartLine) || {};
+    const item = gtmItemFromVariant(line.merchandise, line.quantity);
+    const items = item ? [item] : [];
+    gtmPush(
+      "add_to_cart",
+      { ads_items: gtmAdsItems(items) },
+      gtmClean({
+        currency: line.cost && line.cost.totalAmount && line.cost.totalAmount.currencyCode,
+        value: gtmAmount(line.cost && line.cost.totalAmount),
+        items: items,
+      }),
+      event,
+    ).catch(function () {});
+  });
+  analytics.subscribe("cart_viewed", function (event) {
+    const cart = (event.data && event.data.cart) || {};
+    const total = cart.cost && cart.cost.totalAmount;
+    const items = gtmItemsFromLines(cart.lines, "merchandise");
+    gtmPush(
+      "view_cart",
+      { ads_items: gtmAdsItems(items) },
+      gtmClean({ currency: total && total.currencyCode, value: gtmAmount(total), items: items }),
+      event,
+    ).catch(function () {});
+  });
+  analytics.subscribe("checkout_started", function (event) {
+    const ec = gtmCheckoutEcommerce(event.data && event.data.checkout);
+    gtmPush("begin_checkout", { ads_items: gtmAdsItems(ec.items || []) }, ec, event).catch(function () {});
+  });
+  analytics.subscribe("checkout_contact_info_submitted", function (event) {
+    gtmPush("add_contact_info", {}, gtmCheckoutEcommerce(event.data && event.data.checkout), event).catch(function () {});
+  });
+  analytics.subscribe("checkout_address_info_submitted", function (event) {
+    const c = (event.data && event.data.checkout) || {};
+    const country = c.shippingAddress && c.shippingAddress.countryCode;
+    gtmPush("add_address_info", { shipping_country: country }, gtmCheckoutEcommerce(c), event).catch(function () {});
+  });
+  analytics.subscribe("checkout_shipping_info_submitted", function (event) {
+    const c = (event.data && event.data.checkout) || {};
+    const opt = c.delivery && c.delivery.selectedDeliveryOptions && c.delivery.selectedDeliveryOptions[0];
+    const ec = gtmCheckoutEcommerce(c);
+    ec.shipping_tier = (opt && opt.title) || undefined;
+    gtmPush("add_shipping_info", {}, gtmClean(ec), event).catch(function () {});
+  });
+  analytics.subscribe("payment_info_submitted", function (event) {
+    const c = (event.data && event.data.checkout) || {};
+    const tx = (Array.isArray(c.transactions) && c.transactions[0]) || null;
+    const ec = gtmCheckoutEcommerce(c);
+    ec.payment_type = (tx && tx.paymentMethod && (tx.paymentMethod.name || tx.paymentMethod.type)) || undefined;
+    gtmPush("add_payment_info", {}, gtmClean(ec), event).catch(function () {});
+  });
+  analytics.subscribe("checkout_completed", function (event) {
+    const c = (event.data && event.data.checkout) || {};
+    const ec = gtmCheckoutEcommerce(c);
+    ec.transaction_id = gtmSid(c.order && c.order.id) || c.token || undefined;
+    ec.tax = gtmAmount(c.totalTax);
+    ec.shipping = gtmAmount(c.shippingLine && c.shippingLine.price);
+    gtmPush(
+      "purchase",
+      { transaction_id: ec.transaction_id, ads_items: gtmAdsItems(ec.items || []) },
+      gtmClean(ec),
+      event,
+    ).catch(function () {});
+  });
+  analytics.subscribe("alert_displayed", function (event) {
+    const a = (event.data && event.data.alert) || {};
+    gtmPush(
+      "checkout_error",
+      {
+        error_type: a.type,
+        error_target: a.target ? String(a.target).slice(0, 100) : undefined,
+        error_message: a.value ? String(a.value).slice(0, 100) : undefined,
+      },
+      null,
+      event,
+    ).catch(function () {});
+  });
+
+  gtmSub("ab_assigned", function (d, event) {
+    return gtmPushNow("ab_assigned", { experiment: d.experiment, variant: d.variant }, null, event);
+  });
+  gtmSub("ab_upsell_assigned", function () {});
+  let gtmLastVariantKey = "";
+  gtmSub("rs_variant_selected", function (d, event) {
+    const key = gtmSid(d.variantId) + "|" + (d.lane || "");
+    if (key === gtmLastVariantKey) return;
+    gtmLastVariantKey = key;
+    const item = gtmCustomItem(d);
+    const items = item ? [item] : [];
+    return gtmPushNow(
+      "view_item_variant",
+      Object.assign(gtmCustomParams(d), { ads_items: gtmAdsItems(items) }),
+      gtmClean({ currency: d.currency || "CHF", value: gtmNum(d.price), items: items }),
+      event,
+    );
+  });
+  gtmSub("size_selected", function (d, event) {
+    const item = gtmCustomItem(d);
+    return gtmPushNow(
+      "size_selected",
+      gtmCustomParams(d),
+      gtmClean({ currency: d.currency || "CHF", value: gtmNum(d.price), items: item ? [item] : [] }),
+      event,
+    );
+  });
+  gtmSub("upsell_shown", function (d, event) {
+    return gtmPushNow("upsell_shown", gtmCustomParams(d), null, event);
+  });
+  gtmSub("upsell_accepted", function (d, event) {
+    const item = gtmCustomItem(d);
+    return gtmPushNow(
+      "upsell_accepted",
+      Object.assign(gtmCustomParams(d), {
+        upsell_item: gtmItemId(d.productId, d.variantId),
+        upsell_type: d.upsellType,
+        parent_product_id: gtmSid(d.parentProductId) || undefined,
+      }),
+      gtmClean({ currency: d.currency || "CHF", value: gtmNum(d.price), items: item ? [item] : [] }),
+      event,
+    );
+  });
+  gtmSub("upsell_skipped", function (d, event) {
+    return gtmPushNow("upsell_skipped", Object.assign(gtmCustomParams(d), { reason: d.reason }), null, event);
+  });
+  gtmSub("flow_cart_opened", function (d, event) {
+    return gtmPushNow("flow_cart_opened", gtmCustomParams(d), null, event);
+  });
+  gtmSub("flow_checkout_redirect", function (d, event) {
+    return gtmPushNow(
+      "flow_checkout_redirect",
+      { source: d.source, flow: d.flow, upsell_variant: d.upsell },
+      null,
+      event,
+    );
+  });
+  gtmSub("rs_collection_navigated", function (d, event) {
+    return gtmPushNow(
+      "collection_navigated",
+      {
+        collection_handle: d.collectionHandle,
+        collection_title: d.collectionTitle,
+        page_location: d.url,
+        source: d.source,
+      },
+      null,
+      event,
+    );
+  });
+  gtmSub("rs_fulfillment_mode_selected", function (d, event) {
+    return gtmPushNow(
+      "fulfillment_mode_selected",
+      {
+        fulfillment_mode: d.fulfillmentMode,
+        previous_mode: d.previousMode,
+        standard_price: gtmNum(d.standardPrice),
+        express_price: gtmNum(d.expressPrice),
+      },
+      null,
+      event,
+    );
+  });
+  gtmSub("rs_cart_item_added", function (d, event) {
+    const item = gtmCustomItem(d);
+    const items = item ? [item] : [];
+    return gtmPushNow(
+      "cart_item_added",
+      Object.assign(gtmCustomParams(d), {
+        sku: d.sku,
+        fulfillment_mode: d.fulfillmentMode,
+        ads_items: gtmAdsItems(items),
+      }),
+      gtmClean({ currency: d.currency || "CHF", value: gtmNum(d.displayedPrice || d.price), items: items }),
+      event,
+    );
+  });
+  gtmSub("rs_upsell_carousel_interacted", function (d, event) {
+    return gtmPushNow(
+      "upsell_carousel_interacted",
+      {
+        source_component: d.sourceComponent,
+        interaction_type: d.interactionType,
+        scroll_direction: d.scrollDirection,
+        visible_product_ids: d.visibleProductIds,
+      },
+      null,
+      event,
+    );
+  });
+<<<<<<< HEAD
+}
+=======
+  })();
+>>>>>>> 9691346 (fix(tracking): wrap GTM block in IIFE for Shopify pixel editor)
