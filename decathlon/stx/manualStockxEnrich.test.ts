@@ -17,12 +17,21 @@ describe("looksLikeStockxOrderNumber", () => {
   it("accepts hashed and bare StockX order numbers", () => {
     expect(looksLikeStockxOrderNumber("#03-2GJ0J7WHDV")).toBe(true);
     expect(looksLikeStockxOrderNumber("03-2GJ0J7WHDV")).toBe(true);
+    expect(looksLikeStockxOrderNumber("01-ABC123")).toBe(true);
   });
 
   it("rejects empty / urls / spaces", () => {
     expect(looksLikeStockxOrderNumber("")).toBe(false);
     expect(looksLikeStockxOrderNumber("https://stockx.com/x")).toBe(false);
     expect(looksLikeStockxOrderNumber("03 2GJ0")).toBe(false);
+  });
+
+  it("rejects manual / local / supplier refs (must not trip causality)", () => {
+    expect(looksLikeStockxOrderNumber("MANUAL-206440263-1")).toBe(false);
+    expect(looksLikeStockxOrderNumber("LOCAL-STOCK-206440263-1")).toBe(false);
+    expect(looksLikeStockxOrderNumber("IN_STOCK-PAIR-01")).toBe(false);
+    expect(looksLikeStockxOrderNumber("BWZ_4058511958439")).toBe(false);
+    expect(looksLikeStockxOrderNumber("REI-CART-1")).toBe(false);
   });
 });
 

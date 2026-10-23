@@ -42,7 +42,7 @@
     "mailparser": "^3.9.47",
     "next": "^16.1.1",
     "pg": "^8.22.0",
-    "playwright": "^1.58.1",
+    "playwright": "1.60.0",
     "prisma": "^6.19.1",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",

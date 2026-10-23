@@ -28,14 +28,19 @@ export function normalizeStockxOrderNumberInput(input: string | null | undefined
     .trim();
 }
 
+/**
+ * True only for real StockX buy order numbers (e.g. `03-2GJ0J7WHDV`, `#01-ABC123`).
+ * Must NOT match LOCAL-/MANUAL-/supplier refs — those used to trip causality gates
+ * and block fully-manual links on non-STX lines (BWZ/REI/etc).
+ */
 export function looksLikeStockxOrderNumber(input: string | null | undefined): boolean {
   const value = normalizeStockxOrderNumberInput(input);
   if (!value) return false;
-  if (value.length < 6 || value.length > 60) return false;
   if (/^https?:\/\//i.test(value)) return false;
   if (/\s/.test(value)) return false;
-  // Allow optional leading # on raw input; normalized must start alnum.
-  return /^[A-Za-z0-9][A-Za-z0-9._:/#-]*$/.test(value);
+  if (/^(MANUAL-|LOCAL-)/i.test(value)) return false;
+  // StockX Pro buy numbers are NN-XXXXXXXX (digits-hyphen-alnum).
+  return /^\d{2}-[A-Za-z0-9]{4,}$/.test(value);
 }
 
 /**

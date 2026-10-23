@@ -248,10 +248,28 @@ export default function GalaxusManualEntryModal({
             <h3 className="font-semibold text-gray-900">🏪 Supplier (StockX)</h3>
             {isDecathlon || isGalaxus ? (
               <p className="text-xs text-gray-600">
-                Paste a StockX buy order number to auto-load chain/order id, variant, cost, ETA, and AWB.
-                If you sold from your own stock or another source, enter any custom reference (for example
-                <span className="font-mono"> IN_STOCK-PAIR-01</span>) and save; link is still stored as manual.
+                Paste a real StockX buy # (<span className="font-mono">03-…</span> /{" "}
+                <span className="font-mono">01-…</span>) to auto-load cost, ETA, AWB. Purchase date is
+                required only for those. Local / BabyWalz / other supplier: leave StockX # empty (or any
+                non-StockX ref) and save — no purchase date needed.
               </p>
+            ) : null}
+            {isGalaxus ? (
+              <button
+                type="button"
+                className="text-xs px-2 py-1 rounded border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                onClick={() => {
+                  setLookupStatus(null);
+                  update({
+                    stockxOrderNumber: "",
+                    stockxOrderId: "",
+                    stockxPurchaseDate: null,
+                    stockxStatus: "MANUAL",
+                  });
+                }}
+              >
+                Local / no StockX — clear order # (fully manual)
+              </button>
             ) : null}
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -267,7 +285,7 @@ export default function GalaxusManualEntryModal({
                       void lookupStockxOrder(e.target.value);
                     }
                   }}
-                  placeholder={isDecathlon || isGalaxus ? "StockX order #" : "Supplier Order Number"}
+                  placeholder={isDecathlon || isGalaxus ? "StockX order # (01-/03-…) or empty" : "Supplier Order Number"}
                   className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
                 />
                 {isGalaxus && lookupBusy ? (
