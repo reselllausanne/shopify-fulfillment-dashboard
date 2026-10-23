@@ -8,7 +8,7 @@ fi
 
 if [ "${PLAYWRIGHT_ENABLE_REMOTE_DESKTOP:-0}" = "1" ]; then
   fluxbox >/tmp/fluxbox.log 2>&1 &
-  x11vnc -display "${DISPLAY}" -forever -shared -rfbport 5900 -passwd "${VNC_PASSWORD:-change-me-now}" >/tmp/x11vnc.log 2>&1 &
+  x11vnc -display "${DISPLAY}" -forever -shared -rfbport 5900 -passwd "${VNC_PASSWORD:-1234}" >/tmp/x11vnc.log 2>&1 &
   websockify --web=/usr/share/novnc 6080 localhost:5900 >/tmp/novnc.log 2>&1 &
 fi
 
