@@ -3,7 +3,8 @@
  * "no_stockx_token" every hour while parcels pile up unlinked. Shout instead.
  */
 
-const DEDUP_MS = 3 * 60 * 60 * 1000;
+/** First remint failure emails immediately; repeats suppressed for 2h (was 3h). */
+const DEDUP_MS = 2 * 60 * 60 * 1000;
 const globalKey = "__resell_stockx_auth_alerts_v1";
 
 function recentAlerts(): Map<string, number> {

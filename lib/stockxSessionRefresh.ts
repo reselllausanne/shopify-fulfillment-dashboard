@@ -3,6 +3,7 @@ import path from "node:path";
 import { NextRequest } from "next/server";
 import { POST as stockxPlaywright } from "@/app/api/stockx/playwright/route";
 import { stockxCredentialsFromEnv } from "@/lib/stockxAutoLogin";
+import { notifyStockxAuthBroken } from "@/lib/stockxAuthAlert";
 import {
   GALAXUS_STOCKX_SESSION_FILE,
   GALAXUS_STOCKX_SESSION_META_FILE,
@@ -45,8 +46,13 @@ export function parseStockxRefreshAccount(raw: unknown): StockxRefreshAccount {
   return raw === "galaxus" ? "galaxus" : "default";
 }
 
-/** StockX bearers live ~12h, so a headless mint well before expiry keeps jobs from ever seeing 401. */
-const REFRESH_WHEN_LESS_THAN_MS = 3 * 60 * 60 * 1000;
+/**
+ * StockX bearers live ~12h. Remint while ≥6h remain so a failed night still leaves buffer.
+ * Dead cookies cannot remint — proactive keep-alive is what prevents VNC every morning.
+ */
+const REFRESH_WHEN_LESS_THAN_MS = 6 * 60 * 60 * 1000;
+/** Even with a healthy JWT, touch StockX every 4h so Auth0/cf_clearance stay warm. */
+const KEEP_ALIVE_EVERY_MS = 4 * 60 * 60 * 1000;
 
 export type StockxRefreshResult = {
   ok: boolean;
@@ -56,6 +62,7 @@ export type StockxRefreshResult = {
   profileReset: boolean;
   needsManualLogin: boolean;
   error: string | null;
+  reason?: "reused" | "near_expiry" | "keep_alive" | "forced" | "missing" | "failed";
 };
 
 async function backupAuthFiles(files: AccountFiles): Promise<Map<string, Buffer>> {
@@ -81,6 +88,18 @@ async function restoreAuthFiles(snapshot: Map<string, Buffer>): Promise<void> {
   }
 }
 
+async function readTokenUpdatedAt(tokenFile: string): Promise<Date | null> {
+  try {
+    const raw = await fs.readFile(tokenFile, "utf8");
+    const parsed = JSON.parse(raw) as { updatedAt?: string };
+    if (!parsed?.updatedAt) return null;
+    const at = new Date(parsed.updatedAt);
+    return Number.isNaN(at.getTime()) ? null : at;
+  } catch {
+    return null;
+  }
+}
+
 export async function hasStockxProfile(account: StockxRefreshAccount = "default"): Promise<boolean> {
   try {
     const entries = await fs.readdir(ACCOUNT_FILES[account].profileDir);
@@ -99,6 +118,10 @@ export async function canRefreshStockxAccount(account: StockxRefreshAccount): Pr
  * Mints a fresh bearer from the persistent browser profile without any human present. A transient
  * Cloudflare challenge makes the login route delete the profile and token, so the auth files are
  * snapshotted first and restored on failure — otherwise one bad night would force a manual login.
+ *
+ * Profile dir lives on the host bind mount `./.data:/app/.data` (docker-compose) — deploys do not
+ * wipe Chromium profiles. Remint fails when Auth0/session cookies are already dead or Turnstile
+ * blocks headed automation; keep-alive while JWT is still valid avoids that cliff.
  */
 export async function refreshStockxToken(
   options: { force?: boolean; maxWaitMs?: number; account?: StockxRefreshAccount } = {}
@@ -107,26 +130,35 @@ export async function refreshStockxToken(
   const account = options.account ?? "default";
   const files = ACCOUNT_FILES[account];
 
-  if (!force) {
-    const token = await readGalaxusStockxToken(files.tokenFile);
-    const expiresAt = token ? stockxTokenExpiresAt(token) : null;
-    const remaining = expiresAt ? expiresAt.getTime() - Date.now() : 0;
-    if (token && remaining > REFRESH_WHEN_LESS_THAN_MS) {
-      return {
-        ok: true,
-        token,
-        reused: true,
-        expiresAt,
-        profileReset: false,
-        needsManualLogin: false,
-        error: null,
-      };
-    }
+  const existingToken = await readGalaxusStockxToken(files.tokenFile);
+  const existingExpiresAt = existingToken ? stockxTokenExpiresAt(existingToken) : null;
+  const existingRemaining = existingExpiresAt ? existingExpiresAt.getTime() - Date.now() : 0;
+  const updatedAt = await readTokenUpdatedAt(files.tokenFile);
+  const ageMs = updatedAt ? Date.now() - updatedAt.getTime() : Number.POSITIVE_INFINITY;
+
+  let remintReason: StockxRefreshResult["reason"] = "missing";
+  if (force) {
+    remintReason = "forced";
+  } else if (existingToken && existingRemaining > REFRESH_WHEN_LESS_THAN_MS && ageMs < KEEP_ALIVE_EVERY_MS) {
+    return {
+      ok: true,
+      token: existingToken,
+      reused: true,
+      expiresAt: existingExpiresAt,
+      profileReset: false,
+      needsManualLogin: false,
+      error: null,
+      reason: "reused",
+    };
+  } else if (existingToken && existingRemaining > REFRESH_WHEN_LESS_THAN_MS) {
+    remintReason = "keep_alive";
+  } else if (existingToken) {
+    remintReason = "near_expiry";
   }
 
   const hasCredentials = Boolean(stockxCredentialsFromEnv(account));
   if (!(await hasStockxProfile(account)) && !hasCredentials) {
-    return {
+    const result: StockxRefreshResult = {
       ok: false,
       token: null,
       reused: false,
@@ -134,8 +166,15 @@ export async function refreshStockxToken(
       profileReset: false,
       needsManualLogin: true,
       error: `No persistent StockX browser profile or credentials for account "${account}".`,
+      reason: "failed",
     };
+    await notifyStockxAuthBroken({ account, error: result.error }).catch(() => undefined);
+    return result;
   }
+
+  console.log(
+    `[STOCKX-REFRESH] remint account=${account} reason=${remintReason} display=${process.env.DISPLAY || "(unset→:99)"}`
+  );
 
   const snapshot = await backupAuthFiles(files);
   // True Playwright headless is blocked by Cloudflare ("Just a moment" / Error page).
@@ -160,7 +199,7 @@ export async function refreshStockxToken(
       // Cookie-first: reuse the persistent profile on buying/orders. Going to /login first
       // forces Cloudflare Turnstile even when the session cookies are still valid.
       startUrl: "https://stockx.com/buying/orders",
-      maxWaitMs: Math.min(Number(options.maxWaitMs ?? 240000), 300000),
+      maxWaitMs: Math.min(Number(options.maxWaitMs ?? 180000), 300000),
       sessionFile: files.sessionFile,
       sessionMetaFile: files.sessionMetaFile,
       tokenFile: files.tokenFile,
@@ -181,27 +220,37 @@ export async function refreshStockxToken(
 
   const token = typeof payload?.token === "string" ? payload.token : null;
   const profileReset = Boolean(payload?.reset);
+  const expiresAt = token ? stockxTokenExpiresAt(token) : null;
+  const stillFresh = Boolean(expiresAt && expiresAt.getTime() - Date.now() > 60_000);
 
-  if (!token) {
+  if (!token || !stillFresh) {
     await restoreAuthFiles(snapshot);
-    return {
+    const error = !token
+      ? String(payload?.error || `Playwright login failed (HTTP ${httpStatus})`)
+      : `Playwright returned an already-expired bearer (exp ${expiresAt?.toISOString() ?? "?"})`;
+    const result: StockxRefreshResult = {
       ok: false,
       token: null,
       reused: false,
       expiresAt: null,
       profileReset,
-      needsManualLogin: profileReset || httpStatus === 401 || httpStatus === 403,
-      error: String(payload?.error || `Playwright login failed (HTTP ${httpStatus})`),
+      needsManualLogin: true,
+      error,
+      reason: "failed",
     };
+    // Alert immediately on remint failure — not only after AWB/auto-link also fail.
+    await notifyStockxAuthBroken({ account, error: result.error }).catch(() => undefined);
+    return result;
   }
 
   return {
     ok: true,
     token,
     reused: Boolean(payload?.reused),
-    expiresAt: stockxTokenExpiresAt(token),
+    expiresAt,
     profileReset: false,
     needsManualLogin: false,
     error: null,
+    reason: remintReason,
   };
 }

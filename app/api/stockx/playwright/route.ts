@@ -7,7 +7,11 @@ import {
   readStockxPersistedHashes,
   writeStockxPersistedHashes,
 } from "@/app/lib/stockxPersistedHashes";
-import { stockxCredentialsFromEnv, tryStockxCredentialLogin } from "@/lib/stockxAutoLogin";
+import {
+  stockxCredentialsFromEnv,
+  tryStockxCredentialLogin,
+  waitForCookieSessionWarm,
+} from "@/lib/stockxAutoLogin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -121,14 +125,6 @@ const extractTokenFromStorage = (store: Record<string, string | null>): string |
   return null;
 };
 
-const extractTokenFromCookies = (cookies: Array<{ name: string; value: string }>): string | null => {
-  for (const cookie of cookies) {
-    const token = extractJwtFromText(cookie.value);
-    if (token) return `Bearer ${token}`;
-  }
-  return null;
-};
-
 const isTokenExpired = (token: string, skewSeconds = 60): boolean => {
   try {
     const payloadRaw = base64UrlDecode(token.split(".")[1] || "");
@@ -140,6 +136,22 @@ const isTokenExpired = (token: string, skewSeconds = 60): boolean => {
   } catch {
     return true;
   }
+};
+
+const extractTokenFromCookies = (cookies: Array<{ name: string; value: string }>): string | null => {
+  for (const cookie of cookies) {
+    const token = extractJwtFromText(cookie.value);
+    if (token && !isTokenExpired(token)) return `Bearer ${token}`;
+  }
+  return null;
+};
+
+const acceptFreshBearer = (value: string | null): string | null => {
+  const normalized = normalizeBearer(value);
+  if (!normalized) return null;
+  const raw = stripBearer(normalized);
+  if (!raw || isTokenExpired(raw)) return null;
+  return normalized;
 };
 
 const isPersistentProfileLockError = (error: unknown): boolean => {
@@ -391,13 +403,9 @@ export async function POST(req: NextRequest) {
       const auth = headers["authorization"] || headers["Authorization"];
       const deviceId = headers["x-stockx-device-id"] || headers["X-Stockx-Device-Id"];
       const sessionId = headers["x-stockx-session-id"] || headers["X-Stockx-Session-Id"];
-      const normalized = normalizeBearer(auth || null);
-      if (
-        normalized &&
-        !/undefined|null/i.test(normalized) &&
-        normalized.length > 25
-      ) {
-        capturedToken = normalized;
+      const fresh = acceptFreshBearer(auth || null);
+      if (fresh) {
+        capturedToken = fresh;
       }
       if (typeof deviceId === "string" && deviceId.trim()) {
         capturedDeviceId = deviceId.trim();
@@ -435,13 +443,9 @@ export async function POST(req: NextRequest) {
         authResponses.push({ url, status: res.status() });
       }
       const auth = headers["authorization"] || headers["Authorization"] || headers["x-auth-token"];
-      const normalized = normalizeBearer(auth || null);
-      if (
-        normalized &&
-        !/undefined|null/i.test(normalized) &&
-        normalized.length > 25
-      ) {
-        capturedToken = normalized;
+      const fresh = acceptFreshBearer(auth || null);
+      if (fresh) {
+        capturedToken = fresh;
       }
     });
 
@@ -460,7 +464,8 @@ export async function POST(req: NextRequest) {
       requestFails.push(`${url} :: ${failure?.errorText || "failed"}`);
     });
     // Cookie-first remint: hit buying/orders with the persistent profile before /login.
-    // /login re-triggers Cloudflare Turnstile even when cookies would still mint a bearer.
+    // /login re-triggers Cloudflare Turnstile even when Auth0 cookies would still mint a bearer.
+    let cookieWarm: "token" | "authenticated" | "login_wall" | "blocked" | null = null;
     if (autoLogin) {
       try {
         await page.goto("https://stockx.com/", { waitUntil: "domcontentloaded", timeout: 45000 });
@@ -469,37 +474,53 @@ export async function POST(req: NextRequest) {
           waitUntil: "domcontentloaded",
           timeout: 45000,
         });
-        const cookieDeadline = Date.now() + 12_000;
-        while (!capturedToken && Date.now() < cookieDeadline) {
-          await page.waitForTimeout(1000);
-          if (capturedToken) break;
+        cookieWarm = await waitForCookieSessionWarm(page, {
+          timeoutMs: 120_000,
+          hasToken: () => Boolean(capturedToken),
+        });
+        if (!capturedToken) {
           try {
             const dump = await page.evaluate(() => {
               const out: Record<string, string | null> = {};
               for (const key of Object.keys(localStorage)) out[key] = localStorage.getItem(key);
               return out;
             });
-            const fromStorage = extractTokenFromStorage(dump);
-            if (fromStorage) {
-              capturedToken = fromStorage;
-              break;
-            }
+            const fromStorage = acceptFreshBearer(extractTokenFromStorage(dump));
+            if (fromStorage) capturedToken = fromStorage;
           } catch {
             // ignore storage probe failures
+          }
+        }
+        if (!capturedToken) {
+          try {
+            const cookies = (await context.cookies()) as Array<{ name: string; value: string }>;
+            const fromCookies = extractTokenFromCookies(cookies);
+            if (fromCookies) capturedToken = fromCookies;
+          } catch {
+            // ignore
           }
         }
         if (capturedToken) {
           console.log("[STOCKX-PW] Cookie-first remint succeeded (persistent session)");
         } else {
-          console.log("[STOCKX-PW] Cookie-first remint missed; falling back to credential login");
+          console.log(
+            `[STOCKX-PW] Cookie-first remint missed (warm=${cookieWarm}); credential fallback only if login wall`
+          );
         }
       } catch (err: any) {
         console.warn("[STOCKX-PW] Cookie-first remint navigation failed", err?.message || err);
       }
     }
 
-    if (!capturedToken) {
-      await page.goto(startUrl, { waitUntil: "domcontentloaded" });
+    if (!capturedToken && cookieWarm !== "blocked") {
+      // Prefer buying/orders (startUrl from refresh) — never force /login as first nav.
+      const nextUrl =
+        autoLogin && cookieWarm === "login_wall"
+          ? "https://stockx.com/login"
+          : startUrl.includes("/login") && autoLogin
+            ? "https://stockx.com/buying/orders"
+            : startUrl;
+      await page.goto(nextUrl, { waitUntil: "domcontentloaded" }).catch(() => undefined);
     }
     const currentUrl = page.url();
     const pageTitle = await page.title().catch(() => "");
@@ -559,19 +580,22 @@ export async function POST(req: NextRequest) {
         body?.credentialsAccount === "galaxus" ? "galaxus" : "default"
       );
       if (creds) {
-        // Credential fill needs the Auth0/login wall — only open it when cookies failed.
+        // Credential fill needs the Auth0/login wall — only after cookie-first on buying/orders.
         if (!/accounts\.stockx\.com|stockx\.com\/login/i.test(page.url())) {
           await page.goto("https://stockx.com/login", {
             waitUntil: "domcontentloaded",
             timeout: 45000,
           }).catch(() => undefined);
         }
-        console.log("[STOCKX-PW] Attempting credential auto-login");
+        console.log(
+          `[STOCKX-PW] Attempting credential auto-login (cookieWarm=${cookieWarm ?? "n/a"})`
+        );
         const result = await tryStockxCredentialLogin(page, creds);
         autoLoginNeedsOtp = result.needsOtp;
         autoLoginError = result.error;
         if (result.needsOtp) {
-          console.warn("[STOCKX-PW] OTP / 2FA screen detected — human required");
+          // OTP auto-fill via Gmail IMAP runs inside tryStockxCredentialLogin; needsOtp means it failed.
+          console.warn("[STOCKX-PW] OTP / 2FA screen — Gmail auto-fill failed or not configured");
         }
         // Warm buying page so a bearer appears in storage/network after password success.
         if (!result.needsOtp && !result.error) {
@@ -585,7 +609,10 @@ export async function POST(req: NextRequest) {
           }
         }
       } else {
-        autoLoginError = "STOCKX_EMAIL/STOCKX_PASSWORD not configured";
+        autoLoginError =
+          cookieWarm === "blocked"
+            ? "Cloudflare challenge did not clear on buying/orders (Turnstile); STOCKX_EMAIL/PASSWORD not configured."
+            : "STOCKX_EMAIL/STOCKX_PASSWORD not configured";
       }
     }
 
@@ -626,7 +653,7 @@ export async function POST(req: NextRequest) {
       } catch {
         localStorageDump = {};
       }
-      const token = extractTokenFromStorage(localStorageDump);
+      const token = acceptFreshBearer(extractTokenFromStorage(localStorageDump));
       if (token) {
         capturedToken = token;
         break;
@@ -643,7 +670,7 @@ export async function POST(req: NextRequest) {
       } catch {
         sessionDump = {};
       }
-      const sessionToken = extractTokenFromStorage(sessionDump);
+      const sessionToken = acceptFreshBearer(extractTokenFromStorage(sessionDump));
       if (sessionToken) {
         capturedToken = sessionToken;
         break;
