@@ -8,9 +8,15 @@ import {
   writeStockxPersistedHashes,
 } from "@/app/lib/stockxPersistedHashes";
 import {
+  clearStockxForceLoginTransactions,
+  cookieJarHasAuth0Session,
+  cookieJarHasLoggedInMarker,
+  cookieJarHasTokenCookie,
+  softNavigateForSilentRemint,
   stockxCredentialsFromEnv,
   tryStockxCredentialLogin,
   waitForCookieSessionWarm,
+  type StockxCookieWarm,
 } from "@/lib/stockxAutoLogin";
 
 export const runtime = "nodejs";
@@ -463,48 +469,80 @@ export async function POST(req: NextRequest) {
       const failure = req.failure();
       requestFails.push(`${url} :: ${failure?.errorText || "failed"}`);
     });
-    // Cookie-first remint: hit buying/orders with the persistent profile before /login.
-    // /login re-triggers Cloudflare Turnstile even when Auth0 cookies would still mint a bearer.
-    let cookieWarm: "token" | "authenticated" | "login_wall" | "blocked" | null = null;
+    // Cookie-first remint: soft StockX URLs with the persistent profile. Never open /login first —
+    // that seeds Auth0 forceLogin + Turnstile even when auth0/did cookies are still valid for months.
+    let cookieWarm: StockxCookieWarm | null = null;
+    let hasAuth0Session = false;
+    const probeCookiesForToken = async () => {
+      if (capturedToken) return;
+      try {
+        const dump = await page.evaluate(() => {
+          const out: Record<string, string | null> = {};
+          for (const key of Object.keys(localStorage)) out[key] = localStorage.getItem(key);
+          return out;
+        });
+        const fromStorage = acceptFreshBearer(extractTokenFromStorage(dump));
+        if (fromStorage) capturedToken = fromStorage;
+      } catch {
+        // ignore
+      }
+      if (capturedToken) return;
+      try {
+        const cookies = (await context.cookies()) as Array<{ name: string; value: string }>;
+        const fromCookies = extractTokenFromCookies(cookies);
+        if (fromCookies) capturedToken = fromCookies;
+      } catch {
+        // ignore
+      }
+    };
+    const logAuthCookieSummary = async (label: string) => {
+      try {
+        const cookies = (await context.cookies()) as Array<{
+          name: string;
+          value: string;
+          domain: string;
+          expires: number;
+        }>;
+        hasAuth0Session = cookieJarHasAuth0Session(cookies);
+        const interesting = cookies.filter((c) =>
+          /^(auth0|auth0_compat|did|did_compat|cf_clearance|loggedIn|token|stockx_session)$/i.test(
+            c.name
+          )
+        );
+        const summary = interesting.map((c) => {
+          const exp =
+            typeof c.expires === "number" && c.expires > 0
+              ? new Date(c.expires * 1000).toISOString()
+              : "session";
+          return `${c.name}@${c.domain}(exp=${exp},len=${c.value?.length ?? 0})`;
+        });
+        console.log(
+          `[STOCKX-PW] ${label} auth0=${hasAuth0Session} loggedIn=${cookieJarHasLoggedInMarker(cookies)} tokenCookie=${cookieJarHasTokenCookie(cookies)} :: ${summary.join(" | ") || "(none)"}`
+        );
+      } catch (err: any) {
+        console.warn(`[STOCKX-PW] ${label} cookie summary failed`, err?.message || err);
+      }
+    };
     if (autoLogin) {
       try {
-        await page.goto("https://stockx.com/", { waitUntil: "domcontentloaded", timeout: 45000 });
-        await page.waitForTimeout(2500);
-        await page.goto("https://stockx.com/buying/orders", {
-          waitUntil: "domcontentloaded",
-          timeout: 45000,
+        await clearStockxForceLoginTransactions(context);
+        await logAuthCookieSummary("pre-nav");
+        await softNavigateForSilentRemint(page, {
+          hasToken: () => Boolean(capturedToken),
+          perUrlWaitMs: 6_000,
         });
+        await probeCookiesForToken();
         cookieWarm = await waitForCookieSessionWarm(page, {
-          timeoutMs: 120_000,
+          timeoutMs: 90_000,
           hasToken: () => Boolean(capturedToken),
         });
-        if (!capturedToken) {
-          try {
-            const dump = await page.evaluate(() => {
-              const out: Record<string, string | null> = {};
-              for (const key of Object.keys(localStorage)) out[key] = localStorage.getItem(key);
-              return out;
-            });
-            const fromStorage = acceptFreshBearer(extractTokenFromStorage(dump));
-            if (fromStorage) capturedToken = fromStorage;
-          } catch {
-            // ignore storage probe failures
-          }
-        }
-        if (!capturedToken) {
-          try {
-            const cookies = (await context.cookies()) as Array<{ name: string; value: string }>;
-            const fromCookies = extractTokenFromCookies(cookies);
-            if (fromCookies) capturedToken = fromCookies;
-          } catch {
-            // ignore
-          }
-        }
+        await probeCookiesForToken();
+        await logAuthCookieSummary(`post-warm warm=${cookieWarm}`);
         if (capturedToken) {
           console.log("[STOCKX-PW] Cookie-first remint succeeded (persistent session)");
         } else {
           console.log(
-            `[STOCKX-PW] Cookie-first remint missed (warm=${cookieWarm}); credential fallback only if login wall`
+            `[STOCKX-PW] Cookie-first remint missed (warm=${cookieWarm} auth0=${hasAuth0Session}); credentials only on login_wall without Auth0`
           );
         }
       } catch (err: any) {
@@ -513,13 +551,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (!capturedToken && cookieWarm !== "blocked") {
-      // Prefer buying/orders (startUrl from refresh) — never force /login as first nav.
+      // Soft only — never force /login here (burns Auth0 SSO behind Turnstile).
       const nextUrl =
-        autoLogin && cookieWarm === "login_wall"
-          ? "https://stockx.com/login"
-          : startUrl.includes("/login") && autoLogin
-            ? "https://stockx.com/buying/orders"
-            : startUrl;
+        startUrl.includes("/login") || autoLogin
+          ? "https://stockx.com/buying/orders"
+          : startUrl;
       await page.goto(nextUrl, { waitUntil: "domcontentloaded" }).catch(() => undefined);
     }
     const currentUrl = page.url();
@@ -575,52 +611,47 @@ export async function POST(req: NextRequest) {
 
     let autoLoginNeedsOtp = false;
     let autoLoginError: string | null = null;
-    // Session cookies look logged-in but bearer not minted yet — keep kicking buying/orders.
-    // Going to /login here kills a recoverable Auth0 session behind Turnstile.
-    if (autoLogin && !capturedToken && cookieWarm === "authenticated") {
-      console.log("[STOCKX-PW] Authenticated UI without bearer — waiting for silent remint");
-      const silentDeadline = Date.now() + 90_000;
+    // Auth0/session cookies look logged-in but bearer not minted yet — soft URLs only.
+    // Going to /login here kills a recoverable Auth0 session behind Turnstile + forceLogin.
+    if (
+      autoLogin &&
+      !capturedToken &&
+      (cookieWarm === "authenticated" || cookieWarm === "token" || hasAuth0Session)
+    ) {
+      console.log(
+        `[STOCKX-PW] Silent remint (warm=${cookieWarm} auth0=${hasAuth0Session}) — soft URLs only, no /login`
+      );
+      await clearStockxForceLoginTransactions(context);
+      const silentDeadline = Date.now() + 75_000;
       while (!capturedToken && Date.now() < silentDeadline) {
-        try {
-          await page.goto("https://stockx.com/buying/orders", {
-            waitUntil: "domcontentloaded",
-            timeout: 30000,
-          });
-        } catch {
-          // ignore
-        }
-        await page.waitForTimeout(3000);
-        try {
-          const dump = await page.evaluate(() => {
-            const out: Record<string, string | null> = {};
-            for (const key of Object.keys(localStorage)) out[key] = localStorage.getItem(key);
-            return out;
-          });
-          const fromStorage = acceptFreshBearer(extractTokenFromStorage(dump));
-          if (fromStorage) capturedToken = fromStorage;
-        } catch {
-          // ignore
-        }
-        if (!capturedToken) {
-          try {
-            const cookies = (await context.cookies()) as Array<{ name: string; value: string }>;
-            const fromCookies = extractTokenFromCookies(cookies);
-            if (fromCookies) capturedToken = fromCookies;
-          } catch {
-            // ignore
-          }
-        }
+        await softNavigateForSilentRemint(page, {
+          hasToken: () => Boolean(capturedToken),
+          perUrlWaitMs: 4_000,
+        });
+        await probeCookiesForToken();
+        if (capturedToken) break;
       }
+      await logAuthCookieSummary("post-silent");
       if (capturedToken) {
-        console.log("[STOCKX-PW] Silent remint succeeded after authenticated wait");
+        console.log("[STOCKX-PW] Silent remint succeeded after soft Auth0 wait");
+      } else if (hasAuth0Session) {
+        autoLoginError =
+          "Auth0/session cookies still present but JWT was not reminted. Do NOT burn /login — use /admin/stockx-login once.";
+        console.warn(`[STOCKX-PW] ${autoLoginError}`);
       }
     }
-    if (autoLogin && !capturedToken) {
+    // Credentials ONLY when there is a real login wall and no Auth0 SSO cookie left.
+    // Prior bug: always fell through to /login after warm=authenticated → Turnstile + forceLogin.
+    const allowCredentialFallback =
+      autoLogin &&
+      !capturedToken &&
+      !hasAuth0Session &&
+      (cookieWarm === "login_wall" || cookieWarm === null);
+    if (allowCredentialFallback) {
       const creds = stockxCredentialsFromEnv(
         body?.credentialsAccount === "galaxus" ? "galaxus" : "default"
       );
       if (creds) {
-        // Credential fill needs the Auth0/login wall — only after cookie-first on buying/orders.
         if (!/accounts\.stockx\.com|stockx\.com\/login/i.test(page.url())) {
           await page.goto("https://stockx.com/login", {
             waitUntil: "domcontentloaded",
@@ -628,16 +659,14 @@ export async function POST(req: NextRequest) {
           }).catch(() => undefined);
         }
         console.log(
-          `[STOCKX-PW] Attempting credential auto-login (cookieWarm=${cookieWarm ?? "n/a"})`
+          `[STOCKX-PW] Attempting credential auto-login (cookieWarm=${cookieWarm ?? "n/a"} auth0=${hasAuth0Session})`
         );
         const result = await tryStockxCredentialLogin(page, creds);
         autoLoginNeedsOtp = result.needsOtp;
         autoLoginError = result.error;
         if (result.needsOtp) {
-          // OTP auto-fill via Gmail IMAP runs inside tryStockxCredentialLogin; needsOtp means it failed.
           console.warn("[STOCKX-PW] OTP / 2FA screen — Gmail auto-fill failed or not configured");
         }
-        // Warm buying page so a bearer appears in storage/network after password success.
         if (!result.needsOtp && !result.error) {
           try {
             await page.goto("https://stockx.com/buying/orders", {
@@ -654,11 +683,22 @@ export async function POST(req: NextRequest) {
             ? "Cloudflare challenge did not clear on buying/orders (Turnstile); STOCKX_EMAIL/PASSWORD not configured."
             : "STOCKX_EMAIL/STOCKX_PASSWORD not configured";
       }
+    } else if (autoLogin && !capturedToken && !autoLoginError) {
+      if (cookieWarm === "blocked") {
+        autoLoginError =
+          "Cloudflare/Turnstile blocked soft remint; Auth0 cookies kept (no /login burn). Retry or /admin/stockx-login.";
+      } else if (hasAuth0Session) {
+        autoLoginError =
+          "Auth0 cookies valid but bearer missing after soft remint. Use /admin/stockx-login (credential /login skipped to protect SSO).";
+      }
     }
 
     const start = Date.now();
     let lastKick = 0;
-    while (!capturedToken && Date.now() - start < maxWaitMs) {
+    // Auth0 present but silent remint already failed → don't burn another 3–9 minutes on /login-ish waits.
+    const failFastAuth0 =
+      autoLogin && !capturedToken && hasAuth0Session && Boolean(autoLoginError);
+    while (!capturedToken && !failFastAuth0 && Date.now() - start < maxWaitMs) {
       try {
         await page.waitForTimeout(2000);
       } catch {
@@ -671,10 +711,12 @@ export async function POST(req: NextRequest) {
         if (now - lastKick > 15000) {
           lastKick = now;
           try {
-            // Prefer buying/orders so a still-valid session emits Authorization headers.
+            // Soft buying/orders only — never kick /login (Turnstile + forceLogin).
             const kickUrl = autoLogin
               ? "https://stockx.com/buying/orders"
-              : startUrl;
+              : startUrl.includes("/login")
+                ? "https://stockx.com/buying/orders"
+                : startUrl;
             await page.goto(kickUrl, { waitUntil: "domcontentloaded" });
           } catch {
             // ignore navigation errors

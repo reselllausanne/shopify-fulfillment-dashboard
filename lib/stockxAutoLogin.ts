@@ -1,5 +1,63 @@
-import type { Page } from "playwright";
+import type { BrowserContext, Page } from "playwright";
 import { waitForStockxEmailOtp } from "@/lib/stockxEmailOtp";
+
+export type StockxCookieWarm = "token" | "authenticated" | "login_wall" | "blocked";
+
+type CookieLike = { name: string; value: string; domain?: string };
+
+export function cookieJarHasAuth0Session(cookies: CookieLike[]): boolean {
+  return cookies.some(
+    (c) =>
+      (c.name === "auth0" || c.name === "auth0_compat" || c.name === "did" || c.name === "did_compat") &&
+      Boolean(c.value?.trim()) &&
+      String(c.domain || "").includes("stockx")
+  );
+}
+
+export function cookieJarHasLoggedInMarker(cookies: CookieLike[]): boolean {
+  return cookies.some((c) => c.name === "loggedIn" && Boolean(c.value?.trim()));
+}
+
+export function cookieJarHasTokenCookie(cookies: CookieLike[]): boolean {
+  return cookies.some((c) => c.name === "token" && /^eyJ/.test(String(c.value || "").trim()));
+}
+
+/**
+ * StockX /login often seeds Auth0 transaction cookies with forceLogin=true, which blocks SSO
+ * remint from the still-valid auth0 session cookie. Strip those before soft navigations.
+ */
+export async function clearStockxForceLoginTransactions(context: BrowserContext): Promise<number> {
+  const cookies = await context.cookies();
+  const isForceLogin = (name: string) => {
+    if (/forceLogin/i.test(name)) return true;
+    try {
+      return /forceLogin/i.test(decodeURIComponent(name));
+    } catch {
+      return false;
+    }
+  };
+  const bad = cookies.filter((c) => isForceLogin(c.name));
+  if (!bad.length) return 0;
+  const badKeys = new Set(bad.map((c) => `${c.domain}\0${c.name}\0${c.path}`));
+  const keep = cookies.filter((c) => !badKeys.has(`${c.domain}\0${c.name}\0${c.path}`));
+  await context.clearCookies();
+  if (keep.length) {
+    await context.addCookies(
+      keep.map((c) => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path || "/",
+        expires: c.expires,
+        httpOnly: c.httpOnly,
+        secure: c.secure,
+        sameSite: c.sameSite,
+      }))
+    );
+  }
+  console.log(`[STOCKX-PW] Cleared ${bad.length} Auth0 forceLogin transaction cookie(s)`);
+  return bad.length;
+}
 
 const OTP_SCREEN_RE =
   /type=OTP|passwordless-email-challenge|verify|one[-\s]?time|enter (the )?code|we sent (you )?a code|check your email|verification code|authentication code|2fa|two[-\s]?factor/i;
@@ -132,13 +190,14 @@ export async function waitForCloudflareClear(page: Page, timeoutMs = 120000): Pr
 }
 
 /**
- * Cookie-first remint: wait on buying/orders (never /login) until Turnstile clears or the
- * authenticated buying UI appears. Headed Xvfb often auto-passes; rushing to /login makes it worse.
+ * Cookie-first remint: wait on buying/orders (never /login) until Turnstile clears or a real
+ * authenticated session appears. URL alone is NOT enough — logged-out shells still land on
+ * /buying/orders and the old check false-positive'd, then credential /login burned Auth0 SSO.
  */
 export async function waitForCookieSessionWarm(
   page: Page,
   options: { timeoutMs?: number; hasToken?: () => boolean } = {}
-): Promise<"token" | "authenticated" | "login_wall" | "blocked"> {
+): Promise<StockxCookieWarm> {
   const timeoutMs = options.timeoutMs ?? 120_000;
   const start = Date.now();
   let softReloads = 0;
@@ -163,15 +222,31 @@ export async function waitForCookieSessionWarm(
     if (/accounts\.stockx\.com|stockx\.com\/login/i.test(url)) {
       return "login_wall";
     }
-    if (/stockx\.com\/(buying|sell|account|profile)/i.test(url)) {
-      return "authenticated";
-    }
+
+    const cookies = (await page.context().cookies().catch(() => [])) as CookieLike[];
+    const hasLoggedIn = cookieJarHasLoggedInMarker(cookies);
+    const hasTokenCookie = cookieJarHasTokenCookie(cookies);
+    const loginCta = await page
+      .locator(
+        'a[href*="login"], button:has-text("Log In"), button:has-text("Sign In"), button:has-text("Se connecter"), a:has-text("Se connecter")'
+      )
+      .first()
+      .isVisible({ timeout: 400 })
+      .catch(() => false);
     const hasBuyingUi = await page
       .locator('a[href*="/buying"], [data-testid*="buying" i], text=/Order History|Historique/i')
       .first()
       .isVisible({ timeout: 500 })
       .catch(() => false);
-    if (hasBuyingUi) return "authenticated";
+
+    // Real session markers beat URL heuristics.
+    if (hasLoggedIn || hasTokenCookie) return "authenticated";
+    if (/stockx\.com\/(buying|sell|account|profile)/i.test(url)) {
+      if (loginCta) return "login_wall";
+      if (hasBuyingUi) return "authenticated";
+      // Soft shell on /buying without login CTA — keep waiting for SPA/Auth0 callback.
+    }
+    if (hasBuyingUi && !loginCta) return "authenticated";
     await page.waitForTimeout(2000);
   }
   const url = page.url();
@@ -179,7 +254,37 @@ export async function waitForCookieSessionWarm(
   const body = (await page.locator("body").innerText().catch(() => "")) || "";
   if (pageLooksLikeCloudflare(url, title, body)) return "blocked";
   if (/accounts\.stockx\.com|stockx\.com\/login/i.test(url)) return "login_wall";
+  const cookies = (await page.context().cookies().catch(() => [])) as CookieLike[];
+  if (cookieJarHasLoggedInMarker(cookies) || cookieJarHasTokenCookie(cookies)) {
+    return "authenticated";
+  }
   return "blocked";
+}
+
+/** Soft URLs that let Auth0 SSO mint a bearer without hitting /login (Turnstile + forceLogin). */
+export const STOCKX_SOFT_REMINT_URLS = [
+  "https://stockx.com/",
+  "https://stockx.com/account",
+  "https://stockx.com/buying",
+  "https://stockx.com/buying/orders",
+] as const;
+
+export async function softNavigateForSilentRemint(
+  page: Page,
+  options: { hasToken?: () => boolean; perUrlWaitMs?: number } = {}
+): Promise<boolean> {
+  const perUrlWaitMs = options.perUrlWaitMs ?? 8_000;
+  for (const url of STOCKX_SOFT_REMINT_URLS) {
+    if (options.hasToken?.()) return true;
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+    } catch {
+      // keep trying other soft URLs
+    }
+    await page.waitForTimeout(perUrlWaitMs);
+    if (options.hasToken?.()) return true;
+  }
+  return Boolean(options.hasToken?.());
 }
 
 /**
