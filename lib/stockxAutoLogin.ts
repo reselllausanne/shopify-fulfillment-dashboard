@@ -78,7 +78,17 @@ async function completeStockxEmailOtp(
   };
 }
 
-async function waitForCloudflareClear(page: Page, timeoutMs = 120000): Promise<boolean> {
+export function pageLooksLikeCloudflare(url: string, title: string, body: string): boolean {
+  return (
+    /cdn-cgi|challenges\.cloudflare/i.test(url) ||
+    /just a moment|un instant|vérification de sécurité|security check|cf-turnstile|attention required/i.test(
+      `${title}\n${body}`
+    )
+  );
+}
+
+/** Wait until Turnstile clears enough to show the Auth0 email field (credential path). */
+export async function waitForCloudflareClear(page: Page, timeoutMs = 120000): Promise<boolean> {
   const start = Date.now();
   let reloads = 0;
   while (Date.now() - start < timeoutMs) {
@@ -94,11 +104,7 @@ async function waitForCloudflareClear(page: Page, timeoutMs = 120000): Promise<b
 
     const successStuck =
       /vérification réussie|verification successful|waiting for.*accounts\.stockx/i.test(body);
-    const blocked =
-      /cdn-cgi|challenges\.cloudflare/i.test(url) ||
-      /just a moment|un instant|vérification de sécurité|security check|cf-turnstile/i.test(
-        `${title}\n${body}`
-      );
+    const blocked = pageLooksLikeCloudflare(url, title, body);
 
     // Turnstile often says "success" then hangs — reload once onto login.
     if (successStuck && reloads < 2) {
@@ -126,6 +132,57 @@ async function waitForCloudflareClear(page: Page, timeoutMs = 120000): Promise<b
 }
 
 /**
+ * Cookie-first remint: wait on buying/orders (never /login) until Turnstile clears or the
+ * authenticated buying UI appears. Headed Xvfb often auto-passes; rushing to /login makes it worse.
+ */
+export async function waitForCookieSessionWarm(
+  page: Page,
+  options: { timeoutMs?: number; hasToken?: () => boolean } = {}
+): Promise<"token" | "authenticated" | "login_wall" | "blocked"> {
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  const start = Date.now();
+  let softReloads = 0;
+  while (Date.now() - start < timeoutMs) {
+    if (options.hasToken?.()) return "token";
+    const url = page.url();
+    const title = await page.title().catch(() => "");
+    const body = (await page.locator("body").innerText().catch(() => "")) || "";
+    if (pageLooksLikeCloudflare(url, title, body)) {
+      const successStuck =
+        /vérification réussie|verification successful|waiting for.*stockx/i.test(body);
+      if (successStuck && softReloads < 2) {
+        softReloads += 1;
+        await page.goto("https://stockx.com/buying/orders", {
+          waitUntil: "domcontentloaded",
+          timeout: 45000,
+        }).catch(() => undefined);
+      }
+      await page.waitForTimeout(2500);
+      continue;
+    }
+    if (/accounts\.stockx\.com|stockx\.com\/login/i.test(url)) {
+      return "login_wall";
+    }
+    if (/stockx\.com\/(buying|sell|account|profile)/i.test(url)) {
+      return "authenticated";
+    }
+    const hasBuyingUi = await page
+      .locator('a[href*="/buying"], [data-testid*="buying" i], text=/Order History|Historique/i')
+      .first()
+      .isVisible({ timeout: 500 })
+      .catch(() => false);
+    if (hasBuyingUi) return "authenticated";
+    await page.waitForTimeout(2000);
+  }
+  const url = page.url();
+  const title = await page.title().catch(() => "");
+  const body = (await page.locator("body").innerText().catch(() => "")) || "";
+  if (pageLooksLikeCloudflare(url, title, body)) return "blocked";
+  if (/accounts\.stockx\.com|stockx\.com\/login/i.test(url)) return "login_wall";
+  return "blocked";
+}
+
+/**
  * Fills StockX's email → password login and reads an email OTP from Gmail when requested.
  */
 export async function tryStockxCredentialLogin(
@@ -145,7 +202,8 @@ export async function tryStockxCredentialLogin(
     }
 
     // accounts.stockx.com sits behind Cloudflare Turnstile ("Un instant…").
-    const cleared = await waitForCloudflareClear(page, 90000);
+    // Headed Xvfb can auto-pass; give it a full 2 minutes before declaring dead.
+    const cleared = await waitForCloudflareClear(page, 120000);
     if (!cleared) {
       return {
         attempted: true,
@@ -250,6 +308,24 @@ export async function tryStockxCredentialLogin(
     }
 
     if (!passwordInput) {
+      const url = page.url();
+      const title = await page.title().catch(() => "");
+      const body = (await page.locator("body").innerText().catch(() => "")) || "";
+      if (pageLooksLikeCloudflare(url, title, body)) {
+        return {
+          attempted: true,
+          needsOtp: false,
+          error: "Cloudflare challenge did not clear (Turnstile). Retry or login via /admin/stockx-login.",
+        };
+      }
+      if (OTP_SCREEN_RE.test(`${url}\n${body}`)) {
+        const otp = await completeStockxEmailOtp(page, emailSubmittedAt ?? new Date(), email);
+        return {
+          attempted: true,
+          needsOtp: !otp.completed,
+          error: otp.error,
+        };
+      }
       return { attempted: true, needsOtp: false, error: "Password field not found after email" };
     }
 

@@ -126,6 +126,7 @@ export async function POST(req: NextRequest) {
             expiresAt: refresh.expiresAt?.toISOString() ?? null,
             needsManualLogin: refresh.needsManualLogin,
             error: refresh.error,
+            reason: refresh.reason ?? null,
           },
           galaxusRefresh: galaxusRefresh
             ? {
@@ -133,6 +134,7 @@ export async function POST(req: NextRequest) {
                 reused: galaxusRefresh.reused,
                 expiresAt: galaxusRefresh.expiresAt?.toISOString() ?? null,
                 error: galaxusRefresh.error,
+                reason: galaxusRefresh.reason ?? null,
               }
             : null,
           needsManualLogin: Boolean(refresh.needsManualLogin || (!galaxusRefresh?.ok && galaxusExpiringSoon)),

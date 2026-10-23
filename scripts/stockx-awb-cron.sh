@@ -44,14 +44,16 @@ fi
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] START stockx-awb-sync days=$DAYS limit=$LIMIT forceRefresh=$FORCE_REFRESH" | tee -a "$LOG_FILE"
 
-# 1) Token remint only — always runs, even when forceRefresh=false (near-expiry path inside API).
+# 1) Token remint only — always runs, even when forceRefresh=false
+#    (near-expiry <6h + keep-alive every 4h while JWT still valid — see lib/stockxSessionRefresh.ts).
+#    Two accounts × cookie-first Turnstile wait can exceed 10 minutes; do not starve remint.
 REFRESH_BODY=$(printf '{"forceRefresh":%s,"refreshOnly":true}' "$FORCE_REFRESH")
 set +e
 REFRESH_HTTP=$(curl -sS -o /tmp/stockx-awb-refresh-body.json -w "%{http_code}" \
   -X POST "$BASE_URL/api/admin/stockx-awb-sync" \
   -H "content-type: application/json" \
   -d "$REFRESH_BODY" \
-  --max-time 560)
+  --max-time 900)
 REFRESH_CURL=$?
 set -e
 REFRESH_RESP="$(cat /tmp/stockx-awb-refresh-body.json 2>/dev/null || true)"
