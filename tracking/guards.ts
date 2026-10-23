@@ -10,7 +10,8 @@ export type Env = Record<string, string | undefined>;
 
 export const OUTBOUND_LOCKED = {
   ga4_test: true,
-  google_ads_secondary: true,
+  /** G4: code lock lifted — live upload still needs ENABLED=1 + APPROVED_AT + ACTION_ID. */
+  google_ads_secondary: false,
   meta: true,
   tiktok: true,
 } as const;

@@ -15,9 +15,10 @@ AOV ~201–207 CHF, 8 211 clients Shopify.
 1. **Zéro impact production** : aucun tag, conversion, audience ou flux existant n'est modifié en Phase 1.
 2. **Brique par brique** : une destination sortante = une gate = une PR qui lève un seul verrou.
 3. **Verrou en code** : `tracking/guards.ts` → `OUTBOUND_LOCKED` = `true` pour `ga4_test`,
-   `google_ads_secondary`, `meta`, `tiktok`. Les fonctions `send*()` lèvent `OutboundLockedError`
-   et n'ont aucun transport HTTP. Les IDs production (GA4, AW, labels, 14 conversion actions) sont
-   refusés à vie (`isProductionId`).
+   `meta`, `tiktok`. **G4** : `google_ads_secondary` = `false` (code) mais upload live toujours
+   bloqué sans `TRACKING_GOOGLE_ADS_SECONDARY_ENABLED=1` + `APPROVED_AT` + `ACTION_ID` Secondary
+   non-prod (`destinationGate` + `validateSecondaryAction`). Les IDs production (GA4, AW, labels,
+   14 conversion actions) sont refusés à vie (`isProductionId`).
 4. **Profit = interne** : jamais à la place du revenu, jamais Primary, jamais utilisé en enchères (§6).
 5. **Consentement d'abord** : identifiants publicitaires (click ids, email/phone hashés) uniquement
    avec consentement marketing.

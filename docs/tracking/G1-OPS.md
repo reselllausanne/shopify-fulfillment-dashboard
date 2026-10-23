@@ -26,6 +26,16 @@ systemctl list-timers 'resell-tracking*' 'resell-funnel*'
 journalctl -u resell-tracking-shadow-report.service -n 30
 ```
 
+## Vendredi — digeste
+
+```bash
+bash scripts/tracking-weekly-check.sh
+# → tmp_tracking/weekly-YYYY-MM-DD.txt
+# optional: TRACKING_WEEKLY_MAILTO=you@example.com
+```
+
+Shadow report split : `pixel` vs `server.orders_paid` (webhook backup).
+
 ## Critère G1 (≈2 semaines)
 
 - `tracking-shadow-report --days=14 --alert` vert (couverture commandes trackées)

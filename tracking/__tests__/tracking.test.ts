@@ -67,14 +67,26 @@ function purchase(over: Partial<ShadowPurchase> = {}): ShadowPurchase {
 }
 
 describe("guards", () => {
-  it("every destination is code-locked in phase 1", () => {
-    for (const dest of Object.keys(OUTBOUND_LOCKED) as Destination[]) {
-      expect(OUTBOUND_LOCKED[dest]).toBe(true);
+  it("keeps non-G4 destinations code-locked; G4 secondary unlocked but env-gated", () => {
+    expect(OUTBOUND_LOCKED.ga4_test).toBe(true);
+    expect(OUTBOUND_LOCKED.google_ads_secondary).toBe(false);
+    expect(OUTBOUND_LOCKED.meta).toBe(true);
+    expect(OUTBOUND_LOCKED.tiktok).toBe(true);
+
+    for (const dest of ["ga4_test", "meta", "tiktok"] as Destination[]) {
       const gate = destinationGate(dest, FULL_ENV(dest));
       expect(gate.open).toBe(false);
       expect(gate.reasons).toContain("phase-1 code lock");
       expect(() => assertDestinationOpen(dest, FULL_ENV(dest))).toThrow(OutboundLockedError);
     }
+
+    const adsGateClosed = destinationGate("google_ads_secondary", {});
+    expect(adsGateClosed.open).toBe(false);
+    expect(adsGateClosed.reasons.join("|")).toMatch(/ENABLED!=1/);
+
+    const adsGateOpen = destinationGate("google_ads_secondary", FULL_ENV("google_ads_secondary"));
+    expect(adsGateOpen.open).toBe(true);
+    expect(() => assertDestinationOpen("google_ads_secondary", FULL_ENV("google_ads_secondary"))).not.toThrow();
   });
 
   it("flags missing env + production ids", () => {
@@ -93,9 +105,15 @@ describe("guards", () => {
     expect(isProductionId("")).toBe(false);
   });
 
-  it("send functions refuse while locked", async () => {
+  it("send functions refuse while locked / gated", async () => {
     await expect(sendGa4Test()).rejects.toBeInstanceOf(OutboundLockedError);
-    await expect(sendGoogleAdsSecondary()).rejects.toBeInstanceOf(OutboundLockedError);
+    await expect(
+      sendGoogleAdsSecondary({
+        purchase: purchase(),
+        customerId: "123",
+        conversionActionId: "9999999999",
+      }),
+    ).rejects.toBeInstanceOf(OutboundLockedError);
     await expect(sendMeta()).rejects.toBeInstanceOf(OutboundLockedError);
     await expect(sendTikTok()).rejects.toBeInstanceOf(OutboundLockedError);
   });
@@ -177,6 +195,51 @@ describe("disabled adapters — payload contract", () => {
     expect(validateSecondaryAction(ok)).toEqual([]);
     expect(validateSecondaryAction({ ...ok, primaryForGoal: true }).join()).toMatch(/Primary/);
     expect(validateSecondaryAction({ ...ok, id: "6622228228" }).join()).toMatch(/production/);
+  });
+
+  it("uploads Secondary click conversion when gate open (mocked transport)", async () => {
+    const ok = {
+      id: "9999999999",
+      name: "TEST purchase (shadow)",
+      status: "ENABLED",
+      type: "UPLOAD_CLICKS",
+      primaryForGoal: false,
+      includeInConversionsMetric: false,
+    };
+    let uploaded: unknown[] = [];
+    const result = await sendGoogleAdsSecondary({
+      purchase: purchase(),
+      customerId: "1234567890",
+      conversionActionId: "9999999999",
+      actionCheck: ok,
+      env: FULL_ENV("google_ads_secondary"),
+      uploadFn: async (_cfg, conversions) => {
+        uploaded = conversions;
+        return { results: [{}], partialFailureError: null };
+      },
+    });
+    expect(result.status).toBe("uploaded");
+    expect(result.body?.orderId).toBe("13697584726402");
+    expect(uploaded).toHaveLength(1);
+  });
+
+  it("rejects Primary action even when gate open", async () => {
+    await expect(
+      sendGoogleAdsSecondary({
+        purchase: purchase(),
+        customerId: "123",
+        conversionActionId: "9999999999",
+        actionCheck: {
+          id: "9999999999",
+          name: "bad",
+          status: "ENABLED",
+          type: "UPLOAD_CLICKS",
+          primaryForGoal: true,
+        },
+        env: FULL_ENV("google_ads_secondary"),
+        uploadFn: async () => ({ results: [], partialFailureError: null }),
+      }),
+    ).rejects.toThrow(/Primary/);
   });
 
   it("Meta / TikTok: consent gate, hashed PII, shared event_id", () => {
