@@ -3,6 +3,7 @@ import { prisma } from "@/app/lib/prisma";
 import { resolveStockxBuyByOrderNumberWithToken } from "@/decathlon/stx/manualStockxEnrich";
 import { fetchStockxBuyOrderDetailsFull } from "@/galaxus/stx/stockxClient";
 import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
+import { unitSettledLooksLikeOcrAboveApi } from "@/galaxus/stx/settledAmountPrefer";
 
 export type LinkedStxUnitRefreshStats = {
   eligible: number;
@@ -53,17 +54,23 @@ export function stxUnitEligibleForStoredRefRefresh(unit: {
   return true;
 }
 
-/** True when AWB / ETA / settled / checkout still missing on a linked unit. */
-export function stxUnitNeedsStockxRefresh(unit: {
-  awb?: string | null;
-  etaMin?: Date | null;
-  etaMax?: Date | null;
-  stockxSettledAmount?: unknown;
-  checkoutType?: string | null;
-}): boolean {
+/** True when AWB / ETA / settled / checkout still missing — or unit OCR above match API settled. */
+export function stxUnitNeedsStockxRefresh(
+  unit: {
+    awb?: string | null;
+    etaMin?: Date | null;
+    etaMax?: Date | null;
+    stockxSettledAmount?: unknown;
+    checkoutType?: string | null;
+  },
+  opts?: { matchStockxAmount?: unknown }
+): boolean {
   if (!trimStr(unit.awb)) return true;
   if (!unit.etaMin || !unit.etaMax) return true;
   if (unit.stockxSettledAmount == null || !Number.isFinite(Number(unit.stockxSettledAmount))) {
+    return true;
+  }
+  if (unitSettledLooksLikeOcrAboveApi(unit.stockxSettledAmount, opts?.matchStockxAmount)) {
     return true;
   }
   if (!trimStr(unit.checkoutType)) return true;
@@ -159,9 +166,17 @@ async function refreshOneLinkedUnit(
   if (!unit.etaMin && etaMin) updateData.etaMin = etaMin;
   if (!unit.etaMax && etaMax) updateData.etaMax = etaMax;
   if (!trimStr(unit.checkoutType) && checkoutType) updateData.checkoutType = checkoutType;
-  if (!hadSettled && stockxSettledAmount != null && stockxSettledAmount > 0) {
-    updateData.stockxSettledAmount = stockxSettledAmount;
-    if (stockxSettledCurrency) updateData.stockxSettledCurrency = stockxSettledCurrency;
+  // API settled is source of truth — overwrite nulls and stale confirm-OCR on the unit.
+  if (stockxSettledAmount != null && stockxSettledAmount > 0) {
+    const currentSettled = hadSettled ? Number(unit.stockxSettledAmount) : null;
+    if (
+      !hadSettled ||
+      currentSettled == null ||
+      Math.abs(currentSettled - stockxSettledAmount) > 0.009
+    ) {
+      updateData.stockxSettledAmount = stockxSettledAmount;
+      if (stockxSettledCurrency) updateData.stockxSettledCurrency = stockxSettledCurrency;
+    }
   }
   if (stockxOrderNumber && stockxOrderNumber !== trimStr(unit.stockxOrderNumber)) {
     updateData.stockxOrderNumber = stockxOrderNumber;
@@ -201,11 +216,15 @@ async function refreshOneLinkedUnit(
     })
     .catch(() => null);
 
+  const settledWrote =
+    stockxSettledAmount != null &&
+    stockxSettledAmount > 0 &&
+    updateData.stockxSettledAmount != null;
   return {
     ok: true,
     awbBackfilled: !hadAwb && Boolean(nextAwb),
     etaBackfilled: !hadEta && Boolean(etaMin || etaMax),
-    settledBackfilled: !hadSettled && stockxSettledAmount != null && stockxSettledAmount > 0,
+    settledBackfilled: Boolean(settledWrote),
   };
 }
 
@@ -256,8 +275,30 @@ export async function refreshLinkedStxUnitsByStoredRefs(
     });
   }
 
+  const allOrderIds = units.map((u) => trimStr(u.stockxOrderId)).filter(Boolean);
+  const matches = allOrderIds.length
+    ? await (prisma as any).galaxusStockxMatch.findMany({
+        where: { stockxOrderId: { in: allOrderIds } },
+        select: { stockxOrderId: true, stockxChainId: true, stockxAmount: true },
+      })
+    : [];
+  const chainByOrderId = new Map<string, string>();
+  const matchAmountByOrderId = new Map<string, number>();
+  for (const m of matches) {
+    const oid = trimStr(m.stockxOrderId);
+    const chain = trimStr(m.stockxChainId);
+    if (oid && chain) chainByOrderId.set(oid, chain);
+    if (oid && m.stockxAmount != null && Number.isFinite(Number(m.stockxAmount))) {
+      matchAmountByOrderId.set(oid, Number(m.stockxAmount));
+    }
+  }
+
   const eligibleList = units.filter(
-    (u) => stxUnitEligibleForStoredRefRefresh(u) && stxUnitNeedsStockxRefresh(u)
+    (u) =>
+      stxUnitEligibleForStoredRefRefresh(u) &&
+      stxUnitNeedsStockxRefresh(u, {
+        matchStockxAmount: matchAmountByOrderId.get(trimStr(u.stockxOrderId)),
+      })
   );
   const stats: LinkedStxUnitRefreshStats = {
     eligible: eligibleList.length,
@@ -271,22 +312,6 @@ export async function refreshLinkedStxUnitsByStoredRefs(
     failures: [],
   };
   if (eligibleList.length === 0) return stats;
-
-  const stockxOrderIds = eligibleList
-    .map((u) => trimStr(u.stockxOrderId))
-    .filter(Boolean);
-  const matches = stockxOrderIds.length
-    ? await (prisma as any).galaxusStockxMatch.findMany({
-        where: { stockxOrderId: { in: stockxOrderIds } },
-        select: { stockxOrderId: true, stockxChainId: true },
-      })
-    : [];
-  const chainByOrderId = new Map<string, string>();
-  for (const m of matches) {
-    const oid = trimStr(m.stockxOrderId);
-    const chain = trimStr(m.stockxChainId);
-    if (oid && chain) chainByOrderId.set(oid, chain);
-  }
 
   const limiter = createLimiter(2);
   await Promise.all(
