@@ -70,4 +70,19 @@ describe("stxUnitNeedsStockxRefresh", () => {
       })
     ).toBe(false);
   });
+
+  it("needs refresh when unit OCR settled is above match API settled", () => {
+    expect(
+      stxUnitNeedsStockxRefresh(
+        {
+          awb: "99.00.123456.12345678",
+          etaMin: new Date(),
+          etaMax: new Date(),
+          stockxSettledAmount: 165.62,
+          checkoutType: "STANDARD",
+        },
+        { matchStockxAmount: 135.27 }
+      )
+    ).toBe(true);
+  });
 });

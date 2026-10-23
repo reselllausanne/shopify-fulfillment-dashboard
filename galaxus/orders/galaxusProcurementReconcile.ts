@@ -13,6 +13,7 @@ import {
   isGalaxusStxSupplierLine,
 } from "@/galaxus/warehouse/lineInventorySource";
 import { ensureLocalStockMatchesForOrder } from "@/galaxus/orders/localStockMatch";
+import { preferApiSettledOverUnitOcr } from "@/galaxus/stx/settledAmountPrefer";
 
 function isUnknownCancelledAtArg(error: unknown): boolean {
   const message = String((error as any)?.message ?? "");
@@ -98,6 +99,18 @@ export async function ensureGalaxusStockxMatchesFromLinkedUnits(
         String(unit.stockxOrderNumber ?? "").trim() || String(unit.stockxOrderId ?? "").trim();
       if (!stockxOrderNumber) continue;
 
+      const existingAtSlot =
+        lineMatches.find((m: any) => Number(m.unitIndex ?? 0) === unitIndex) ?? null;
+      const unitSettled =
+        unit.stockxSettledAmount != null && Number.isFinite(Number(unit.stockxSettledAmount))
+          ? Number(unit.stockxSettledAmount)
+          : null;
+      // Prefer lower API/match settled; never let higher unit confirm-OCR clobber it.
+      const stockxAmount = preferApiSettledOverUnitOcr(
+        existingAtSlot?.stockxAmount,
+        unitSettled
+      );
+
       const payload = {
         galaxusOrderId: order.id,
         galaxusOrderRef: order.galaxusOrderId,
@@ -121,11 +134,14 @@ export async function ensureGalaxusStockxMatchesFromLinkedUnits(
         stockxVariantId: String(unit.supplierVariantId ?? "")
           .replace(/^stx_/i, "")
           .trim() || null,
-        stockxAmount:
-          unit.stockxSettledAmount != null && Number.isFinite(Number(unit.stockxSettledAmount))
-            ? Number(unit.stockxSettledAmount)
-            : null,
-        stockxCurrencyCode: unit.stockxSettledCurrency ?? null,
+        stockxAmount,
+        stockxCurrencyCode:
+          stockxAmount != null &&
+          existingAtSlot?.stockxAmount != null &&
+          Number(existingAtSlot.stockxAmount) === stockxAmount &&
+          existingAtSlot?.stockxCurrencyCode
+            ? existingAtSlot.stockxCurrencyCode
+            : (unit.stockxSettledCurrency ?? null),
         stockxEstimatedDelivery: unit.etaMin ?? null,
         stockxLatestEstimatedDelivery: unit.etaMax ?? null,
         stockxAwb: unit.awb ?? null,
