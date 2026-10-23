@@ -12,6 +12,8 @@ services:
       - PLAYWRIGHT_USE_XVFB=${PLAYWRIGHT_USE_XVFB:-1}
       - PLAYWRIGHT_ENABLE_REMOTE_DESKTOP=${PLAYWRIGHT_ENABLE_REMOTE_DESKTOP:-1}
       - VNC_PASSWORD=${VNC_PASSWORD:-1234}
+      # Long-lived StockX Chromium on Xvfb (CDP) so hourly remint skips cold Turnstile.
+      - STOCKX_WARM_DAEMON=${STOCKX_WARM_DAEMON:-1}
       # Needed so cron/exec Playwright headed refresh can find the entrypoint Xvfb.
       - DISPLAY=${DISPLAY:-:99}
     ports:

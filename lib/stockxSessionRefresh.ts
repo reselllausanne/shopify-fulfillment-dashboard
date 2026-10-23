@@ -11,6 +11,12 @@ import {
   readGalaxusStockxToken,
 } from "@/lib/stockxGalaxusAuth";
 import { stockxTokenExpiresAt } from "@/lib/stockxServerToken";
+import {
+  readStoredRefreshToken,
+  tryRefreshTokenGrant,
+  writeStockxTokenFile,
+} from "@/lib/stockxSilentAuth0";
+import { markWarmToken } from "@/lib/stockxWarmBrowser";
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 
@@ -51,8 +57,8 @@ export function parseStockxRefreshAccount(raw: unknown): StockxRefreshAccount {
  * Dead cookies cannot remint — proactive keep-alive is what prevents VNC every morning.
  */
 const REFRESH_WHEN_LESS_THAN_MS = 6 * 60 * 60 * 1000;
-/** Even with a healthy JWT, touch StockX every 4h so Auth0/cf_clearance stay warm. */
-const KEEP_ALIVE_EVERY_MS = 4 * 60 * 60 * 1000;
+/** Touch StockX / warm browser every ~90m so cf session never goes cold on vacation. */
+const KEEP_ALIVE_EVERY_MS = 90 * 60 * 1000;
 
 export type StockxRefreshResult = {
   ok: boolean;
@@ -176,10 +182,39 @@ export async function refreshStockxToken(
     `[STOCKX-REFRESH] remint account=${account} reason=${remintReason} display=${process.env.DISPLAY || "(unset→:99)"}`
   );
 
+  // Path 0: Auth0 refresh_token grant — no browser, no Turnstile (when previously captured).
+  const storedRefresh = await readStoredRefreshToken(files.tokenFile);
+  if (storedRefresh) {
+    const refreshed = await tryRefreshTokenGrant(storedRefresh);
+    if (refreshed.token) {
+      await writeStockxTokenFile(files.tokenFile, refreshed.token, {
+        refreshToken: refreshed.refreshToken,
+        source: "auth0-refresh-token",
+      });
+      await markWarmToken(account).catch(() => undefined);
+      const expiresAt = stockxTokenExpiresAt(refreshed.token);
+      console.log(
+        `[STOCKX-REFRESH] refresh_token grant ok account=${account} exp=${expiresAt?.toISOString() ?? "?"}`
+      );
+      return {
+        ok: true,
+        token: refreshed.token,
+        reused: false,
+        expiresAt,
+        profileReset: false,
+        needsManualLogin: false,
+        error: null,
+        reason: remintReason,
+      };
+    }
+    console.warn(
+      `[STOCKX-REFRESH] refresh_token grant failed account=${account}: ${refreshed.error}`
+    );
+  }
+
   const snapshot = await backupAuthFiles(files);
   // True Playwright headless is blocked by Cloudflare ("Just a moment" / Error page).
-  // Use a headed Chromium on the container Xvfb display instead — same path as phone login,
-  // no human needed when the saved profile session is still valid.
+  // Prefer warm CDP Chromium; else headed launch on Xvfb and leave it warm.
   if (!process.env.DISPLAY) {
     process.env.DISPLAY = ":99";
   }
@@ -199,12 +234,17 @@ export async function refreshStockxToken(
       // Cookie-first: reuse the persistent profile on buying/orders. Going to /login first
       // forces Cloudflare Turnstile even when the session cookies are still valid.
       startUrl: "https://stockx.com/buying/orders",
-      maxWaitMs: Math.min(Number(options.maxWaitMs ?? 180000), 300000),
+      // Sit-still Turnstile + silent Auth0 needs headroom; cron allows ~9m.
+      maxWaitMs: Math.min(Number(options.maxWaitMs ?? 240000), 420000),
       sessionFile: files.sessionFile,
       sessionMetaFile: files.sessionMetaFile,
       tokenFile: files.tokenFile,
       userDataDir: files.profileDir,
       credentialsAccount: account,
+      // Vacation path: attach warm CDP if up; leave browser open after mint.
+      useWarmCdp: true,
+      leaveWarm: true,
+      silentAuth0: true,
     }),
   });
 
@@ -238,11 +278,12 @@ export async function refreshStockxToken(
       error,
       reason: "failed",
     };
-    // Alert immediately on remint failure — not only after AWB/auto-link also fail.
+    // Alert only after cookie + warm + silent Auth0 paths failed (playwright already exhausted).
     await notifyStockxAuthBroken({ account, error: result.error }).catch(() => undefined);
     return result;
   }
 
+  await markWarmToken(account).catch(() => undefined);
   return {
     ok: true,
     token,

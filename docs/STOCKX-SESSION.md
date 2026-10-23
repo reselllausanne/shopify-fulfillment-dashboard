@@ -1,26 +1,48 @@
-# StockX session / auto-remint
+# StockX session / vacation remint
 
-## Why manual VNC keeps coming back
+## Why JWT dies (and cookies do not)
 
-StockX bearers last ~12h. Cookie remint (headed Chromium on Xvfb) only works **while Auth0 / `cf_clearance` cookies are still warm**. Once those die, automation hits Cloudflare Turnstile (`Un instant…`) and credential fill fails (`Password field not found`). Dead cookies cannot remint themselves.
+| Artifact | Lifetime | Role |
+|---|---|---|
+| StockX bearer JWT | ~12h | GraphQL `Authorization` |
+| Auth0 `auth0` / `did` cookies | ~100d (seen → 2027) | SSO session on `accounts.stockx.com` |
+| `cf_clearance` | months–1y | Cloudflare pass (bound to IP + browser) |
 
-Deploy does **not** wipe profiles: `docker-compose.yml` bind-mounts `./.data:/app/.data` (`stockx-profile`, `stockx-profile-galaxus`, token files).
+Deploy does **not** wipe profiles: `docker-compose.yml` bind-mounts `./.data:/app/.data`.
 
-## Auto path (hourly cron)
+## Vacation-proof path (priority order)
 
-`scripts/stockx-awb-cron.sh` → `POST /api/admin/stockx-awb-sync` with `refreshOnly: true`, then AWB.
+`lib/stockxSessionRefresh.ts` → playwright:
 
-`lib/stockxSessionRefresh.ts`:
+1. **Reuse** JWT if >6h remain **and** last mint <90m ago.
+2. **Auth0 `refresh_token` grant** (HTTP, no browser) if token file stored one from a prior silent mint (`offline_access`).
+3. **Warm CDP attach** (`http://127.0.0.1:9222` default / `:9223` galaxus) — no cold Chromium.
+4. Else **headed launch** on `DISPLAY=:99`, **leaveWarm** with remote debugging, cookie-first `buying/orders`.
+5. **Sit-still** on Cloudflare — do **not** cycle soft URLs while Turnstile is up (reloads reset the challenge).
+6. **Silent Auth0** `prompt=none` authorize (`client_id=OVxrt4VJqTx7LIUKd661W0DuVMpcFByD`, redirect `https://stockx.com`) once CF is clear.
+7. Credentials `/login` **only** when Auth0 cookies are gone. Never burn SSO.
 
-1. **Reuse** JWT if >6h remain **and** last mint <4h ago.
-2. Else **remint** (keep-alive or near-expiry): Playwright headed on `DISPLAY=:99`, cookie-first `https://stockx.com/buying/orders` (never `/login` first).
-3. Wait out Turnstile on buying/orders; only then fall back to env credentials + Gmail OTP (`lib/stockxEmailOtp.ts`).
-4. On remint failure → Postmark/Slack via `notifyStockxAuthBroken` immediately.
+Alert email/Slack fires only after these paths fail.
 
-## One manual login when alert fires
+## Warm daemon
 
-Phone: `/admin/stockx-login` (and `?account=galaxus` for the second account) → complete Turnstile/OTP once in noVNC (VNC password `1234`, autofilled in the viewer URL). After that, proactive keep-alive should remint without you.
+```bash
+# Inside web container (shares Xvfb :99)
+npx tsx scripts/stockx-warm-daemon.ts both
+```
+
+Docker Compose service `stockx-warm` runs this continuously. Hourly cron then attaches via CDP instead of cold launch.
+
+## Hourly cron
+
+`scripts/stockx-awb-cron.sh` → `POST /api/admin/stockx-awb-sync` (`refreshOnly`, then AWB).
+
+**Avoid** crontab `--force-refresh` every few hours while Auth0 is healthy — thrashing cold Chromium elevates Turnstile to interactive checkbox.
+
+## One bootstrap when CF shows “Un instant…”
+
+Phone: `/admin/stockx-login` (and `?account=galaxus`) → complete Turnstile once in noVNC (password `1234`). After that, warm CDP + 90m keep-alive should remint without you for weeks (while Auth0 cookies live).
 
 ## Headless vs headed
 
-True Playwright `headless: true` is blocked by Cloudflare. Production uses headed Chromium on the container Xvfb (`PLAYWRIGHT_USE_XVFB=1`).
+True Playwright `headless: true` is blocked by Cloudflare. Production uses headed Chromium on container Xvfb (`PLAYWRIGHT_USE_XVFB=1`).

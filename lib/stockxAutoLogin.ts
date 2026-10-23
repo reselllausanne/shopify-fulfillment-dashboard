@@ -190,17 +190,16 @@ export async function waitForCloudflareClear(page: Page, timeoutMs = 120000): Pr
 }
 
 /**
- * Cookie-first remint: wait on buying/orders (never /login) until Turnstile clears or a real
- * authenticated session appears. URL alone is NOT enough — logged-out shells still land on
- * /buying/orders and the old check false-positive'd, then credential /login burned Auth0 SSO.
+ * Cookie-first remint: SIT on one page until Turnstile clears. Reloads reset CF challenges —
+ * only reload on "verification successful" hang (max 1). Never /login.
  */
 export async function waitForCookieSessionWarm(
   page: Page,
   options: { timeoutMs?: number; hasToken?: () => boolean } = {}
 ): Promise<StockxCookieWarm> {
-  const timeoutMs = options.timeoutMs ?? 120_000;
+  const timeoutMs = options.timeoutMs ?? 180_000;
   const start = Date.now();
-  let softReloads = 0;
+  let successReload = 0;
   while (Date.now() - start < timeoutMs) {
     if (options.hasToken?.()) return "token";
     const url = page.url();
@@ -209,14 +208,16 @@ export async function waitForCookieSessionWarm(
     if (pageLooksLikeCloudflare(url, title, body)) {
       const successStuck =
         /vérification réussie|verification successful|waiting for.*stockx/i.test(body);
-      if (successStuck && softReloads < 2) {
-        softReloads += 1;
+      // ONE reload max — thrashing every few seconds resets Turnstile forever.
+      if (successStuck && successReload < 1) {
+        successReload += 1;
+        console.log("[STOCKX-PW] CF success-stuck — single reload");
         await page.goto("https://stockx.com/buying/orders", {
           waitUntil: "domcontentloaded",
           timeout: 45000,
         }).catch(() => undefined);
       }
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(3000);
       continue;
     }
     if (/accounts\.stockx\.com|stockx\.com\/login/i.test(url)) {
@@ -263,19 +264,58 @@ export async function waitForCookieSessionWarm(
 
 /** Soft URLs that let Auth0 SSO mint a bearer without hitting /login (Turnstile + forceLogin). */
 export const STOCKX_SOFT_REMINT_URLS = [
-  "https://stockx.com/",
+  "https://stockx.com/buying/orders",
   "https://stockx.com/account",
   "https://stockx.com/buying",
-  "https://stockx.com/buying/orders",
+  "https://stockx.com/",
 ] as const;
 
+/**
+ * Soft remint navigations. When already on CF, SIT — do not cycle URLs (resets Turnstile).
+ */
 export async function softNavigateForSilentRemint(
   page: Page,
   options: { hasToken?: () => boolean; perUrlWaitMs?: number } = {}
 ): Promise<boolean> {
-  const perUrlWaitMs = options.perUrlWaitMs ?? 8_000;
+  const perUrlWaitMs = options.perUrlWaitMs ?? 10_000;
+  if (options.hasToken?.()) return true;
+
+  const title0 = await page.title().catch(() => "");
+  const body0 = (await page.locator("body").innerText().catch(() => "")) || "";
+  if (pageLooksLikeCloudflare(page.url(), title0, body0)) {
+    // Already challenged — sit; caller’s waitForCookieSessionWarm owns the wait.
+    console.log("[STOCKX-PW] soft-nav skipped — Cloudflare challenge active (sit-still)");
+    await page.waitForTimeout(Math.min(perUrlWaitMs, 8_000));
+    return Boolean(options.hasToken?.());
+  }
+
+  // First landing if blank
+  if (!/stockx\.com/i.test(page.url()) || page.url() === "about:blank") {
+    try {
+      await page.goto(STOCKX_SOFT_REMINT_URLS[0], {
+        waitUntil: "domcontentloaded",
+        timeout: 45000,
+      });
+    } catch {
+      // ignore
+    }
+    await page.waitForTimeout(perUrlWaitMs);
+    if (options.hasToken?.()) return true;
+    const title = await page.title().catch(() => "");
+    const body = (await page.locator("body").innerText().catch(() => "")) || "";
+    if (pageLooksLikeCloudflare(page.url(), title, body)) {
+      return false;
+    }
+  }
+
   for (const url of STOCKX_SOFT_REMINT_URLS) {
     if (options.hasToken?.()) return true;
+    const title = await page.title().catch(() => "");
+    const body = (await page.locator("body").innerText().catch(() => "")) || "";
+    if (pageLooksLikeCloudflare(page.url(), title, body)) {
+      console.log("[STOCKX-PW] soft-nav stop — CF appeared mid-cycle");
+      return false;
+    }
     try {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
     } catch {
