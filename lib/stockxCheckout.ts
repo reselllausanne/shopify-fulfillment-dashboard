@@ -5,7 +5,11 @@ import { prisma } from "@/app/lib/prisma";
 import { stockxAccountFiles } from "@/lib/stockxSessionRefresh";
 import {
   chooseLane,
+  chooseLaneByCsAtMargin,
   classifyLaneLabel,
+  countDistinctShippingTierInText,
+  extractCheckoutSubtotalChf,
+  laneMatchesSubtotal,
   marginOk,
   moneyToNumber,
   parseLaneCardsFromText,
@@ -276,14 +280,16 @@ async function parseLanesFromPage(page: Page): Promise<StockxLaneCard[]> {
     const out: Array<{ rawLabel: string; totalChf: number; eta: string | null }> = [];
     for (const node of nodes) {
       const text = (node.textContent || "").replace(/\s+/g, " ").trim();
-      if (!/\b(Standard|Express|Xpress)\b/i.test(text)) continue;
+      if (!/\b(Standard|Express|Xpress|Fastest)\b/i.test(text)) continue;
       if (!/\d/.test(text) || !/CHF/i.test(text)) continue;
-      const labelMatch = text.match(/\b(Standard|Express|Xpress)\b/i);
-      const priceMatch = text.match(/(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
+      const labelMatch = text.match(/\b(Standard|Express|Xpress|Fastest)\b/i);
+      const priceMatch =
+        text.match(/CHF\s*(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)/i) ||
+        text.match(/(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
       if (!labelMatch || !priceMatch) continue;
       const cleaned = priceMatch[1].replace(/[^\d,.-]/g, "").replace(/\s/g, "").replace(",", ".");
       const totalChf = Number(cleaned);
-      if (!Number.isFinite(totalChf)) continue;
+      if (!Number.isFinite(totalChf) || totalChf < 80) continue;
       const etaMatch = text.match(/(?:d['’]ici le|by|ETA)\s*([^·|]{3,40})/i);
       out.push({
         rawLabel: labelMatch[1],
@@ -294,44 +300,123 @@ async function parseLanesFromPage(page: Page): Promise<StockxLaneCard[]> {
     return out;
   });
 
-  if (fromDom.length) {
-    const seen = new Set<string>();
-    return fromDom
-      .map((row) => ({
-        label: classifyLaneLabel(row.rawLabel),
-        rawLabel: row.rawLabel,
-        totalChf: row.totalChf,
-        eta: row.eta,
-      }))
-      .filter((lane) => {
-        const key = `${lane.label}:${lane.totalChf.toFixed(2)}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-  }
-
   const body = await page.locator("body").innerText().catch(() => "");
-  return parseLaneCardsFromText(body);
+  const fromText = parseLaneCardsFromText(body);
+
+  const seen = new Set<string>();
+  const merged: StockxLaneCard[] = [];
+  for (const row of fromDom) {
+    const label = classifyLaneLabel(row.rawLabel);
+    if (label === "UNKNOWN") continue;
+    const key = `${label}:${row.totalChf.toFixed(2)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push({
+      label,
+      rawLabel: row.rawLabel,
+      totalChf: row.totalChf,
+      eta: row.eta,
+    });
+  }
+  for (const lane of fromText) {
+    const key = `${lane.label}:${lane.totalChf.toFixed(2)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(lane);
+  }
+  return merged;
 }
 
 async function clickLaneCard(page: Page, lane: StockxLaneCard): Promise<boolean> {
-  const label = String(lane.totalChf).replace(".", "[,.]");
-  const card = page
-    .locator("button,label,div[role=button],div[role=radio]")
-    .filter({ hasText: new RegExp(`\\b${lane.rawLabel}\\b`, "i") })
-    .filter({ hasText: new RegExp(label) })
+  const priceRe = String(lane.totalChf).replace(".", "[,.]");
+  const selectors = [
+    "button,label,div[role=button],div[role=radio],div[role=option]",
+    "div,li,section",
+  ];
+  for (const sel of selectors) {
+    const card = page
+      .locator(sel)
+      .filter({ hasText: new RegExp(`\\b${lane.rawLabel}\\b`, "i") })
+      .filter({ hasText: new RegExp(`(?:CHF\\s*)?${priceRe}`) })
+      .first();
+    if (await card.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await card.click().catch(() => undefined);
+      return true;
+    }
+  }
+  // Date-only cards: click by price when rawLabel is Standard/Express from date-tier inference
+  const byPrice = page
+    .locator("button,label,div[role=button],div[role=radio],div,li")
+    .filter({ hasText: new RegExp(`(?:CHF\\s*)?${priceRe}`) })
     .first();
-  if (await card.isVisible({ timeout: 2500 }).catch(() => false)) {
-    await card.click().catch(() => undefined);
+  if (await byPrice.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await byPrice.click().catch(() => undefined);
     return true;
   }
   const byName = page.getByRole("button", { name: new RegExp(lane.rawLabel, "i") }).first();
-  if (await byName.isVisible({ timeout: 1000 }).catch(() => false)) {
+  if (await byName.isVisible({ timeout: 800 }).catch(() => false)) {
     await byName.click().catch(() => undefined);
     return true;
   }
   return false;
+}
+
+/**
+ * Click lane + require checkout subtotal ≈ picked all-in (fail closed).
+ * LIVE price only — never invent cost from confirm OCR.
+ */
+export async function selectAndVerifyStockxLane(
+  page: Page,
+  options:
+    | { policy: "desired"; desired: StockxDesiredLane; maxAllInChf?: number }
+    | { policy: "galaxus_csat"; sellChf: number; maxAllInChf?: number }
+): Promise<
+  | { ok: true; lane: StockxLaneCard; lanes: StockxLaneCard[]; pickReason: string; subtotalChf: number }
+  | { ok: false; reason: string; lanes: StockxLaneCard[]; detail?: string }
+> {
+  const maxAllInChf = options.maxAllInChf ?? MAX_ALL_IN_CHF;
+  const body = await page.locator("body").innerText().catch(() => "");
+  const lanes = await parseLanesFromPage(page);
+  const tiersInText = countDistinctShippingTierInText(body, maxAllInChf);
+
+  let picked: StockxLaneCard | null = null;
+  let pickReason = "";
+
+  if (options.policy === "galaxus_csat") {
+    const pick = chooseLaneByCsAtMargin(options.sellChf, lanes, {
+      maxAllInChf,
+      shippingTierInText: tiersInText,
+    });
+    if (!pick.ok) {
+      return { ok: false, reason: pick.reason, lanes, detail: pick.detail };
+    }
+    picked = pick.lane;
+    pickReason = pick.reason;
+  } else {
+    const pick = chooseLane(options.desired, lanes, maxAllInChf);
+    if (!pick.ok) {
+      return { ok: false, reason: pick.reason, lanes };
+    }
+    picked = pick.lane;
+    pickReason = `desired:${options.desired}`;
+  }
+
+  const clicked = await clickLaneCard(page, picked);
+  await page.waitForTimeout(900);
+  const after = await page.locator("body").innerText().catch(() => "");
+  const subtotalChf = extractCheckoutSubtotalChf(after);
+
+  // Click may no-op if already selected — subtotal must still match picked lane.
+  if (subtotalChf == null || !laneMatchesSubtotal(picked, subtotalChf)) {
+    return {
+      ok: false,
+      reason: clicked ? "price_moved" : "express_unparsed",
+      lanes,
+      detail: `lane not verified pick=${picked.totalChf} subtotal=${subtotalChf} clicked=${clicked} (${pickReason})`,
+    };
+  }
+
+  return { ok: true, lane: picked, lanes, pickReason, subtotalChf };
 }
 
 async function resolveSlugFromSku(sku: string): Promise<string | null> {
@@ -445,13 +530,20 @@ async function launchStockxContext() {
 }
 
 function parseCheckoutTotals(text: string) {
+  const subtotal = extractCheckoutSubtotalChf(text);
   const amounts = extractChfAmounts(text);
-  const totalMatch = text.match(/Total\s+(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
-  const totalChf = moneyToNumber(totalMatch?.[1] ?? null) ?? amounts[amounts.length - 1] ?? null;
+  const totalMatch =
+    text.match(/Total(?:\s*Price)?\s+CHF\s*(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)/i) ||
+    text.match(/Total(?:\s*Price)?\s+(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i) ||
+    text.match(/Total\s*à\s*payer\s+(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
+  const totalChf =
+    moneyToNumber(totalMatch?.[1] ?? null) ?? subtotal ?? amounts[amounts.length - 1] ?? null;
   const itemMatch = text.match(/Prix d['’]achat\s+(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
   const feeMatch = text.match(/Traitement[^\d]*(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
   const shipMatch = text.match(/Livraison[^\d]*(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
-  const etaMatch = text.match(/Recevez votre commande d['’]ici le\s*([^\n]+)/i);
+  const etaMatch =
+    text.match(/Recevez votre commande d['’]ici le\s*([^\n]+)/i) ||
+    text.match(/Arriv(?:e|es|al)[^\n]{0,20}?([^\n]{3,40})/i);
   return {
     totalChf,
     itemChf: moneyToNumber(itemMatch?.[1] ?? null),
@@ -515,12 +607,14 @@ export async function previewStockxCheckout(options: {
     await page.waitForTimeout(4500);
     await dismissNoise(page);
 
-    const lanes = await parseLanesFromPage(page);
-    const pick = chooseLane(desiredLane, lanes, maxAllInChf);
-    if (pick.ok) {
-      await clickLaneCard(page, pick.lane);
-      await page.waitForTimeout(1000);
-    }
+    const selected = await selectAndVerifyStockxLane(page, {
+      policy: "desired",
+      desired: desiredLane,
+      maxAllInChf,
+    });
+    const lanes = selected.lanes;
+    const pickOk = selected.ok;
+    const pickLane = selected.ok ? selected.lane : null;
 
     if (await clickReviewOrder(page)) {
       await page.waitForTimeout(4500);
@@ -534,7 +628,10 @@ export async function previewStockxCheckout(options: {
 
     const text = await page.locator("body").innerText().catch(() => "");
     const totals = parseCheckoutTotals(text);
-    const totalChf = totals.totalChf ?? (pick.ok ? pick.lane.totalChf : null);
+    const totalChf =
+      totals.totalChf ??
+      (selected.ok ? selected.subtotalChf : null) ??
+      (pickLane?.totalChf ?? null);
 
     await page.screenshot({ path: shotAbs, fullPage: true }).catch(() => undefined);
     let screenshotDataUrl: string | null = null;
@@ -560,13 +657,13 @@ export async function previewStockxCheckout(options: {
       buyUrl: page.url(),
       desiredLane,
       shopifyExpress,
-      lane: pick.ok ? pick.lane.label : "UNKNOWN",
+      lane: pickOk && pickLane ? pickLane.label : "UNKNOWN",
       lanes,
       itemChf: totals.itemChf,
       feesChf: totals.feesChf,
       shippingChf: totals.shippingChf,
       totalChf,
-      eta: totals.eta || (pick.ok ? pick.lane.eta ?? null : null),
+      eta: totals.eta || (pickLane?.eta ?? null),
       payButton: payText,
       withinCap: totalChf != null && totalChf <= maxAllInChf,
       marginOk: marginOk(shopify.saleChf, totalChf),
@@ -635,19 +732,26 @@ export async function confirmStockxCheckout(options: {
     await page.waitForTimeout(4000);
     await dismissNoise(page);
 
-    const lanes = await parseLanesFromPage(page);
-    const pick = chooseLane(preview.desiredLane || "STANDARD", lanes, preview.maxAllInChf);
-    if (pick.ok) await clickLaneCard(page, pick.lane);
+    const selected = await selectAndVerifyStockxLane(page, {
+      policy: "desired",
+      desired: preview.desiredLane || "STANDARD",
+      maxAllInChf: preview.maxAllInChf,
+    });
+    if (!selected.ok) {
+      error = `Lane verify failed: ${selected.reason}${selected.detail ? ` (${selected.detail})` : ""}`;
+    }
 
-    if (await clickReviewOrder(page)) {
+    if (!error && (await clickReviewOrder(page))) {
       await page.waitForTimeout(4000);
     }
 
     const text = await page.locator("body").innerText().catch(() => "");
-    const liveTotal = parseCheckoutTotals(text).totalChf;
-    if (liveTotal == null || Math.abs(liveTotal - preview.totalChf) > 0.5) {
+    const liveTotal =
+      parseCheckoutTotals(text).totalChf ??
+      (selected.ok ? selected.subtotalChf : null);
+    if (!error && (liveTotal == null || Math.abs(liveTotal - preview.totalChf) > 0.5)) {
       error = `Live total changed (preview ${preview.totalChf}, live ${liveTotal})`;
-    } else {
+    } else if (!error) {
       const pay = page.getByRole("button", { name: /Passer commande|Place Order/i }).first();
       if (!(await pay.isVisible({ timeout: 8000 }).catch(() => false))) {
         error = "Place Order button not found";
@@ -858,16 +962,27 @@ export async function runStockxAutoCheckoutForOrder(options: {
     await page.waitForTimeout(4500);
     await dismissNoise(page);
 
-    const lanes = await parseLanesFromPage(page);
-    const pick = chooseLane(desiredLane, lanes, maxAllInChf);
-    if (!pick.ok) {
+    const selected = await selectAndVerifyStockxLane(page, {
+      policy: "desired",
+      desired: desiredLane,
+      maxAllInChf,
+    });
+    const lanes = selected.lanes;
+    if (!selected.ok) {
       const cheapest =
         [...lanes].sort((a, b) => a.totalChf - b.totalChf)[0] ?? null;
-      return fail(pick.reason, { lanes, recommended: cheapest });
+      const reason = (
+        ["oos", "multi_price", "wrong_lane_only", "cap", "express_unparsed", "price_moved", "bot_fail"] as const
+      ).includes(selected.reason as any)
+        ? (selected.reason as StockxNeedsHumanReason)
+        : "bot_fail";
+      return fail(reason, {
+        lanes,
+        recommended: cheapest,
+        detail: selected.detail ?? selected.reason,
+      });
     }
-
-    await clickLaneCard(page, pick.lane);
-    await page.waitForTimeout(800);
+    const pick = { ok: true as const, lane: selected.lane };
 
     if (!(await clickReviewOrder(page))) {
       return fail("bot_fail", {
@@ -880,7 +995,8 @@ export async function runStockxAutoCheckoutForOrder(options: {
 
     const text = await page.locator("body").innerText().catch(() => "");
     const totals = parseCheckoutTotals(text);
-    const totalChf = totals.totalChf ?? pick.lane.totalChf;
+    // Pre-pay LIVE total only — never OCR confirm screen for cost.
+    const totalChf = totals.totalChf ?? selected.subtotalChf;
 
     if (totalChf == null || totalChf > maxAllInChf) {
       return fail("cap", {
