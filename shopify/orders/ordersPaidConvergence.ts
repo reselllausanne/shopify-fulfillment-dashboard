@@ -23,6 +23,15 @@ export type OrderPaidLineItem = {
 export type OrderPaidPayload = {
   id?: number | string;
   admin_graphql_api_id?: string;
+  created_at?: string;
+  processed_at?: string;
+  total_price?: string | number;
+  current_total_price?: string | number;
+  currency?: string;
+  payment_gateway_names?: string[];
+  landing_site?: string | null;
+  referring_site?: string | null;
+  note_attributes?: Array<{ name?: string; value?: string | null }>;
   line_items?: OrderPaidLineItem[];
 };
 
