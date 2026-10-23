@@ -6,6 +6,10 @@ import { calcGalaxusStxSellFromSourceCost, getDefaultPricing } from "@/galaxus/e
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { accumulateBestCandidates, filterExportCandidates } from "@/galaxus/exports/gtinSelection";
 import {
+  applyListingAliasToCandidates,
+  loadGalaxusListingIdentities,
+} from "@/galaxus/exports/listingAlias";
+import {
   buildGalaxusAlternativeOfferRows,
   filterAlternativeProducts,
   loadAlternativeProductsForExport,
@@ -192,7 +196,7 @@ export async function GET(request: Request) {
     seenProviderKeys.add(key);
     return true;
   });
-  const { valid: exportCandidates, invalidSupplierVariantIds } = filterExportCandidates(uniqueCandidates);
+  const { valid: filteredCandidates, invalidSupplierVariantIds } = filterExportCandidates(uniqueCandidates);
   if (invalidSupplierVariantIds.length > 0) {
     return NextResponse.json(
       {
@@ -203,6 +207,17 @@ export async function GET(request: Request) {
       { status: 409 }
     );
   }
+  // Remapped GTINs: price the ProviderKey Galaxus already ingested (no re-ingest).
+  const listingIdentities = await loadGalaxusListingIdentities(
+    filteredCandidates.map((c: any) => ({
+      supplierVariantId: c?.variant?.supplierVariantId ?? c?.mapping?.supplierVariantId,
+      providerKey: c?.providerKey,
+    }))
+  );
+  const { candidates: exportCandidates } = applyListingAliasToCandidates(
+    filteredCandidates,
+    listingIdentities
+  );
   const stockBySupplierVariantId = await attachAvailableStock(
     exportCandidates
       .map((candidate: any) => candidate?.variant)

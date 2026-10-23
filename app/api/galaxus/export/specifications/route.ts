@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toCsv } from "@/galaxus/exports/csv";
 import { accumulateBestCandidates, filterExportCandidates } from "@/galaxus/exports/gtinSelection";
+import { loadGalaxusListingIdentities } from "@/galaxus/exports/listingAlias";
 import {
   buildGalaxusAlternativeSpecRows,
   filterAlternativeProducts,
@@ -148,7 +149,7 @@ export async function GET(request: Request) {
   } while (all && lastBatch === pageSize);
 
   const candidates = Array.from(bestByGtin.values());
-  const { valid: exportCandidates, invalidSupplierVariantIds } = filterExportCandidates(candidates);
+  const { valid: filteredCandidates, invalidSupplierVariantIds } = filterExportCandidates(candidates);
   if (invalidSupplierVariantIds.length > 0 && !report) {
     return NextResponse.json(
       {
@@ -159,6 +160,19 @@ export async function GET(request: Request) {
       { status: 409 }
     );
   }
+  // Same as master: do not attach specs under a remapped ProviderKey Galaxus never ingested.
+  const listingIdentities = await loadGalaxusListingIdentities(
+    filteredCandidates.map((c: any) => ({
+      supplierVariantId: c?.variant?.supplierVariantId ?? c?.mapping?.supplierVariantId,
+      providerKey: c?.providerKey,
+    }))
+  );
+  const exportCandidates = filteredCandidates.filter((c: any) => {
+    const svId = String(c?.variant?.supplierVariantId ?? c?.mapping?.supplierVariantId ?? "").trim();
+    const identity = svId ? listingIdentities.get(svId) : undefined;
+    if (!identity?.isAlias) return true;
+    return String(c?.providerKey ?? "") === identity.listingProviderKey;
+  });
   const specStats = {
     exportable: exportCandidates.length,
     withSpecs: 0,
