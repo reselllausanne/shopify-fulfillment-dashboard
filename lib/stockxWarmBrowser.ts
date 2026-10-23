@@ -6,6 +6,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser, type BrowserContext } from "playwright";
 import { isChromeUsingProfile, killChromeForUserDataDir } from "@/lib/stockxBrowserProcess";
+import {
+  nextStockxPlaywrightProxy,
+  stockxBrowserProxyMode,
+} from "@/lib/stockxPlaywrightProxy";
 
 const DATA_DIR = path.join(process.cwd(), ".data");
 
@@ -123,6 +127,12 @@ export async function launchWarmPersistentContext(options: LaunchWarmOptions): P
     options.userAgent ||
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
 
+  // Optional residential proxy when STOCKX_BROWSER_PROXY_MODE=always (CF clearer than VPS IP).
+  // on_fail leaves warm on direct IP; remint falls back to ephemeral proxy path instead.
+  const proxy =
+    stockxBrowserProxyMode() === "always" ? nextStockxPlaywrightProxy() : null;
+  if (proxy) console.log(`[STOCKX-WARM] launch proxy=${proxy.label}`);
+
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: false,
     args: [
@@ -137,6 +147,15 @@ export async function launchWarmPersistentContext(options: LaunchWarmOptions): P
     timezoneId: "Europe/Zurich",
     viewport: { width: 1440, height: 900 },
     userAgent,
+    ...(proxy
+      ? {
+          proxy: {
+            server: proxy.server,
+            username: proxy.username,
+            password: proxy.password,
+          },
+        }
+      : {}),
     env: {
       ...process.env,
       DISPLAY: process.env.DISPLAY || ":99",

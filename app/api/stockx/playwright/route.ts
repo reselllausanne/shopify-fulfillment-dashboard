@@ -30,6 +30,10 @@ import {
   writeWarmState,
   type StockxWarmAccount,
 } from "@/lib/stockxWarmBrowser";
+import {
+  nextStockxPlaywrightProxy,
+  stockxBrowserProxyMode,
+} from "@/lib/stockxPlaywrightProxy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -309,10 +313,28 @@ export async function POST(req: NextRequest) {
     if (!process.env.DISPLAY) {
       process.env.DISPLAY = ":99";
     }
+    // Optional residential proxy on cold launch (not warm CDP attach — that browser already has its own net).
+    // Prefer STOCKX_PROXY_* / SCRAPER pool when STOCKX_BROWSER_PROXY_MODE=always or body.useProxy.
+    const wantProxy =
+      Boolean(body?.useProxy) || stockxBrowserProxyMode() === "always";
+    const playwrightProxy = wantProxy ? nextStockxPlaywrightProxy() : null;
+    if (playwrightProxy) {
+      console.log(`[STOCKX-PW] launch proxy=${playwrightProxy.label}`);
+    }
+
     const launchOptions = {
       headless,
       slowMo: headless ? 0 : 50,
       args: baseArgs,
+      ...(playwrightProxy
+        ? {
+            proxy: {
+              server: playwrightProxy.server,
+              username: playwrightProxy.username,
+              password: playwrightProxy.password,
+            },
+          }
+        : {}),
       env: {
         ...process.env,
         DISPLAY: process.env.DISPLAY || ":99",
