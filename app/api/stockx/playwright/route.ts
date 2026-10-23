@@ -494,7 +494,7 @@ export async function POST(req: NextRequest) {
       }
     });
 
-    const page = await context.newPage();
+    let page = await context.newPage();
     page.on("console", (msg) => {
       const text = msg.text();
       if (text) consoleLogs.push(text);
@@ -572,7 +572,8 @@ export async function POST(req: NextRequest) {
         });
         await probeCookiesForToken();
         cookieWarm = await waitForCookieSessionWarm(page, {
-          timeoutMs: 90_000,
+          // Headed Xvfb often needs a long Turnstile sit; Auth0 cookies stay valid meanwhile.
+          timeoutMs: 150_000,
           hasToken: () => Boolean(capturedToken),
         });
         await probeCookiesForToken();
@@ -661,13 +662,29 @@ export async function POST(req: NextRequest) {
         `[STOCKX-PW] Silent remint (warm=${cookieWarm} auth0=${hasAuth0Session}) — soft URLs only, no /login`
       );
       await clearStockxForceLoginTransactions(context);
-      const silentDeadline = Date.now() + 75_000;
+      const silentDeadline = Date.now() + 120_000;
       while (!capturedToken && Date.now() < silentDeadline) {
-        await softNavigateForSilentRemint(page, {
-          hasToken: () => Boolean(capturedToken),
-          perUrlWaitMs: 4_000,
-        });
-        await probeCookiesForToken();
+        try {
+          if (page.isClosed()) {
+            console.warn("[STOCKX-PW] Soft remint page closed — opening new tab on same profile");
+            page = await context.newPage();
+          }
+          await softNavigateForSilentRemint(page, {
+            hasToken: () => Boolean(capturedToken),
+            perUrlWaitMs: 5_000,
+          });
+          await probeCookiesForToken();
+        } catch (err: any) {
+          const msg = String(err?.message || err);
+          console.warn("[STOCKX-PW] Soft remint iteration error", msg);
+          if (/has been closed|Target page|browser has been closed/i.test(msg)) {
+            try {
+              page = await context.newPage();
+            } catch {
+              break;
+            }
+          }
+        }
         if (capturedToken) break;
       }
       await logAuthCookieSummary("post-silent");
@@ -675,7 +692,7 @@ export async function POST(req: NextRequest) {
         console.log("[STOCKX-PW] Silent remint succeeded after soft Auth0 wait");
       } else if (hasAuth0Session) {
         autoLoginError =
-          "Auth0/session cookies still present but JWT was not reminted. Do NOT burn /login — use /admin/stockx-login once.";
+          "Auth0/session cookies still present but JWT was not reminted (Turnstile/cold browser). Do NOT burn /login — use /admin/stockx-login once.";
         console.warn(`[STOCKX-PW] ${autoLoginError}`);
       }
     }
