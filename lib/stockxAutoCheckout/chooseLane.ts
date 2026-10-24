@@ -21,6 +21,14 @@ const LANE_LABEL_RE = String.raw`(Standard|Express|Xpress|Fastest|Expedited)`;
 /** Default StockX express→expedited upgrade thresholds (env-overridable). */
 export const EXPEDITED_UPGRADE_MAX_PCT_DEFAULT = 0.05;
 export const EXPEDITED_UPGRADE_MAX_DELTA_CHF_DEFAULT = 10;
+/**
+ * STANDARD → faster-lane (EXPRESS/EXPEDITED) upgrade. A customer who paid for standard
+ * is strictly better off on a faster lane when it costs about the same, and when NO
+ * standard lane exists we must still buy (take the faster lane) rather than refuse.
+ * Upgrade-by-preference is bounded by pct/delta; "standard missing" always takes faster.
+ */
+export const STANDARD_UPGRADE_MAX_PCT_DEFAULT = 0.05;
+export const STANDARD_UPGRADE_MAX_DELTA_CHF_DEFAULT = 10;
 
 function envNum(name: string, def: number): number {
   const v = process.env[name];
@@ -283,6 +291,10 @@ export function chooseLane(
     expeditedUpgradeMaxPct?: number;
     /** …or if (expedited-normal) <= delta CHF. Default env STOCKX_EXPEDITED_UPGRADE_MAX_DELTA_CHF. */
     expeditedUpgradeMaxDeltaChf?: number;
+    /** STANDARD→faster accepted if faster <= standard*(1+pct). Default env STOCKX_STANDARD_UPGRADE_MAX_PCT. */
+    standardUpgradeMaxPct?: number;
+    /** …or if (faster-standard) <= delta CHF. Default env STOCKX_STANDARD_UPGRADE_MAX_DELTA_CHF. */
+    standardUpgradeMaxDeltaChf?: number;
   }
 ): ChooseLaneResult {
   if (!lanes.length) return { ok: false, reason: "oos", lane: null };
@@ -330,22 +342,47 @@ export function chooseLane(
     return { ok: true, lane: cheapestExpedited! };
   }
 
-  // desired === "STANDARD" — never escalate to EXPRESS / EXPEDITED.
-  const desiredUnderCap = underCap.filter((l) => l.label === "STANDARD");
+  // desired === "STANDARD" — a faster lane is strictly better service for the customer,
+  // so UPGRADE to EXPRESS/EXPEDITED when it is ~same price, and when NO standard lane
+  // exists take the faster lane rather than refusing (never go slower than standard).
+  // Still bounded by the all-in cap here + the margin gate downstream.
+  const stdPct =
+    opts?.standardUpgradeMaxPct ??
+    envNum("STOCKX_STANDARD_UPGRADE_MAX_PCT", STANDARD_UPGRADE_MAX_PCT_DEFAULT);
+  const stdDelta =
+    opts?.standardUpgradeMaxDeltaChf ??
+    envNum("STOCKX_STANDARD_UPGRADE_MAX_DELTA_CHF", STANDARD_UPGRADE_MAX_DELTA_CHF_DEFAULT);
 
-  if (desiredUnderCap.length === 0) {
-    const desiredAny = lanes.filter((l) => l.label === "STANDARD");
-    if (desiredAny.length > 0) return { ok: false, reason: "cap", lane: null };
-    const otherUnderCap = underCap.filter((l) => isExpressFamily(l.label));
-    if (otherUnderCap.length > 0) return { ok: false, reason: "wrong_lane_only", lane: null };
+  const standards = underCap
+    .filter((l) => l.label === "STANDARD")
+    .sort((a, b) => a.totalChf - b.totalChf);
+  const fasterUnderCap = underCap
+    .filter((l) => isExpressFamily(l.label))
+    .sort((a, b) => a.totalChf - b.totalChf);
+
+  if (standards.length === 0) {
+    // No standard lane: take the cheapest faster lane under cap (don't refuse the buy).
+    if (fasterUnderCap.length > 0) return { ok: true, lane: fasterUnderCap[0]! };
+    const standardAny = lanes.filter((l) => l.label === "STANDARD");
+    if (standardAny.length > 0) return { ok: false, reason: "cap", lane: null };
+    // Nothing standard anywhere, nothing faster under cap → over-cap express or OOS.
+    if (lanes.some((l) => isExpressFamily(l.label))) return { ok: false, reason: "cap", lane: null };
     return { ok: false, reason: "oos", lane: null };
   }
 
-  const priceKeys = new Set(desiredUnderCap.map((l) => l.totalChf.toFixed(2)));
+  const priceKeys = new Set(standards.map((l) => l.totalChf.toFixed(2)));
   if (priceKeys.size > 1) return { ok: false, reason: "multi_price", lane: null };
 
-  const lane = [...desiredUnderCap].sort((a, b) => a.totalChf - b.totalChf)[0]!;
-  return { ok: true, lane };
+  const chosenStd = standards[0]!;
+  // Upgrade to a faster lane if it costs about the same (few CHF / small %).
+  const cheapestFaster = fasterUnderCap[0] ?? null;
+  if (cheapestFaster) {
+    const upgrade =
+      cheapestFaster.totalChf <= chosenStd.totalChf * (1 + stdPct) ||
+      cheapestFaster.totalChf - chosenStd.totalChf <= stdDelta;
+    if (upgrade) return { ok: true, lane: cheapestFaster };
+  }
+  return { ok: true, lane: chosenStd };
 }
 
 export type ChooseGalaxusLaneResult =
