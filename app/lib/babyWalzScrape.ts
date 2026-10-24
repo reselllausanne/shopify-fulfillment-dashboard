@@ -78,7 +78,14 @@ function formatBabyWalzNote(product: BabyWalzProduct) {
     parcelClass: product.parcel.parcelClass,
     shipChf: product.parcel.shipChf,
     parcelSource: product.parcel.source ?? null,
-    stockSource: "nuxt_variant_stock.quantity",
+    nuxtQty: product.nuxtQty,
+    usedDefaultStock: product.usedDefaultStock,
+    stockSource:
+      product.nuxtQty != null
+        ? "nuxt_variant_stock.quantity"
+        : product.usedDefaultStock
+          ? "default_stock_rejected"
+          : "no_nuxt_qty",
     buyPriceSource: "nuxt_variant_price.withTax",
   });
 }
@@ -155,14 +162,19 @@ export async function scrapeBabyWalzShop(
     const queueImage = !deferBabyWalzImageSync() && needsImageHosting(existing, product.imageUrl);
     const now = new Date();
     const decision = decideBwzPublishedQty({
-      nuxtQty: product.stock,
-      inStock: product.stock > 0,
+      nuxtQty: product.nuxtQty,
+      inStock: product.inStock,
       name: product.name,
       productType: product.productType,
       url: product.productUrl,
       sku: product.sku,
     });
-    const stockWrite = mayMutateMarketplaceStock() ? decision.proposedQty : undefined;
+    // Observation-only: normally freeze SV.stock. Still repair absurd/gutschein frozen rows
+    // so dashboard + non-evidence readers stop showing million-qty gift cards / warehouse dumps.
+    const existingStock = Number(existing?.stock ?? 0) || 0;
+    const repairAbsurd = decision.excluded || existingStock > 12;
+    const stockWrite =
+      mayMutateMarketplaceStock() || repairAbsurd ? decision.proposedQty : undefined;
     recordBwzObservation(
       {
         productUrl: product.productUrl,
@@ -171,8 +183,9 @@ export async function scrapeBabyWalzShop(
         productName: product.name,
         productType: product.productType,
         priceChf: product.priceChf,
-        nuxtQty: product.stock,
-        inStock: product.stock > 0,
+        nuxtQty: product.nuxtQty,
+        inStock: product.inStock,
+        usedDefaultStock: product.usedDefaultStock,
       },
       { scrapeRunId: runId, observedAt: now }
     );

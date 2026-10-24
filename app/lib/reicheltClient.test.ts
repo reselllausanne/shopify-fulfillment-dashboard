@@ -178,7 +178,7 @@ describe("computeReicheltShippingEur", () => {
 });
 
 describe("computeReicheltLandedCost", () => {
-  it("adds shipping and 30% margin", () => {
+  it("petit colis ≤10kg → flat CHF 2 ship (not full DPD ~10 EUR)", () => {
     const cost = computeReicheltLandedCost({
       priceChf: 3.2,
       priceEur: 2.95,
@@ -187,9 +187,24 @@ describe("computeReicheltLandedCost", () => {
     });
     expect(cost).not.toBeNull();
     expect(cost?.productChf).toBe(3.2);
-    expect(cost?.shippingEur).toBe(10.21);
-    expect(cost?.landedChf).toBeGreaterThan(12);
-    expect(cost?.sellPriceChf).toBe(Math.round(cost!.landedChf * 1.3 * 100) / 100);
+    expect(cost?.shippingChf).toBe(2);
+    expect(cost?.landedChf).toBe(5.2);
+    // Cheap floor: buy <10 → sell ≥ landed+5
+    expect(cost?.sellPriceChf).toBe(Math.max(Math.round(5.2 * 1.3 * 100) / 100, 10.2));
+  });
+
+  it("keeps real DPD ship for >10kg parcels", () => {
+    const cost = computeReicheltLandedCost({
+      priceChf: 74.18,
+      priceEur: 79.12,
+      weightGrams: 15_000,
+      marginPercent: 30,
+    });
+    expect(cost).not.toBeNull();
+    expect(cost!.weightGrams).toBe(15_000);
+    expect(cost!.shippingEur).toBe(15.59);
+    expect(cost!.shippingChf).toBeGreaterThan(10);
+    expect(cost!.shippingChf).not.toBe(2);
   });
 
   it("does not bake 121kg ship into Brio-class SKUs", () => {
@@ -207,7 +222,7 @@ describe("computeReicheltLandedCost", () => {
     expect(cost!.sellPriceChf).toBeGreaterThan(100);
   });
 
-  it("uses packaging-scale weight when provided", () => {
+  it("uses packaging-scale weight when provided (still petit colis → CHF 2)", () => {
     const cost = computeReicheltLandedCost({
       priceChf: 74.18,
       priceEur: 79.12,
@@ -216,7 +231,7 @@ describe("computeReicheltLandedCost", () => {
       weightKind: "packaging",
     });
     expect(cost!.weightGrams).toBe(200);
-    expect(cost!.shippingEur).toBe(10.21);
+    expect(cost!.shippingChf).toBe(2);
     expect(cost!.sellPriceChf).toBeLessThan(120);
   });
 

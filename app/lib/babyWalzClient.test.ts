@@ -216,7 +216,9 @@ describe("parseBabyWalzProductHtml", () => {
     expect(products[0]?.gtin).toBe("5702017813967");
     expect(products[0]?.gtinSource).toBe("gtin13");
     expect(products[0]?.priceChf).toBe(45.95);
+    expect(products[0]?.nuxtQty).toBe(4);
     expect(products[0]?.stock).toBe(4);
+    expect(products[0]?.usedDefaultStock).toBe(false);
     expect(products[0]?.inStock).toBe(true);
     expect(products[0]?.brand).toBe("LEGO®");
     expect(products[0]?.name).toBe("43257 Angel");
@@ -287,7 +289,165 @@ describe("parseBabyWalzProductHtml", () => {
     )}</script>`;
     const products = parseBabyWalzProductHtml(html, SAMPLE_URL);
     expect(products).toHaveLength(1);
+    expect(products[0]?.nuxtQty).toBe(0);
     expect(products[0]?.stock).toBe(0);
     expect(products[0]?.inStock).toBe(false);
+  });
+
+  it("buyable with missing Nuxt qty → nuxtQty null, stock 0 (never invent defaultStock=5)", () => {
+    // Same shape as the happy-path fixture; quantity slot (index 164) set to null.
+    const payload = [
+      ["ShallowReactive", 1],
+      {
+        data: 2,
+        state: -1,
+        once: -1,
+        _errors: -1,
+        serverRendered: 3,
+        path: 4,
+        pinia: -1,
+      },
+      ["ShallowReactive", 5],
+      true,
+      "/de/p/lego-43257-angel-8409994/",
+      { "product:8409994": 6 },
+      { product: 7, detail: -1, variantDetails: 8 },
+      {
+        id: 9,
+        referenceKey: 10,
+        seoUrl: 11,
+        isActive: 3,
+        isSoldOut: 12,
+        isNew: 12,
+        sale: 12,
+        masterKey: 13,
+        name: 14,
+        brand: 15,
+        artikelThema: -1,
+        collections: -1,
+        images: 16,
+        downloadAssets: -1,
+        promo: -1,
+        categories: -1,
+        variants: 17,
+        siblings: -1,
+        attributes: -1,
+        advancedAttributes: -1,
+        priceRange: -1,
+        sequence: -1,
+        breadcrumbs: 18,
+      },
+      { "8409994": 19 },
+      892396,
+      "8409994",
+      "/p/lego-43257-angel-8409994/",
+      false,
+      "P1841350",
+      "43257 Angel",
+      "LEGO®",
+      [20],
+      [21],
+      [22],
+      {
+        stock: 23,
+        kqpri: -1,
+        isBulkyOrLoad: 12,
+        badges: -1,
+        priceOptions: -1,
+        attributes: -1,
+        advancedAttributes: 24,
+        description: -1,
+        manufacturer: -1,
+        warnings: -1,
+        careHints: -1,
+        customization: -1,
+        contentChecks: -1,
+      },
+      { src: 25, name: 26, displayLocales: -1 },
+      {
+        id: 27,
+        referenceKey: 10,
+        price: 28,
+        KQPRI: -1,
+        stock: 23,
+        isProductBuyable: 3,
+        isProductAdvisible: 3,
+        isValid: 3,
+        attributes: 29,
+        advancedAttributes: -1,
+      },
+      { label: 30, to: 31 },
+      {
+        supplierId: 32,
+        warehouseId: 33,
+        quantity: 34,
+        isSellableWithoutStock: 12,
+        expectedAvailabilityAt: -1,
+      },
+      { asGro: 35 },
+      "images/4efa772d9defdeaddb300a1f7dcdf346.jpg",
+      "8409994_03.jpg",
+      3799681,
+      {
+        currencyCode: 36,
+        withTax: 37,
+        withoutTax: 38,
+        beforeSaleWithTax: 39,
+        recommendedRetailPrice: 39,
+        tax: -1,
+        appliedReductions: -1,
+        totalAppliedReductions: -1,
+        reductionsRelativeTo: -1,
+      },
+      { ean: 40, bulkyOrLoad: -1, isSale: -1 },
+      "Spielzeug",
+      "/de/spielzeug",
+      1,
+      457,
+      null, // was 4 — missing qty must not invent defaultStock
+      {
+        id: 41,
+        key: 42,
+        label: 43,
+        type: 44,
+        values: 45,
+      },
+      "CHF",
+      4595,
+      4251,
+      7490,
+      {
+        id: 46,
+        key: 47,
+        label: 47,
+        type: 48,
+        multiSelect: 12,
+        values: 49,
+      },
+      1516,
+      "asGro",
+      "Größe",
+      "advancedAttribute",
+      [{ fieldSet: 50, groupSet: 51 }],
+      20009,
+      "ean",
+      "string",
+      { id: 46, label: 47, value: 52 },
+      [53],
+      [],
+      "5702017813967",
+      [54],
+      { value: 55 },
+      "35",
+    ];
+    const html = `<script id="__NUXT_DATA__" type="application/json">${JSON.stringify(
+      payload
+    )}</script>`;
+    const products = parseBabyWalzProductHtml(html, SAMPLE_URL);
+    expect(products).toHaveLength(1);
+    expect(products[0]?.inStock).toBe(true);
+    expect(products[0]?.nuxtQty).toBeNull();
+    expect(products[0]?.stock).toBe(0);
+    expect(products[0]?.usedDefaultStock).toBe(false);
   });
 });

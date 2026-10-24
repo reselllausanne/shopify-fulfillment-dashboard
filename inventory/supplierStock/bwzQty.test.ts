@@ -7,8 +7,12 @@ describe("bwzQty", () => {
     expect(d.sourceQty).toBe(4);
     expect(d.proposedQty).toBe(2);
   });
-  it("N=34 → 17", () => {
-    expect(decideBwzPublishedQty({ nuxtQty: 34, inStock: true }).proposedQty).toBe(17);
+  it("N=34 → halfCeil 17 capped at 12", () => {
+    expect(decideBwzPublishedQty({ nuxtQty: 34, inStock: true }).proposedQty).toBe(12);
+    expect(decideBwzPublishedQty({ nuxtQty: 34, inStock: true }).reason).toBe("halfCeilCapped:34->12");
+  });
+  it("N=999 warehouse → still capped 12", () => {
+    expect(decideBwzPublishedQty({ nuxtQty: 999, inStock: true }).proposedQty).toBe(12);
   });
   it("N=1 → 1", () => {
     expect(decideBwzPublishedQty({ nuxtQty: 1, inStock: true }).proposedQty).toBe(1);
