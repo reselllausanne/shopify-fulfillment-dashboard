@@ -1464,6 +1464,8 @@ export async function createAndOpenReturnFromFormData(
             ? ("paid" as const)
             : ("not_required" as const),
         publicBaseUrl: publicBaseUrl || null,
+        /** Unpaid Shopify order for price gap (not a draft — app lacks write_draft_orders). */
+        paymentOrder: exchangeDraft,
         draftOrder: exchangeDraft,
       }
     : undefined;

@@ -6,6 +6,7 @@ import {
   webhookSigningSecrets,
   type OrderPaidPayload,
 } from "@/shopify/orders/ordersPaidConvergence";
+import { tryCompleteExchangeReturnAfterOrderPaid } from "@/shopify/returns/exchangeReturnShipping";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,6 +75,18 @@ export async function POST(req: Request) {
     });
   }
 
+  let exchangeReturn:
+    | Awaited<ReturnType<typeof tryCompleteExchangeReturnAfterOrderPaid>>
+    | null = null;
+  try {
+    exchangeReturn = await tryCompleteExchangeReturnAfterOrderPaid(payload);
+  } catch (err: unknown) {
+    console.error("[shopify][webhook][orders-paid] exchange return after paid failed", {
+      orderId,
+      error: err instanceof Error ? err.message : err,
+    });
+  }
+
   console.info("[shopify][webhook][orders-paid] processed", {
     topic,
     shop,
@@ -84,6 +97,7 @@ export async function POST(req: Request) {
     changed: results.filter((r) => r.changed).length,
     errors: results.filter((r) => r.error).length,
     funnelBackup,
+    exchangeReturn,
   });
 
   return NextResponse.json({
@@ -92,6 +106,7 @@ export async function POST(req: Request) {
     gtins: gtins.length,
     results,
     funnelBackup,
+    exchangeReturn,
   });
 }
 

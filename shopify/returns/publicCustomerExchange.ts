@@ -82,13 +82,15 @@ query ExchangeVariantSnapshot($id: ID!) {
 }
 `;
 
-const DRAFT_ORDER_CREATE = /* GraphQL */ `
-mutation ExchangeDraftOrderCreate($input: DraftOrderInput!) {
-  draftOrderCreate(input: $input) {
-    draftOrder {
+/** App token has write_orders but NOT write_draft_orders — use unpaid order + status page. */
+const EXCHANGE_GAP_ORDER_CREATE = /* GraphQL */ `
+mutation ExchangeGapOrderCreate($order: OrderCreateOrderInput!) {
+  orderCreate(order: $order) {
+    order {
       id
       name
-      invoiceUrl
+      statusPageUrl
+      displayFinancialStatus
     }
     userErrors {
       field
@@ -454,66 +456,79 @@ export async function createExchangePriceDifferenceDraftOrder(input: {
   totalDue: number;
   note: string;
 }): Promise<{ draftOrderId: string; draftOrderName: string | null; invoiceUrl: string | null }> {
+  // Kept export name for createAndOpenReturn callers; implementation is orderCreate
+  // (write_draft_orders scope missing on this app).
   if (!Number.isFinite(input.totalDue) || input.totalDue <= 0) {
     return { draftOrderId: "", draftOrderName: null, invoiceUrl: null };
   }
 
+  const currency = String(input.currencyCode || "CHF").trim().toUpperCase() || "CHF";
   const { data, errors } = await shopifyGraphQL<{
-    draftOrderCreate?: {
-      draftOrder?: { id?: string; name?: string; invoiceUrl?: string | null } | null;
-      userErrors?: Array<{ message?: string | null }>;
+    orderCreate?: {
+      order?: {
+        id?: string;
+        name?: string;
+        statusPageUrl?: string | null;
+      } | null;
+      userErrors?: Array<{ message?: string | null; field?: string[] | null }>;
     };
-  }>(DRAFT_ORDER_CREATE, {
-    input: {
+  }>(EXCHANGE_GAP_ORDER_CREATE, {
+    order: {
       email: input.customerEmail,
-      customerId: input.customerId || undefined,
-      note: input.note,
+      currency,
+      financialStatus: "PENDING",
       tags: ["exchange-price-difference", "returns-portal"],
+      note: input.note,
       customAttributes: [
         { key: "source", value: "returns-portal-exchange" },
         { key: "original_order", value: input.orderName },
         { key: "return_name", value: input.returnName },
         { key: "shopify_return_id", value: input.shopifyReturnId },
+        ...(input.customerId
+          ? [{ key: "customer_id", value: input.customerId }]
+          : []),
       ],
       lineItems: [
         {
           title: `Écart échange (${input.returnName})`,
-          originalUnitPrice: input.totalDue.toFixed(2),
           quantity: 1,
+          priceSet: {
+            shopMoney: { amount: input.totalDue.toFixed(2), currencyCode: currency },
+          },
           taxable: false,
+          requiresShipping: false,
         },
       ],
-      presentmentCurrencyCode: input.currencyCode,
     },
   });
 
   if (errors?.length) {
     throw new ShopifyReturnRequestError(
       "SERVER_ERROR",
-      "Draft order for price difference failed",
+      "Payment order for price difference failed",
       502,
       errors
     );
   }
 
-  const userErrors = data?.draftOrderCreate?.userErrors ?? [];
+  const userErrors = data?.orderCreate?.userErrors ?? [];
   if (userErrors.length) {
     throw new ShopifyReturnRequestError(
       "SERVER_ERROR",
-      userErrors.map((e) => e.message).filter(Boolean).join("; ") || "Draft order failed",
+      userErrors.map((e) => e.message).filter(Boolean).join("; ") || "Payment order failed",
       502,
       userErrors
     );
   }
 
-  const draft = data?.draftOrderCreate?.draftOrder;
-  if (!draft?.id) {
-    throw new ShopifyReturnRequestError("SERVER_ERROR", "Draft order missing id", 502);
+  const order = data?.orderCreate?.order;
+  if (!order?.id) {
+    throw new ShopifyReturnRequestError("SERVER_ERROR", "Payment order missing id", 502);
   }
 
   return {
-    draftOrderId: draft.id,
-    draftOrderName: draft.name ?? null,
-    invoiceUrl: draft.invoiceUrl ?? null,
+    draftOrderId: order.id,
+    draftOrderName: order.name ?? null,
+    invoiceUrl: order.statusPageUrl ?? null,
   };
 }
