@@ -19,5 +19,11 @@ export function toPublicReturnsErrorMessage(
   if (error.code === "RETURN_POLICY_EXCLUDED") {
     return "These items cannot be returned online (sale/promo or price over CHF 650).";
   }
+  if (error.code === "ITEM_NOT_RETURNABLE") {
+    return "This line is not eligible for an exchange on this order.";
+  }
+  if (error.code === "SERVER_ERROR") {
+    return error.message || "Temporary server error. Try again in a moment.";
+  }
   return error.message || fallback;
 }

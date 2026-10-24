@@ -1,6 +1,12 @@
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
-import { generateShopifyReturnLabel } from "@/shopify/returns/label";
+import { attachShopifyReturnShippingLabel } from "@/shopify/returns/exchangeReturnShipping";
+import {
+  computeUnitPriceDelta,
+  createExchangePriceDifferenceDraftOrder,
+  snapshotReplacementVariant,
+  type PublicCustomerExchangeLine,
+} from "@/shopify/returns/publicCustomerExchange";
 import { fetchShopifyReturnLineItems } from "@/shopify/returns/returnLineItemsForReceipt";
 import { defaultReturnRestockingFeeInput } from "@/shopify/returns/restockingFee";
 import { parseStrictPublicOrderNumber } from "@/shopify/returns/publicOrderNumber";
@@ -15,11 +21,14 @@ import {
   type ReturnExcludeReason,
 } from "@/shopify/returns/returnEligibility";
 
+export type CustomerReturnIntent = "return" | "exchange";
+
 export type ReturnFormReason =
   | "WRONG_SIZE"
   | "WRONG_ITEM"
   | "DAMAGED"
   | "SIZE_CHANGE"
+  | "EXCHANGE_SIZE_OR_MODEL"
   | "CHANGE_OF_MIND"
   | "DEFECTIVE_ITEM"
   | "WRONG_ITEM_RECEIVED"
@@ -32,6 +41,7 @@ export type ShopifyReturnRequestInput = {
   customerProvidedEmail?: string;
   reason: ReturnFormReason | string;
   details: string;
+  intent?: CustomerReturnIntent | string;
   items?: Array<{
     fulfillmentLineItemId?: string;
     lineItemId?: string;
@@ -39,6 +49,7 @@ export type ShopifyReturnRequestInput = {
     quantity?: number;
     reason?: ReturnFormReason | string;
     details?: string;
+    replacementVariantId?: string;
   }>;
 };
 
@@ -71,6 +82,9 @@ type ReturnableLine = {
   quantity: number;
   title: string | null;
   sku: string | null;
+  variantId: string | null;
+  variantLabel: string | null;
+  imageUrl: string | null;
   lineItemId: string | null;
   unitAmount: number | null;
   currencyCode: string | null;
@@ -95,6 +109,7 @@ type NormalizedRequestedItem = {
   quantity: number;
   reason: string | null;
   details: string | null;
+  replacementVariantId: string | null;
 };
 
 export type ShopifyReturnableItem = {
@@ -102,6 +117,9 @@ export type ShopifyReturnableItem = {
   lineItemId: string | null;
   sku: string | null;
   title: string | null;
+  variantId: string | null;
+  variantLabel: string | null;
+  imageUrl: string | null;
   quantity: number;
   unitAmount: number | null;
   currencyCode: string | null;
@@ -168,6 +186,10 @@ query FulfilledLineItemsForOrder($orderId: ID!) {
               id
               title
               sku
+              variantTitle
+              image {
+                url(transform: { maxWidth: 128, maxHeight: 128 })
+              }
               originalUnitPriceSet {
                 shopMoney {
                   amount
@@ -176,7 +198,15 @@ query FulfilledLineItemsForOrder($orderId: ID!) {
               }
               variant {
                 id
+                title
                 compareAtPrice
+                selectedOptions {
+                  name
+                  value
+                }
+                image {
+                  url(transform: { maxWidth: 128, maxHeight: 128 })
+                }
                 delivery48h: metafield(namespace: "custom", key: "delivery_48h") {
                   value
                 }
@@ -186,6 +216,13 @@ query FulfilledLineItemsForOrder($orderId: ID!) {
                 product {
                   id
                   tags
+                  featuredMedia {
+                    preview {
+                      image {
+                        url(transform: { maxWidth: 128, maxHeight: 128 })
+                      }
+                    }
+                  }
                   collections(first: 20) {
                     nodes {
                       handle
@@ -218,6 +255,10 @@ query ReturnableFulfillmentsForOrder($orderId: ID!, $first: Int!) {
                   id
                   title
                   sku
+                  variantTitle
+                  image {
+                    url(transform: { maxWidth: 128, maxHeight: 128 })
+                  }
                   originalUnitPriceSet {
                     shopMoney {
                       amount
@@ -226,7 +267,15 @@ query ReturnableFulfillmentsForOrder($orderId: ID!, $first: Int!) {
                   }
                   variant {
                     id
+                    title
                     compareAtPrice
+                    selectedOptions {
+                      name
+                      value
+                    }
+                    image {
+                      url(transform: { maxWidth: 128, maxHeight: 128 })
+                    }
                     delivery48h: metafield(namespace: "custom", key: "delivery_48h") {
                       value
                     }
@@ -236,6 +285,13 @@ query ReturnableFulfillmentsForOrder($orderId: ID!, $first: Int!) {
                     product {
                       id
                       tags
+                      featuredMedia {
+                        preview {
+                          image {
+                            url(transform: { maxWidth: 128, maxHeight: 128 })
+                          }
+                        }
+                      }
                       collections(first: 20) {
                         nodes {
                           handle
@@ -368,6 +424,7 @@ const RETURN_REASON_LABELS: Record<string, string> = {
   WRONG_ITEM: "Wrong item",
   DAMAGED: "Damaged item",
   SIZE_CHANGE: "Changement de taille",
+  EXCHANGE_SIZE_OR_MODEL: "Echange taille ou modele",
   CHANGE_OF_MIND: "Changement d'avis",
   DEFECTIVE_ITEM: "Article recu defectueux",
   WRONG_ITEM_RECEIVED: "Mauvais article recu",
@@ -378,6 +435,7 @@ const RETURN_REASON_LABELS: Record<string, string> = {
 const RETURN_REASON_MAP: Record<string, string> = {
   WRONG_SIZE: "SIZE_TOO_SMALL",
   SIZE_CHANGE: "SIZE_TOO_SMALL",
+  EXCHANGE_SIZE_OR_MODEL: "SIZE_TOO_SMALL",
   WRONG_ITEM: "WRONG_ITEM",
   WRONG_ITEM_RECEIVED: "WRONG_ITEM",
   DAMAGED: "DEFECTIVE",
@@ -445,25 +503,89 @@ function orderNodeEmail(node: ShopifyOrderNode) {
   );
 }
 
+const SIZE_OPTION_NAME = /^(taille|size|größe|grosse|pointure)$/i;
+
+export function normalizeVariantSizeToken(value: string): string {
+  return value.trim().toLowerCase().replace(",", ".");
+}
+
+export function variantSizeTokensFromOptions(
+  selectedOptions?: Array<{ name?: string | null; value?: string | null } | null> | null
+): string[] {
+  const tokens: string[] = [];
+  for (const o of selectedOptions ?? []) {
+    const name = String(o?.name ?? "").trim();
+    const value = String(o?.value ?? "").trim();
+    if (!value) continue;
+    if (SIZE_OPTION_NAME.test(name)) {
+      tokens.push(normalizeVariantSizeToken(value));
+    }
+  }
+  return [...new Set(tokens.filter(Boolean))];
+}
+
+export function lineItemVariantLabel(
+  lineItem: {
+    sku?: string | null;
+    variantTitle?: string | null;
+    variant?: {
+      title?: string | null;
+      selectedOptions?: Array<{ name?: string | null; value?: string | null } | null> | null;
+    } | null;
+  } | null
+  | undefined
+): string | null {
+  for (const o of lineItem?.variant?.selectedOptions ?? []) {
+    const name = String(o?.name ?? "").trim();
+    const value = String(o?.value ?? "").trim();
+    if (value && SIZE_OPTION_NAME.test(name)) return value;
+  }
+  const variantTitle = String(lineItem?.variantTitle ?? "").trim();
+  if (variantTitle) return variantTitle;
+  const title = String(lineItem?.variant?.title ?? "").trim();
+  if (title && title !== "Default Title") return title;
+  const sku = String(lineItem?.sku ?? "").trim();
+  const fromSku = sku.match(/-(\d+(?:\.\d+)?)$/);
+  if (fromSku?.[1]) return fromSku[1];
+  return null;
+}
+
 type ReturnLineItemFields = {
   id?: string | null;
   title?: string | null;
   sku?: string | null;
+  variantTitle?: string | null;
+  image?: { url?: string | null } | null;
   originalUnitPriceSet?: {
     shopMoney?: { amount?: string | null; currencyCode?: string | null } | null;
   } | null;
   variant?: {
     id?: string | null;
+    title?: string | null;
+    selectedOptions?: Array<{ name?: string | null; value?: string | null } | null> | null;
     compareAtPrice?: string | null;
+    image?: { url?: string | null } | null;
     delivery48h?: { value?: string | null } | null;
     priceLocked?: { value?: string | null } | null;
     product?: {
       id?: string | null;
       tags?: string[] | null;
+      featuredMedia?: { preview?: { image?: { url?: string | null } | null } | null } | null;
       collections?: { nodes?: Array<{ handle?: string | null } | null> | null } | null;
     } | null;
   } | null;
 };
+
+function lineItemImageUrl(lineItem: ReturnLineItemFields | null | undefined): string | null {
+  const fromLine = String(lineItem?.image?.url ?? "").trim();
+  if (fromLine) return fromLine;
+  const fromVariant = String(lineItem?.variant?.image?.url ?? "").trim();
+  if (fromVariant) return fromVariant;
+  const fromProduct = String(
+    lineItem?.variant?.product?.featuredMedia?.preview?.image?.url ?? ""
+  ).trim();
+  return fromProduct || null;
+}
 
 export type CreateReturnOptions = {
   publicBaseUrl?: string;
@@ -494,6 +616,9 @@ function buildReturnableLine(
     quantity,
     title: lineItem?.title ?? null,
     sku: lineItem?.sku ?? null,
+    variantId: lineItem?.variant?.id ?? null,
+    variantLabel: lineItemVariantLabel(lineItem),
+    imageUrl: lineItemImageUrl(lineItem),
     lineItemId: lineItem?.id ?? null,
     unitAmount: Number.isFinite(amountRaw) ? amountRaw : null,
     currencyCode: lineItem?.originalUnitPriceSet?.shopMoney?.currencyCode ?? null,
@@ -516,6 +641,9 @@ function validateInput(input: ShopifyReturnRequestInput, staffMode = false) {
   const details =
     String(input.details ?? "").trim() || (staffMode ? "Return opened by staff." : "");
   const requestedItems = normalizeRequestedItems(input.items);
+  const intentRaw = String(input.intent ?? "").trim().toLowerCase();
+  const intent: CustomerReturnIntent =
+    reason === "EXCHANGE_SIZE_OR_MODEL" || intentRaw === "exchange" ? "exchange" : "return";
 
   if (!orderNumber) {
     throw new ShopifyReturnRequestError(
@@ -539,7 +667,19 @@ function validateInput(input: ShopifyReturnRequestInput, staffMode = false) {
     );
   }
 
-  return { orderNumber, email, customerProvidedEmail, reason, details, requestedItems };
+  if (!staffMode && intent === "exchange" && requestedItems.length > 0) {
+    for (const item of requestedItems) {
+      if (!item.replacementVariantId) {
+        throw new ShopifyReturnRequestError(
+          "VALIDATION_ERROR",
+          "Exchange requires a replacement variant for each selected item",
+          400
+        );
+      }
+    }
+  }
+
+  return { orderNumber, email, customerProvidedEmail, reason, details, requestedItems, intent };
 }
 
 function normalizeRequestedItems(input: ShopifyReturnRequestInput["items"]): NormalizedRequestedItem[] {
@@ -561,7 +701,17 @@ function normalizeRequestedItems(input: ShopifyReturnRequestInput["items"]): Nor
     }
     const reason = String(item?.reason ?? "").trim().toUpperCase() || null;
     const details = String(item?.details ?? "").trim() || null;
-    normalized.push({ fulfillmentLineItemId, lineItemId, sku, quantity, reason, details });
+    const replacementVariantId =
+      String(item?.replacementVariantId ?? "").trim() || null;
+    normalized.push({
+      fulfillmentLineItemId,
+      lineItemId,
+      sku,
+      quantity,
+      reason,
+      details,
+      replacementVariantId,
+    });
   }
   return normalized;
 }
@@ -651,6 +801,9 @@ function toPublicReturnableItem(line: ReturnableLine): ShopifyReturnableItem {
     lineItemId: line.lineItemId,
     sku: line.sku,
     title: line.title,
+    variantId: line.variantId,
+    variantLabel: line.variantLabel,
+    imageUrl: line.imageUrl,
     quantity: line.quantity,
     unitAmount: line.unitAmount,
     currencyCode: line.currencyCode,
@@ -946,6 +1099,11 @@ type CreateAndOpenResult = {
   returnLabelUrl?: string | null;
   returnTrackingNumber?: string | null;
   reverseDeliveryId?: string | null;
+  intent?: CustomerReturnIntent;
+  priceDifferenceDue?: number | null;
+  priceCreditDue?: number | null;
+  exchangeInvoiceUrl?: string | null;
+  labelPendingPayment?: boolean;
 };
 
 type ReturnableItemsResult = {
@@ -1153,50 +1311,6 @@ export async function createAndOpenReturnFromFormData(
   }
 
   const publicBaseUrl = String(options.publicBaseUrl || "").trim();
-  const label = await generateShopifyReturnLabel({
-    reference: approvedReturn.name || validated.orderNumber,
-    publicBaseUrl,
-  });
-
-  const reverseDeliveryResult = await shopifyGraphQL<{
-    reverseDeliveryCreateWithShipping: {
-      reverseDelivery?: {
-        id?: string | null;
-        deliverable?: {
-          label?: { publicFileUrl?: string | null } | null;
-          tracking?: { number?: string | null; url?: string | null } | null;
-        } | null;
-      } | null;
-      userErrors: ShopifyReturnUserError[];
-    };
-  }>(REVERSE_DELIVERY_CREATE_MUTATION, {
-    reverseFulfillmentOrderId,
-    labelFileUrl: label.labelPublicUrl,
-    trackingNumber: label.trackingNumber,
-    trackingUrl: label.trackingUrl,
-    notifyCustomer: true,
-  });
-  if (reverseDeliveryResult.errors?.length) {
-    throw new ShopifyReturnRequestError(
-      "SERVER_ERROR",
-      "Shopify reverseDeliveryCreateWithShipping failed",
-      502,
-      reverseDeliveryResult.errors
-    );
-  }
-  assertNoReturnUserErrors(
-    "reverseDeliveryCreateWithShipping",
-    reverseDeliveryResult.data?.reverseDeliveryCreateWithShipping?.userErrors
-  );
-  const reverseDelivery =
-    reverseDeliveryResult.data?.reverseDeliveryCreateWithShipping?.reverseDelivery;
-  if (!reverseDelivery?.id) {
-    throw new ShopifyReturnRequestError(
-      "SERVER_ERROR",
-      "Reverse delivery was not created",
-      502
-    );
-  }
 
   const totalAmount = selectedLines.reduce((sum, entry) => {
     if (entry.line.unitAmount == null) return sum;
@@ -1230,6 +1344,172 @@ export async function createAndOpenReturnFromFormData(
     ? `Customer declared order email: ${validated.customerProvidedEmail}`
     : null;
 
+  const isCustomerExchange = !staffMode && validated.intent === "exchange";
+  const exchangeLines: PublicCustomerExchangeLine[] = [];
+  let priceDifferenceDue = 0;
+  let priceCreditDue = 0;
+
+  if (isCustomerExchange) {
+    const byFli = new Map(
+      validated.requestedItems
+        .filter((item) => item.fulfillmentLineItemId)
+        .map((item) => [item.fulfillmentLineItemId!, item])
+    );
+    for (const entry of selectedLines) {
+      const req = byFli.get(entry.line.fulfillmentLineItemId);
+      const replacementVariantId = req?.replacementVariantId;
+      if (!replacementVariantId) continue;
+      const snap = await snapshotReplacementVariant(replacementVariantId);
+      const unitDelta = computeUnitPriceDelta(entry.line.unitAmount, snap.unitPrice);
+      const lineDelta =
+        unitDelta != null ? Number((unitDelta * entry.quantity).toFixed(2)) : 0;
+      if (lineDelta > 0) priceDifferenceDue += lineDelta;
+      if (lineDelta < 0) priceCreditDue += Math.abs(lineDelta);
+      exchangeLines.push({
+        fulfillmentLineItemId: entry.line.fulfillmentLineItemId,
+        replacementVariantId,
+        replacementSku: snap.sku,
+        replacementTitle: snap.title,
+        unitPriceDelta: unitDelta,
+      });
+    }
+    priceDifferenceDue = Number(priceDifferenceDue.toFixed(2));
+    priceCreditDue = Number(priceCreditDue.toFixed(2));
+  }
+
+  let exchangeDraft: {
+    draftOrderId: string;
+    draftOrderName: string | null;
+    invoiceUrl: string | null;
+  } | null = null;
+
+  const deferLabelUntilExchangePayment =
+    isCustomerExchange && priceDifferenceDue > 0 && !staffMode;
+
+  if (isCustomerExchange && priceDifferenceDue > 0 && customerEmail.includes("@")) {
+    exchangeDraft = await createExchangePriceDifferenceDraftOrder({
+      customerId,
+      customerEmail,
+      orderName: order.name,
+      returnName: approvedReturn.name ?? approvedReturn.id,
+      shopifyReturnId: approvedReturn.id,
+      currencyCode: currency,
+      totalDue: priceDifferenceDue,
+      note: `Écart échange — retour ${approvedReturn.name ?? approvedReturn.id} (commande ${order.name})`,
+    });
+  }
+
+  type GeneratedLabel = Awaited<
+    ReturnType<typeof attachShopifyReturnShippingLabel>
+  >["label"];
+  let label: GeneratedLabel | null = null;
+  let reverseDelivery: {
+    id: string;
+    deliverable?: {
+      label?: { publicFileUrl?: string | null } | null;
+      tracking?: { number?: string | null; url?: string | null } | null;
+    } | null;
+  } | null = null;
+  let returnLabelUrl: string | null = null;
+  let returnTrackingNumber: string | null = null;
+
+  if (!deferLabelUntilExchangePayment) {
+    if (!publicBaseUrl) {
+      throw new ShopifyReturnRequestError(
+        "SERVER_ERROR",
+        "Missing public base URL for return label",
+        502
+      );
+    }
+    const shipped = await attachShopifyReturnShippingLabel({
+      reverseFulfillmentOrderId,
+      reference: approvedReturn.name || validated.orderNumber,
+      publicBaseUrl,
+      notifyCustomer: true,
+    });
+    label = shipped.label;
+    returnLabelUrl = shipped.returnLabelUrl;
+    returnTrackingNumber = shipped.returnTrackingNumber;
+    reverseDelivery = {
+      id: shipped.reverseDeliveryId,
+      deliverable: {
+        label: { publicFileUrl: shipped.returnLabelUrl },
+        tracking: { number: shipped.returnTrackingNumber, url: shipped.label.trackingUrl },
+      },
+    };
+  }
+
+  const customerExchangePayload = isCustomerExchange
+    ? {
+        intent: "exchange" as const,
+        lines: exchangeLines,
+        priceDifferenceDue,
+        priceCreditDue: priceCreditDue > 0 ? priceCreditDue : null,
+        paymentRequired: priceDifferenceDue > 0,
+        exchangePaymentStatus: deferLabelUntilExchangePayment
+          ? ("pending" as const)
+          : priceDifferenceDue > 0
+            ? ("paid" as const)
+            : ("not_required" as const),
+        publicBaseUrl: publicBaseUrl || null,
+        draftOrder: exchangeDraft,
+      }
+    : undefined;
+
+  const processStep = deferLabelUntilExchangePayment ? "awaiting_exchange_payment" : "pending";
+
+  const reverseDeliveryJson =
+    reverseDelivery && label
+      ? {
+          id: reverseDelivery.id,
+          labelPublicFileUrl:
+            reverseDelivery.deliverable?.label?.publicFileUrl || label.labelPublicUrl,
+          trackingNumber:
+            reverseDelivery.deliverable?.tracking?.number || label.trackingNumber,
+          trackingUrl:
+            reverseDelivery.deliverable?.tracking?.url || label.trackingUrl,
+        }
+      : null;
+
+  const generatedLabelJson = label
+    ? {
+        key: label.labelKey,
+        localPath: label.filePath,
+        url: label.labelPublicUrl,
+        mimeType: label.mimeType,
+      }
+    : null;
+
+  const auditEntries: object[] = [
+    {
+      at: new Date().toISOString(),
+      step: "shopify_return_auto_open",
+      ok: true,
+      requestReturnId: requestedReturn.id,
+      status: approvedReturn.status,
+    },
+  ];
+  if (deferLabelUntilExchangePayment) {
+    auditEntries.push({
+      at: new Date().toISOString(),
+      step: "exchange_payment_required_before_label",
+      ok: true,
+      priceDifferenceDue,
+      draftOrderId: exchangeDraft?.draftOrderId ?? null,
+    });
+  } else if (reverseDelivery && label) {
+    auditEntries.push({
+      at: new Date().toISOString(),
+      step: "shopify_reverse_delivery_label_created",
+      ok: true,
+      reverseDeliveryId: reverseDelivery.id,
+      reverseFulfillmentOrderId,
+      trackingNumber: label.trackingNumber,
+      labelPublicUrl: label.labelPublicUrl,
+      customerProvidedEmail: validated.customerProvidedEmail || null,
+    });
+  }
+
   await prisma.marketplaceReturn.upsert({
     where: {
       platform_externalReturnId: {
@@ -1248,16 +1528,20 @@ export async function createAndOpenReturnFromFormData(
           ? `${firstLine?.title ?? "Item"} (+${selectedLines.length - 1} more)`
           : firstLine?.title ?? null,
       sku: firstLine?.sku ?? null,
-      returnLabelNumber: label.trackingNumber,
-      labelKey: label.labelKey,
-      labelStorageUrl: label.labelStorageUrl,
+      returnLabelNumber: label?.trackingNumber ?? null,
+      labelKey: label?.labelKey ?? null,
+      labelStorageUrl: label?.labelStorageUrl ?? null,
       returnAmount,
       currency,
-      returnReasonCode: String(validated.reason).toUpperCase(),
-      returnReasonLabel: mapReasonLabel(validated.reason),
+      returnReasonCode: isCustomerExchange
+        ? "EXCHANGE"
+        : String(validated.reason).toUpperCase(),
+      returnReasonLabel: isCustomerExchange
+        ? "Échange client"
+        : mapReasonLabel(validated.reason),
       miraklStatus: approvedReturn.status,
       localStatus: "pending_receipt",
-      processStep: "pending",
+      processStep,
       syncedAt: new Date(),
       quantity: selectedLines.reduce((sum, entry) => sum + entry.quantity, 0),
       apiSource: "shopify-admin-graphql",
@@ -1268,51 +1552,22 @@ export async function createAndOpenReturnFromFormData(
           email: customerEmail || null,
           customerId,
         },
+        customerExchange: customerExchangePayload,
         return: approvedReturn,
         reverseFulfillmentOrderId,
-        reverseDelivery: {
-          id: reverseDelivery.id,
-          labelPublicFileUrl:
-            reverseDelivery.deliverable?.label?.publicFileUrl || label.labelPublicUrl,
-          trackingNumber:
-            reverseDelivery.deliverable?.tracking?.number || label.trackingNumber,
-          trackingUrl:
-            reverseDelivery.deliverable?.tracking?.url || label.trackingUrl,
-        },
-        generatedLabel: {
-          key: label.labelKey,
-          localPath: label.filePath,
-          url: label.labelPublicUrl,
-          mimeType: label.mimeType,
-        },
+        reverseDelivery: reverseDeliveryJson,
+        generatedLabel: generatedLabelJson,
         form: {
           reason: String(validated.reason).toUpperCase(),
           details: validated.details,
+          intent: validated.intent,
           customerProvidedEmail: validated.customerProvidedEmail || null,
           comment: customerEmailComment,
         },
-        swissPost: label.swissResponse,
+        swissPost: label?.swissResponse ?? null,
         lineItems: receiptLineItems,
       },
-      auditLogJson: [
-        {
-          at: new Date().toISOString(),
-          step: "shopify_return_auto_open",
-          ok: true,
-          requestReturnId: requestedReturn.id,
-          status: approvedReturn.status,
-        },
-        {
-          at: new Date().toISOString(),
-          step: "shopify_reverse_delivery_label_created",
-          ok: true,
-          reverseDeliveryId: reverseDelivery.id,
-          reverseFulfillmentOrderId,
-          trackingNumber: label.trackingNumber,
-          labelPublicUrl: label.labelPublicUrl,
-          customerProvidedEmail: validated.customerProvidedEmail || null,
-        },
-      ],
+      auditLogJson: auditEntries,
     },
     update: {
       externalOrderId: order.name || order.id,
@@ -1323,16 +1578,20 @@ export async function createAndOpenReturnFromFormData(
           ? `${firstLine?.title ?? "Item"} (+${selectedLines.length - 1} more)`
           : firstLine?.title ?? null,
       sku: firstLine?.sku ?? null,
-      returnLabelNumber: label.trackingNumber,
-      labelKey: label.labelKey,
-      labelStorageUrl: label.labelStorageUrl,
+      returnLabelNumber: label?.trackingNumber ?? null,
+      labelKey: label?.labelKey ?? null,
+      labelStorageUrl: label?.labelStorageUrl ?? null,
       returnAmount,
       currency,
-      returnReasonCode: String(validated.reason).toUpperCase(),
-      returnReasonLabel: mapReasonLabel(validated.reason),
+      returnReasonCode: isCustomerExchange
+        ? "EXCHANGE"
+        : String(validated.reason).toUpperCase(),
+      returnReasonLabel: isCustomerExchange
+        ? "Échange client"
+        : mapReasonLabel(validated.reason),
       miraklStatus: approvedReturn.status,
       localStatus: "pending_receipt",
-      processStep: "pending",
+      processStep,
       syncedAt: new Date(),
       quantity: selectedLines.reduce((sum, entry) => sum + entry.quantity, 0),
       apiSource: "shopify-admin-graphql",
@@ -1343,30 +1602,19 @@ export async function createAndOpenReturnFromFormData(
           email: customerEmail || null,
           customerId,
         },
+        customerExchange: customerExchangePayload,
         return: approvedReturn,
         reverseFulfillmentOrderId,
-        reverseDelivery: {
-          id: reverseDelivery.id,
-          labelPublicFileUrl:
-            reverseDelivery.deliverable?.label?.publicFileUrl || label.labelPublicUrl,
-          trackingNumber:
-            reverseDelivery.deliverable?.tracking?.number || label.trackingNumber,
-          trackingUrl:
-            reverseDelivery.deliverable?.tracking?.url || label.trackingUrl,
-        },
-        generatedLabel: {
-          key: label.labelKey,
-          localPath: label.filePath,
-          url: label.labelPublicUrl,
-          mimeType: label.mimeType,
-        },
+        reverseDelivery: reverseDeliveryJson,
+        generatedLabel: generatedLabelJson,
         form: {
           reason: String(validated.reason).toUpperCase(),
           details: validated.details,
+          intent: validated.intent,
           customerProvidedEmail: validated.customerProvidedEmail || null,
           comment: customerEmailComment,
         },
-        swissPost: label.swissResponse,
+        swissPost: label?.swissResponse ?? null,
         lineItems: receiptLineItems,
       },
       failureMessage: null,
@@ -1381,10 +1629,13 @@ export async function createAndOpenReturnFromFormData(
     status: approvedReturn.status,
     orderId: order.id,
     name: approvedReturn.name ?? approvedReturn.id,
-    returnLabelUrl:
-      reverseDelivery.deliverable?.label?.publicFileUrl || label.labelPublicUrl,
-    returnTrackingNumber:
-      reverseDelivery.deliverable?.tracking?.number || label.trackingNumber,
-    reverseDeliveryId: reverseDelivery.id || null,
+    returnLabelUrl: deferLabelUntilExchangePayment ? null : returnLabelUrl,
+    returnTrackingNumber: deferLabelUntilExchangePayment ? null : returnTrackingNumber,
+    reverseDeliveryId: reverseDelivery?.id ?? null,
+    intent: validated.intent,
+    priceDifferenceDue: isCustomerExchange ? priceDifferenceDue : null,
+    priceCreditDue: isCustomerExchange && priceCreditDue > 0 ? priceCreditDue : null,
+    exchangeInvoiceUrl: exchangeDraft?.invoiceUrl ?? null,
+    labelPendingPayment: deferLabelUntilExchangePayment,
   };
 }

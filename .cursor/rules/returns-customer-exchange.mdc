@@ -1,0 +1,34 @@
+---
+description: Customer /returns exchange WIP — one branch, always on GitHub
+globs:
+  - app/returns/**
+  - app/api/shopify/returns/**
+  - shopify/returns/**
+alwaysApply: false
+---
+
+# Returns customer exchange (WIP)
+
+## Single home branch
+
+- All exchange / public returns work lives on **`feat/returns-customer-exchange`** only.
+- **Do not** mix returns edits into StockX, Galaxus, or other feature branches.
+- Remote is always **`origin`** → `github.com/reselllausanne/shopify-fulfillment-dashboard`. There is no second repo for this app.
+
+## Before leaving the branch or ending a session
+
+1. `git status` — commit tracked returns files on this branch.
+2. `git push -u origin feat/returns-customer-exchange` so GitHub has the SHA (other Mac / agent can fetch).
+3. Untracked returns modules must be **`git add`** + commit; plain `git stash` **drops untracked** unless `git stash push -u`.
+
+## Switching branches
+
+- Tracked dirty → **commit or stash** first; never `git switch` with returns files dirty on the wrong branch.
+- After `git switch feat/returns-customer-exchange`: `git pull --ff-only` if clean.
+- Recover WIP: `git stash list` → look for messages containing `returns`; `git stash apply` on **this** branch only.
+
+## Agent checklist
+
+- Confirm `git rev-parse --abbrev-ref HEAD` is `feat/returns-customer-exchange` before editing returns.
+- After meaningful changes: commit + push in the same session unless the user forbids commit.
+- Do not `git switch -C feat/returns-customer-exchange origin/main` without user ask (wipes unpushed commits on that branch name).

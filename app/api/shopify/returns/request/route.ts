@@ -139,6 +139,7 @@ export async function POST(request: Request) {
       customerProvidedEmail: body?.customerProvidedEmail,
       reason: body?.reason,
       details: body?.details,
+      intent: body?.intent,
       items: Array.isArray(body?.items) ? body.items : undefined,
     }, { publicBaseUrl });
 

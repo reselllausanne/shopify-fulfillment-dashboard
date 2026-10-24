@@ -26,6 +26,7 @@ export type ReturnsCopy = {
   returnPolicyExcluded: string;
   quantity: string;
   max: string;
+  orderedSizeLabel: string;
   reasonLabel: string;
   reasons: Record<string, string>;
   commentLabel: string;
@@ -50,10 +51,37 @@ export type ReturnsCopy = {
   orderHelpTitle: string;
   orderHelpIntro: string;
   orderHelpItems: string[];
+  pathTitle: string;
+  pathReturnTitle: string;
+  pathReturnHint: string;
+  pathExchangeTitle: string;
+  pathExchangeHint: string;
+  replacementLabel: string;
+  replacementLoading: string;
+  replacementNone: string;
+  exchangeMultiQtyHint: string;
+  replacementPickRequired: string;
+  exchangePriceDiffDue: string;
+  payExchangeDiff: string;
+  validateExchange: string;
+  successTitleExchange: string;
+  successBodyExchange: string;
+  successNextExchange: string[];
+  exchangePayBeforeLabelTitle: string;
+  exchangePayBeforeLabelBody: string;
+  exchangePayBeforeLabelNext: string[];
+  exchangeCreditDue: string;
+  confirmSummaryTitle: string;
+  confirmEditProducts: string;
+  confirmReason: string;
+  confirmReplacement: string;
+  confirmPathReturn: string;
+  confirmPathExchange: string;
 };
 
 const REASONS_FR = {
-  SIZE_CHANGE: "Mauvaise taille",
+  EXCHANGE_SIZE_OR_MODEL: "Je souhaite un echange (taille ou modele)",
+  SIZE_CHANGE: "Mauvaise taille — retour / avoir",
   CHANGE_OF_MIND: "Je change d'avis",
   DEFECTIVE_ITEM: "Article abime ou defectueux",
   WRONG_ITEM_RECEIVED: "Mauvais article recu",
@@ -62,7 +90,8 @@ const REASONS_FR = {
 };
 
 const REASONS_EN = {
-  SIZE_CHANGE: "Wrong size",
+  EXCHANGE_SIZE_OR_MODEL: "I want an exchange (size or model)",
+  SIZE_CHANGE: "Wrong size — return for credit",
   CHANGE_OF_MIND: "I changed my mind",
   DEFECTIVE_ITEM: "Damaged or defective item",
   WRONG_ITEM_RECEIVED: "Wrong item received",
@@ -71,7 +100,8 @@ const REASONS_EN = {
 };
 
 const REASONS_DE = {
-  SIZE_CHANGE: "Falsche Groesse",
+  EXCHANGE_SIZE_OR_MODEL: "Ich moechte umtauschen (Groesse oder Modell)",
+  SIZE_CHANGE: "Falsche Groesse — Retoure / Guthaben",
   CHANGE_OF_MIND: "Ich habe meine Meinung geaendert",
   DEFECTIVE_ITEM: "Beschaedigter oder defekter Artikel",
   WRONG_ITEM_RECEIVED: "Falscher Artikel erhalten",
@@ -108,6 +138,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
       "Aucun article de cette commande n'est eligible au retour en ligne (Soldes/promo ou prix > CHF 650).",
     quantity: "Quantite",
     max: "max",
+    orderedSizeLabel: "Taille",
     reasonLabel: "Pourquoi retournez-vous ?",
     reasons: REASONS_FR,
     commentLabel: "Remarque",
@@ -145,6 +176,44 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
       "Dans votre compte client > Mes commandes.",
       "Sur la facture PDF recue par e-mail.",
     ],
+    pathTitle: "Que voulez-vous faire ?",
+    pathReturnTitle: "Retour — avoir magasin",
+    pathReturnHint: "Renvoyer l'article, remboursement en avoir apres controle.",
+    pathExchangeTitle: "Echange — autre taille / variante",
+    pathExchangeHint: "Meme modele, autre variante en stock sur le site.",
+    replacementLabel: "Nouvelle variante",
+    replacementLoading: "Chargement des tailles…",
+    replacementNone: "Aucune variante disponible pour un echange en ligne.",
+    exchangeMultiQtyHint:
+      "Plusieurs paires sur cette ligne : une seule nouvelle taille s'appliquera a toutes les quantites retournees.",
+    replacementPickRequired: "Choisissez une variante de remplacement pour chaque article.",
+    exchangePriceDiffDue: "Difference a regler : CHF {amount}",
+    payExchangeDiff: "Payer la difference (lien securise)",
+    validateExchange: "Valider mon echange",
+    successTitleExchange: "Echange enregistre",
+    successBodyExchange:
+      "Suivez les etapes ci-dessous. Nous preparons le remplacement apres reception.",
+    successNextExchange: [
+      "Payez la difference si un lien est affiche.",
+      "Apres paiement, etiquette de retour par e-mail.",
+      "Deposez le colis a la Poste.",
+      "Controle puis expedition du remplacement.",
+    ],
+    exchangePayBeforeLabelTitle: "Paiement avant l'etiquette",
+    exchangePayBeforeLabelBody:
+      "Reglez la difference de prix pour recevoir l'etiquette de retour.",
+    exchangePayBeforeLabelNext: [
+      "Payez via le lien ci-dessous.",
+      "Etiquette generee apres paiement.",
+      "Ensuite seulement, envoyez votre paire.",
+    ],
+    exchangeCreditDue: "Avoir prevu apres controle : CHF {amount}",
+    confirmSummaryTitle: "Recapitulatif",
+    confirmEditProducts: "Modifier",
+    confirmReason: "Motif",
+    confirmReplacement: "Remplacement",
+    confirmPathReturn: "Retour (avoir)",
+    confirmPathExchange: "Echange",
   },
   en: {
     brand: "Resell Lausanne",
@@ -173,6 +242,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
       "No item on this order is eligible for an online return (sale/promo or price over CHF 650).",
     quantity: "Quantity",
     max: "max",
+    orderedSizeLabel: "Size",
     reasonLabel: "Why are you returning?",
     reasons: REASONS_EN,
     commentLabel: "Note",
@@ -210,6 +280,42 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
       "In your customer account > My orders.",
       "On the PDF invoice sent by email.",
     ],
+    pathTitle: "What do you want to do?",
+    pathReturnTitle: "Return — store credit",
+    pathReturnHint: "Send item back for store credit after inspection.",
+    pathExchangeTitle: "Exchange — other size / variant",
+    pathExchangeHint: "Same product, another in-stock variant.",
+    replacementLabel: "New variant",
+    replacementLoading: "Loading sizes…",
+    replacementNone: "No variant available online.",
+    exchangeMultiQtyHint:
+      "Multiple pairs on this line: one replacement size applies to all returned units.",
+    replacementPickRequired: "Pick a replacement for each item.",
+    exchangePriceDiffDue: "Amount due: CHF {amount}",
+    payExchangeDiff: "Pay difference (secure link)",
+    validateExchange: "Confirm exchange",
+    successTitleExchange: "Exchange registered",
+    successBodyExchange: "Follow the steps below.",
+    successNextExchange: [
+      "Pay the difference if shown.",
+      "Return label by email after payment.",
+      "Drop parcel at Post Office.",
+      "Replacement ships after inspection.",
+    ],
+    exchangePayBeforeLabelTitle: "Payment before label",
+    exchangePayBeforeLabelBody: "Pay the price difference to get the return label.",
+    exchangePayBeforeLabelNext: [
+      "Pay using the link below.",
+      "Label after payment.",
+      "Then send your pair back.",
+    ],
+    exchangeCreditDue: "Store credit after inspection: CHF {amount}",
+    confirmSummaryTitle: "Summary",
+    confirmEditProducts: "Edit",
+    confirmReason: "Reason",
+    confirmReplacement: "Replacement",
+    confirmPathReturn: "Return (credit)",
+    confirmPathExchange: "Exchange",
   },
   de: {
     brand: "Resell Lausanne",
@@ -238,6 +344,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
       "Kein Artikel dieser Bestellung ist online rueckgabefaehig (Sale/Promo oder Preis > CHF 650).",
     quantity: "Menge",
     max: "max",
+    orderedSizeLabel: "Groesse",
     reasonLabel: "Warum senden Sie zurueck?",
     reasons: REASONS_DE,
     commentLabel: "Bemerkung",
@@ -275,6 +382,42 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
       "Im Kundenkonto > Meine Bestellungen.",
       "Auf der PDF-Rechnung per E-Mail.",
     ],
+    pathTitle: "Was moechten Sie tun?",
+    pathReturnTitle: "Retoure — Store-Guthaben",
+    pathReturnHint: "Artikel zurueck, Guthaben nach Kontrolle.",
+    pathExchangeTitle: "Umtausch — andere Groesse",
+    pathExchangeHint: "Gleiches Produkt, andere Variante.",
+    replacementLabel: "Neue Variante",
+    replacementLoading: "Groessen laden…",
+    replacementNone: "Keine Variante online verfuegbar.",
+    exchangeMultiQtyHint:
+      "Mehrere Paare in dieser Zeile: eine Ersatzgroesse gilt fuer alle zurueckgesendeten Stueck.",
+    replacementPickRequired: "Ersatz pro Artikel waehlen.",
+    exchangePriceDiffDue: "Zu zahlen: CHF {amount}",
+    payExchangeDiff: "Differenz bezahlen",
+    validateExchange: "Umtausch bestaetigen",
+    successTitleExchange: "Umtausch erfasst",
+    successBodyExchange: "Schritte unten befolgen.",
+    successNextExchange: [
+      "Differenz bezahlen falls noetig.",
+      "Label per E-Mail nach Zahlung.",
+      "Paket zur Post.",
+      "Ersatz nach Kontrolle.",
+    ],
+    exchangePayBeforeLabelTitle: "Zahlung vor Label",
+    exchangePayBeforeLabelBody: "Preisdifferenz zahlen fuer Retourenlabel.",
+    exchangePayBeforeLabelNext: [
+      "Link unten.",
+      "Label nach Zahlung.",
+      "Dann Paar zuruecksenden.",
+    ],
+    exchangeCreditDue: "Guthaben nach Kontrolle: CHF {amount}",
+    confirmSummaryTitle: "Zusammenfassung",
+    confirmEditProducts: "Aendern",
+    confirmReason: "Grund",
+    confirmReplacement: "Ersatz",
+    confirmPathReturn: "Retoure",
+    confirmPathExchange: "Umtausch",
   },
 };
 

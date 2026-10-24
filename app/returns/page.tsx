@@ -9,6 +9,20 @@ import {
   formatPublicOrderNumberFromDigits,
   parseStrictPublicOrderNumber,
 } from "@/shopify/returns/publicOrderNumber";
+import type { ProductSizeFit } from "@/shopify/returns/productSizeFit";
+import { customerSizeFitLine } from "@/shopify/returns/productSizeFit";
+
+type FlowPath = "return" | "exchange";
+
+type ReplacementOption = {
+  variantId: string;
+  sku: string | null;
+  title: string | null;
+  optionLabel: string | null;
+  unitPrice: number | null;
+  currencyCode: string | null;
+  availableQuantity: number | null;
+};
 
 function messageForPublicError(
   code: string,
@@ -30,6 +44,7 @@ function messageForPublicError(
 }
 
 type ReturnReason =
+  | "EXCHANGE_SIZE_OR_MODEL"
   | "SIZE_CHANGE"
   | "CHANGE_OF_MIND"
   | "DEFECTIVE_ITEM"
@@ -40,7 +55,17 @@ type ReturnReason =
 type SubmitState =
   | { type: "idle" }
   | { type: "loading" }
-  | { type: "success"; message: string; labelUrl?: string | null; trackingNumber?: string | null }
+  | {
+      type: "success";
+      message: string;
+      labelUrl?: string | null;
+      trackingNumber?: string | null;
+      intent?: FlowPath;
+      exchangeInvoiceUrl?: string | null;
+      priceDifferenceDue?: number | null;
+      priceCreditDue?: number | null;
+      labelPendingPayment?: boolean;
+    }
   | { type: "error"; message: string; code?: string };
 
 type ReturnableItem = {
@@ -48,10 +73,49 @@ type ReturnableItem = {
   lineItemId: string | null;
   sku: string | null;
   title: string | null;
+  variantLabel: string | null;
+  imageUrl: string | null;
   quantity: number;
   unitAmount: number | null;
   currencyCode: string | null;
 };
+
+function ReturnLineProductHead({
+  title,
+  sizeLabel,
+  orderedSizeLabel,
+  imageUrl,
+}: {
+  title: string;
+  sizeLabel: string | null;
+  orderedSizeLabel: string;
+  imageUrl: string | null;
+}) {
+  return (
+    <span className="flex min-w-0 flex-1 items-start justify-between gap-3">
+      <span className="min-w-0">
+        <span className="block font-medium leading-snug">{title}</span>
+        {sizeLabel ? (
+          <span className="mt-1 block text-sm text-neutral-500">
+            {orderedSizeLabel} {sizeLabel}
+          </span>
+        ) : null}
+      </span>
+      {imageUrl ? (
+        <span className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-sm border border-neutral-200 bg-white p-1">
+          {/* eslint-disable-next-line @next/next/no-img-element -- Shopify CDN thumbnail from Admin API */}
+          <img
+            src={imageUrl}
+            alt=""
+            width={56}
+            height={56}
+            className="max-h-full max-w-full object-contain object-center"
+          />
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 type ExcludedReturnItem = ReturnableItem & {
   excludeReason: "PRICE_OVER_LIMIT" | "SALE_OR_PROMO";
@@ -95,13 +159,22 @@ function PublicReturnsWizard() {
   const [orderNumberError, setOrderNumberError] = useState<string | null>(null);
   const [emailError, setEmailError] = useState<string | null>(null);
   const [reason, setReason] = useState<ReturnReason>("SIZE_CHANGE");
+  const isExchangeFlow = reason === "EXCHANGE_SIZE_OR_MODEL";
   const [details, setDetails] = useState("");
   const [loadingItems, setLoadingItems] = useState(false);
   const [returnableItems, setReturnableItems] = useState<ReturnableItem[]>([]);
   const [excludedItems, setExcludedItems] = useState<ExcludedReturnItem[]>([]);
   const [selectedItems, setSelectedItems] = useState<
-    Record<string, { checked: boolean; quantity: number }>
+    Record<
+      string,
+      { checked: boolean; quantity: number; replacementVariantId?: string | null }
+    >
   >({});
+  const [replacementOptions, setReplacementOptions] = useState<
+    Record<string, ReplacementOption[]>
+  >({});
+  const [replacementLoading, setReplacementLoading] = useState<Record<string, boolean>>({});
+  const [sizeFitByLine, setSizeFitByLine] = useState<Record<string, ProductSizeFit | null>>({});
   const [submitState, setSubmitState] = useState<SubmitState>({ type: "idle" });
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
@@ -128,6 +201,56 @@ function PublicReturnsWizard() {
       setEmailError(null);
     }
     return ok;
+  }
+
+  async function loadReplacementOptions(fulfillmentLineItemId: string) {
+    setReplacementLoading((prev) => ({ ...prev, [fulfillmentLineItemId]: true }));
+    try {
+      const response = await fetch("/api/shopify/returns/replacement-options", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          orderNumber,
+          email: orderEmail.trim().toLowerCase(),
+          fulfillmentLineItemId,
+        }),
+      });
+      const contentType = response.headers.get("content-type") ?? "";
+      const data = contentType.includes("json")
+        ? await response.json().catch(() => ({}))
+        : {};
+      if (!response.ok || !data?.success) {
+        setReplacementOptions((prev) => ({ ...prev, [fulfillmentLineItemId]: [] }));
+        const code = String(data?.error ?? (response.ok ? "" : "HTTP_ERROR"));
+        const fallback =
+          response.status === 404
+            ? "Service echange indisponible (API). Rechargez la page."
+            : copy.lookupFailed;
+        setSubmitState({
+          type: "error",
+          message:
+            code && code !== "HTTP_ERROR"
+              ? messageForPublicError(code, data?.message, copy)
+              : fallback,
+          code,
+        });
+        return;
+      }
+      const options = Array.isArray(data?.options)
+        ? (data.options as ReplacementOption[])
+        : [];
+      setReplacementOptions((prev) => ({ ...prev, [fulfillmentLineItemId]: options }));
+      if (data?.productSizeFit) {
+        setSizeFitByLine((prev) => ({
+          ...prev,
+          [fulfillmentLineItemId]: data.productSizeFit as ProductSizeFit,
+        }));
+      }
+    } catch {
+      setReplacementOptions((prev) => ({ ...prev, [fulfillmentLineItemId]: [] }));
+    } finally {
+      setReplacementLoading((prev) => ({ ...prev, [fulfillmentLineItemId]: false }));
+    }
   }
 
   async function loadReturnableItems() {
@@ -162,11 +285,29 @@ function PublicReturnsWizard() {
         : [];
       setReturnableItems(items);
       setExcludedItems(excluded);
-      const defaults: Record<string, { checked: boolean; quantity: number }> = {};
+      const defaults: Record<
+        string,
+        { checked: boolean; quantity: number; replacementVariantId?: string | null }
+      > = {};
       for (const item of items) {
-        defaults[item.fulfillmentLineItemId] = { checked: items.length === 1, quantity: 1 };
+        defaults[item.fulfillmentLineItemId] = {
+          checked: items.length === 1,
+          quantity: 1,
+          replacementVariantId: null,
+        };
       }
       setSelectedItems(defaults);
+      setReplacementOptions({});
+      setReplacementLoading({});
+      setSizeFitByLine({});
+      if (!items.length) {
+        setSubmitState({
+          type: "error",
+          code: excluded.length ? "RETURN_POLICY_EXCLUDED" : "NO_RETURNABLE_ITEMS",
+          message: excluded.length ? copy.returnPolicyExcluded : copy.noEligibleProducts,
+        });
+        return;
+      }
       setStep(2);
     } catch (error: any) {
       setReturnableItems([]);
@@ -196,6 +337,9 @@ function PublicReturnsWizard() {
         .map(([fulfillmentLineItemId, value]) => ({
           fulfillmentLineItemId,
           quantity: value.quantity,
+          ...(isExchangeFlow && value.replacementVariantId
+            ? { replacementVariantId: value.replacementVariantId }
+            : {}),
         }));
       if (!chosenItems.length) {
         setSubmitState({
@@ -213,6 +357,7 @@ function PublicReturnsWizard() {
           email: orderEmail.trim().toLowerCase(),
           reason,
           details: details.trim(),
+          intent: isExchangeFlow ? "exchange" : "return",
           items: chosenItems,
         }),
       });
@@ -226,15 +371,29 @@ function PublicReturnsWizard() {
         });
         return;
       }
+      const successIntent: FlowPath =
+        String(data?.intent ?? (isExchangeFlow ? "exchange" : "return")).toLowerCase() ===
+        "exchange"
+          ? "exchange"
+          : "return";
       setSubmitState({
         type: "success",
         message: String(data?.name ?? data?.returnId ?? "ok"),
         labelUrl: String(data?.returnLabelUrl ?? "").trim() || null,
         trackingNumber: String(data?.returnTrackingNumber ?? "").trim() || null,
+        intent: successIntent,
+        exchangeInvoiceUrl: String(data?.exchangeInvoiceUrl ?? "").trim() || null,
+        priceDifferenceDue:
+          typeof data?.priceDifferenceDue === "number" ? data.priceDifferenceDue : null,
+        priceCreditDue: typeof data?.priceCreditDue === "number" ? data.priceCreditDue : null,
+        labelPendingPayment: Boolean(data?.labelPendingPayment),
       });
       setOrderDigits("");
       setOrderEmail("");
       setReason("SIZE_CHANGE");
+      setReplacementOptions({});
+      setReplacementLoading({});
+      setSizeFitByLine({});
       setDetails("");
       setReturnableItems([]);
       setExcludedItems([]);
@@ -254,6 +413,34 @@ function PublicReturnsWizard() {
 
   const selectedCount = Object.values(selectedItems).filter((value) => value.checked).length;
 
+  function replacementLabelForLine(fulfillmentLineItemId: string, variantId: string | null | undefined) {
+    if (!variantId) return null;
+    const opt = (replacementOptions[fulfillmentLineItemId] ?? []).find(
+      (o) => o.variantId === variantId
+    );
+    return opt?.optionLabel || opt?.title || opt?.sku || variantId;
+  }
+
+  const selectedLineSummaries = returnableItems
+    .map((item) => {
+      const state = selectedItems[item.fulfillmentLineItemId];
+      if (!state?.checked || state.quantity <= 0) return null;
+      return {
+        id: item.fulfillmentLineItemId,
+        title: item.title ?? item.sku ?? "—",
+        quantity: state.quantity,
+        replacement: isExchangeFlow
+          ? replacementLabelForLine(item.fulfillmentLineItemId, state.replacementVariantId)
+          : null,
+      };
+    })
+    .filter(Boolean) as Array<{
+    id: string;
+    title: string;
+    quantity: number;
+    replacement: string | null;
+  }>;
+
   function goToStep3() {
     if (selectedCount === 0) {
       setSubmitState({
@@ -262,6 +449,33 @@ function PublicReturnsWizard() {
         message: copy.selectOneProduct,
       });
       return;
+    }
+    if (isExchangeFlow) {
+      for (const item of returnableItems) {
+        const st = selectedItems[item.fulfillmentLineItemId];
+        if (!st?.checked) continue;
+        const opts = replacementOptions[item.fulfillmentLineItemId];
+        if (opts && opts.length === 0) {
+          setSubmitState({
+            type: "error",
+            code: "VALIDATION_ERROR",
+            message: copy.replacementNone,
+          });
+          return;
+        }
+      }
+      const missing = Object.entries(selectedItems).some(
+        ([, value]) =>
+          value.checked && value.quantity > 0 && !String(value.replacementVariantId ?? "").trim()
+      );
+      if (missing) {
+        setSubmitState({
+          type: "error",
+          code: "VALIDATION_ERROR",
+          message: copy.replacementPickRequired,
+        });
+        return;
+      }
     }
     setSubmitState({ type: "idle" });
     setConsentAccepted(false);
@@ -275,6 +489,9 @@ function PublicReturnsWizard() {
     setOrderEmail("");
     setReason("SIZE_CHANGE");
     setDetails("");
+    setReplacementOptions({});
+    setReplacementLoading({});
+    setSizeFitByLine({});
     setReturnableItems([]);
     setExcludedItems([]);
     setSelectedItems({});
@@ -436,6 +653,42 @@ function PublicReturnsWizard() {
               <div className="rounded-sm bg-neutral-50 px-4 py-3 text-base text-neutral-700">
                 {orderNumber} · {orderEmail}
               </div>
+
+              <label className="block">
+                <span className="mb-2 block text-base font-medium">{copy.reasonLabel}</span>
+                <select
+                  value={reason}
+                  onChange={(e) => {
+                    const next = e.target.value as ReturnReason;
+                    setReason(next);
+                    setSubmitState({ type: "idle" });
+                    if (next === "EXCHANGE_SIZE_OR_MODEL") {
+                      for (const item of returnableItems) {
+                        const st = selectedItems[item.fulfillmentLineItemId];
+                        if (st?.checked) {
+                          void loadReplacementOptions(item.fulfillmentLineItemId);
+                        }
+                      }
+                    } else {
+                      setSelectedItems((prev) => {
+                        const out = { ...prev };
+                        for (const key of Object.keys(out)) {
+                          out[key] = { ...out[key], replacementVariantId: null };
+                        }
+                        return out;
+                      });
+                    }
+                  }}
+                  className={fieldClass}
+                >
+                  {Object.entries(copy.reasons).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <div>
                 <h3 className="text-lg font-semibold">{copy.productsTitle}</h3>
                 <p className="mt-1 text-sm text-neutral-500">{copy.productsHint}</p>
@@ -457,25 +710,31 @@ function PublicReturnsWizard() {
                             <input
                               type="checkbox"
                               checked={state.checked}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                const checked = e.target.checked;
                                 setSelectedItems((prev) => ({
                                   ...prev,
                                   [item.fulfillmentLineItemId]: {
                                     ...state,
-                                    checked: e.target.checked,
+                                    checked,
+                                    replacementVariantId: checked
+                                      ? state.replacementVariantId ?? null
+                                      : null,
                                   },
-                                }))
-                              }
+                                }));
+                                if (checked && isExchangeFlow) {
+                                  void loadReplacementOptions(item.fulfillmentLineItemId);
+                                }
+                              }}
                               className="mt-1 h-5 w-5"
                             />
-                            <span className="flex-1">
-                              <span className="block font-medium">
-                                {item.title ?? item.sku ?? item.lineItemId ?? "—"}
-                              </span>
-                              <span className="mt-1 block text-sm text-neutral-500">
-                                {item.sku ? `SKU ${item.sku} · ` : ""}
-                                {copy.max} {item.quantity}
-                              </span>
+                            <span className="flex min-w-0 flex-1">
+                              <ReturnLineProductHead
+                                title={item.title ?? item.sku ?? item.lineItemId ?? "—"}
+                                sizeLabel={item.variantLabel ?? null}
+                                orderedSizeLabel={copy.orderedSizeLabel}
+                                imageUrl={item.imageUrl ?? null}
+                              />
                             </span>
                           </label>
                           {item.quantity > 1 ? (
@@ -503,6 +762,57 @@ function PublicReturnsWizard() {
                               />
                             </div>
                           ) : null}
+                          {isExchangeFlow && state.checked ? (
+                            <div className="mt-4 border-t border-neutral-100 pt-4">
+                              {item.quantity > 1 ? (
+                                <p className="mb-3 text-sm text-neutral-600">
+                                  {copy.exchangeMultiQtyHint}
+                                </p>
+                              ) : null}
+                              {sizeFitByLine[item.fulfillmentLineItemId] ? (
+                                <div className="mb-3 rounded-sm border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950">
+                                  {customerSizeFitLine(
+                                    sizeFitByLine[item.fulfillmentLineItemId]!,
+                                    locale
+                                  )}
+                                </div>
+                              ) : null}
+                              <span className="mb-2 block text-sm font-medium">
+                                {copy.replacementLabel}
+                              </span>
+                              {replacementLoading[item.fulfillmentLineItemId] ? (
+                                <p className="text-sm text-neutral-500">{copy.replacementLoading}</p>
+                              ) : (replacementOptions[item.fulfillmentLineItemId] ?? []).length ===
+                                0 ? (
+                                <p className="text-sm text-amber-800">{copy.replacementNone}</p>
+                              ) : (
+                                <select
+                                  value={state.replacementVariantId ?? ""}
+                                  onChange={(e) => {
+                                    const replacementVariantId = e.target.value || null;
+                                    setSelectedItems((prev) => ({
+                                      ...prev,
+                                      [item.fulfillmentLineItemId]: {
+                                        ...state,
+                                        replacementVariantId,
+                                      },
+                                    }));
+                                  }}
+                                  className="min-h-12 w-full rounded-sm border border-neutral-300 px-3 text-sm"
+                                >
+                                  <option value="">—</option>
+                                  {(replacementOptions[item.fulfillmentLineItemId] ?? []).map(
+                                    (opt) => (
+                                      <option key={opt.variantId} value={opt.variantId}>
+                                        {opt.optionLabel || opt.title || opt.sku || opt.variantId}
+                                        {opt.unitPrice != null ? ` · CHF ${opt.unitPrice}` : ""}
+                                      </option>
+                                    )
+                                  )}
+                                </select>
+                              )}
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -517,9 +827,12 @@ function PublicReturnsWizard() {
                         key={`excluded-${item.fulfillmentLineItemId}`}
                         className="rounded-sm border border-amber-200 bg-amber-50 p-4"
                       >
-                        <p className="text-base font-medium text-neutral-900">
-                          {item.title ?? item.sku ?? item.lineItemId ?? "—"}
-                        </p>
+                        <ReturnLineProductHead
+                          title={item.title ?? item.sku ?? item.lineItemId ?? "—"}
+                          sizeLabel={item.variantLabel ?? null}
+                          orderedSizeLabel={copy.orderedSizeLabel}
+                          imageUrl={item.imageUrl ?? null}
+                        />
                         <p className="mt-1 text-sm font-medium text-amber-900">
                           {excludeReasonMessage(item.excludeReason)}
                         </p>
@@ -528,21 +841,6 @@ function PublicReturnsWizard() {
                   </div>
                 ) : null}
               </div>
-
-              <label className="block">
-                <span className="mb-2 block text-base font-medium">{copy.reasonLabel}</span>
-                <select
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value as ReturnReason)}
-                  className={fieldClass}
-                >
-                  {Object.entries(copy.reasons).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
 
               <div className="grid grid-cols-2 gap-3">
                 <button type="button" onClick={() => setStep(1)} className={btnSecondary}>
@@ -560,6 +858,45 @@ function PublicReturnsWizard() {
               <div className="rounded-sm bg-neutral-50 px-4 py-3 text-base text-neutral-700">
                 {orderNumber} · {orderEmail}
               </div>
+
+              <div className="rounded-sm border border-neutral-200 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-base font-semibold">{copy.confirmSummaryTitle}</h3>
+                  <button
+                    type="button"
+                    onClick={() => setStep(2)}
+                    className="text-sm font-medium underline"
+                  >
+                    {copy.confirmEditProducts}
+                  </button>
+                </div>
+                <p className="mt-2 text-sm text-neutral-600">
+                  {isExchangeFlow ? copy.confirmPathExchange : copy.confirmPathReturn}
+                </p>
+                <ul className="mt-3 space-y-2 text-base">
+                  {selectedLineSummaries.map((line) => (
+                    <li key={line.id}>
+                      <div className="flex justify-between gap-3">
+                        <span>{line.title}</span>
+                        <span className="text-neutral-500">× {line.quantity}</span>
+                      </div>
+                      {line.replacement ? (
+                        <p className="mt-1 text-sm text-neutral-600">
+                          {copy.confirmReplacement}:{" "}
+                          <span className="font-medium text-neutral-900">{line.replacement}</span>
+                        </p>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 text-sm text-neutral-600">
+                  {copy.confirmReason}:{" "}
+                  <span className="font-medium text-neutral-900">
+                    {copy.reasons[reason] ?? reason}
+                  </span>
+                </p>
+              </div>
+
               <label className="block">
                 <span className="mb-1.5 flex items-baseline gap-2">
                   <span className="text-sm font-medium text-neutral-700">{copy.commentLabel}</span>
@@ -609,7 +946,11 @@ function PublicReturnsWizard() {
                   disabled={submitState.type === "loading" || !consentAccepted}
                   className={btnPrimary}
                 >
-                  {submitState.type === "loading" ? copy.validating : copy.validateReturn}
+                  {submitState.type === "loading"
+                    ? copy.validating
+                    : isExchangeFlow
+                      ? copy.validateExchange
+                      : copy.validateReturn}
                 </button>
               </div>
             </form>
@@ -618,9 +959,19 @@ function PublicReturnsWizard() {
           {step === 4 && submitState.type === "success" && (
             <div className="mt-6 space-y-5">
               <div className="rounded-sm border border-emerald-200 bg-emerald-50 p-5">
-                <h3 className="text-2xl font-semibold text-emerald-950">{copy.successTitle}</h3>
+                <h3 className="text-2xl font-semibold text-emerald-950">
+                  {submitState.labelPendingPayment
+                    ? copy.exchangePayBeforeLabelTitle
+                    : submitState.intent === "exchange"
+                      ? copy.successTitleExchange
+                      : copy.successTitle}
+                </h3>
                 <p className="mt-2 text-base leading-relaxed text-emerald-900">
-                  {copy.successBody}
+                  {submitState.labelPendingPayment
+                    ? copy.exchangePayBeforeLabelBody
+                    : submitState.intent === "exchange"
+                      ? copy.successBodyExchange
+                      : copy.successBody}
                 </p>
                 {submitState.trackingNumber ? (
                   <p className="mt-3 text-sm text-emerald-900">
@@ -632,7 +983,12 @@ function PublicReturnsWizard() {
               <div className="rounded-sm border border-neutral-200 bg-neutral-50 p-5">
                 <h4 className="text-lg font-semibold">{copy.successNextTitle}</h4>
                 <ol className="mt-3 space-y-2 text-base text-neutral-700">
-                  {copy.successNext.map((item, index) => (
+                  {(submitState.labelPendingPayment
+                    ? copy.exchangePayBeforeLabelNext
+                    : submitState.intent === "exchange"
+                      ? copy.successNextExchange
+                      : copy.successNext
+                  ).map((item, index) => (
                     <li key={item} className="flex gap-3">
                       <span className="font-semibold text-neutral-900">{index + 1}.</span>
                       <span>{item}</span>
@@ -641,7 +997,36 @@ function PublicReturnsWizard() {
                 </ol>
               </div>
 
-              {submitState.labelUrl ? (
+              {submitState.priceDifferenceDue != null && submitState.priceDifferenceDue > 0 ? (
+                <p className="text-base">
+                  {copy.exchangePriceDiffDue.replace(
+                    "{amount}",
+                    submitState.priceDifferenceDue.toFixed(2)
+                  )}
+                </p>
+              ) : null}
+
+              {submitState.priceCreditDue != null && submitState.priceCreditDue > 0 ? (
+                <p className="text-base">
+                  {copy.exchangeCreditDue.replace(
+                    "{amount}",
+                    submitState.priceCreditDue.toFixed(2)
+                  )}
+                </p>
+              ) : null}
+
+              {submitState.exchangeInvoiceUrl ? (
+                <a
+                  href={submitState.exchangeInvoiceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex min-h-14 items-center justify-center rounded-sm bg-neutral-900 px-5 text-base font-semibold text-white"
+                >
+                  {copy.payExchangeDiff}
+                </a>
+              ) : null}
+
+              {submitState.labelUrl && !submitState.labelPendingPayment ? (
                 <a
                   href={submitState.labelUrl}
                   target="_blank"
