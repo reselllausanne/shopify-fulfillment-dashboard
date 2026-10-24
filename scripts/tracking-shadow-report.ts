@@ -49,7 +49,12 @@ type OrderRow = {
   utm_source: string | null;
   ab: string | null;
 };
-type LineRow = { oid: string; revenue: number; cost: number | null };
+type LineRow = {
+  oid: string;
+  revenue: number;
+  cost: number | null;
+  match_type: string | null;
+};
 
 async function main() {
   const days = Math.max(1, Number(arg("days") ?? 14));
@@ -133,21 +138,28 @@ async function main() {
 
   const lines = await prisma.$queryRaw<LineRow[]>`
     SELECT "shopifyOrderId" AS oid, "shopifyTotalPrice"::float AS revenue,
-           COALESCE("manualCostOverride", "supplierCost")::float AS cost
+           COALESCE("manualCostOverride", "supplierCost")::float AS cost,
+           "matchType" AS match_type
     FROM "OrderMatch"
     WHERE "shopifyCreatedAt" >= ${since}
   `;
   const assumptions = profitAssumptionsFromEnv();
+  const isProtection = (m: string | null) => m === "package_protection";
   const linesByOrder = new Map<string, LineRow[]>();
   for (const l of lines) linesByOrder.set(l.oid, [...(linesByOrder.get(l.oid) ?? []), l]);
   const profitByOrder = new Map(
-    [...linesByOrder].map(([oid, ls]) => [
-      oid,
-      computeOrderProfit(
-        ls.map((l) => ({ revenueGross: l.revenue, supplierCost: l.cost })),
-        assumptions,
-      ),
-    ]),
+    [...linesByOrder].map(([oid, ls]) => {
+      // Package protection = marge pure (cost 0 real) — exclude from CM2 denom noise.
+      const productLines = ls.filter((l) => !isProtection(l.match_type));
+      if (productLines.length === 0) return [oid, null] as const;
+      return [
+        oid,
+        computeOrderProfit(
+          productLines.map((l) => ({ revenueGross: l.revenue, supplierCost: l.cost })),
+          assumptions,
+        ),
+      ] as const;
+    }),
   );
 
   const total = orders.length;
@@ -157,7 +169,9 @@ async function main() {
   const trackedServerOnly = orders.filter((o) => o.tracked_server && !o.tracked_pixel);
   const dupes = orders.filter((o) => Number(o.completions) > 1);
   const withConsent = tracked.filter((o) => o.consent_marketing === true);
-  const profits = orders.map((o) => profitByOrder.get(o.oid)).filter((p) => p && p.costComplete);
+  /** Orders with ≥1 non-protection OrderMatch line (bought / physical / fixed). Unbought ≠ gap. */
+  const productMatched = orders.filter((o) => profitByOrder.get(o.oid) != null);
+  const profits = productMatched.map((o) => profitByOrder.get(o.oid)).filter((p) => p && p.costComplete);
 
   const abGroups = new Map<string, { orders: number; revenue: number; cm2: number; cm2Orders: number }>();
   for (const o of tracked) {
@@ -204,10 +218,14 @@ async function main() {
       ),
     ),
     internalProfit: {
-      note: "internal CM2 estimate — reporting only, never sent",
+      note: "CM2 reporting only — never sent. Denom = product-matched orders (excl. package_protection, excl. unbought)",
       assumptions,
+      productMatchedOrders: productMatched.length,
+      productMatchedPctOfShopify: pct(productMatched.length, total),
       ordersWithCompleteCost: profits.length,
-      ordersWithCompleteCostPct: pct(profits.length, total),
+      /** Fair G5 gate: complete cost / product-matched (not / all Shopify). */
+      ordersWithCompleteCostPct: pct(profits.length, productMatched.length),
+      ordersWithCompleteCostPctOfAllShopify: pct(profits.length, total),
       avgCm2: profits.length ? Math.round((profits.reduce((s, p) => s + p!.cm2, 0) / profits.length) * 100) / 100 : null,
       cm2PctOfRevenue: profits.length
         ? Math.round((profits.reduce((s, p) => s + p!.cm2, 0) / profits.reduce((s, p) => s + p!.revenueGross, 0)) * 1000) / 1000

@@ -226,12 +226,16 @@ export async function convergeRecentPaidShopifyOrders(options?: {
   for (const [orderId] of orderSales) {
     try {
       const res = await upsertAutoOrderMatchesForPaidOrder(orderId);
-      if (res.fixedRule + res.moneyKickz + res.physicalZero > 0 || res.errors.length > 0) {
+      if (
+        res.fixedRule + res.moneyKickz + res.physicalUnitCost + res.physicalZero > 0 ||
+        res.errors.length > 0
+      ) {
         console.log("[shopify][recent-paid][auto-match]", {
           orderId,
           orderName: res.orderName,
           fixedRule: res.fixedRule,
           moneyKickz: res.moneyKickz,
+          physicalUnitCost: res.physicalUnitCost,
           physicalZero: res.physicalZero,
           skippedProtected: res.skippedProtected,
           errors: res.errors,

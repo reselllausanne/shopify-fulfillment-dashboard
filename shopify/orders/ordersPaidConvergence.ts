@@ -412,12 +412,20 @@ export async function processOrdersPaidPayload(
   if (orderId) {
     try {
       const autoMatch = await upsertAutoOrderMatchesForPaidOrder(orderId);
-      if (autoMatch.fixedRule + autoMatch.moneyKickz + autoMatch.physicalZero > 0 || autoMatch.errors.length > 0) {
+      if (
+        autoMatch.fixedRule +
+          autoMatch.moneyKickz +
+          autoMatch.physicalUnitCost +
+          autoMatch.physicalZero >
+          0 ||
+        autoMatch.errors.length > 0
+      ) {
         console.log("[shopify][orders-paid][auto-match]", {
           orderId,
           orderName: autoMatch.orderName,
           fixedRule: autoMatch.fixedRule,
           moneyKickz: autoMatch.moneyKickz,
+          physicalUnitCost: autoMatch.physicalUnitCost,
           physicalZero: autoMatch.physicalZero,
           skippedProtected: autoMatch.skippedProtected,
           errors: autoMatch.errors,

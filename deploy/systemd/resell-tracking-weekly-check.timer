@@ -1,0 +1,10 @@
+[Unit]
+Description=Friday Resell tracking digeste
+
+[Timer]
+OnCalendar=Fri *-*-* 09:00:00
+Persistent=true
+Unit=resell-tracking-weekly-check.service
+
+[Install]
+WantedBy=timers.target

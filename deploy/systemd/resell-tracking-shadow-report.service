@@ -1,11 +1,10 @@
 [Unit]
-Description=Resell funnel shadow report (checkout coverage alert)
-After=network.target
+Description=Resell tracking shadow reconciliation (funnel vs Shopify)
+After=network.target docker.service
 
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/resell
-EnvironmentFile=-/etc/default/resell-ads
-ExecStart=/usr/bin/env bash -lc 'docker compose exec -T web npx tsx scripts/tracking-shadow-report.ts --days=14 --alert'
+ExecStart=/usr/bin/env bash -lc 'docker compose exec -T web npx tsx scripts/tracking-shadow-report.ts --days=7 --alert'
 StandardOutput=journal
 StandardError=journal
