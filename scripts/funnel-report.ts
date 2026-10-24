@@ -182,6 +182,19 @@ async function main() {
       AND (${includeBots}::boolean OR (webdriver IS NOT TRUE AND device_type IS DISTINCT FROM 'bot'))
   `;
 
+  /** Dual-CTA post-add: panel_checkout vs panel_cart (must stay instrumented). */
+  const panelCta = await prisma.$queryRaw<{ source: string | null; n: bigint; sessions: bigint }[]>`
+    SELECT COALESCE(props->>'source', '(none)') AS source,
+           COUNT(*)::bigint AS n,
+           COUNT(DISTINCT COALESCE(session_id, client_id))::bigint AS sessions
+    FROM public.funnel_events
+    WHERE created_at >= ${since}
+      AND event_name IN ('flow_checkout_redirect', 'flow_cart_opened')
+      AND (${includeBots}::boolean OR (webdriver IS NOT TRUE AND device_type IS DISTINCT FROM 'bot'))
+    GROUP BY 1
+    ORDER BY n DESC
+  `;
+
   const periodKey = (s: SessionRow) => new Date(s.period).toISOString().slice(0, 10);
   const tables: [string, Map<string, Funnel>][] = [
     [`by ${by}`, groupBy(sessions, periodKey)],
@@ -219,6 +232,11 @@ async function main() {
           atcTracking: Object.fromEntries(
             Object.entries(atcTracking ?? {}).map(([key, value]) => [key, Number(value)]),
           ),
+          panelCta: panelCta.map((r) => ({
+            source: r.source,
+            n: Number(r.n),
+            sessions: Number(r.sessions),
+          })),
           alerts: alerts.map((a) => ({ ...a, n: Number(a.n) })),
         },
         null,
@@ -235,6 +253,14 @@ async function main() {
   printTable("total", groupBy(sessions, () => "all"));
   printTable(tables[0][0], tables[0][1], true);
   for (const [title, m] of tables.slice(1)) printTable(title, m);
+
+  console.log("\n== Dual-CTA panel (post-add) — track forever");
+  if (!panelCta.length) console.log("(none yet — need theme publish + pixel flush)");
+  else {
+    for (const r of panelCta) {
+      console.log(`${String(Number(r.n)).padStart(6)} ev / ${String(Number(r.sessions)).padStart(5)} sess  source=${r.source}`);
+    }
+  }
 
   console.log("\n== ATC instrumentation (not additive conversions)");
   console.log(

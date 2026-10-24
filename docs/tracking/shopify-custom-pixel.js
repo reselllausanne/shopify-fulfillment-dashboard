@@ -45,7 +45,7 @@
 
 const ENDPOINT = "__FUNNEL_ENDPOINT__";
 const TRACK_KEY = "__FUNNEL_TRACK_KEY__";
-const PIXEL_VERSION = "2026-10-15.p3";
+const PIXEL_VERSION = "2026-10-24.p4";
 const CLICK_KEYS = ["gclid", "gbraid", "wbraid", "fbclid", "ttclid", "msclkid"];
 const CLICK_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const CLICK_STORE_KEY = "rl_clk";
@@ -82,7 +82,14 @@ const CUSTOM_EVENTS = [
 ];
 const AB_ID_RE = /^[a-z0-9_]{1,40}$/;
 const AB_VARIANT_RE = /^[A-Za-z0-9_-]{1,20}$/;
-const IMMEDIATE_EVENTS = new Set(["checkout_completed", "payment_info_submitted", "cart_item_added"]);
+// flow_* fire then navigate away — flush immediately (keepalive alone is flaky).
+const IMMEDIATE_EVENTS = new Set([
+  "checkout_completed",
+  "payment_info_submitted",
+  "cart_item_added",
+  "flow_checkout_redirect",
+  "flow_cart_opened",
+]);
 const EXPRESS_RE = /express|priority|prioritaire|24\s?h|next.?day|same.?day|a-post/i;
 const MAX_BATCH = 20;
 const FLUSH_DELAY_MS = 200;
