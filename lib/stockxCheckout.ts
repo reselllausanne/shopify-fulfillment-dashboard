@@ -15,6 +15,7 @@ import {
 import {
   chooseLane,
   chooseLaneByCsAtMargin,
+  classifyEmptyLaneReason,
   classifyLaneLabel,
   countDistinctShippingTierInText,
   extractCheckoutSubtotalChf,
@@ -102,6 +103,7 @@ export type StockxLastAutoBatch = {
     reason: string;
     reasonFr: string;
     title: string;
+    sizeEU?: string | null;
     saleChf: number | null;
     desiredLane: string;
   }>;
@@ -585,6 +587,22 @@ export async function selectAndVerifyStockxLane(
   } else {
     const pick = chooseLane(options.desired, lanes, maxAllInChf);
     if (!pick.ok) {
+      // Lanes parsed empty → distinguish TRUE oos ("aucune demande") from a
+      // parser miss where the item is still buyable (Express-only / single price).
+      if (pick.reason === "oos" && lanes.length === 0) {
+        const refined = classifyEmptyLaneReason(body);
+        return {
+          ok: false,
+          reason: refined,
+          lanes,
+          detail:
+            refined === "oos_no_ask"
+              ? "page: aucune demande / no ask — true OOS"
+              : refined === "express_only"
+                ? "page shows buyable price/Xpress but STANDARD not parsed"
+                : `empty lanes, unknown body (bodyChars=${body.length})`,
+        };
+      }
       return { ok: false, reason: pick.reason, lanes };
     }
     picked = pick.lane;
@@ -1334,7 +1352,7 @@ export async function runStockxAutoCheckoutForOrder(options: {
       const cheapest =
         [...lanes].sort((a, b) => a.totalChf - b.totalChf)[0] ?? null;
       const reason = (
-        ["oos", "multi_price", "wrong_lane_only", "cap", "express_unparsed", "price_moved", "bot_fail"] as const
+        ["oos", "oos_no_ask", "express_only", "multi_price", "wrong_lane_only", "cap", "express_unparsed", "price_moved", "bot_fail"] as const
       ).includes(selected.reason as any)
         ? (selected.reason as StockxNeedsHumanReason)
         : "bot_fail";

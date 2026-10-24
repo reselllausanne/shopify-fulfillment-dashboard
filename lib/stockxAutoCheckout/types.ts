@@ -14,6 +14,8 @@ export type StockxLaneCard = {
 /** Why auto-buy stopped and ops must act. */
 export type StockxNeedsHumanReason =
   | "oos"
+  | "oos_no_ask"
+  | "express_only"
   | "multi_price"
   | "wrong_lane_only"
   | "express_unparsed"
@@ -54,7 +56,9 @@ export type StockxNeedsHumanPayload = {
 
 /** French ops copy for email / admin UI. */
 export const STOCKX_NEEDS_HUMAN_REASON_FR: Record<StockxNeedsHumanReason, string> = {
-  oos: "Rupture / aucune lane parsée",
+  oos: "Rupture / aucune lane parsée (cause inconnue)",
+  oos_no_ask: "Vraie rupture — aucune demande / aucun vendeur à cette taille",
+  express_only: "Achetable (prix unique / Xpress) mais STANDARD non parsé — PAS en rupture",
   multi_price: "Plusieurs prix pour la lane demandée — choix ambigu",
   wrong_lane_only: "Seule l'autre lane (Express vs Standard) est dispo sous plafond",
   express_unparsed:

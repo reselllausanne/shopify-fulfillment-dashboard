@@ -175,6 +175,7 @@ export async function runStockxAutoEasyAndEmailRest(options?: {
       reason: n.reason,
       reasonFr: STOCKX_NEEDS_HUMAN_REASON_FR[n.reason] || n.reason,
       title: n.title,
+      sizeEU: n.sizeEU,
       saleChf: n.saleChf,
       desiredLane: n.desiredLane,
     })),

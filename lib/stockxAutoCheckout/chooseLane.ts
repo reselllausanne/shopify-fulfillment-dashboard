@@ -184,6 +184,36 @@ export function countDistinctShippingTierInText(
   return prices.size;
 }
 
+/**
+ * When lanes parse EMPTY, read raw checkout/PDP body to tell TRUE out-of-stock
+ * from a parser miss (buyable, Express-only). Distinguishes:
+ *  - `oos_no_ask`  : body says "aucune demande" / "no asks" / "make an offer" and
+ *                    shows NO CHF price → genuinely nobody selling this size.
+ *                    Only this one is safe to tell a customer "unavailable".
+ *  - `express_only`: a single buyable signal is present (e.g. "il n'en reste que 1",
+ *                    "Prix de l'article", Xpress/Express) but STANDARD was not parsed
+ *                    → buyable, NOT out of stock (parser miss).
+ *  - `oos`         : unknown / unparseable (keep the conservative default).
+ */
+export function classifyEmptyLaneReason(
+  body: string | null | undefined
+): "oos_no_ask" | "express_only" | "oos" {
+  const t = String(body || "");
+  const noAskRe = /aucune demande|no asks?|make an offer|faire une offre/i;
+  const buyableRe =
+    /il n['’]en reste que\s*\d|prix de l['’]article|\b(xpress|express)\b/i;
+  // Any CHF money token on the page (prefix or suffix form).
+  const hasPriceRe = new RegExp(
+    String.raw`(?:CHF\s*${MONEY_RE})|(?:${MONEY_RE}\s*CHF)`,
+    "i"
+  );
+  const hasPrice = hasPriceRe.test(t);
+
+  if (noAskRe.test(t) && !hasPrice) return "oos_no_ask";
+  if (buyableRe.test(t) || hasPrice) return "express_only";
+  return "oos";
+}
+
 export type ChooseLaneResult =
   | { ok: true; lane: StockxLaneCard }
   | {
