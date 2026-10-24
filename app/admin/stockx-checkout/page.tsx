@@ -101,7 +101,9 @@ export default function StockxCheckoutPage() {
   const [lastConfirm, setLastConfirm] = useState<LastConfirm | null>(null);
   const [lastAutoBatch, setLastAutoBatch] = useState<LastAutoBatch | null>(null);
   const [queue, setQueue] = useState<QueuePlan | null>(null);
-  const [busy, setBusy] = useState<"preview" | "confirm" | "auto" | null>(null);
+  const [busy, setBusy] = useState<"preview" | "confirm" | "auto" | "shopify-batch" | null>(
+    null
+  );
   const [message, setMessage] = useState<string | null>(null);
   const [showScreen, setShowScreen] = useState(false);
   const [autoDryRun, setAutoDryRun] = useState(true);
