@@ -3,6 +3,11 @@ import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
 import { dryRunPlan, getBuyLagDays } from "@/lib/stockxAutoCheckout/queue";
 import { runStockxAutoEasyAndEmailRest } from "@/lib/stockxAutoCheckout/runAutoBatch";
 import {
+  runShopifyBatchBuy,
+  SHOPIFY_STANDARD_BATCH_13,
+  type ShopifyBatchBuyItem,
+} from "@/lib/stockxAutoCheckout/shopifyBatchBuy";
+import {
   confirmStockxCheckout,
   getStockxCheckoutState,
   previewStockxCheckout,
@@ -11,7 +16,8 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+/** Batch buy can run many sequential PDPs on one sticky session. */
+export const maxDuration = 900;
 
 async function requireAdmin(req: NextRequest) {
   const role = await getStaffRoleFromRequest(req);
@@ -139,6 +145,37 @@ export async function POST(req: NextRequest) {
           queue: summary.queue ? serializeQueuePlan(summary.queue) : null,
         },
       });
+    }
+
+    if (action === "shopify_batch_buy" || action === "shopify-batch-buy") {
+      const confirmLive =
+        body.confirmLive === true ||
+        body.confirmLive === "true" ||
+        body.go === true ||
+        body.go === "true";
+      // Default dry-run unless confirmLive/go — never surprise Place Order.
+      const dryRun = !confirmLive;
+      let items: ShopifyBatchBuyItem[] = SHOPIFY_STANDARD_BATCH_13;
+      if (Array.isArray(body.items) && body.items.length) {
+        items = body.items.map((raw) => {
+          const r = raw as Record<string, unknown>;
+          return {
+            orderName: String(r.orderName ?? ""),
+            slug: String(r.slug ?? ""),
+            sizeEU: String(r.sizeEU ?? ""),
+            lineItemId: r.lineItemId != null ? String(r.lineItemId) : null,
+          };
+        });
+      } else if (Array.isArray(body.orderNames) && body.orderNames.length) {
+        const want = new Set(body.orderNames.map((n) => String(n).replace(/^#?/, "#")));
+        items = SHOPIFY_STANDARD_BATCH_13.filter((i) => want.has(i.orderName));
+      }
+      const summary = await runShopifyBatchBuy({
+        items,
+        dryRun,
+        confirmLive,
+      });
+      return NextResponse.json({ ok: true, summary });
     }
 
     return NextResponse.json({ ok: false, error: "Unknown action" }, { status: 400 });

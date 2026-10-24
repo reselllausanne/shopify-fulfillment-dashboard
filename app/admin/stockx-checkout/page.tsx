@@ -205,6 +205,41 @@ export default function StockxCheckoutPage() {
     }
   };
 
+  const runShopifyBatchBuy = async () => {
+    const confirmMsg = autoDryRun
+      ? "DRY-RUN shopify-batch-buy: sticky-first STANDARD cohort (13), no Place Order?"
+      : "LIVE shopify-batch-buy: Place Order on easy STANDARD path for planned 13. Continue?";
+    if (!window.confirm(confirmMsg)) return;
+    setBusy("shopify-batch");
+    setMessage(null);
+    setShowScreen(true);
+    try {
+      const res = await fetch("/api/admin/stockx-checkout", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "shopify_batch_buy",
+          dryRun: autoDryRun,
+          confirmLive: !autoDryRun,
+        }),
+      });
+      const data = await res.json();
+      if (!data?.ok) {
+        setMessage(data?.error || "Shopify batch buy failed");
+      } else {
+        const s = data.summary;
+        setMessage(
+          `Shopify batch ${s.dryRun ? "dry-run" : "LIVE"} — bought ${s.bought}, aborted ${s.aborted}, skipped ${s.skipped}, needs_human ${s.needsHuman}`
+        );
+      }
+      await load();
+    } catch (e: any) {
+      setMessage(e?.message || "Network error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const runAutoBatch = async () => {
     const cohortHint = queue?.orderNamesIfRunNow?.length
       ? `\nQueue: ${queue.cohortSellDateKey} → ${queue.orderNamesIfRunNow.join(", ")}`
@@ -372,6 +407,20 @@ export default function StockxCheckoutPage() {
                 : autoDryRun
                   ? "Auto dry-run (queue)"
                   : "Auto LIVE queue + email rest"}
+            </button>
+            <button
+              className={`rounded px-4 py-2 text-sm text-white disabled:opacity-50 ${
+                autoDryRun ? "bg-teal-800" : "bg-rose-800"
+              }`}
+              disabled={busy != null}
+              onClick={() => void runShopifyBatchBuy()}
+              title="Sticky-first STANDARD batch (max 2 rotates), shared session"
+            >
+              {busy === "shopify-batch"
+                ? "Shopify batch…"
+                : autoDryRun
+                  ? "Shopify batch dry-run"
+                  : "Shopify batch LIVE"}
             </button>
             <button
               className="rounded border px-4 py-2 text-sm"
