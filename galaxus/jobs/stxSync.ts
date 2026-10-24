@@ -277,8 +277,9 @@ async function listStxSupplierVariantIdsForKickdbProductId(kickdbProductId: stri
 }
 
 /**
- * Price refresh only: variants that stay in DB but are no longer returned as eligible (no express offer, bad GTIN,
- * size removed from StockX payload, etc.) get stock 0 instead of keeping a stale ask count / price-looking state.
+ * Price refresh only: variants that stay in DB but are no longer returned as eligible (0 asks on every
+ * lane, bad GTIN, size removed from StockX payload, etc.) get stock 0 instead of keeping a stale ask
+ * count / price-looking state. Applies to LEGO the same as sneakers (express preferred, else standard).
  * Does not touch manualLock rows (bulkUpdateSupplierVariants skips them).
  */
 async function zeroStockForStxVariantsNotInEligibleBatch(
@@ -304,7 +305,7 @@ async function zeroStockForStxVariantsNotInEligibleBatch(
 
 /**
  * Zero stock for `stx_{variantId}` rows present in the SSE payload but no longer eligible
- * (no express offer, invalid GTIN, etc.). Works even when VariantMapping is missing.
+ * (0 asks on every lane, invalid GTIN, etc.). Works even when VariantMapping is missing.
  */
 async function zeroStockForPayloadStxVariantsNotInEligibleBatch(
   payload: any,
@@ -491,9 +492,9 @@ export async function ingestStxFromRawPayload(
   const remappedResult = await remapRowsToExistingProviderKeyGtin(parsed);
   const rows = remappedResult.rows as IngestParsedRow[];
   const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-  const skipZeroStock =
-    options?.skipZeroStock === true ||
-    allowsStxStandardImport(payload);
+  // LEGO/force-import used to skip zeroing and left stale stock>0 when asks hit 0.
+  // Same rule for everyone: no usable ask (express or standard) → stock 0.
+  const skipZeroStock = options?.skipZeroStock === true;
 
   for (const row of rows) {
     assertMappingIntegrity({
@@ -873,15 +874,10 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
           const remappedResult = await parseStxRefreshRows(payload, dbProductId);
           const rows = remappedResult.rows;
           const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-          const skipZeroStock = allowsStxStandardImport(
-            payload,
-            pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey)
-          );
           const zeroed = await zeroStockForStxVariantsNotInEligibleBatch(
             dbProductId,
             eligibleIds,
-            now,
-            { skip: skipZeroStock }
+            now
           );
           const shopify = await syncShopifyStockAfterRefresh(dbProductId, payload, rows, zeroed);
           return {
@@ -1013,15 +1009,9 @@ export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSync
   const remappedResult = await parseStxRefreshRows(payload, dbProductId || slug);
   const rows = remappedResult.rows;
   const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-  const skipZeroStock = allowsStxStandardImport(
-    payload,
-    pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey, slug)
-  );
   const stockZeroed =
     dbProductId.length > 0
-      ? await zeroStockForStxVariantsNotInEligibleBatch(dbProductId, eligibleIds, now, {
-          skip: skipZeroStock,
-        })
+      ? await zeroStockForStxVariantsNotInEligibleBatch(dbProductId, eligibleIds, now)
       : 0;
   const { zeroed: shopifySoldoutZeroed, restored: shopifyStockRestored } = await syncShopifyStockAfterRefresh(
     dbProductId,
@@ -1141,15 +1131,10 @@ export async function refreshStxProductsByKickdbProductIds(
         const remappedResult = await parseStxRefreshRows(payload, cleanId);
         const rows = remappedResult.rows;
         const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-        const skipZeroStock = allowsStxStandardImport(
-          payload,
-          pickString(payload?.slug, payload?.url_key, payload?.urlKey, kickRow?.urlKey)
-        );
         const stockZeroed = await zeroStockForStxVariantsNotInEligibleBatch(
           cleanId,
           eligibleIds,
-          now,
-          { skip: skipZeroStock }
+          now
         );
         const shopify = await syncShopifyStockAfterRefresh(cleanId, payload, rows, stockZeroed);
         return {
