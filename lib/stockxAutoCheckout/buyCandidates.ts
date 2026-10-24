@@ -15,6 +15,7 @@ import {
   detectShopifyExpress,
 } from "@/lib/stockxAutoCheckout/detectShopifyExpress";
 import {
+  getStockxFeedHeartbeat,
   precheckStockxBuyability,
   type PrecheckLine,
   type PrecheckResult,
@@ -217,6 +218,10 @@ export async function selectBuyCandidates(
     for (const p of prior as Array<{ shopifyOrderName: string }>) stickySkip.add(p.shopifyOrderName);
   }
 
+  // Resolve the global feed heartbeat once so staleness is judged by SSE liveness,
+  // not each row's own (change-only) lastSyncAt.
+  const feedLastSyncAt = await getStockxFeedHeartbeat(now);
+
   const candidates: BuyCandidate[] = [];
   let skippedKnownUnbuyable = 0;
 
@@ -248,6 +253,7 @@ export async function selectBuyCandidates(
       marginFloorPct: opts.marginFloorPct,
       staleHours: opts.staleHours,
       now,
+      feedLastSyncAt,
     });
 
     const shopifyLineItemId = line.shopifyLineItemId ?? null;

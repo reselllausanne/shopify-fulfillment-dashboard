@@ -99,6 +99,46 @@ describe("evaluatePrecheck", () => {
     expect(r.status).toBe("stale_data");
   });
 
+  it("feed live but row lastSyncAt old → buyable (change-only lastSyncAt ignored)", () => {
+    const oldRow = new Date(NOW.getTime() - 30 * 24 * 3_600_000); // 30d since last value change
+    const feedFresh = new Date(NOW.getTime() - 10 * 60_000); // SSE updated 10 min ago
+    const r = evaluatePrecheck({
+      variant: variant({ standardBuyPrice: 200, lastSyncAt: oldRow }),
+      sellChf: 300,
+      desiredLane: "STANDARD",
+      staleHours: 24,
+      feedLastSyncAt: feedFresh,
+      now: NOW,
+    });
+    expect(r.status).toBe("buyable");
+  });
+
+  it("feed silent beyond staleHours → stale_data regardless of row", () => {
+    const feedSilent = new Date(NOW.getTime() - 48 * 3_600_000);
+    const r = evaluatePrecheck({
+      variant: variant({ standardBuyPrice: 200, lastSyncAt: NOW }),
+      sellChf: 300,
+      desiredLane: "STANDARD",
+      staleHours: 24,
+      feedLastSyncAt: feedSilent,
+      now: NOW,
+    });
+    expect(r.status).toBe("stale_data");
+    expect(r.detail).toContain("SSE down");
+  });
+
+  it("no feed heartbeat (null) → stale_data (never synced)", () => {
+    const r = evaluatePrecheck({
+      variant: variant({ standardBuyPrice: 200, lastSyncAt: NOW }),
+      sellChf: 300,
+      desiredLane: "STANDARD",
+      feedLastSyncAt: null,
+      now: NOW,
+    });
+    expect(r.status).toBe("stale_data");
+    expect(r.detail).toContain("never synced");
+  });
+
   it("no usable price (lane + base null) → stale_data", () => {
     const r = evaluatePrecheck({
       variant: variant({ standardBuyPrice: null, expressBuyPrice: null, price: null }),
