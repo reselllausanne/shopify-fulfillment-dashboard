@@ -23,6 +23,7 @@ import {
 import { tryConsumeStockxCfRotateBudget } from "@/lib/stockxProxyCfBudget";
 import { writeStockxTokenFile } from "@/lib/stockxSilentAuth0";
 import { stockxTokenExpiresAt } from "@/lib/stockxServerToken";
+import { stockxCredentialsFromEnv, tryStockxCredentialLogin } from "@/lib/stockxAutoLogin";
 import type { StockxWarmAccount } from "@/lib/stockxWarmBrowser";
 
 const DATA_DIR = path.join(process.cwd(), ".data");
@@ -225,6 +226,47 @@ async function remintOnceViaProxy(opts: {
         continue;
       }
       await page.waitForTimeout(2000);
+    }
+
+    // SSO cold: residential proxy cleared CF but the Auth0 session did not silently
+    // mint a bearer (StockX redirected to /u/login/identifier). Passively waiting never
+    // yields a token. Fall through to credential + Gmail/IMAP OTP login IN THIS proxy
+    // context (CF already clear here), then capture the fresh JWT. This is the robust
+    // "datacenter IP can't pass Turnstile" escape: residential IP + real login.
+    if (!captured && !stockxHardBlock) {
+      const url = page.url();
+      const title = await page.title().catch(() => "");
+      const body = (await page.locator("body").innerText().catch(() => "")) || "";
+      const onLoginWall =
+        /accounts\.stockx\.com|\/login|identifier/i.test(url) ||
+        /log in|se connecter/i.test(title);
+      const creds = stockxCredentialsFromEnv(account);
+      if (onLoginWall && creds && !looksCloudflare(url, title, body)) {
+        console.log(
+          `[STOCKX-PROXY-REMINT] SSO cold (login wall, CF clear) → credential + OTP login via ${proxy.label}`
+        );
+        const login = await tryStockxCredentialLogin(page, creds);
+        console.log(
+          `[STOCKX-PROXY-REMINT] credential login attempted=${login.attempted} needsOtp=${login.needsOtp} error=${login.error ?? "none"}`
+        );
+        // Re-capture after login: ctx request hook grabs Authorization bearer; also poll cookie.
+        const reUntil = Date.now() + 45_000;
+        while (!captured && Date.now() < reUntil) {
+          for (const c of await ctx.cookies()) {
+            if (c.name === "token" && c.value.startsWith("eyJ") && isFreshJwt(c.value)) {
+              captured = c.value;
+              break;
+            }
+          }
+          if (captured) break;
+          if (!/buying|account/i.test(page.url())) {
+            await page
+              .goto("https://stockx.com/buying/orders", { waitUntil: "domcontentloaded" })
+              .catch(() => undefined);
+          }
+          await page.waitForTimeout(3000);
+        }
+      }
     }
 
     if (!captured) {
