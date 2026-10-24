@@ -4,7 +4,16 @@ set -euo pipefail
 
 BRANCH="feat/returns-customer-exchange"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="${1:-$ROOT/.worktrees/returns-local}"
+WT="$ROOT/.worktrees/returns-local"
+if [ -n "${1:-}" ]; then
+  TARGET="$1"
+elif [ -e "$WT/.git" ]; then
+  TARGET="$WT"
+elif [ "$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")" = "$BRANCH" ]; then
+  TARGET="$ROOT"
+else
+  TARGET="$WT"
+fi
 
 if [ ! -d "$TARGET/.git" ] && [ ! -f "$TARGET/.git" ]; then
   echo "missing worktree: $TARGET"
