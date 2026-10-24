@@ -175,69 +175,64 @@ query OrderLookupForReturn($first: Int!, $query: String!) {
 }
 `;
 
+/** Shared line fields — keep cheap (Shopify cost was ~900+ and throttled). */
+const RETURNABLE_LINE_ITEM_FIELDS = /* GraphQL */ `
+  id
+  title
+  sku
+  variantTitle
+  image {
+    url(transform: { maxWidth: 128, maxHeight: 128 })
+  }
+  originalUnitPriceSet {
+    shopMoney {
+      amount
+      currencyCode
+    }
+  }
+  discountedUnitPriceAfterAllDiscountsSet {
+    shopMoney {
+      amount
+      currencyCode
+    }
+  }
+  variant {
+    id
+    title
+    compareAtPrice
+    selectedOptions {
+      name
+      value
+    }
+    delivery48h: metafield(namespace: "custom", key: "delivery_48h") {
+      value
+    }
+    priceLocked: metafield(namespace: "custom", key: "price_locked") {
+      value
+    }
+    product {
+      id
+      tags
+      collections(first: 5) {
+        nodes {
+          handle
+        }
+      }
+    }
+  }
+`;
+
 const FULFILLED_LINE_ITEMS_QUERY = /* GraphQL */ `
 query FulfilledLineItemsForOrder($orderId: ID!) {
   order(id: $orderId) {
-    fulfillments(first: 20) {
-      fulfillmentLineItems(first: 100) {
+    fulfillments(first: 10) {
+      fulfillmentLineItems(first: 40) {
         edges {
           node {
             id
             quantity
             lineItem {
-              id
-              title
-              sku
-              variantTitle
-              image {
-                url(transform: { maxWidth: 128, maxHeight: 128 })
-              }
-              originalUnitPriceSet {
-                shopMoney {
-                  amount
-                  currencyCode
-                }
-              }
-              discountedUnitPriceAfterAllDiscountsSet {
-                shopMoney {
-                  amount
-                  currencyCode
-                }
-              }
-              variant {
-                id
-                title
-                compareAtPrice
-                selectedOptions {
-                  name
-                  value
-                }
-                image {
-                  url(transform: { maxWidth: 128, maxHeight: 128 })
-                }
-                delivery48h: metafield(namespace: "custom", key: "delivery_48h") {
-                  value
-                }
-                priceLocked: metafield(namespace: "custom", key: "price_locked") {
-                  value
-                }
-                product {
-                  id
-                  tags
-                  featuredMedia {
-                    preview {
-                      image {
-                        url(transform: { maxWidth: 128, maxHeight: 128 })
-                      }
-                    }
-                  }
-                  collections(first: 20) {
-                    nodes {
-                      handle
-                    }
-                  }
-                }
-              }
+              ${RETURNABLE_LINE_ITEM_FIELDS}
             }
           }
         }
@@ -253,66 +248,14 @@ query ReturnableFulfillmentsForOrder($orderId: ID!, $first: Int!) {
     edges {
       node {
         id
-        returnableFulfillmentLineItems(first: 100) {
+        returnableFulfillmentLineItems(first: 40) {
           edges {
             node {
               quantity
               fulfillmentLineItem {
                 id
                 lineItem {
-                  id
-                  title
-                  sku
-                  variantTitle
-                  image {
-                    url(transform: { maxWidth: 128, maxHeight: 128 })
-                  }
-                  originalUnitPriceSet {
-                    shopMoney {
-                      amount
-                      currencyCode
-                    }
-                  }
-                  discountedUnitPriceAfterAllDiscountsSet {
-                    shopMoney {
-                      amount
-                      currencyCode
-                    }
-                  }
-                  variant {
-                    id
-                    title
-                    compareAtPrice
-                    selectedOptions {
-                      name
-                      value
-                    }
-                    image {
-                      url(transform: { maxWidth: 128, maxHeight: 128 })
-                    }
-                    delivery48h: metafield(namespace: "custom", key: "delivery_48h") {
-                      value
-                    }
-                    priceLocked: metafield(namespace: "custom", key: "price_locked") {
-                      value
-                    }
-                    product {
-                      id
-                      tags
-                      featuredMedia {
-                        preview {
-                          image {
-                            url(transform: { maxWidth: 128, maxHeight: 128 })
-                          }
-                        }
-                      }
-                      collections(first: 20) {
-                        nodes {
-                          handle
-                        }
-                      }
-                    }
-                  }
+                  ${RETURNABLE_LINE_ITEM_FIELDS}
                 }
               }
             }
@@ -471,6 +414,34 @@ export class ShopifyReturnRequestError extends Error {
     this.status = status;
     this.details = details;
   }
+}
+
+function isShopifyThrottleErrors(errors: unknown): boolean {
+  if (!Array.isArray(errors)) return false;
+  return errors.some((entry) => {
+    const code = String((entry as { extensions?: { code?: string } })?.extensions?.code ?? "")
+      .trim()
+      .toUpperCase();
+    const message = String((entry as { message?: string })?.message ?? "").toLowerCase();
+    return code === "THROTTLED" || message.includes("throttled");
+  });
+}
+
+function throwShopifyLookupFailed(kind: string, errors: unknown): never {
+  if (isShopifyThrottleErrors(errors)) {
+    throw new ShopifyReturnRequestError(
+      "RATE_LIMITED",
+      "Shopify is busy — wait a few seconds and try again.",
+      503,
+      errors
+    );
+  }
+  throw new ShopifyReturnRequestError(
+    "SERVER_ERROR",
+    `Shopify ${kind} lookup failed`,
+    502,
+    errors
+  );
 }
 
 export function normalizeOrderNumber(value: string): string {
@@ -914,15 +885,10 @@ async function listReturnableLineItems(orderId: string): Promise<ReturnableLine[
         };
       }>;
     };
-  }>(RETURNABLE_FULFILLMENTS_QUERY, { orderId, first: 20 });
+  }>(RETURNABLE_FULFILLMENTS_QUERY, { orderId, first: 10 });
 
   if (errors?.length) {
-    throw new ShopifyReturnRequestError(
-      "SERVER_ERROR",
-      "Shopify returnable items lookup failed",
-      502,
-      errors
-    );
+    throwShopifyLookupFailed("returnable items", errors);
   }
 
   const lines: ReturnableLine[] = [];
@@ -972,12 +938,7 @@ async function listFulfilledLineItemsFromOrder(orderId: string): Promise<Returna
   }>(FULFILLED_LINE_ITEMS_QUERY, { orderId });
 
   if (errors?.length) {
-    throw new ShopifyReturnRequestError(
-      "SERVER_ERROR",
-      "Shopify fulfilled items lookup failed",
-      502,
-      errors
-    );
+    throwShopifyLookupFailed("fulfilled items", errors);
   }
 
   const byLineId = new Map<string, ReturnableLine>();

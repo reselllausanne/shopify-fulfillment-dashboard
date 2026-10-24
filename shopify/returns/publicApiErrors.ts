@@ -22,6 +22,9 @@ export function toPublicReturnsErrorMessage(
   if (error.code === "ITEM_NOT_RETURNABLE") {
     return "This line is not eligible for an exchange on this order.";
   }
+  if (error.code === "RATE_LIMITED") {
+    return error.message || "Too many requests — wait a few seconds and try again.";
+  }
   if (error.code === "SERVER_ERROR") {
     return error.message || "Temporary server error. Try again in a moment.";
   }

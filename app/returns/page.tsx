@@ -56,6 +56,9 @@ function messageForPublicError(
   }
   if (code === "NO_RETURNABLE_ITEMS") return copy.noEligibleProducts;
   if (code === "RETURN_POLICY_EXCLUDED") return copy.returnPolicyExcluded;
+  if (code === "RATE_LIMITED") {
+    return "Shopify est occupe — attendez quelques secondes et reessayez.";
+  }
   const raw = String(apiMessage ?? "").trim();
   return raw || copy.lookupFailed;
 }
