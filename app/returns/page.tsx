@@ -486,6 +486,21 @@ function PublicReturnsWizard() {
     returnAmount: number | null;
   }>;
 
+  const exchangeSelectionTotal = (() => {
+    if (
+      !isExchangeFlow ||
+      !selectedLineSummaries.length ||
+      selectedLineSummaries.some((line) => line.lineDelta == null)
+    ) {
+      return null;
+    }
+    return Number(
+      selectedLineSummaries
+        .reduce((sum, line) => sum + (line.lineDelta ?? 0), 0)
+        .toFixed(2)
+    );
+  })();
+
   const returnRefundEstimate = (() => {
     if (isExchangeFlow) return null;
     let sum = 0;
@@ -881,18 +896,9 @@ function PublicReturnsWizard() {
                                   )}
                                 </div>
                               ) : null}
-                              {item.unitAmount != null ? (
-                                <p className="mb-2 text-sm font-medium text-neutral-800">
-                                  {copy.paidPairLabel.replace(
-                                    "{amount}",
-                                    item.unitAmount.toFixed(2)
-                                  )}
-                                </p>
-                              ) : null}
                               <span className="mb-2 block text-sm font-medium">
                                 {copy.replacementLabel}
                               </span>
-                              <p className="mb-2 text-xs text-neutral-500">{copy.priceDiffHint}</p>
                               {replacementLoading[item.fulfillmentLineItemId] ? (
                                 <p className="text-sm text-neutral-500">{copy.replacementLoading}</p>
                               ) : (replacementOptions[item.fulfillmentLineItemId] ?? []).length ===
@@ -934,35 +940,6 @@ function PublicReturnsWizard() {
                                       }
                                     )}
                                   </select>
-                                  {state.replacementVariantId ? (
-                                    (() => {
-                                      const opt = (
-                                        replacementOptions[item.fulfillmentLineItemId] ?? []
-                                      ).find((o) => o.variantId === state.replacementVariantId);
-                                      const delta = unitPriceDelta(
-                                        item.unitAmount,
-                                        opt?.unitPrice ?? null
-                                      );
-                                      const line =
-                                        delta != null
-                                          ? Number((delta * state.quantity).toFixed(2))
-                                          : null;
-                                      const tone =
-                                        line == null || Math.abs(line) < 0.005
-                                          ? "text-neutral-700"
-                                          : line > 0
-                                            ? "text-amber-900"
-                                            : "text-emerald-800";
-                                      return (
-                                        <p
-                                          className={`mt-2 text-sm font-semibold ${tone}`}
-                                          aria-live="polite"
-                                        >
-                                          {formatDeltaLabel(line, copy)}
-                                        </p>
-                                      );
-                                    })()
-                                  ) : null}
                                 </>
                               )}
                             </div>
@@ -996,6 +973,21 @@ function PublicReturnsWizard() {
                 ) : null}
               </div>
 
+              {exchangeSelectionTotal != null ? (
+                <p className="text-right text-base font-semibold text-neutral-900" aria-live="polite">
+                  {exchangeSelectionTotal > 0
+                    ? copy.selectionTotalDue.replace(
+                        "{amount}",
+                        exchangeSelectionTotal.toFixed(2)
+                      )
+                    : exchangeSelectionTotal < 0
+                      ? copy.selectionTotalCredit.replace(
+                          "{amount}",
+                          Math.abs(exchangeSelectionTotal).toFixed(2)
+                        )
+                      : copy.selectionTotalEven}
+                </p>
+              ) : null}
               <div className="grid grid-cols-2 gap-3">
                 <button type="button" onClick={() => setStep(1)} className={btnSecondary}>
                   {copy.back}
