@@ -18,11 +18,21 @@ type NativeReturnLine = {
   quantity: number;
   returnReason: string;
   reasonNote?: string | null;
+  /** Paid-pair unit used for customer Δ (fallback when Shopify line is 0). */
+  paidUnitAmount?: number | null;
 };
 
 type NativeExchangeLine = {
   variantId: string;
   quantity: number;
+  /** Catalog unit price of the replacement (presentment, tax-included). */
+  unitPrice?: number | null;
+  /**
+   * Discount on the exchange line so Shopify net due matches paid-pair Δ
+   * (needed when the original line was 100% discounted / staff gratis).
+   */
+  appliedDiscountAmount?: number | null;
+  currencyCode?: string | null;
 };
 
 type CreatedReturnLine = {
@@ -125,43 +135,6 @@ query CustomerExchangeReturnReasonDefinitions($handles: [String!]) {
       id
       handle
       deleted
-    }
-  }
-}
-`;
-
-const RETURN_CALCULATE = /* GraphQL */ `
-query CustomerExchangeReturnCalculate($input: CalculateReturnInput!) {
-  returnCalculate(input: $input) {
-    returnLineItems {
-      quantity
-      subtotalSet {
-        presentmentMoney {
-          amount
-          currencyCode
-        }
-      }
-      totalTaxSet {
-        presentmentMoney {
-          amount
-          currencyCode
-        }
-      }
-    }
-    exchangeLineItems {
-      quantity
-      subtotalSet {
-        presentmentMoney {
-          amount
-          currencyCode
-        }
-      }
-      totalTaxSet {
-        presentmentMoney {
-          amount
-          currencyCode
-        }
-      }
     }
   }
 }
@@ -369,67 +342,69 @@ async function resolveReturnReasonDefinitionId(reason: string): Promise<string> 
   return definition.id;
 }
 
-type CalculatedLine = {
-  quantity: number;
-  subtotalSet: { presentmentMoney: { amount: string; currencyCode: string } };
-  totalTaxSet: { presentmentMoney: { amount: string; currencyCode: string } };
-};
-
-function calculatedLineTotal(lines: CalculatedLine[]): number {
-  return Number(
-    lines
-      .reduce((sum, line) => {
-        const subtotal = Number(line.subtotalSet.presentmentMoney.amount ?? 0);
-        const tax = Number(line.totalTaxSet.presentmentMoney.amount ?? 0);
-        return sum + (Number.isFinite(subtotal) ? subtotal : 0) + (Number.isFinite(tax) ? tax : 0);
-      }, 0)
-      .toFixed(2)
-  );
+/**
+ * Customer-facing quote = same math as the size selector:
+ * replacement catalog − paid pair unit (staff/0-paid fallback included).
+ * Raw returnCalculate alone is wrong for gratis lines (credit 0) and when
+ * tax is stacked on TTC catalog prices (+17 became 178.44).
+ */
+export function quoteCustomerExchangeFromPaidPair(input: {
+  lines: Array<{
+    paidUnitAmount: number | null;
+    replacementUnitPrice: number | null;
+    quantity: number;
+  }>;
+  currencyCode?: string | null;
+}): {
+  priceDifferenceDue: number;
+  priceCreditDue: number;
+  currencyCode: string;
+} {
+  let delta = 0;
+  let known = false;
+  for (const line of input.lines) {
+    if (line.paidUnitAmount == null || line.replacementUnitPrice == null) continue;
+    known = true;
+    delta += (line.replacementUnitPrice - line.paidUnitAmount) * line.quantity;
+  }
+  if (!known) {
+    throw new ShopifyReturnRequestError(
+      "VALIDATION_ERROR",
+      "Missing prices for exchange quote",
+      400
+    );
+  }
+  const rounded = Number(delta.toFixed(2));
+  return {
+    priceDifferenceDue: rounded > 0 ? rounded : 0,
+    priceCreditDue: rounded < 0 ? Math.abs(rounded) : 0,
+    currencyCode: String(input.currencyCode ?? "CHF").trim().toUpperCase() || "CHF",
+  };
 }
 
-/** Shopify-native quote without creating a return. */
 export async function quoteCustomerExchange(input: {
   orderId: string;
-  returnLines: Array<{ fulfillmentLineItemId: string; quantity: number }>;
-  exchangeLines: NativeExchangeLine[];
+  returnLines: Array<{
+    fulfillmentLineItemId: string;
+    quantity: number;
+    paidUnitAmount: number | null;
+  }>;
+  exchangeLines: Array<NativeExchangeLine & { unitPrice: number | null }>;
+  currencyCode?: string | null;
 }): Promise<{
   priceDifferenceDue: number;
   priceCreditDue: number;
   currencyCode: string;
 }> {
-  const result = await shopifyGraphQL<{
-    returnCalculate?: {
-      returnLineItems?: CalculatedLine[];
-      exchangeLineItems?: CalculatedLine[];
-    } | null;
-  }>(RETURN_CALCULATE, {
-    input: {
-      orderId: input.orderId,
-      returnLineItems: input.returnLines,
-      exchangeLineItems: input.exchangeLines,
-    },
+  void input.orderId;
+  return quoteCustomerExchangeFromPaidPair({
+    currencyCode: input.currencyCode,
+    lines: input.returnLines.map((line, index) => ({
+      paidUnitAmount: line.paidUnitAmount,
+      replacementUnitPrice: input.exchangeLines[index]?.unitPrice ?? null,
+      quantity: line.quantity,
+    })),
   });
-  assertNoErrors("returnCalculate", result.errors, undefined);
-  const calculated = result.data?.returnCalculate;
-  if (!calculated) {
-    throw new ShopifyReturnRequestError(
-      "SERVER_ERROR",
-      "Shopify returnCalculate returned no calculation",
-      502
-    );
-  }
-  const returned = calculatedLineTotal(calculated.returnLineItems ?? []);
-  const exchanged = calculatedLineTotal(calculated.exchangeLineItems ?? []);
-  const delta = Number((exchanged - returned).toFixed(2));
-  const currencyCode =
-    calculated.exchangeLineItems?.[0]?.subtotalSet.presentmentMoney.currencyCode ??
-    calculated.returnLineItems?.[0]?.subtotalSet.presentmentMoney.currencyCode ??
-    "CHF";
-  return {
-    priceDifferenceDue: delta > 0 ? delta : 0,
-    priceCreditDue: delta < 0 ? Math.abs(delta) : 0,
-    currencyCode,
-  };
 }
 
 async function suggestedOutcome(input: {
@@ -541,10 +516,28 @@ export async function openNativeCustomerExchange(input: {
         returnReasonDefinitionId: returnReasonDefinitionIds[index],
         returnReasonNote: String(line.reasonNote ?? "").slice(0, 255),
       })),
-      exchangeLineItems: input.exchangeLines.map((line) => ({
-        variantId: line.variantId,
-        quantity: line.quantity,
-      })),
+      exchangeLineItems: input.exchangeLines.map((line) => {
+        const discount = Number(line.appliedDiscountAmount ?? 0);
+        const currency =
+          String(line.currencyCode ?? "CHF").trim().toUpperCase() || "CHF";
+        return {
+          variantId: line.variantId,
+          quantity: line.quantity,
+          ...(discount > 0.009
+            ? {
+                appliedDiscount: {
+                  description: "Ajustement echange — prix paire paye",
+                  value: {
+                    amount: {
+                      amount: discount.toFixed(2),
+                      currencyCode: currency,
+                    },
+                  },
+                },
+              }
+            : {}),
+        };
+      }),
     },
   });
   assertNoErrors(
@@ -574,16 +567,23 @@ export async function openNativeCustomerExchange(input: {
     );
   }
 
+  const paidPairQuote = quoteCustomerExchangeFromPaidPair({
+    currencyCode: input.exchangeLines[0]?.currencyCode ?? "CHF",
+    lines: input.returnLines.map((line, index) => ({
+      paidUnitAmount: line.paidUnitAmount ?? null,
+      replacementUnitPrice: input.exchangeLines[index]?.unitPrice ?? null,
+      quantity: line.quantity,
+    })),
+  });
+
   let outcome = await suggestedOutcome({
     returnId: created.id,
     returnLineItems,
     exchangeLineItems,
     allocation: "ORIGINAL_PAYMENT_METHODS",
   });
-  const due =
-    outcome?.__typename === "InvoiceReturnOutcome" ? amountFromBag(outcome.amount) : 0;
-  const credit =
-    outcome?.__typename === "RefundReturnOutcome" ? amountFromBag(outcome.amount) : 0;
+  const due = paidPairQuote.priceDifferenceDue;
+  const credit = paidPairQuote.priceCreditDue;
 
   let refundPreference: "original_payment" | "store_credit" | null = null;
   if (outcome?.__typename === "RefundReturnOutcome") {

@@ -94,7 +94,10 @@ type ReturnableLine = {
   variantLabel: string | null;
   imageUrl: string | null;
   lineItemId: string | null;
+  /** Paid-pair unit for Δ (fallback to list price when Shopify line is 0). */
   unitAmount: number | null;
+  /** Raw Shopify discounted unit (may be 0 on staff/gratis orders). */
+  shopifyPaidUnitAmount: number | null;
   currencyCode: string | null;
   compareAtPrice: number | null;
   delivery48h: string | null;
@@ -655,6 +658,7 @@ function buildReturnableLine(
   }
 
   const paid = paidUnitAmountFromLineItem(lineItem);
+  const shopifyPaid = moneyAmount(lineItem?.discountedUnitPriceAfterAllDiscountsSet);
   const list = moneyAmount(lineItem?.originalUnitPriceSet);
   const compareAtRaw = Number(lineItem?.variant?.compareAtPrice ?? NaN);
   const collectionHandles = (lineItem?.variant?.product?.collections?.nodes ?? [])
@@ -675,6 +679,7 @@ function buildReturnableLine(
     lineItemId: lineItem?.id ?? null,
     // Exchange Δ = replacement catalog − what customer paid for this pair.
     unitAmount: paid.amount,
+    shopifyPaidUnitAmount: shopifyPaid.amount,
     currencyCode: paid.currencyCode ?? list.currencyCode,
     compareAtPrice: Number.isFinite(compareAtRaw) ? compareAtRaw : null,
     delivery48h: lineItem?.variant?.delivery48h?.value ?? null,
@@ -1256,7 +1261,14 @@ export async function createAndOpenReturnFromFormData(
         .filter((item) => item.fulfillmentLineItemId)
         .map((item) => [item.fulfillmentLineItemId!, item])
     );
-    const nativeExchangeLines = selectedLines.map((entry) => {
+    const { openNativeCustomerExchange } = await import(
+      "@/shopify/returns/customerNativeExchange"
+    );
+    const { snapshotReplacementVariant } = await import(
+      "@/shopify/returns/publicCustomerExchange"
+    );
+    const nativeExchangeLines = [];
+    for (const entry of selectedLines) {
       const replacementVariantId = String(
         requestedByFli.get(entry.line.fulfillmentLineItemId)?.replacementVariantId ?? ""
       ).trim();
@@ -1267,11 +1279,26 @@ export async function createAndOpenReturnFromFormData(
           400
         );
       }
-      return { variantId: replacementVariantId, quantity: entry.quantity };
-    });
-    const { openNativeCustomerExchange } = await import(
-      "@/shopify/returns/customerNativeExchange"
-    );
+      const snap = await snapshotReplacementVariant(replacementVariantId);
+      const displayPaid = entry.line.unitAmount;
+      const shopifyPaid = entry.line.shopifyPaidUnitAmount;
+      const discountPerUnit =
+        displayPaid != null && shopifyPaid != null
+          ? Math.max(0, Number((displayPaid - shopifyPaid).toFixed(2)))
+          : displayPaid != null && (shopifyPaid == null || shopifyPaid < 0.01)
+            ? displayPaid
+            : 0;
+      nativeExchangeLines.push({
+        variantId: replacementVariantId,
+        quantity: entry.quantity,
+        unitPrice: snap.unitPrice,
+        currencyCode: entry.line.currencyCode ?? "CHF",
+        appliedDiscountAmount:
+          discountPerUnit > 0
+            ? Number((discountPerUnit * entry.quantity).toFixed(2))
+            : 0,
+      });
+    }
     nativeExchangeResult = await openNativeCustomerExchange({
       orderId: order.id,
       customerEmail: orderNodeEmail(order),
@@ -1279,6 +1306,7 @@ export async function createAndOpenReturnFromFormData(
         fulfillmentLineItemId: entry.line.fulfillmentLineItemId,
         quantity: entry.quantity,
         returnReason: entry.reason,
+        paidUnitAmount: entry.line.unitAmount,
         reasonNote: [mapReasonLabel(entry.reason), entry.customerNote]
           .filter(Boolean)
           .join(" — "),

@@ -4,6 +4,7 @@ import {
   ShopifyReturnRequestError,
 } from "@/shopify/returns/createAndOpenReturn";
 import { quoteCustomerExchange } from "@/shopify/returns/customerNativeExchange";
+import { snapshotReplacementVariant } from "@/shopify/returns/publicCustomerExchange";
 import { toPublicReturnsErrorMessage } from "@/shopify/returns/publicApiErrors";
 
 export const runtime = "nodejs";
@@ -97,8 +98,17 @@ export async function POST(request: Request) {
     const byId = new Map(
       returnable.items.map((item) => [item.fulfillmentLineItemId, item])
     );
-    const returnLines: Array<{ fulfillmentLineItemId: string; quantity: number }> = [];
-    const exchangeLines: Array<{ variantId: string; quantity: number }> = [];
+    const returnLines: Array<{
+      fulfillmentLineItemId: string;
+      quantity: number;
+      paidUnitAmount: number | null;
+    }> = [];
+    const exchangeLines: Array<{
+      variantId: string;
+      quantity: number;
+      unitPrice: number | null;
+    }> = [];
+
     for (const item of requested) {
       const fulfillmentLineItemId = String(item?.fulfillmentLineItemId ?? "").trim();
       const variantId = String(item?.replacementVariantId ?? "").trim();
@@ -111,14 +121,24 @@ export async function POST(request: Request) {
           400
         );
       }
-      returnLines.push({ fulfillmentLineItemId, quantity });
-      exchangeLines.push({ variantId, quantity });
+      const snap = await snapshotReplacementVariant(variantId);
+      returnLines.push({
+        fulfillmentLineItemId,
+        quantity,
+        paidUnitAmount: line.unitAmount,
+      });
+      exchangeLines.push({
+        variantId,
+        quantity,
+        unitPrice: snap.unitPrice,
+      });
     }
 
     const quote = await quoteCustomerExchange({
       orderId: returnable.orderId,
       returnLines,
       exchangeLines,
+      currencyCode: returnable.items[0]?.currencyCode ?? "CHF",
     });
     return NextResponse.json({ success: true, ...quote }, { status: 200, headers });
   } catch (error: unknown) {
