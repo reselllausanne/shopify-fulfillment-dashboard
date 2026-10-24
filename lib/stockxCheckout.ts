@@ -179,6 +179,13 @@ async function selectSizeEuOrUs(
   sizeUS: string | null
 ): Promise<{ ok: boolean; used: "EU" | "US" | null }> {
   const size = sizeEU.replace(/^EU\s*/i, "").trim();
+  // One-size / OS accessories — no size picker; Buy Now already sized.
+  if (/^(os|one\s*size|o\/s|onesize|-)$/i.test(size)) {
+    const buy = page.getByRole("button", { name: /Acheter maintenant|Buy Now|Buy$/i }).first();
+    if (await buy.isVisible({ timeout: 2500 }).catch(() => false)) {
+      return { ok: true, used: null };
+    }
+  }
   await page.getByRole("button", { name: /Taille|Size/i }).first().click({ timeout: 8000 }).catch(() => undefined);
   await page.waitForTimeout(700);
 
