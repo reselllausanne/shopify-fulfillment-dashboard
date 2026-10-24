@@ -401,14 +401,7 @@ function computeSellPrices(input: {
   return { normalSell: resolved.normalSell, expressSell: resolved.expressSell };
 }
 
-/**
- * Write StockX dropship express_price only.
- *
- * Never flip custom.express_available here — that flag means physical warehouse
- * 48h stock (Bussigny/shops). STX used to force true on every price sync and
- * bloated the express-delivery smart collection (~80k dropship SKUs).
- * express_available is owned by expressRepriceSync / syncPhysicalExpressAvailability.
- */
+/** Write express money + flip express_available so theme never shows stale/inverted price. */
 async function writeShopifyExpressPrice(
   variantId: string,
   expressSell: number
@@ -427,6 +420,13 @@ async function writeShopifyExpressPrice(
         key: "express_price",
         type: "money",
         value: expressValue,
+      },
+      {
+        ownerId: variantId,
+        namespace: "custom",
+        key: "express_available",
+        type: "boolean",
+        value: "true",
       },
     ],
   });
