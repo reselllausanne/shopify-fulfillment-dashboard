@@ -365,103 +365,97 @@ async function clickLaneCard(page: Page, lane: StockxLaneCard): Promise<boolean>
   const targetLabel = String(lane.rawLabel || lane.label || "").trim();
   const wantStandard = classifyLaneLabel(targetLabel) === "STANDARD" || lane.label === "STANDARD";
 
-  const viaDom = await page.evaluate(
-    ({ price, label, wantStd }) => {
-      const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim();
-      const priceOk = (text: string) => {
-        const m =
-          text.match(/CHF\s*(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)/i) ||
-          text.match(/(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
-        if (!m) return false;
-        const n = Number(m[1].replace(/[^\d,.-]/g, "").replace(/\s/g, "").replace(",", "."));
-        return Number.isFinite(n) && Math.abs(n - price) <= 0.51;
-      };
-      const labelOk = (text: string) => {
-        if (!label) return true;
-        if (new RegExp(`\\b${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text)) {
-          return true;
-        }
-        // Date-tier inferred Standard: reject Express/Xpress/Fastest cards
-        if (wantStd && /\b(express|xpress|fastest)\b/i.test(text)) return false;
-        if (wantStd && /\bstandard\b/i.test(text)) return true;
-        return !/\b(express|xpress|fastest|standard)\b/i.test(text);
-      };
-      const isInteractive = (el: Element) => {
-        const tag = el.tagName.toLowerCase();
-        if (tag === "button" || tag === "label" || tag === "input") return true;
-        const role = (el.getAttribute("role") || "").toLowerCase();
-        return role === "button" || role === "radio" || role === "option";
-      };
-      const clickEl = (el: HTMLElement) => {
-        const input =
-          (el.matches("input") ? el : null) ||
-          el.querySelector("input[type=radio],input[type=checkbox]") ||
-          (el.closest("label")?.querySelector("input") ?? null);
-        if (input instanceof HTMLInputElement) {
-          input.click();
-          if (!input.checked) {
-            input.checked = true;
-            input.dispatchEvent(new Event("input", { bubbles: true }));
-            input.dispatchEvent(new Event("change", { bubbles: true }));
+  // String evaluate — tsx/esbuild injects `__name` into function() evaluate bodies (breaks in browser).
+  const viaDom = await page
+    .evaluate(
+      `({ price, label, wantStd }) => {
+        const norm = (s) => (s || "").replace(/\\s+/g, " ").trim();
+        const priceOk = (text) => {
+          const m =
+            text.match(/CHF\\s*(\\d{1,3}(?:[’'\\s]\\d{3})*(?:[.,]\\d{2})?)/i) ||
+            text.match(/(\\d{1,3}(?:[’'\\s]\\d{3})*(?:[.,]\\d{2})?)\\s*CHF/i);
+          if (!m) return false;
+          const n = Number(m[1].replace(/[^\\d,.-]/g, "").replace(/\\s/g, "").replace(",", "."));
+          return Number.isFinite(n) && Math.abs(n - price) <= 0.51;
+        };
+        const labelOk = (text) => {
+          if (!label) return true;
+          if (text.toLowerCase().indexOf(String(label).toLowerCase()) >= 0) return true;
+          if (wantStd && /\\b(express|xpress|fastest)\\b/i.test(text)) return false;
+          if (wantStd && /\\bstandard\\b/i.test(text)) return true;
+          return !/\\b(express|xpress|fastest|standard)\\b/i.test(text);
+        };
+        const isInteractive = (el) => {
+          const tag = el.tagName.toLowerCase();
+          if (tag === "button" || tag === "label" || tag === "input") return true;
+          const role = (el.getAttribute("role") || "").toLowerCase();
+          return role === "button" || role === "radio" || role === "option";
+        };
+        const clickEl = (el) => {
+          const input =
+            (el.matches && el.matches("input") ? el : null) ||
+            el.querySelector("input[type=radio],input[type=checkbox]") ||
+            (el.closest("label") && el.closest("label").querySelector("input"));
+          if (input && input.tagName === "INPUT") {
+            input.click();
+            if (!input.checked) {
+              input.checked = true;
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+              input.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+            return true;
           }
+          el.scrollIntoView({ block: "center", inline: "nearest" });
+          el.click();
           return true;
-        }
-        el.scrollIntoView({ block: "center", inline: "nearest" });
-        el.click();
-        return true;
-      };
-
-      const candidates = Array.from(
-        document.querySelectorAll(
-          "button,label,div[role=button],div[role=radio],div[role=option],li[role=option],input[type=radio]"
-        )
-      ) as HTMLElement[];
-      // Smallest matching interactive node first (avoid outer wrappers).
-      const scored = candidates
-        .map((el) => {
+        };
+        const candidates = Array.from(
+          document.querySelectorAll(
+            "button,label,div[role=button],div[role=radio],div[role=option],li[role=option],input[type=radio]"
+          )
+        );
+        const scored = [];
+        for (const el of candidates) {
           const text = norm(el.textContent || "");
-          if (!priceOk(text) || !labelOk(text)) return null;
-          return { el, len: text.length, interactive: isInteractive(el) };
-        })
-        .filter(Boolean) as Array<{ el: HTMLElement; len: number; interactive: boolean }>;
-      scored.sort((a, b) => {
-        if (a.interactive !== b.interactive) return a.interactive ? -1 : 1;
-        return a.len - b.len;
-      });
-      for (const row of scored.slice(0, 6)) {
-        try {
-          if (clickEl(row.el)) return { ok: true, via: "interactive" };
-        } catch {
-          /* try next */
+          if (!priceOk(text) || !labelOk(text)) continue;
+          scored.push({ el, len: text.length, interactive: isInteractive(el) });
         }
-      }
-
-      // Date-only: nearest clickable ancestor of a price text node
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      let node: Node | null;
-      while ((node = walker.nextNode())) {
-        const t = norm(node.textContent || "");
-        if (!priceOk(t)) continue;
-        let el = node.parentElement;
-        for (let i = 0; i < 6 && el; i += 1, el = el.parentElement) {
-          const block = norm(el.textContent || "").slice(0, 280);
-          if (!labelOk(block)) continue;
-          if (!isInteractive(el) && !el.querySelector("input[type=radio]")) continue;
+        scored.sort((a, b) => {
+          if (a.interactive !== b.interactive) return a.interactive ? -1 : 1;
+          return a.len - b.len;
+        });
+        for (const row of scored.slice(0, 6)) {
           try {
-            if (clickEl(el as HTMLElement)) return { ok: true, via: "price-text" };
-          } catch {
-            /* continue */
+            if (clickEl(row.el)) return { ok: true, via: "interactive" };
+          } catch (e) {}
+        }
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+          const t = norm(node.textContent || "");
+          if (!priceOk(t)) continue;
+          let el = node.parentElement;
+          for (let i = 0; i < 6 && el; i += 1, el = el.parentElement) {
+            const block = norm(el.textContent || "").slice(0, 280);
+            if (!labelOk(block)) continue;
+            if (!isInteractive(el) && !el.querySelector("input[type=radio]")) continue;
+            try {
+              if (clickEl(el)) return { ok: true, via: "price-text" };
+            } catch (e) {}
           }
         }
-      }
-      return { ok: false, via: "none" };
-    },
-    { price: targetPrice, label: targetLabel, wantStd: wantStandard }
-  );
+        return { ok: false, via: "none" };
+      }`,
+      { price: targetPrice, label: targetLabel, wantStd: wantStandard }
+    )
+    .catch((e: any) => {
+      console.warn(`[STOCKX-CHECKOUT] clickLaneCard evaluate failed: ${e?.message || e}`);
+      return { ok: false, via: "error" };
+    });
 
-  if (viaDom?.ok) return true;
+  if (viaDom && (viaDom as { ok?: boolean }).ok) return true;
 
-  // Fallback: Playwright locators (force) — last resort
+  // Fallback: Playwright locators (force)
   const priceRe = String(lane.totalChf).replace(".", "[,.]");
   const labelRe = wantStandard
     ? /\bStandard\b/i
@@ -506,17 +500,16 @@ export async function selectAndVerifyStockxLane(
 > {
   const maxAllInChf = options.maxAllInChf ?? MAX_ALL_IN_CHF;
   // Shipping cards often paint after Buy Now — empty body → false oos.
+  // String predicate avoids tsx `__name` injection into waitForFunction bodies.
   const shipReady = await page
     .waitForFunction(
-      () => {
-        const t = document.body?.innerText || "";
+      `() => {
+        const t = document.body && document.body.innerText || "";
         return (
-          /\b(Standard|Express|Xpress|Fastest)\b/i.test(t) ||
-          /\d{1,2}\s+(jan|fév|fev|mar|avr|mai|juin|juil|aoû|aou|sep|oct|nov|déc|dec|janvier|février|mars|avril|juin|juillet|août|septembre|octobre|novembre|décembre)/i.test(
-            t
-          )
+          /\\b(Standard|Express|Xpress|Fastest)\\b/i.test(t) ||
+          /\\d{1,2}\\s+(jan|fév|fev|mar|avr|mai|juin|juil|aoû|aou|sep|oct|nov|déc|dec|janvier|février|mars|avril|juin|juillet|août|septembre|octobre|novembre|décembre)/i.test(t)
         );
-      },
+      }`,
       { timeout: 20_000 }
     )
     .then(() => true)
