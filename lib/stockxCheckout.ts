@@ -600,12 +600,11 @@ export async function selectAndVerifyStockxLane(
       if (pick.reason === "oos" && lanes.length === 0) {
         const refined = classifyEmptyLaneReason(body);
         // SINGLE-PRICE XPRESS direct-ship: no Standard/Express cards, only an item
-        // price + "livraison Xpress". Customer Express → synthesize ONE EXPRESS lane
-        // and proceed through the normal verify + margin + cap + Place Order path.
-        if (
-          refined === "express_only" &&
-          options.desired === "EXPRESS"
-        ) {
+        // price + "livraison Xpress". Xpress is the ONLY ship option, so synthesize ONE
+        // EXPRESS lane regardless of the customer's desired lane (never refuse express
+        // when it's the only option; STANDARD orders get a free speed upgrade) and
+        // proceed through the normal verify + margin + cap + Place Order path.
+        if (refined === "express_only") {
           const itemPriceChf = parseSingleXpressItemPriceChf(body);
           if (itemPriceChf != null && itemPriceChf <= maxAllInChf) {
             const synth: StockxLaneCard = {
@@ -701,6 +700,20 @@ export async function selectAndVerifyStockxLane(
   // enforce the cap here; margin is gated downstream on this live subtotal. Fail closed
   // (no item-price fallback) when no live subtotal appears.
   if (singleXpressSynth) {
+    // Beat the render race: on high Cloudflare pressure the Xpress subtotal lands as
+    // "Loading…" / 0,00 before finalizing. Poll a few more seconds for a real total
+    // before fail-closing, so a slow page isn't mistaken for an unbuyable one.
+    if (verifiedSubtotal == null || verifiedSubtotal < LANE_MIN_ALL_IN_CHF) {
+      for (
+        let i = 0;
+        i < 6 && (verifiedSubtotal == null || verifiedSubtotal < LANE_MIN_ALL_IN_CHF);
+        i += 1
+      ) {
+        await page.waitForTimeout(1500);
+        const t = await page.locator("body").innerText().catch(() => "");
+        verifiedSubtotal = extractCheckoutSubtotalChf(t);
+      }
+    }
     if (verifiedSubtotal == null || verifiedSubtotal < LANE_MIN_ALL_IN_CHF) {
       return {
         ok: false,
