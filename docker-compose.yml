@@ -176,22 +176,8 @@ services:
     depends_on:
       - web
 
-  worker-shopify-stx-price-sync:
-    build: .
-    env_file:
-      - .env
-    environment:
-      - NODE_OPTIONS=${SHOPIFY_STX_SYNC_NODE_OPTIONS:---max-old-space-size=2048}
-      - SHOPIFY_STX_SYNC_INTERVAL_MS=${SHOPIFY_STX_SYNC_INTERVAL_MS:-3600000}
-      - SHOPIFY_STX_SYNC_INITIAL_DELAY_MS=${SHOPIFY_STX_SYNC_INITIAL_DELAY_MS:-120000}
-      - SHOPIFY_STX_SYNC_BATCH_SIZE=${SHOPIFY_STX_SYNC_BATCH_SIZE:-50}
-      - SHOPIFY_STX_SYNC_BATCH_SLEEP_MS=${SHOPIFY_STX_SYNC_BATCH_SLEEP_MS:-1500}
-      - SHOPIFY_STX_SYNC_ONLY_ON_SHOPIFY=${SHOPIFY_STX_SYNC_ONLY_ON_SHOPIFY:-1}
-      - SHOPIFY_API_RESERVE_POINTS=${SHOPIFY_STX_SYNC_API_RESERVE_POINTS:-800}
-    command: ["npx", "tsx", "scripts/workers/shopifyStxPriceSyncWorker.ts"]
-    volumes:
-      - ./.data:/app/.data
-    restart: unless-stopped
+  # REMOVED 2026-10-24: continuous STX price-sync worker (duplicate of SSE keep-updated).
+  # Former service: worker-shopify-stx-price-sync (shopifyStxPriceSyncWorker.ts)
 
   # REMOVED 2026-10-24: continuous fast-reprice worker fought SSE/convergence.
   # One-shot still OK: docker compose run --rm web npx tsx scripts/reprice-shopify-fast.ts --apply --verify-bulk
