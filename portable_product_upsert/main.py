@@ -2970,8 +2970,8 @@ def process_url(url, thread_id=0, prefetched=None):
                 )
 
             # Express sell:
-            # - Distinct STX express+standard asks → max(calc(express), standard) + 20
-            # - Single offer only → standard=calc; express=standard+20
+            # - Distinct STX express+standard asks → express=max(calc(express), standard) (no +20)
+            # - Same ask / single offer only → standard=calc; express=standard+20
             express_sell_price = None
             if express_prices and standard_prices:
                 lowest_express_entry = min(express_prices, key=lambda x: x["price"])

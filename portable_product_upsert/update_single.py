@@ -367,8 +367,8 @@ def update_single_product(url_slug, allow_new_variants=True, images_only=False, 
         sell_price = calc_sell_price(raw_stockx_price, product_category, is_express=False, product_handle=product_handle, brand=brand)
 
         # Express sell:
-        # - Distinct STX express+standard → max(calc(express), standard) + 20
-        # - Single offer → standard=calc; express=standard+20
+        # - Distinct STX express+standard → express=max(calc(express), standard) (no +20)
+        # - Same ask / single offer → standard=calc; express=standard+20
         express_sell_price = None
         if express_prices and standard_prices:
             lowest_express_entry = min(express_prices, key=lambda x: x['price'])

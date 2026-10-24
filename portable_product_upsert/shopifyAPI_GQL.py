@@ -497,9 +497,8 @@ def _psych_round_up(price: float) -> int:
 
 def read_stx_express_surcharge_chf() -> float:
     """
-    Flat CHF surcharge added on top of the standard sell price to guarantee a
-    meaningful express premium on STX dropship variants. Mirrors the warehouse
-    liquidation rule (LIQUIDATION_EXPRESS_SURCHARGE_CHF, default 20).
+    Diff only when standard + express StockX asks are the same (or single lane).
+    Distinct express ask → sell = locked calc(express), no flat +20.
     """
     raw = (
         os.environ.get("STX_EXPRESS_SURCHARGE_CHF")
@@ -517,9 +516,8 @@ def read_stx_express_surcharge_chf() -> float:
 
 def apply_stx_express_floor(standard_sell, express_calc=None):
     """
-    Single-offer express premium: express = standard + surcharge (ceil centime).
-    Dual-lane callers must pass express_calc=None only for the +surcharge case,
-    or skip this helper and use locked calc(express buy) directly.
+    Same-price / single-offer only: express = standard + surcharge.
+    When express_calc is already above standard, keep it (no +20).
     """
     try:
         std = float(standard_sell or 0)
@@ -537,13 +535,13 @@ def apply_stx_express_floor(standard_sell, express_calc=None):
         exp = 0.0
     if exp <= std:
         return floor
-    return max(exp, floor)
+    return _ceil_to_whole_franc(exp)
 
 
 def dual_lane_express_sell(standard_sell, express_calc):
     """
     Distinct standard + express StockX asks:
-    express = max(calc(express buy), standard) + surcharge (ceil whole franc).
+    express = max(calc(express buy), standard) — no flat +20.
     Mirrors TS resolveStxWebsiteSellPrices dual_lane.
     """
     try:
@@ -557,7 +555,7 @@ def dual_lane_express_sell(standard_sell, express_calc):
     base = max(exp, std)
     if base <= 0:
         return None
-    return _ceil_to_whole_franc(base + read_stx_express_surcharge_chf())
+    return _ceil_to_whole_franc(base)
 
 
 def calc_liquidation_sell_price(cost_chf) -> int:
