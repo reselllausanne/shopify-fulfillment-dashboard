@@ -1479,15 +1479,18 @@ export async function runStockxAutoCheckoutForOrder(options: {
       });
     }
 
-    // Last gate before Place Order: never pay Express when desired STANDARD.
+    // Last gate before Place Order: block an Express total only when we actually PICKED a
+    // STANDARD lane (click didn't stick → stuck-Express protection). A deliberate upgrade
+    // or a single-Xpress-only page legitimately has an Express total, so key on the chosen
+    // lane, not the customer's original desire (margin/cap already gated above/below).
     if (
-      desiredLane === "STANDARD" &&
+      pick.lane.label === "STANDARD" &&
       liveSubtotalLooksLikeExpress(totalChf, lanes, "STANDARD")
     ) {
       return fail("price_moved", {
         lanes,
         recommended: pick.lane,
-        detail: `Place Order blocked — live total ${totalChf} matches Express (desired STANDARD ${pick.lane.totalChf})`,
+        detail: `Place Order blocked — live total ${totalChf} matches Express (picked STANDARD ${pick.lane.totalChf})`,
       });
     }
 
