@@ -1,7 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chromium, type Page } from "playwright";
+import { chromium, type BrowserContext, type Page } from "playwright";
 import { prisma } from "@/app/lib/prisma";
+import {
+  nextStockxPlaywrightProxy,
+  stockxBrowserProxyMode,
+  type PlaywrightProxyConfig,
+} from "@/lib/stockxPlaywrightProxy";
 import { stockxAccountFiles } from "@/lib/stockxSessionRefresh";
 import {
   chooseLane,
@@ -503,7 +508,12 @@ async function loadShopifyLine(
   };
 }
 
-async function launchStockxContext() {
+export async function launchStockxContext(options?: {
+  /** Prefer LemonPrime sticky (Shopify buy path should pass this). */
+  proxy?: PlaywrightProxyConfig | null;
+  /** When true (default if STOCKX_BROWSER_PROXY_MODE=always), pick next sticky. */
+  useStickyProxy?: boolean;
+}): Promise<{ ctx: BrowserContext; page: Page; proxy: PlaywrightProxyConfig | null }> {
   const files = stockxAccountFiles("default");
   // VPS Xvfb / VNC: without DISPLAY Chromium dies. Default :99 like stockx login.
   if (!process.env.DISPLAY) process.env.DISPLAY = ":99";
@@ -511,6 +521,20 @@ async function launchStockxContext() {
     await fs.rm(path.join(files.profileDir, lockName), { force: true }).catch(() => undefined);
     await fs.rm(path.join(files.profileDir, "Default", lockName), { force: true }).catch(() => undefined);
   }
+
+  const wantSticky =
+    options?.useStickyProxy === true ||
+    (options?.useStickyProxy !== false && stockxBrowserProxyMode() === "always");
+  const proxy =
+    options?.proxy !== undefined
+      ? options.proxy
+      : wantSticky
+        ? nextStockxPlaywrightProxy()
+        : null;
+  if (proxy) {
+    console.log(`[STOCKX-CHECKOUT] launch sticky proxy=${proxy.label}`);
+  }
+
   try {
     const ctx = await chromium.launchPersistentContext(files.profileDir, {
       headless: false,
@@ -522,9 +546,18 @@ async function launchStockxContext() {
       locale: "fr-CH",
       timezoneId: "Europe/Zurich",
       viewport: { width: 1440, height: 1100 },
+      ...(proxy
+        ? {
+            proxy: {
+              server: proxy.server,
+              username: proxy.username,
+              password: proxy.password,
+            },
+          }
+        : {}),
     });
     const page = ctx.pages()[0] || (await ctx.newPage());
-    return { ctx, page };
+    return { ctx, page, proxy };
   } catch (e: any) {
     const msg = e?.message || String(e);
     throw new Error(
@@ -847,11 +880,22 @@ export async function runStockxAutoCheckoutForOrder(options: {
   maxAllInChf?: number;
   /** When true, do not click Place Order (dry run classification + preview). */
   dryRun?: boolean;
+  /** Force StockX lane (Shopify batch = STANDARD). Default: from Shopify Express detect. */
+  desiredLane?: StockxDesiredLane | null;
+  /** Reuse an already-warm sticky browser (batch buy). Caller owns close. */
+  reuse?: { ctx: BrowserContext; page: Page } | null;
+  /** Skip hard PDP goto when reuse page is already on product. */
+  skipGoto?: boolean;
+  /** Override Shopify size when line load unavailable / plan size. */
+  sizeEUOverride?: string | null;
 }): Promise<StockxAutoCheckoutResult> {
   const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
   let shopify: ShopifyLineCtx;
   try {
     shopify = await loadShopifyLine(options.orderName, options.lineItemId);
+    if (options.sizeEUOverride) {
+      shopify = { ...shopify, sizeEU: options.sizeEUOverride };
+    }
   } catch (e: any) {
     return {
       kind: "needs_human",
@@ -948,7 +992,8 @@ export async function runStockxAutoCheckoutForOrder(options: {
     deliveryModeLabel: shopify.deliveryModeLabel,
     shippingLineTitles: shopify.shippingLineTitles,
   });
-  const desiredLane = desiredStockxLaneFromShopify(shopifyExpress);
+  const desiredLane =
+    options.desiredLane || desiredStockxLaneFromShopify(shopifyExpress);
 
   const slug = (options.slug || (await resolveSlugFromSku(shopify.sku)) || "").trim();
   if (!slug) {
@@ -962,11 +1007,21 @@ export async function runStockxAutoCheckoutForOrder(options: {
   });
   const productUrl = buildStockxBuyUrl(slug, sizeUS);
 
-  let ctx: Awaited<ReturnType<typeof launchStockxContext>>["ctx"] | null = null;
+  let ctx: BrowserContext | null = null;
+  let ownsContext = false;
   try {
-    const launched = await launchStockxContext();
-    ctx = launched.ctx;
-    const { page } = launched;
+    let page: Page;
+    if (options.reuse?.page) {
+      ctx = options.reuse.ctx;
+      page = options.reuse.page;
+    } else {
+      const launched = await launchStockxContext({
+        useStickyProxy: stockxBrowserProxyMode() === "always",
+      });
+      ctx = launched.ctx;
+      page = launched.page;
+      ownsContext = true;
+    }
 
     const fail = async (
       reason: StockxNeedsHumanReason,
@@ -989,8 +1044,12 @@ export async function runStockxAutoCheckoutForOrder(options: {
       return { kind: "needs_human", reason, detail: extras.detail, needsHuman: nh };
     };
 
-    await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForTimeout(3500);
+    if (!options.skipGoto) {
+      await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForTimeout(3500);
+    } else {
+      await page.waitForTimeout(800);
+    }
     await dismissNoise(page);
 
     const sized = await selectSizeEuOrUs(page, shopify.sizeEU, sizeUS);
@@ -1169,6 +1228,6 @@ export async function runStockxAutoCheckoutForOrder(options: {
     });
     return { kind: "needs_human", reason: "bot_fail", detail: e?.message, needsHuman: nh };
   } finally {
-    await ctx?.close().catch(() => undefined);
+    if (ownsContext) await ctx?.close().catch(() => undefined);
   }
 }
