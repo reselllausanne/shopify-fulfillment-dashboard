@@ -23,6 +23,7 @@ import {
   marginOk,
   moneyToNumber,
   parseLaneCardsFromText,
+  parseSingleXpressItemPriceChf,
 } from "@/lib/stockxAutoCheckout/chooseLane";
 import {
   detectShopifyExpress,
@@ -43,6 +44,7 @@ import {
   MAX_ALL_IN_CHF,
   type StockxDesiredLane,
   type StockxLaneCard,
+  type StockxLaneLabel,
   type StockxNeedsHumanPayload,
   type StockxNeedsHumanReason,
 } from "@/lib/stockxAutoCheckout/types";
@@ -65,7 +67,7 @@ export type StockxCheckoutPreview = {
   buyUrl: string | null;
   desiredLane: StockxDesiredLane;
   shopifyExpress: boolean;
-  lane: "STANDARD" | "EXPRESS" | "UNKNOWN";
+  lane: StockxLaneLabel;
   lanes: StockxLaneCard[];
   itemChf: number | null;
   feesChf: number | null;
@@ -315,9 +317,9 @@ async function parseLanesFromPage(page: Page): Promise<StockxLaneCard[]> {
     const out: Array<{ rawLabel: string; totalChf: number; eta: string | null }> = [];
     for (const node of nodes) {
       const text = (node.textContent || "").replace(/\s+/g, " ").trim();
-      if (!/\b(Standard|Express|Xpress|Fastest)\b/i.test(text)) continue;
+      if (!/\b(Standard|Express|Xpress|Fastest|Expedited)\b/i.test(text)) continue;
       if (!/\d/.test(text) || !/CHF/i.test(text)) continue;
-      const labelMatch = text.match(/\b(Standard|Express|Xpress|Fastest)\b/i);
+      const labelMatch = text.match(/\b(Standard|Express|Xpress|Fastest|Expedited)\b/i);
       const priceMatch =
         text.match(/CHF\s*(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)/i) ||
         text.match(/(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
@@ -413,9 +415,9 @@ async function clickLaneCard(page: Page, lane: StockxLaneCard): Promise<boolean>
         const labelOk = (text) => {
           if (!label) return true;
           if (text.toLowerCase().indexOf(String(label).toLowerCase()) >= 0) return true;
-          if (wantStd && /\\b(express|xpress|fastest)\\b/i.test(text)) return false;
+          if (wantStd && /\\b(express|xpress|fastest|expedited)\\b/i.test(text)) return false;
           if (wantStd && /\\bstandard\\b/i.test(text)) return true;
-          return !/\\b(express|xpress|fastest|standard)\\b/i.test(text);
+          return !/\\b(express|xpress|fastest|expedited|standard)\\b/i.test(text);
         };
         const isInteractive = (el) => {
           const tag = el.tagName.toLowerCase();
@@ -509,7 +511,9 @@ function liveSubtotalLooksLikeExpress(
 ): boolean {
   if (desired !== "STANDARD" || subtotalChf == null) return false;
   return lanes.some(
-    (l) => l.label === "EXPRESS" && Math.abs(l.totalChf - subtotalChf) <= 0.51
+    (l) =>
+      (l.label === "EXPRESS" || l.label === "EXPEDITED") &&
+      Math.abs(l.totalChf - subtotalChf) <= 0.51
   );
 }
 
@@ -534,7 +538,7 @@ export async function selectAndVerifyStockxLane(
       `() => {
         const t = document.body && document.body.innerText || "";
         return (
-          /\\b(Standard|Express|Xpress|Fastest)\\b/i.test(t) ||
+          /\\b(Standard|Express|Xpress|Fastest|Expedited)\\b/i.test(t) ||
           /\\d{1,2}\\s+(jan|fév|fev|mar|avr|mai|juin|juil|aoû|aou|sep|oct|nov|déc|dec|janvier|février|mars|avril|juin|juillet|août|septembre|octobre|novembre|décembre)/i.test(t)
         );
       }`,
@@ -591,22 +595,55 @@ export async function selectAndVerifyStockxLane(
       // parser miss where the item is still buyable (Express-only / single price).
       if (pick.reason === "oos" && lanes.length === 0) {
         const refined = classifyEmptyLaneReason(body);
-        return {
-          ok: false,
-          reason: refined,
-          lanes,
-          detail:
-            refined === "oos_no_ask"
-              ? "page: aucune demande / no ask — true OOS"
-              : refined === "express_only"
-                ? "page shows buyable price/Xpress but STANDARD not parsed"
-                : `empty lanes, unknown body (bodyChars=${body.length})`,
-        };
+        // SINGLE-PRICE XPRESS direct-ship: no Standard/Express cards, only an item
+        // price + "livraison Xpress". Customer Express → synthesize ONE EXPRESS lane
+        // and proceed through the normal verify + margin + cap + Place Order path.
+        if (
+          refined === "express_only" &&
+          options.desired === "EXPRESS"
+        ) {
+          const itemPriceChf = parseSingleXpressItemPriceChf(body);
+          if (itemPriceChf != null && itemPriceChf <= maxAllInChf) {
+            const synth: StockxLaneCard = {
+              label: "EXPRESS",
+              rawLabel: "Xpress",
+              totalChf: itemPriceChf,
+              eta: null,
+            };
+            lanes = [synth];
+            picked = synth;
+            pickReason = `single-xpress:item=${itemPriceChf}`;
+            console.warn(
+              `[STOCKX-CHECKOUT] single-price Xpress — synthesized EXPRESS lane ${itemPriceChf} CHF (live subtotal still gates)`
+            );
+          }
+        }
+        if (!picked) {
+          return {
+            ok: false,
+            reason: refined,
+            lanes,
+            detail:
+              refined === "oos_no_ask"
+                ? "page: aucune demande / no ask — true OOS"
+                : refined === "express_only"
+                  ? "page shows buyable price/Xpress but STANDARD not parsed"
+                  : `empty lanes, unknown body (bodyChars=${body.length})`,
+          };
+        }
+      } else {
+        return { ok: false, reason: pick.reason, lanes };
       }
-      return { ok: false, reason: pick.reason, lanes };
     }
-    picked = pick.lane;
-    pickReason = `desired:${options.desired}`;
+    // pick.ok OR synthesized single-xpress lane
+    if (!picked && pick.ok) {
+      picked = pick.lane;
+      pickReason = `desired:${options.desired}`;
+    }
+  }
+
+  if (!picked) {
+    return { ok: false, reason: "oos", lanes };
   }
 
   const desiredForVerify: StockxDesiredLane | null =

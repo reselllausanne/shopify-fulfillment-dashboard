@@ -9,6 +9,7 @@ import {
   laneMarginPct,
   marginOk,
   parseLaneCardsFromText,
+  parseSingleXpressItemPriceChf,
 } from "@/lib/stockxAutoCheckout/chooseLane";
 import type { StockxLaneCard } from "@/lib/stockxAutoCheckout/types";
 
@@ -21,10 +22,11 @@ const lanes = (rows: Array<[string, number]>): StockxLaneCard[] =>
   }));
 
 describe("classifyLaneLabel", () => {
-  it("maps Express / Xpress / Fastest / Standard", () => {
+  it("maps Express / Xpress / Expedited / Fastest / Standard", () => {
     expect(classifyLaneLabel("Express")).toBe("EXPRESS");
     expect(classifyLaneLabel("Xpress")).toBe("EXPRESS");
-    expect(classifyLaneLabel("Fastest")).toBe("EXPRESS");
+    expect(classifyLaneLabel("Express Expedited")).toBe("EXPEDITED");
+    expect(classifyLaneLabel("Fastest")).toBe("EXPEDITED");
     expect(classifyLaneLabel("Standard")).toBe("STANDARD");
   });
 });
@@ -83,6 +85,104 @@ describe("chooseLane", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("oos");
   });
+
+  it("EXPRESS: picks expedited when within 5% of normal express", () => {
+    // normal 140, expedited 145 → 145 <= 140*1.05=147 → upgrade
+    const result = chooseLane("EXPRESS", lanes([
+      ["Express", 140],
+      ["Express Expedited", 145],
+    ]));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.lane.label).toBe("EXPEDITED");
+      expect(result.lane.totalChf).toBe(145);
+    }
+  });
+
+  it("EXPRESS: picks expedited when delta <= 10 CHF even if >5%", () => {
+    // normal 100, expedited 109 → 109 > 105 but delta 9 <= 10 → upgrade
+    const result = chooseLane("EXPRESS", lanes([
+      ["Express", 100],
+      ["Expedited", 109],
+    ]));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("EXPEDITED");
+  });
+
+  it("EXPRESS: keeps normal express when expedited far more expensive", () => {
+    // normal 140, expedited 200 → >5% and delta 60 → keep normal
+    const result = chooseLane("EXPRESS", lanes([
+      ["Express", 140],
+      ["Express Expedited", 200],
+    ]));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.lane.label).toBe("EXPRESS");
+      expect(result.lane.totalChf).toBe(140);
+    }
+  });
+
+  it("EXPRESS: uses expedited when only expedited present", () => {
+    const result = chooseLane("EXPRESS", lanes([["Express Expedited", 150]]));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("EXPEDITED");
+  });
+
+  it("EXPRESS: does NOT multi_price on express vs expedited", () => {
+    const result = chooseLane("EXPRESS", lanes([
+      ["Express", 140],
+      ["Express Expedited", 200],
+    ]));
+    expect(result.ok).toBe(true);
+  });
+
+  it("EXPRESS: multi_price only when 2+ distinct normal express prices", () => {
+    const result = chooseLane("EXPRESS", lanes([
+      ["Express", 140],
+      ["Express", 160],
+    ]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("multi_price");
+  });
+
+  it("STANDARD never escalates to EXPEDITED", () => {
+    const result = chooseLane("STANDARD", lanes([["Express Expedited", 150]]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("wrong_lane_only");
+  });
+
+  it("EXPRESS: respects configurable thresholds via opts", () => {
+    // normal 140, expedited 145 but pct=0 and delta=0 → keep normal
+    const result = chooseLane(
+      "EXPRESS",
+      lanes([
+        ["Express", 140],
+        ["Express Expedited", 145],
+      ]),
+      250,
+      { expeditedUpgradeMaxPct: 0, expeditedUpgradeMaxDeltaChf: 0 }
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("EXPRESS");
+  });
+});
+
+describe("parseSingleXpressItemPriceChf", () => {
+  it("parses FR 'Prix de l'article 119 CHF' (no decimals)", () => {
+    expect(
+      parseSingleXpressItemPriceChf(
+        "Prix de l'article 119 CHF\ndirectement expédié en livraison Xpress"
+      )
+    ).toBe(119);
+  });
+
+  it("parses 'Item price CHF 119.00'", () => {
+    expect(parseSingleXpressItemPriceChf("Item price CHF 119.00")).toBe(119);
+  });
+
+  it("returns null when no item price present", () => {
+    expect(parseSingleXpressItemPriceChf("aucune demande")).toBeNull();
+  });
 });
 
 describe("parseLaneCardsFromText", () => {
@@ -125,7 +225,7 @@ CHF 199.00
     const parsed = parseLaneCardsFromText(text);
     expect(parsed.find((l) => l.label === "STANDARD")?.totalChf).toBe(125.12);
     expect(parsed.find((l) => l.rawLabel === "Express")?.totalChf).toBe(128.44);
-    expect(parsed.some((l) => l.rawLabel === "Fastest" && l.label === "EXPRESS")).toBe(true);
+    expect(parsed.some((l) => l.rawLabel === "Fastest" && l.label === "EXPEDITED")).toBe(true);
   });
 
   it("parses en-GB date-only cards into Standard + Express", () => {
@@ -204,6 +304,22 @@ describe("chooseLaneByCsAtMargin", () => {
     });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.lane.label).toBe("STANDARD");
+  });
+
+  it("treats EXPEDITED as express-equivalent (no regression)", () => {
+    // Only an expedited lane labelled — must still count as express for CSAT.
+    const result = chooseLaneByCsAtMargin(
+      149.54,
+      lanes([
+        ["Standard", 125.12],
+        ["Express Expedited", 128.44],
+      ])
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.lane.label).toBe("EXPEDITED");
+      expect(result.lane.totalChf).toBe(128.44);
+    }
   });
 });
 
