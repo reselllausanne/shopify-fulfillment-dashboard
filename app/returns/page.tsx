@@ -490,20 +490,27 @@ function PublicReturnsWizard() {
     returnAmount: number | null;
   }>;
 
-  const exchangeSelectionTotal = (() => {
-    if (
-      !isExchangeFlow ||
-      !selectedLineSummaries.length ||
-      selectedLineSummaries.some((line) => line.lineDelta == null)
-    ) {
-      return null;
+  function setFlowPathAndLoad(next: FlowPath) {
+    setFlowPath(next);
+    setSubmitState({ type: "idle" });
+    setExchangeQuote(null);
+    if (next === "exchange") {
+      for (const item of returnableItems) {
+        const st = selectedItems[item.fulfillmentLineItemId];
+        if (st?.checked) {
+          void loadReplacementOptions(item.fulfillmentLineItemId);
+        }
+      }
+      return;
     }
-    return Number(
-      selectedLineSummaries
-        .reduce((sum, line) => sum + (line.lineDelta ?? 0), 0)
-        .toFixed(2)
-    );
-  })();
+    setSelectedItems((prev) => {
+      const out = { ...prev };
+      for (const key of Object.keys(out)) {
+        out[key] = { ...out[key], replacementVariantId: null };
+      }
+      return out;
+    });
+  }
 
   const returnRefundEstimate = (() => {
     if (isExchangeFlow) return null;
@@ -778,37 +785,33 @@ function PublicReturnsWizard() {
                 {orderNumber} · {orderEmail}
               </div>
 
-              <label className="block">
+              <div>
                 <span className="mb-2 block text-base font-medium">{copy.pathTitle}</span>
-                <select
-                  value={flowPath}
-                  onChange={(e) => {
-                    const next = e.target.value as FlowPath;
-                    setFlowPath(next);
-                    setSubmitState({ type: "idle" });
-                    if (next === "exchange") {
-                      for (const item of returnableItems) {
-                        const st = selectedItems[item.fulfillmentLineItemId];
-                        if (st?.checked) {
-                          void loadReplacementOptions(item.fulfillmentLineItemId);
-                        }
-                      }
-                    } else {
-                      setSelectedItems((prev) => {
-                        const out = { ...prev };
-                        for (const key of Object.keys(out)) {
-                          out[key] = { ...out[key], replacementVariantId: null };
-                        }
-                        return out;
-                      });
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setFlowPathAndLoad("return")}
+                    className={
+                      flowPath === "return"
+                        ? "min-h-14 rounded-sm bg-neutral-900 px-4 text-base font-semibold text-white"
+                        : "min-h-14 rounded-sm border border-neutral-300 bg-white px-4 text-base font-medium text-neutral-900"
                     }
-                  }}
-                  className={fieldClass}
-                >
-                  <option value="return">{copy.pathReturnTitle}</option>
-                  <option value="exchange">{copy.pathExchangeTitle}</option>
-                </select>
-              </label>
+                  >
+                    {copy.pathReturnTitle}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFlowPathAndLoad("exchange")}
+                    className={
+                      flowPath === "exchange"
+                        ? "min-h-14 rounded-sm bg-neutral-900 px-4 text-base font-semibold text-white"
+                        : "min-h-14 rounded-sm border border-neutral-300 bg-white px-4 text-base font-medium text-neutral-900"
+                    }
+                  >
+                    {copy.pathExchangeTitle}
+                  </button>
+                </div>
+              </div>
 
               <label className="block">
                 <span className="mb-2 block text-base font-medium">{copy.reasonLabel}</span>
@@ -993,21 +996,6 @@ function PublicReturnsWizard() {
                 ) : null}
               </div>
 
-              {exchangeSelectionTotal != null ? (
-                <p className="text-right text-base font-semibold text-neutral-900" aria-live="polite">
-                  {exchangeSelectionTotal > 0
-                    ? copy.selectionTotalDue.replace(
-                        "{amount}",
-                        exchangeSelectionTotal.toFixed(2)
-                      )
-                    : exchangeSelectionTotal < 0
-                      ? copy.selectionTotalCredit.replace(
-                          "{amount}",
-                          Math.abs(exchangeSelectionTotal).toFixed(2)
-                        )
-                      : copy.selectionTotalEven}
-                </p>
-              ) : null}
               <div className="grid grid-cols-2 gap-3">
                 <button type="button" onClick={() => setStep(1)} className={btnSecondary}>
                   {copy.back}

@@ -87,9 +87,6 @@ export type ReturnsCopy = {
   priceDiffSame: string;
   priceDiffPlus: string;
   priceDiffMinus: string;
-  selectionTotalDue: string;
-  selectionTotalCredit: string;
-  selectionTotalEven: string;
   confirmMoneyTitle: string;
   confirmAmountDue: string;
   confirmAmountSave: string;
@@ -208,7 +205,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     pathTitle: "Que voulez-vous faire ?",
     pathReturnTitle: "Retour",
     pathReturnHint: "Renvoyer l'article, remboursement en avoir apres controle.",
-    pathExchangeTitle: "Échange — autre taille / variante",
+    pathExchangeTitle: "Échange",
     pathExchangeHint: "Meme modele, autre variante en stock sur le site.",
     replacementLabel: "Nouvelle variante",
     replacementLoading: "Chargement des tailles…",
@@ -218,7 +215,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     replacementPickRequired: "Choisissez une variante de remplacement pour chaque article.",
     exchangePriceDiffDue: "Difference a regler : CHF {amount}",
     payExchangeDiff: "Payer la difference (lien securise)",
-    validateExchange: "Valider mon echange",
+    validateExchange: "Valider mon échange",
     successTitleExchange: "Demande d'echange prise en compte",
     successBodyExchange:
       "Merci. Votre demande est enregistree. Vous allez recevoir un e-mail avec la suite.",
@@ -251,15 +248,12 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     confirmExchangeForSize: "Echange pour la {size}",
     confirmPathReturn: "Retour (avoir)",
     confirmPathExchange: "Echange",
-    priceDiffSame: "Aucune différence de prix",
-    priceDiffPlus: "Différence de prix à payer : CHF {amount}",
-    priceDiffMinus: "Économie : CHF {amount}",
-    selectionTotalDue: "Total à payer : CHF {amount}",
-    selectionTotalCredit: "Économie totale : CHF {amount}",
-    selectionTotalEven: "Total à payer : CHF 0.00",
-    confirmMoneyTitle: "Difference de prix",
+    priceDiffSame: "Même prix",
+    priceDiffPlus: "+ CHF {amount}",
+    priceDiffMinus: "− CHF {amount}",
+    confirmMoneyTitle: "Différence de prix",
     confirmAmountDue: "CHF {amount}",
-    confirmAmountSave: "Economie CHF {amount}",
+    confirmAmountSave: "Économie CHF {amount}",
     confirmAmountEven: "CHF 0.00",
     confirmPayBeforeShip:
       "Pas d'expedition / etiquette avant reglement de la difference.",
@@ -340,7 +334,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     pathTitle: "What do you want to do?",
     pathReturnTitle: "Return",
     pathReturnHint: "Send item back for store credit after inspection.",
-    pathExchangeTitle: "Exchange — other size / variant",
+    pathExchangeTitle: "Exchange",
     pathExchangeHint: "Same product, another in-stock variant.",
     replacementLabel: "New variant",
     replacementLoading: "Loading sizes…",
@@ -382,12 +376,9 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     confirmExchangeForSize: "Exchange for size {size}",
     confirmPathReturn: "Return (credit)",
     confirmPathExchange: "Exchange",
-    priceDiffSame: "No price difference",
-    priceDiffPlus: "Price difference to pay: CHF {amount}",
-    priceDiffMinus: "You save: CHF {amount}",
-    selectionTotalDue: "Total to pay: CHF {amount}",
-    selectionTotalCredit: "Total savings: CHF {amount}",
-    selectionTotalEven: "Total to pay: CHF 0.00",
+    priceDiffSame: "Same price",
+    priceDiffPlus: "+ CHF {amount}",
+    priceDiffMinus: "− CHF {amount}",
     confirmMoneyTitle: "Price difference",
     confirmAmountDue: "CHF {amount}",
     confirmAmountSave: "You save CHF {amount}",
@@ -469,7 +460,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     pathTitle: "Was moechten Sie tun?",
     pathReturnTitle: "Retoure",
     pathReturnHint: "Artikel zurueck, Guthaben nach Kontrolle.",
-    pathExchangeTitle: "Umtausch — andere Groesse",
+    pathExchangeTitle: "Umtausch",
     pathExchangeHint: "Gleiches Produkt, andere Variante.",
     replacementLabel: "Neue Variante",
     replacementLoading: "Groessen laden…",
@@ -511,12 +502,9 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     confirmExchangeForSize: "Umtausch fuer Groesse {size}",
     confirmPathReturn: "Retoure",
     confirmPathExchange: "Umtausch",
-    priceDiffSame: "Kein Preisunterschied",
-    priceDiffPlus: "Zu zahlende Preisdifferenz: CHF {amount}",
-    priceDiffMinus: "Ersparnis: CHF {amount}",
-    selectionTotalDue: "Zu zahlender Gesamtbetrag: CHF {amount}",
-    selectionTotalCredit: "Gesamtersparnis: CHF {amount}",
-    selectionTotalEven: "Zu zahlender Gesamtbetrag: CHF 0.00",
+    priceDiffSame: "Gleicher Preis",
+    priceDiffPlus: "+ CHF {amount}",
+    priceDiffMinus: "− CHF {amount}",
     confirmMoneyTitle: "Preisdifferenz",
     confirmAmountDue: "CHF {amount}",
     confirmAmountSave: "Ersparnis CHF {amount}",

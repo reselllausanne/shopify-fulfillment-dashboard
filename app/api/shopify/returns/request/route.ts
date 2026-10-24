@@ -13,7 +13,7 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "https://www.resell-lausanne.ch",
 ];
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
-const RATE_LIMIT_MAX_REQUESTS = 10;
+const RATE_LIMIT_MAX_REQUESTS = 60;
 
 const globalForRateLimit = globalThis as typeof globalThis & {
   __shopifyReturnsRateLimit?: Map<string, number[]>;
