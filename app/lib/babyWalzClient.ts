@@ -39,8 +39,16 @@ export type BabyWalzProduct = {
   gtin: string;
   gtinSource: string;
   priceChf: number;
+  /**
+   * Raw Nuxt `variant.stock.quantity` (or null if missing).
+   * Never invent defaultStock here — publish path must see null.
+   */
+  nuxtQty: number | null;
+  /** Mirror of proven qty for legacy readers; 0 when nuxtQty null (no invent). */
   stock: number;
   inStock: boolean;
+  /** True only if a caller forced defaultStock (JSON-LD path must not invent either). */
+  usedDefaultStock: boolean;
   imageUrl: string | null;
   sizeRaw: string | null;
   masterKey: string | null;
@@ -275,7 +283,7 @@ function productFromNuxt(
   payload: NuxtPayload,
   productUrl: string,
   articleId: string,
-  opts: { defaultStock: number; cdnBase: string }
+  opts: { cdnBase: string; defaultStock?: number }
 ): BabyWalzProduct[] {
   const root = nuxtObj(payload, 1);
   if (!root) return [];
@@ -317,10 +325,13 @@ function productFromNuxt(
     if (priceChf == null) continue;
 
     const stockObj = nuxtObj(payload, variant.stock);
-    const qty = stockObj ? nuxtNum(payload, stockObj.quantity) : null;
+    const qtyRaw = stockObj ? nuxtNum(payload, stockObj.quantity) : null;
+    const nuxtQty =
+      qtyRaw == null || !Number.isFinite(qtyRaw) ? null : Math.max(0, Math.floor(qtyRaw));
     const buyable = nuxtBool(payload, variant.isProductBuyable);
-    const inStock = !productSoldOut && buyable !== false && (qty == null || qty > 0);
-    const stock = !inStock ? 0 : qty != null && qty > 0 ? qty : opts.defaultStock;
+    const inStock = !productSoldOut && buyable !== false && (nuxtQty == null || nuxtQty > 0);
+    // Never invent SCRAPER_DEFAULT_STOCK=5 as Nuxt proof — missing qty stays null → publish 0.
+    const stock = !inStock ? 0 : nuxtQty != null && nuxtQty > 0 ? nuxtQty : 0;
 
     const detail = nuxtObj(payload, variantDetails[variantReferenceKey]);
     const adv = detail ? nuxtObj(payload, detail.advancedAttributes) : null;
@@ -353,8 +364,10 @@ function productFromNuxt(
       gtin: barcode.gtin,
       gtinSource: barcode.source,
       priceChf,
+      nuxtQty: !inStock ? 0 : nuxtQty,
       stock,
       inStock,
+      usedDefaultStock: false,
       imageUrl,
       sizeRaw,
       masterKey,
@@ -432,7 +445,7 @@ function parseJsonLdProductGroup(html: string): Record<string, unknown> | null {
 export function parseBabyWalzProductHtml(
   html: string,
   productUrl: string,
-  defaultStock = babyWalzConfig().defaultStock
+  _defaultStock = babyWalzConfig().defaultStock
 ): BabyWalzProduct[] {
   const cfg = babyWalzConfig();
   const articleId = articleIdFromBabyWalzUrl(productUrl);
@@ -440,8 +453,8 @@ export function parseBabyWalzProductHtml(
 
   const payload = parseNuxtPayload(html);
   if (payload) {
+    void _defaultStock; // legacy arg; Nuxt path never invents defaultStock
     const fromNuxt = productFromNuxt(payload, productUrl, articleId, {
-      defaultStock,
       cdnBase: cfg.cdnBase,
     });
     if (fromNuxt.length) return withParcelFallbacks(html, fromNuxt);
@@ -485,6 +498,7 @@ export function parseBabyWalzProductHtml(
         : Array.isArray(variant.image) && typeof variant.image[0] === "string"
           ? variant.image[0]
           : null;
+    // JSON-LD has no exact qty — never invent defaultStock as proof.
     out.push({
       productUrl,
       articleId,
@@ -496,8 +510,10 @@ export function parseBabyWalzProductHtml(
       gtin: barcode.gtin,
       gtinSource: barcode.source,
       priceChf,
-      stock: inStock ? defaultStock : 0,
+      nuxtQty: null,
+      stock: 0,
       inStock,
+      usedDefaultStock: false,
       imageUrl: image,
       sizeRaw: null,
       masterKey: null,

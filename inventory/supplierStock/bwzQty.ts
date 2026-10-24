@@ -1,10 +1,13 @@
 /**
  * BWZ (baby-walz Scayle/Nuxt) publish qty proof.
- * - nuxtQty > 0 + inStock → halfCeil(N)
+ * - nuxtQty > 0 + inStock → halfCeil(N) capped at maxPublished (default 12)
  * - Gutschein / gift card → 0, excluded=true
- * - !inStock / missing → 0
+ * - !inStock / missing qty → 0 (never invent defaultStock)
  */
-import { halfCeil } from "./halfCeil";
+import { halfCeilCapped } from "./halfCeil";
+
+/** Align with decidePublishedQuantity maxPublished default. */
+export const BWZ_MAX_PUBLISHED_QTY = 12;
 
 export type BwzPublishInput = {
   nuxtQty: number | null | undefined;
@@ -13,6 +16,7 @@ export type BwzPublishInput = {
   productType?: string | null;
   url?: string | null;
   sku?: string | null;
+  maxPublished?: number;
 };
 
 export type BwzPublishDecision = {
@@ -74,11 +78,12 @@ export function decideBwzPublishedQty(input: BwzPublishInput): BwzPublishDecisio
       excluded: false,
     };
   }
-  const proposed = halfCeil(q);
+  const maxPublished = input.maxPublished ?? BWZ_MAX_PUBLISHED_QTY;
+  const proposed = halfCeilCapped(q, maxPublished);
   return {
     sourceQty: q,
     proposedQty: proposed,
-    reason: `halfCeil:${q}`,
+    reason: proposed < Math.ceil(q / 2) ? `halfCeilCapped:${q}->${proposed}` : `halfCeil:${q}`,
     hasPositiveProof: proposed > 0,
     excluded: false,
   };

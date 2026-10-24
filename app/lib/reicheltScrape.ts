@@ -18,6 +18,7 @@ import {
   isPlausibleReicheltSellPrice,
   type ReicheltLandedCost,
 } from "@/app/lib/reicheltPricing";
+import { isReiGalaxusAllowlisted } from "@/galaxus/exports/reiGalaxusAllowlist";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
 export { startRun, hasRunningRun, recoverStaleRuns };
@@ -362,11 +363,16 @@ export async function scrapeReicheltShop(
   let imageFailed = 0;
   const imageSyncQueue = new Set<string>();
 
+  // STOCK_SWEEP_ONLY=1 → refresh in-stock DB rows then exit (daily cron; no sitemap).
+  // Full weekly pass keeps discovery. Avoids rate-limit pressure from rescraping catalog daily.
+  const stockSweepOnly = String(process.env.SCRAPER_REI_STOCK_SWEEP_ONLY ?? "0") === "1";
   const deltaDays = Math.max(0, Number(process.env.SCRAPER_REI_DELTA_DAYS ?? 0.5));
   const freshCutoffMs = deltaDays > 0 ? Date.now() - deltaDays * 86_400_000 : 0;
   const freshArticleIds = new Set<string>();
   const staleSweepEnabled = String(process.env.SCRAPER_REI_STALE_SWEEP ?? "1") !== "0";
-  const staleDays = Math.max(1, Number(process.env.SCRAPER_REI_STALE_DAYS ?? 1));
+  // Fractional days allowed (e.g. 0.25 ≈ 6h). Stock-only default 0.25 so daily cron refreshes.
+  const staleDaysDefault = stockSweepOnly ? 0.25 : 1;
+  const staleDays = Math.max(0, Number(process.env.SCRAPER_REI_STALE_DAYS ?? staleDaysDefault));
   const staleCutoffMs = Date.now() - staleDays * 86_400_000;
   const staleSweepMaxEnv = Math.max(0, Number(process.env.SCRAPER_REI_STALE_SWEEP_MAX || 0));
   const staleSweepMax = maxProducts
@@ -455,23 +461,35 @@ export async function scrapeReicheltShop(
   async function sweepStaleInStockRows(): Promise<void> {
     if (!staleSweepEnabled) return;
 
-    const targets: ArticleTarget[] = [];
+    type SweepCand = ArticleTarget & { allowlisted: boolean; lastSyncMs: number };
+    const candidates: SweepCand[] = [];
     for (const row of existingRows) {
       if ((row.stock ?? 0) <= 0) continue;
       if (row.lastSyncAt && row.lastSyncAt.getTime() >= staleCutoffMs) continue;
       const articleId = String(parseReicheltNoteFields(row.manualNote).articleId || "").trim();
       if (!articleId) continue;
-      targets.push({
+      // Allowlist keys are REI_{gtin}; supplierVariantId is usually rei_{gtin}.
+      const providerKey = String(row.supplierVariantId || "").replace(/^rei_/i, "REI_");
+      candidates.push({
         articleId,
         productUrl:
           articleProductUrl.get(articleId) ||
           `${shop.baseUrl.replace(/\/$/, "")}/shop/produit/-${articleId}`,
+        allowlisted: isReiGalaxusAllowlisted(providerKey),
+        lastSyncMs: row.lastSyncAt?.getTime() ?? 0,
       });
-      if (targets.length >= staleSweepMax) break;
     }
+    // Galaxus allowlist first, then oldest lastSync — keeps live feed fresh under rate limits.
+    candidates.sort((a, b) => {
+      if (a.allowlisted !== b.allowlisted) return a.allowlisted ? -1 : 1;
+      return a.lastSyncMs - b.lastSyncMs;
+    });
+    const targets: ArticleTarget[] = candidates
+      .slice(0, Number.isFinite(staleSweepMax) ? staleSweepMax : candidates.length)
+      .map(({ articleId, productUrl }) => ({ articleId, productUrl }));
 
     console.log(
-      `[SCRAPER] rei stale sweep: ${targets.length} in-stock rows older than ${staleDays}d`
+      `[SCRAPER] rei stale sweep: ${targets.length}/${candidates.length} in-stock rows older than ${staleDays}d (allowlist-first)`
     );
     if (!targets.length) return;
 
@@ -581,6 +599,34 @@ export async function scrapeReicheltShop(
 
   try {
     await sweepStaleInStockRows();
+
+    if (stockSweepOnly) {
+      console.log(
+        `[SCRAPER] rei stock-sweep-only: skipped sitemap (checked=${stats.staleChecked} zeroed=${stats.staleZeroed} wrote=${stats.wrote})`
+      );
+      if (stats.wrote > 0 || stats.markedDelisted > 0 || stats.staleZeroed > 0) {
+        try {
+          const { scheduleScraperGalaxusFeedPush } = await import("@/app/lib/scraperFeedPush");
+          await scheduleScraperGalaxusFeedPush({
+            shop,
+            wrote: stats.wrote + stats.markedDelisted,
+            syncImages: true,
+          });
+        } catch (err) {
+          console.warn(`[SCRAPER] rei feed push schedule failed:`, (err as Error)?.message || err);
+        }
+      }
+      await updateRun(runId, {
+        status: "ok",
+        finished_at: new Date(),
+        products_listed: stats.listed,
+        with_gtin: stats.gtinMatched,
+        variants_upserted: stats.wrote,
+        errors: stats.parseErrors + stats.requestErrors,
+        message: `stock-sweep-only checked=${stats.staleChecked} wrote=${stats.wrote} zeroed=${stats.staleZeroed}`,
+      });
+      return;
+    }
 
     let stop = false;
     const source = iterArticleTargets(client, discovery, stats);

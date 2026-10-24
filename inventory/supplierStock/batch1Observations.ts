@@ -93,6 +93,7 @@ export type BwzObservationInput = {
   priceChf: number;
   nuxtQty: number | null;
   inStock: boolean;
+  usedDefaultStock?: boolean;
 };
 export function beginBwzObservationRun(scrapeRunId: number) {
   beginSupplierObservationRun("bwz", scrapeRunId);
@@ -104,8 +105,10 @@ export function recordBwzObservation(
   input: BwzObservationInput,
   ctx: { scrapeRunId: number; observedAt: Date }
 ): SupplierVariantObservation {
+  const usedDefaultStock = Boolean(input.usedDefaultStock);
   const d = decideBwzPublishedQty({
-    nuxtQty: input.nuxtQty,
+    // Invented defaultStock is not Nuxt proof — treat as missing qty.
+    nuxtQty: usedDefaultStock ? null : input.nuxtQty,
     inStock: input.inStock,
     name: input.productName,
     productType: input.productType,
@@ -128,12 +131,13 @@ export function recordBwzObservation(
     quantityUnknown: false,
     scrapeRunId: ctx.scrapeRunId,
     observedAt: ctx.observedAt,
-    usedDefaultStock: false,
+    usedDefaultStock,
     rawParseJson: {
       sourceQty: d.sourceQty,
       proposedPublishQty: d.proposedQty,
       qtyReason: d.reason,
       excluded: d.excluded,
+      usedDefaultStock,
     },
   };
   pushSupplierObservation(obs);

@@ -11,6 +11,14 @@ export const REICHELT_CH_SHIPPING_TIERS_EUR: Array<{ maxKg: number; priceEur: nu
 
 export const REICHELT_CH_SHIPPING_EXTRA_EUR_PER_10KG = 5.91;
 
+/**
+ * Petit colis = first DPD CH tier (≤10 kg, ~10.21 EUR / ~9–10 CHF).
+ * Bake flat CHF 2 into shelf price instead of full parcel DPD — most REI SKUs
+ * ship as small parcels / multi-item orders. Keep real DPD tiers for >10 kg.
+ */
+export const REICHELT_SMALL_PARCEL_MAX_KG = 10;
+export const REICHELT_SMALL_PARCEL_SHIP_CHF = 2;
+
 /** Parcel-tier ceiling used when scraped weight is absurd / freight-only. */
 export const REICHELT_MAX_SHIP_WEIGHT_GRAMS_DEFAULT = 50_000;
 
@@ -260,8 +268,16 @@ export function computeReicheltLandedCost(input: {
     weightSource = "mislabeled_g";
   }
 
-  const shippingEur = computeReicheltShippingEur(sanitized.weightGrams);
-  const shippingChf = roundChf(shippingEur * resolved.eurChfRate);
+  const kg = sanitized.weightGrams / 1000;
+  const dpdShippingEur = computeReicheltShippingEur(sanitized.weightGrams);
+  // ≤10kg ("petit colis"): flat CHF 2, not full DPD ~9–10 CHF. >10kg: real DPD.
+  const isSmallParcel = kg <= REICHELT_SMALL_PARCEL_MAX_KG;
+  const shippingChf = isSmallParcel
+    ? REICHELT_SMALL_PARCEL_SHIP_CHF
+    : roundChf(dpdShippingEur * resolved.eurChfRate);
+  const shippingEur = isSmallParcel
+    ? roundChf(REICHELT_SMALL_PARCEL_SHIP_CHF / resolved.eurChfRate)
+    : dpdShippingEur;
   const landedChf = roundChf(resolved.productChf + shippingChf);
   const marginPercent = input.marginPercent ?? cfg.marginPercent;
   const fromPct = roundChf(landedChf * (1 + marginPercent / 100));
