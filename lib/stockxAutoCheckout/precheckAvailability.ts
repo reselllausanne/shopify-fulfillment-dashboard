@@ -58,6 +58,13 @@ export type PrecheckOptions = {
   marginFloorPct?: number;
   staleHours?: number;
   now?: Date;
+  /**
+   * Global feed heartbeat = newest `lastSyncAt` across in-stock StockX variants.
+   * When supplied, staleness is judged by feed liveness (SSE still flowing?) instead
+   * of per-row `lastSyncAt`. Omit to let the pre-check resolve + cache it itself.
+   * Pass `null` only to force the legacy per-row staleness behaviour off.
+   */
+  feedLastSyncAt?: Date | null;
 };
 
 const DEFAULT_MARGIN_FLOOR_PCT = 0.05;
@@ -88,11 +95,14 @@ export function evaluatePrecheck(input: {
   marginFloorPct?: number;
   staleHours?: number;
   now?: Date;
+  /** Global feed heartbeat (see PrecheckOptions). `undefined` → legacy per-row check. */
+  feedLastSyncAt?: Date | null;
 }): PrecheckResult {
   const lane = input.desiredLane;
   const marginFloorPct = input.marginFloorPct ?? DEFAULT_MARGIN_FLOOR_PCT;
   const staleHours = input.staleHours ?? DEFAULT_STALE_HOURS;
   const now = input.now ?? new Date();
+  const hasFeedRef = "feedLastSyncAt" in input;
   const sellChf = Number(input.sellChf ?? 0);
 
   if (!input.variant) {
@@ -174,10 +184,33 @@ export function evaluatePrecheck(input: {
     };
   }
 
-  // 5) Staleness — price/stock last changed too long ago; caller may refresh then retry.
-  //    NOTE: lastSyncAt bumps only when a value changes (see bulkSql), so a long-stable
-  //    price can read as stale; that is intentionally conservative for an auto-buy gate.
-  if (v.lastSyncAt && hoursBetween(now, v.lastSyncAt) > staleHours) {
+  // 5) Staleness — judged by GLOBAL feed liveness, NOT per-row lastSyncAt.
+  //    SupplierVariant.lastSyncAt bumps only when a value changes (see bulkSql), so a
+  //    long-stable price reads "old" while the KickDB SSE feed is actually live and the
+  //    row is current. We only gate when the feed itself went silent (SSE down), which
+  //    we detect via the newest lastSyncAt across in-stock StockX rows (feedLastSyncAt).
+  if (hasFeedRef) {
+    const feedRef = input.feedLastSyncAt ?? null;
+    if (feedRef == null || hoursBetween(now, feedRef) > staleHours) {
+      return {
+        status: "stale_data",
+        lane,
+        expectedBuyChf,
+        stock,
+        sellChf,
+        marginPct,
+        detail: [
+          feedRef == null
+            ? "no StockX feed heartbeat — SSE never synced"
+            : `StockX feed silent >${staleHours}h (SSE down) — refresh before buy`,
+          ...notes,
+        ].join("; "),
+        supplierVariantId: v.supplierVariantId,
+      };
+    }
+    // Feed live → row is current regardless of its own lastSyncAt age.
+  } else if (v.lastSyncAt && hoursBetween(now, v.lastSyncAt) > staleHours) {
+    // Legacy per-row behaviour (no feed heartbeat supplied).
     return {
       status: "stale_data",
       lane,
@@ -293,11 +326,36 @@ export async function resolveSupplierVariantForLine(
 }
 
 /**
+ * Global StockX feed heartbeat: newest `lastSyncAt` across in-stock StockX variants.
+ * Used as the staleness signal (is the KickDB SSE feed still flowing?) instead of each
+ * row's own lastSyncAt (which bumps only on value change). Cached briefly so a buy-plan
+ * loop runs a single aggregate query.
+ */
+const FEED_HEARTBEAT_TTL_MS = 120_000;
+let feedHeartbeatCache: { at: number; value: Date | null } | null = null;
+
+export async function getStockxFeedHeartbeat(now: Date = new Date()): Promise<Date | null> {
+  if (feedHeartbeatCache && now.getTime() - feedHeartbeatCache.at < FEED_HEARTBEAT_TTL_MS) {
+    return feedHeartbeatCache.value;
+  }
+  const agg = await prisma.supplierVariant.aggregate({
+    where: { supplierVariantId: { startsWith: STX_PREFIX }, stock: { gt: 0 } },
+    _max: { lastSyncAt: true },
+  });
+  const value = agg._max.lastSyncAt ?? null;
+  feedHeartbeatCache = { at: now.getTime(), value };
+  return value;
+}
+
+/**
  * DB-backed pre-check: resolve the StockX SupplierVariant for a line, then run the
  * pure verdict. Zero StockX network — only reads already-synced DB rows.
  */
 export async function precheckStockxBuyability(opts: PrecheckOptions): Promise<PrecheckResult> {
   const variant = await resolveSupplierVariantForLine(opts.line);
+  // Resolve (+cache) the feed heartbeat unless the caller supplied one explicitly.
+  const feedLastSyncAt =
+    "feedLastSyncAt" in opts ? opts.feedLastSyncAt : await getStockxFeedHeartbeat(opts.now);
   return evaluatePrecheck({
     variant,
     sellChf: opts.line.saleChf,
@@ -305,5 +363,6 @@ export async function precheckStockxBuyability(opts: PrecheckOptions): Promise<P
     marginFloorPct: opts.marginFloorPct,
     staleHours: opts.staleHours,
     now: opts.now,
+    feedLastSyncAt,
   });
 }
