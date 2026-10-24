@@ -19,7 +19,7 @@ Cloud Agents run on a remote VM, not your Mac. They do **not** inherit Mac MCP O
 
 1. Confirm secrets exist: `npx tsx scripts/cloud-agent-preflight.ts`
 2. Use Supabase MCP (`execute_sql`) or Prisma with `DATABASE_URL` for DB queries
-3. Timezone for "last night" business logic: **Europe/Zurich** (`TZ` is set in `.cursor/environment.json`)
+3. Timezone for "last night" business logic: **Europe/Zurich** (`TZ` is exported by the Cloud Agent start script)
 
 ### Database access
 
@@ -44,6 +44,12 @@ ssh -i ~/.ssh/hetzner -o StrictHostKeyChecking=accept-new "$SSH_USER@$SSH_HOST"
 
 VPS repo path: `/opt/resell`. Logs: `docker compose logs --since 24h`.
 
-### Full setup checklist
+### Dev server
 
-See `.cursor/CLOUD_AGENT_SETUP.md` in this repo.
+Cloud Agent `start` runs `npm run dev` on port 3000 with `TZ=Europe/Zurich`.
+
+`DATABASE_URL` is the shared Supabase database. Do not run `prisma migrate` from a cloud agent.
+
+Start defaults `SCRAPER_RECOVER_ORPHANS_ON_STARTUP=0` and `SCRAPER_AUTO_RESUME_ON_STARTUP=0` so boot does not mark scrape runs interrupted or restart them. Set either to `1` only when a scrape resume is intended.
+
+`npm run lint` calls `next lint`. Next.js 16 treats that as a project directory named `lint`, so the script exits 1. Use `npm test` (vitest). Some tests already fail on `main` and are not an environment failure.
