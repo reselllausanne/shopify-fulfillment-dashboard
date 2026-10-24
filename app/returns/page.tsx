@@ -581,17 +581,9 @@ function PublicReturnsWizard() {
               href="https://www.resell-lausanne.ch"
               target="_blank"
               rel="noreferrer"
-              className="block"
-              aria-label={copy.brand}
+              className="text-xl font-semibold tracking-tight text-neutral-900 md:text-2xl"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element -- static brand asset in /public */}
-              <img
-                src="/resell-lausanne-logo.png"
-                alt={copy.brand}
-                width={220}
-                height={39}
-                className="h-9 w-auto max-w-[220px] object-contain object-left md:h-11 md:max-w-[280px]"
-              />
+              {copy.brand}
             </a>
             <div className="flex items-center gap-2 text-sm">
               <span className="text-neutral-500">{copy.langLabel}</span>
