@@ -632,13 +632,23 @@ function moneyAmount(
 /**
  * Paid unit for this line only (after cart/order discounts).
  * Not order total — package protection / upsells are other line items.
+ * If line was 100% discounted (staff gratis), fall back to checkout list unit
+ * so exchange Δ stays meaningful vs replacement catalog price.
  */
 export function paidUnitAmountFromLineItem(
   lineItem: ReturnLineItemFields | null | undefined
 ): { amount: number | null; currencyCode: string | null } {
   const paid = moneyAmount(lineItem?.discountedUnitPriceAfterAllDiscountsSet);
-  if (paid.amount != null) return paid;
-  return moneyAmount(lineItem?.originalUnitPriceSet);
+  const list = moneyAmount(lineItem?.originalUnitPriceSet);
+  if (paid.amount != null && paid.amount > 0.009) {
+    return { amount: paid.amount, currencyCode: paid.currencyCode ?? list.currencyCode };
+  }
+  if (list.amount != null) {
+    return list;
+  }
+  return paid.amount != null
+    ? { amount: paid.amount, currencyCode: paid.currencyCode }
+    : { amount: null, currencyCode: null };
 }
 
 function buildReturnableLine(
