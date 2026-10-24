@@ -75,6 +75,8 @@ export type ReturnsCopy = {
   confirmEditProducts: string;
   confirmReason: string;
   confirmReplacement: string;
+  /** Recap line: "Echange pour la {size}" */
+  confirmExchangeForSize: string;
   confirmPathReturn: string;
   confirmPathExchange: string;
   /** Size picker: only show Δ vs ordered pair */
@@ -229,6 +231,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     confirmEditProducts: "Modifier",
     confirmReason: "Motif",
     confirmReplacement: "Remplacement",
+    confirmExchangeForSize: "Echange pour la {size}",
     confirmPathReturn: "Retour (avoir)",
     confirmPathExchange: "Echange",
     priceDiffSame: "meme prix",
@@ -238,9 +241,9 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
       "Difference vs le prix paye pour cette paire au checkout (sans protection colis ni upsell).",
     paidPairLabel: "Paye pour cette paire : CHF {amount}",
     confirmMoneyTitle: "Difference de prix",
-    confirmAmountDue: "A payer : CHF {amount}",
-    confirmAmountSave: "Economie : CHF {amount}",
-    confirmAmountEven: "Meme prix — rien a payer.",
+    confirmAmountDue: "CHF {amount}",
+    confirmAmountSave: "Economie CHF {amount}",
+    confirmAmountEven: "CHF 0.00",
     confirmPayBeforeShip:
       "Pas d'expedition / etiquette avant reglement de la difference.",
     confirmRefundOriginal:
@@ -351,6 +354,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     confirmEditProducts: "Edit",
     confirmReason: "Reason",
     confirmReplacement: "Replacement",
+    confirmExchangeForSize: "Exchange for size {size}",
     confirmPathReturn: "Return (credit)",
     confirmPathExchange: "Exchange",
     priceDiffSame: "same price",
@@ -360,9 +364,9 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
       "Difference vs what you paid for this pair at checkout (no package protection or upsell).",
     paidPairLabel: "Paid for this pair: CHF {amount}",
     confirmMoneyTitle: "Price difference",
-    confirmAmountDue: "Amount due: CHF {amount}",
-    confirmAmountSave: "You save: CHF {amount}",
-    confirmAmountEven: "Same price — nothing to pay.",
+    confirmAmountDue: "CHF {amount}",
+    confirmAmountSave: "You save CHF {amount}",
+    confirmAmountEven: "CHF 0.00",
     confirmPayBeforeShip: "No label / shipping until the difference is paid.",
     confirmRefundOriginal:
       "CHF {amount} refunded to your original payment method (gap ≤ CHF 50).",
@@ -471,6 +475,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     confirmEditProducts: "Aendern",
     confirmReason: "Grund",
     confirmReplacement: "Ersatz",
+    confirmExchangeForSize: "Umtausch fuer Groesse {size}",
     confirmPathReturn: "Retoure",
     confirmPathExchange: "Umtausch",
     priceDiffSame: "gleicher Preis",
@@ -480,9 +485,9 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
       "Differenz zum bezahlten Paarpreis im Checkout (ohne Paketschutz / Upsell).",
     paidPairLabel: "Fuer dieses Paar bezahlt: CHF {amount}",
     confirmMoneyTitle: "Preisdifferenz",
-    confirmAmountDue: "Zu zahlen: CHF {amount}",
-    confirmAmountSave: "Ersparnis: CHF {amount}",
-    confirmAmountEven: "Gleicher Preis — nichts zu zahlen.",
+    confirmAmountDue: "CHF {amount}",
+    confirmAmountSave: "Ersparnis CHF {amount}",
+    confirmAmountEven: "CHF 0.00",
     confirmPayBeforeShip: "Kein Label / Versand vor Zahlung der Differenz.",
     confirmRefundOriginal:
       "CHF {amount} Rueckerstattung auf die urspruengliche Zahlung (Differenz ≤ CHF 50).",

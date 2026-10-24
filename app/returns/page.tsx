@@ -11,16 +11,22 @@ import {
 } from "@/shopify/returns/publicOrderNumber";
 import type { ProductSizeFit } from "@/shopify/returns/productSizeFit";
 import { customerSizeFitLine } from "@/shopify/returns/productSizeFit";
-import {
-  ORIGINAL_PAYMENT_REFUND_MAX_CHF,
-  refundPreferenceForAmount,
-  unitPriceDelta,
-} from "@/shopify/returns/refundPreference";
+import { unitPriceDelta } from "@/shopify/returns/refundPreference";
 
 function formatDeltaLabel(delta: number | null, copy: ReturnsCopy): string {
   if (delta == null || Math.abs(delta) < 0.005) return copy.priceDiffSame;
   if (delta > 0) return copy.priceDiffPlus.replace("{amount}", delta.toFixed(2));
   return copy.priceDiffMinus.replace("{amount}", Math.abs(delta).toFixed(2));
+}
+
+/** "Taille: 37.5" / "Size: 42" → "37.5" for recap template. */
+function sizeTokenFromReplacementLabel(label: string | null | undefined): string {
+  const raw = String(label ?? "").trim();
+  if (!raw) return "—";
+  const stripped = raw
+    .replace(/^(taille|size|groesse|größe)\s*:\s*/i, "")
+    .trim();
+  return stripped || raw;
 }
 
 type FlowPath = "return" | "exchange";
@@ -987,14 +993,11 @@ function PublicReturnsWizard() {
                         <span className="text-neutral-500">× {line.quantity}</span>
                       </div>
                       {line.replacement ? (
-                        <p className="mt-1 text-sm text-neutral-600">
-                          {copy.confirmReplacement}:{" "}
-                          <span className="font-medium text-neutral-900">{line.replacement}</span>
-                          {line.lineDelta != null ? (
-                            <span className="ml-2 font-semibold text-neutral-900">
-                              ({formatDeltaLabel(line.lineDelta, copy)})
-                            </span>
-                          ) : null}
+                        <p className="mt-1 text-sm text-neutral-900">
+                          {copy.confirmExchangeForSize.replace(
+                            "{size}",
+                            sizeTokenFromReplacementLabel(line.replacement)
+                          )}
                         </p>
                       ) : null}
                     </li>
@@ -1006,86 +1009,33 @@ function PublicReturnsWizard() {
                     {copy.reasons[reason] ?? reason}
                   </span>
                 </p>
-              </div>
-
-              {isExchangeFlow && exchangeTotals.known ? (
-                <div className="rounded-sm border border-amber-200 bg-amber-50 p-4">
-                  <h3 className="text-base font-semibold text-amber-950">
-                    {copy.confirmMoneyTitle}
-                  </h3>
-                  <p className="mt-1 text-xs text-amber-900/80">{copy.priceDiffHint}</p>
-                  {exchangeTotals.due > 0 ? (
-                    <>
-                      <p className="mt-2 text-lg font-semibold text-amber-950">
-                        {copy.confirmAmountDue.replace(
-                          "{amount}",
-                          exchangeTotals.due.toFixed(2)
-                        )}
-                      </p>
-                      <p className="mt-1 text-sm text-amber-900">{copy.confirmPayBeforeShip}</p>
-                    </>
-                  ) : null}
-                  {exchangeTotals.credit > 0 ? (
-                    <>
-                      <p className="mt-2 text-lg font-semibold text-emerald-900">
-                        {copy.confirmAmountSave.replace(
-                          "{amount}",
-                          exchangeTotals.credit.toFixed(2)
-                        )}
-                      </p>
-                      <p className="mt-2 text-sm text-neutral-800">
-                        {refundPreferenceForAmount(exchangeTotals.credit) ===
-                        "original_payment"
-                          ? copy.confirmRefundOriginal.replace(
+                {isExchangeFlow && exchangeTotals.known ? (
+                  <p className="mt-2 text-sm text-neutral-600">
+                    {copy.confirmMoneyTitle}:{" "}
+                    <span className="font-medium text-neutral-900">
+                      {exchangeTotals.due > 0
+                        ? copy.confirmAmountDue.replace(
+                            "{amount}",
+                            exchangeTotals.due.toFixed(2)
+                          )
+                        : exchangeTotals.credit > 0
+                          ? copy.confirmAmountSave.replace(
                               "{amount}",
                               exchangeTotals.credit.toFixed(2)
                             )
-                          : copy.confirmRefundStoreCredit.replace(
-                              "{amount}",
-                              exchangeTotals.credit.toFixed(2)
-                            )}
-                      </p>
-                    </>
-                  ) : null}
-                  {exchangeTotals.due <= 0 && exchangeTotals.credit <= 0 ? (
-                    <p className="mt-2 text-base font-medium text-neutral-800">
-                      {copy.confirmAmountEven}
-                    </p>
-                  ) : null}
-                  <p className="mt-3 text-xs text-neutral-600">{copy.confirmRefundRuleHint}</p>
-                </div>
-              ) : null}
-
-              {!isExchangeFlow && returnRefundEstimate != null ? (
-                <div className="rounded-sm border border-neutral-200 bg-neutral-50 p-4">
-                  <h3 className="text-base font-semibold text-neutral-900">
-                    {copy.confirmReturnRefundTitle}
-                  </h3>
-                  <p className="mt-2 text-lg font-semibold text-neutral-900">
-                    {copy.confirmReturnRefundAmount.replace(
-                      "{amount}",
-                      returnRefundEstimate.toFixed(2)
-                    )}
+                          : copy.confirmAmountEven}
+                    </span>
                   </p>
-                  <p className="mt-2 text-sm text-neutral-800">
-                    {refundPreferenceForAmount(returnRefundEstimate) === "original_payment"
-                      ? copy.confirmRefundOriginal.replace(
-                          "{amount}",
-                          returnRefundEstimate.toFixed(2)
-                        )
-                      : copy.confirmRefundStoreCredit.replace(
-                          "{amount}",
-                          returnRefundEstimate.toFixed(2)
-                        )}
+                ) : null}
+                {!isExchangeFlow && returnRefundEstimate != null ? (
+                  <p className="mt-2 text-sm text-neutral-600">
+                    {copy.confirmReturnRefundTitle}:{" "}
+                    <span className="font-medium text-neutral-900">
+                      CHF {returnRefundEstimate.toFixed(2)}
+                    </span>
                   </p>
-                  <p className="mt-3 text-xs text-neutral-600">
-                    {copy.confirmRefundRuleHint.replace(
-                      "50",
-                      String(ORIGINAL_PAYMENT_REFUND_MAX_CHF)
-                    )}
-                  </p>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
 
               <label className="block">
                 <span className="mb-1.5 flex items-baseline gap-2">
