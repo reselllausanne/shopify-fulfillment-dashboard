@@ -182,8 +182,20 @@ async function selectSizeEuOrUs(
   // One-size / OS accessories — no size picker; Buy Now already sized.
   if (/^(os|one\s*size|o\/s|onesize|-)$/i.test(size)) {
     const buy = page.getByRole("button", { name: /Acheter maintenant|Buy Now|Buy$/i }).first();
-    if (await buy.isVisible({ timeout: 2500 }).catch(() => false)) {
+    if (await buy.isVisible({ timeout: 4000 }).catch(() => false)) {
       return { ok: true, used: null };
+    }
+    // No Taille/Size control → treat as OS (Buy Now may still be below fold).
+    const sizeCtl = page.getByRole("button", { name: /Taille|Size/i }).first();
+    const hasSize = await sizeCtl.isVisible({ timeout: 1200 }).catch(() => false);
+    if (!hasSize) {
+      const buyInDom = await page.evaluate(() => {
+        const nodes = Array.from(document.querySelectorAll("button,a,[role=button]"));
+        return nodes.some((n) =>
+          /acheter maintenant|buy now/i.test((n.textContent || "").replace(/\s+/g, " "))
+        );
+      });
+      if (buyInDom) return { ok: true, used: null };
     }
   }
   await page.getByRole("button", { name: /Taille|Size/i }).first().click({ timeout: 8000 }).catch(() => undefined);
@@ -344,38 +356,139 @@ async function parseLanesFromPage(page: Page): Promise<StockxLaneCard[]> {
   return merged;
 }
 
+/**
+ * Click shipping lane so UI selection sticks (radio / role=radio preferred).
+ * Playwright locator clicks often hit wrappers that don't toggle — use DOM evaluate.
+ */
 async function clickLaneCard(page: Page, lane: StockxLaneCard): Promise<boolean> {
+  const targetPrice = lane.totalChf;
+  const targetLabel = String(lane.rawLabel || lane.label || "").trim();
+  const wantStandard = classifyLaneLabel(targetLabel) === "STANDARD" || lane.label === "STANDARD";
+
+  const viaDom = await page.evaluate(
+    ({ price, label, wantStd }) => {
+      const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim();
+      const priceOk = (text: string) => {
+        const m =
+          text.match(/CHF\s*(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)/i) ||
+          text.match(/(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)\s*CHF/i);
+        if (!m) return false;
+        const n = Number(m[1].replace(/[^\d,.-]/g, "").replace(/\s/g, "").replace(",", "."));
+        return Number.isFinite(n) && Math.abs(n - price) <= 0.51;
+      };
+      const labelOk = (text: string) => {
+        if (!label) return true;
+        if (new RegExp(`\\b${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text)) {
+          return true;
+        }
+        // Date-tier inferred Standard: reject Express/Xpress/Fastest cards
+        if (wantStd && /\b(express|xpress|fastest)\b/i.test(text)) return false;
+        if (wantStd && /\bstandard\b/i.test(text)) return true;
+        return !/\b(express|xpress|fastest|standard)\b/i.test(text);
+      };
+      const isInteractive = (el: Element) => {
+        const tag = el.tagName.toLowerCase();
+        if (tag === "button" || tag === "label" || tag === "input") return true;
+        const role = (el.getAttribute("role") || "").toLowerCase();
+        return role === "button" || role === "radio" || role === "option";
+      };
+      const clickEl = (el: HTMLElement) => {
+        const input =
+          (el.matches("input") ? el : null) ||
+          el.querySelector("input[type=radio],input[type=checkbox]") ||
+          (el.closest("label")?.querySelector("input") ?? null);
+        if (input instanceof HTMLInputElement) {
+          input.click();
+          if (!input.checked) {
+            input.checked = true;
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          return true;
+        }
+        el.scrollIntoView({ block: "center", inline: "nearest" });
+        el.click();
+        return true;
+      };
+
+      const candidates = Array.from(
+        document.querySelectorAll(
+          "button,label,div[role=button],div[role=radio],div[role=option],li[role=option],input[type=radio]"
+        )
+      ) as HTMLElement[];
+      // Smallest matching interactive node first (avoid outer wrappers).
+      const scored = candidates
+        .map((el) => {
+          const text = norm(el.textContent || "");
+          if (!priceOk(text) || !labelOk(text)) return null;
+          return { el, len: text.length, interactive: isInteractive(el) };
+        })
+        .filter(Boolean) as Array<{ el: HTMLElement; len: number; interactive: boolean }>;
+      scored.sort((a, b) => {
+        if (a.interactive !== b.interactive) return a.interactive ? -1 : 1;
+        return a.len - b.len;
+      });
+      for (const row of scored.slice(0, 6)) {
+        try {
+          if (clickEl(row.el)) return { ok: true, via: "interactive" };
+        } catch {
+          /* try next */
+        }
+      }
+
+      // Date-only: nearest clickable ancestor of a price text node
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      let node: Node | null;
+      while ((node = walker.nextNode())) {
+        const t = norm(node.textContent || "");
+        if (!priceOk(t)) continue;
+        let el = node.parentElement;
+        for (let i = 0; i < 6 && el; i += 1, el = el.parentElement) {
+          const block = norm(el.textContent || "").slice(0, 280);
+          if (!labelOk(block)) continue;
+          if (!isInteractive(el) && !el.querySelector("input[type=radio]")) continue;
+          try {
+            if (clickEl(el as HTMLElement)) return { ok: true, via: "price-text" };
+          } catch {
+            /* continue */
+          }
+        }
+      }
+      return { ok: false, via: "none" };
+    },
+    { price: targetPrice, label: targetLabel, wantStd: wantStandard }
+  );
+
+  if (viaDom?.ok) return true;
+
+  // Fallback: Playwright locators (force) — last resort
   const priceRe = String(lane.totalChf).replace(".", "[,.]");
-  const selectors = [
-    "button,label,div[role=button],div[role=radio],div[role=option]",
-    "div,li,section",
-  ];
-  for (const sel of selectors) {
-    const card = page
-      .locator(sel)
-      .filter({ hasText: new RegExp(`\\b${lane.rawLabel}\\b`, "i") })
-      .filter({ hasText: new RegExp(`(?:CHF\\s*)?${priceRe}`) })
-      .first();
-    if (await card.isVisible({ timeout: 1500 }).catch(() => false)) {
-      await card.click().catch(() => undefined);
-      return true;
-    }
-  }
-  // Date-only cards: click by price when rawLabel is Standard/Express from date-tier inference
-  const byPrice = page
-    .locator("button,label,div[role=button],div[role=radio],div,li")
+  const labelRe = wantStandard
+    ? /\bStandard\b/i
+    : new RegExp(`\\b${targetLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+  const card = page
+    .locator("button,label,div[role=radio],div[role=button],div[role=option]")
+    .filter({ hasText: labelRe })
     .filter({ hasText: new RegExp(`(?:CHF\\s*)?${priceRe}`) })
     .first();
-  if (await byPrice.isVisible({ timeout: 1000 }).catch(() => false)) {
-    await byPrice.click().catch(() => undefined);
-    return true;
-  }
-  const byName = page.getByRole("button", { name: new RegExp(lane.rawLabel, "i") }).first();
-  if (await byName.isVisible({ timeout: 800 }).catch(() => false)) {
-    await byName.click().catch(() => undefined);
+  if (await card.isVisible({ timeout: 1200 }).catch(() => false)) {
+    await card.scrollIntoViewIfNeeded().catch(() => undefined);
+    await card.click({ force: true }).catch(() => undefined);
     return true;
   }
   return false;
+}
+
+/** Live subtotal matches an EXPRESS lane while we wanted STANDARD → click didn't stick. */
+function liveSubtotalLooksLikeExpress(
+  subtotalChf: number | null,
+  lanes: StockxLaneCard[],
+  desired: StockxDesiredLane | null
+): boolean {
+  if (desired !== "STANDARD" || subtotalChf == null) return false;
+  return lanes.some(
+    (l) => l.label === "EXPRESS" && Math.abs(l.totalChf - subtotalChf) <= 0.51
+  );
 }
 
 /**
@@ -392,8 +505,49 @@ export async function selectAndVerifyStockxLane(
   | { ok: false; reason: string; lanes: StockxLaneCard[]; detail?: string }
 > {
   const maxAllInChf = options.maxAllInChf ?? MAX_ALL_IN_CHF;
-  const body = await page.locator("body").innerText().catch(() => "");
-  const lanes = await parseLanesFromPage(page);
+  // Shipping cards often paint after Buy Now — empty body → false oos.
+  const shipReady = await page
+    .waitForFunction(
+      () => {
+        const t = document.body?.innerText || "";
+        return (
+          /\b(Standard|Express|Xpress|Fastest)\b/i.test(t) ||
+          /\d{1,2}\s+(jan|fév|fev|mar|avr|mai|juin|juil|aoû|aou|sep|oct|nov|déc|dec|janvier|février|mars|avril|juin|juillet|août|septembre|octobre|novembre|décembre)/i.test(
+            t
+          )
+        );
+      },
+      { timeout: 20_000 }
+    )
+    .then(() => true)
+    .catch(() => false);
+  if (!shipReady) {
+    await page.waitForTimeout(2500);
+  }
+  let body = await page.locator("body").innerText().catch(() => "");
+  let lanes = await parseLanesFromPage(page);
+  // One extra settle if still empty (SPA lag).
+  if (!lanes.length) {
+    await page.waitForTimeout(3000);
+    body = await page.locator("body").innerText().catch(() => "");
+    lanes = await parseLanesFromPage(page);
+  }
+  if (!lanes.length) {
+    const dump = `/app/.data/stockx-lane-dump-${Date.now().toString(36)}.txt`;
+    await page
+      .evaluate((path) => {
+        // path unused in browser — written from Node below
+        void path;
+      }, dump)
+      .catch(() => undefined);
+    try {
+      const fs = await import("node:fs/promises");
+      await fs.writeFile(dump, body.slice(0, 8000), "utf8");
+      console.warn(`[STOCKX-CHECKOUT] empty lanes — dumped body ${dump} (${body.length} chars)`);
+    } catch {
+      console.warn(`[STOCKX-CHECKOUT] empty lanes — bodyChars=${body.length}`);
+    }
+  }
   const tiersInText = countDistinctShippingTierInText(body, maxAllInChf);
 
   let picked: StockxLaneCard | null = null;
@@ -418,22 +572,72 @@ export async function selectAndVerifyStockxLane(
     pickReason = `desired:${options.desired}`;
   }
 
-  const clicked = await clickLaneCard(page, picked);
-  await page.waitForTimeout(900);
-  const after = await page.locator("body").innerText().catch(() => "");
-  const subtotalChf = extractCheckoutSubtotalChf(after);
+  const desiredForVerify: StockxDesiredLane | null =
+    options.policy === "desired" ? options.desired : picked.label === "STANDARD" ? "STANDARD" : null;
 
-  // Click may no-op if already selected — subtotal must still match picked lane.
-  if (subtotalChf == null || !laneMatchesSubtotal(picked, subtotalChf)) {
+  let clicked = false;
+  let verifiedSubtotal: number | null = null;
+  // Retry click — StockX often keeps Express selected after a soft wrapper click.
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    clicked = (await clickLaneCard(page, picked)) || clicked;
+    await page.waitForTimeout(attempt === 1 ? 1100 : 1500);
+    const after = await page.locator("body").innerText().catch(() => "");
+    verifiedSubtotal = extractCheckoutSubtotalChf(after);
+
+    if (liveSubtotalLooksLikeExpress(verifiedSubtotal, lanes, desiredForVerify)) {
+      // Fail-closed signal: keep retrying click; do NOT accept Express as STANDARD.
+      console.warn(
+        `[STOCKX-CHECKOUT] lane click attempt ${attempt}: still Express subtotal=${verifiedSubtotal} want=${picked.totalChf}`
+      );
+      continue;
+    }
+    if (verifiedSubtotal != null && laneMatchesSubtotal(picked, verifiedSubtotal)) {
+      break;
+    }
+    // Subtotal 0,00 / missing — wait once more for SPA settle before next click.
+    if (verifiedSubtotal == null || verifiedSubtotal < 1) {
+      await page.waitForTimeout(900);
+      const after2 = await page.locator("body").innerText().catch(() => "");
+      verifiedSubtotal = extractCheckoutSubtotalChf(after2);
+      if (verifiedSubtotal != null && laneMatchesSubtotal(picked, verifiedSubtotal)) break;
+      if (liveSubtotalLooksLikeExpress(verifiedSubtotal, lanes, desiredForVerify)) continue;
+    }
+  }
+
+  // Still Express while desired STANDARD → hard fail (never Place Order on Express).
+  if (liveSubtotalLooksLikeExpress(verifiedSubtotal, lanes, desiredForVerify)) {
+    return {
+      ok: false,
+      reason: "price_moved",
+      lanes,
+      detail: `STANDARD click did not stick — live subtotal still Express ${verifiedSubtotal} (want ${picked.totalChf}) clicked=${clicked} (${pickReason})`,
+    };
+  }
+
+  // fr-CH Sous-total 0,00 until "Vérifier": never invent match from card price when
+  // Express is also on page (desired STANDARD) — that masked stuck-Express buys.
+  if (verifiedSubtotal == null || verifiedSubtotal < 1) {
+    if (desiredForVerify === "STANDARD" && lanes.some((l) => l.label === "EXPRESS")) {
+      return {
+        ok: false,
+        reason: "price_moved",
+        lanes,
+        detail: `no live subtotal after STANDARD click — refuse card-price fallback (Express also on page) pick=${picked.totalChf} clicked=${clicked} (${pickReason})`,
+      };
+    }
+    verifiedSubtotal = picked.totalChf;
+  }
+
+  if (!laneMatchesSubtotal(picked, verifiedSubtotal)) {
     return {
       ok: false,
       reason: clicked ? "price_moved" : "express_unparsed",
       lanes,
-      detail: `lane not verified pick=${picked.totalChf} subtotal=${subtotalChf} clicked=${clicked} (${pickReason})`,
+      detail: `lane not verified pick=${picked.totalChf} subtotal=${verifiedSubtotal} clicked=${clicked} (${pickReason})`,
     };
   }
 
-  return { ok: true, lane: picked, lanes, pickReason, subtotalChf };
+  return { ok: true, lane: picked, lanes, pickReason, subtotalChf: verifiedSubtotal };
 }
 
 async function resolveSlugFromSku(sku: string): Promise<string | null> {
@@ -1123,6 +1327,18 @@ export async function runStockxAutoCheckoutForOrder(options: {
         lanes,
         recommended: pick.lane,
         detail: `lane ${pick.lane.totalChf} → total ${totalChf}`,
+      });
+    }
+
+    // Last gate before Place Order: never pay Express when desired STANDARD.
+    if (
+      desiredLane === "STANDARD" &&
+      liveSubtotalLooksLikeExpress(totalChf, lanes, "STANDARD")
+    ) {
+      return fail("price_moved", {
+        lanes,
+        recommended: pick.lane,
+        detail: `Place Order blocked — live total ${totalChf} matches Express (desired STANDARD ${pick.lane.totalChf})`,
       });
     }
 

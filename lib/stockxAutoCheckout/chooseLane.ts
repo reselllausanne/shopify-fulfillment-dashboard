@@ -92,6 +92,9 @@ function parseDateTierLanes(text: string): StockxLaneCard[] {
   const patterns = [
     new RegExp(String.raw`${dateSpan}\s*\n?\s*CHF\s*${MONEY_RE}`, "gi"),
     new RegExp(String.raw`${dateSpan}\s*\n?\s*${MONEY_RE}\s*CHF`, "gi"),
+    // Same card, up to ~60 chars of noise between date span and price
+    new RegExp(String.raw`${dateSpan}[\s\S]{0,60}?CHF\s*${MONEY_RE}`, "gi"),
+    new RegExp(String.raw`${dateSpan}[\s\S]{0,60}?${MONEY_RE}\s*CHF`, "gi"),
   ];
   for (const dateRe of patterns) {
     for (const m of text.matchAll(dateRe)) {
