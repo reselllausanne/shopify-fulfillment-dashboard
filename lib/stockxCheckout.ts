@@ -365,6 +365,32 @@ async function clickLaneCard(page: Page, lane: StockxLaneCard): Promise<boolean>
   const targetLabel = String(lane.rawLabel || lane.label || "").trim();
   const wantStandard = classifyLaneLabel(targetLabel) === "STANDARD" || lane.label === "STANDARD";
 
+  // Date-only FR cards have no "Standard" word — first shipping radio = cheapest/STANDARD.
+  if (wantStandard) {
+    const radioClicked = await page
+      .evaluate(
+        `() => {
+          const radios = Array.from(document.querySelectorAll('input[type=radio]'));
+          const ship = radios.filter((r) => {
+            const root = r.closest("label,li,div") || r.parentElement;
+            const t = ((root && root.textContent) || "").replace(/\\s+/g, " ");
+            return /CHF/i.test(t) && /\\d{1,2}\\s/i.test(t);
+          });
+          const target = ship[0] || radios[0];
+          if (!target) return false;
+          target.click();
+          if (!target.checked) {
+            target.checked = true;
+            target.dispatchEvent(new Event("input", { bubbles: true }));
+            target.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          return true;
+        }`
+      )
+      .catch(() => false);
+    if (radioClicked) return true;
+  }
+
   // String evaluate — tsx/esbuild injects `__name` into function() evaluate bodies (breaks in browser).
   const viaDom = await page
     .evaluate(
@@ -455,19 +481,15 @@ async function clickLaneCard(page: Page, lane: StockxLaneCard): Promise<boolean>
 
   if (viaDom && (viaDom as { ok?: boolean }).ok) return true;
 
-  // Fallback: Playwright locators (force)
-  const priceRe = String(lane.totalChf).replace(".", "[,.]");
-  const labelRe = wantStandard
-    ? /\bStandard\b/i
-    : new RegExp(`\\b${targetLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
-  const card = page
-    .locator("button,label,div[role=radio],div[role=button],div[role=option]")
-    .filter({ hasText: labelRe })
+  // Fallback: Playwright locators (force). Always 2 decimals — UI shows 127,50 not 127,5.
+  const priceRe = lane.totalChf.toFixed(2).replace(".", "[,.]");
+  const byPrice = page
+    .locator("button,label,div[role=radio],div[role=button],div[role=option],li,div")
     .filter({ hasText: new RegExp(`(?:CHF\\s*)?${priceRe}`) })
     .first();
-  if (await card.isVisible({ timeout: 1200 }).catch(() => false)) {
-    await card.scrollIntoViewIfNeeded().catch(() => undefined);
-    await card.click({ force: true }).catch(() => undefined);
+  if (await byPrice.isVisible({ timeout: 1200 }).catch(() => false)) {
+    await byPrice.scrollIntoViewIfNeeded().catch(() => undefined);
+    await byPrice.click({ force: true }).catch(() => undefined);
     return true;
   }
   return false;
@@ -1270,6 +1292,23 @@ export async function runStockxAutoCheckoutForOrder(options: {
     }
     await page.waitForTimeout(4500);
     await dismissNoise(page);
+    // xpress-ship=true defaults Express radio — strip + reload so STANDARD selectable.
+    try {
+      const u = page.url();
+      if (/xpress-ship=true/i.test(u)) {
+        const cleaned = u
+          .replace(/([?&])xpress-ship=true&?/i, "$1")
+          .replace(/[?&]$/, "")
+          .replace(/\?&/, "?");
+        if (cleaned !== u) {
+          await page.goto(cleaned, { waitUntil: "domcontentloaded", timeout: 45000 });
+          await page.waitForTimeout(2500);
+          await dismissNoise(page);
+        }
+      }
+    } catch {
+      /* keep going */
+    }
 
     const selected = await selectAndVerifyStockxLane(page, {
       policy: "desired",
