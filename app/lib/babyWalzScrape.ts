@@ -24,6 +24,7 @@ type ExistingVariantImage = {
   sourceImageUrl: string | null;
   hostedImageUrl: string | null;
   imageSyncStatus: string | null;
+  stock: number | null;
 };
 
 async function updateRun(runId: number, fields: Record<string, unknown>) {
@@ -138,6 +139,7 @@ export async function scrapeBabyWalzShop(
       sourceImageUrl: true,
       hostedImageUrl: true,
       imageSyncStatus: true,
+      stock: true,
     },
   })) as Array<ExistingVariantImage & { supplierVariantId: string }>;
   const existingById = new Map(
@@ -147,6 +149,7 @@ export async function scrapeBabyWalzShop(
         sourceImageUrl: row.sourceImageUrl ?? null,
         hostedImageUrl: row.hostedImageUrl ?? null,
         imageSyncStatus: row.imageSyncStatus ?? null,
+        stock: row.stock ?? null,
       },
     ])
   );
@@ -256,6 +259,7 @@ export async function scrapeBabyWalzShop(
       sourceImageUrl: product.imageUrl,
       hostedImageUrl: queueImage ? null : existing?.hostedImageUrl ?? null,
       imageSyncStatus: queueImage ? "PENDING" : existing?.imageSyncStatus ?? null,
+      stock: stockWrite !== undefined ? stockWrite : existing?.stock ?? null,
     });
     if (queueImage) imageSyncQueue.add(supplierVariantId);
     return true;
