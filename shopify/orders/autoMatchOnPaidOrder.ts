@@ -65,6 +65,7 @@ type OrderDetailsQuery = {
           variant: {
             id: string | null;
             selectedOptions: Array<{ name: string; value: string }> | null;
+            product: { id: string | null } | null;
             inventoryItem: { unitCost: { amount: string | null } | null } | null;
           } | null;
         };
@@ -116,6 +117,7 @@ const ORDER_DETAILS_QUERY = /* GraphQL */ `
             variant {
               id
               selectedOptions { name value }
+              product { id }
               inventoryItem { unitCost { amount } }
             }
           }
@@ -140,6 +142,9 @@ export type AutoMatchResult = {
   orderName: string | null;
   fixedRule: number;
   moneyKickz: number;
+  /** Physical location with Shopify inventoryItem.unitCost > 0. */
+  physicalUnitCost: number;
+  /** Physical location, no unitCost — already-expensed shoes/returns. */
   physicalZero: number;
   skippedProtected: number;
   skippedNoLocation: number;
@@ -178,6 +183,7 @@ export async function upsertAutoOrderMatchesForPaidOrder(
     orderName: null,
     fixedRule: 0,
     moneyKickz: 0,
+    physicalUnitCost: 0,
     physicalZero: 0,
     skippedProtected: 0,
     skippedNoLocation: 0,
@@ -247,10 +253,14 @@ export async function upsertAutoOrderMatchesForPaidOrder(
     const sizeEU = sizeOpt?.value || li.variantTitle || null;
 
     // Résolution du coût par priorité:
-    //   1. Fixed-price rule (Essentials 26, Bape 35, AP 40) — source: code, sûr
-    //   2. Money Kickz location → inventoryItem.unitCost Shopify natif
-    //   3. Physical location sans règle → cost 0 (chaussure déjà expensée via StockX)
-    const productId = li.variant?.id?.match(/Product\/(\d+)/)?.[1] ?? null;
+    //   1. Fixed-price rule (Essentials / Bape allowlist / AP) — source: code
+    //   2. Money Kickz location → inventoryItem.unitCost (required)
+    //   3. Physical location + inventoryItem.unitCost > 0 → use Shopify COGS
+    //   4. Physical location sans unitCost → 0 (chaussure/retour déjà expensé)
+    const productId =
+      li.variant?.product?.id?.match(/Product\/(\d+)/)?.[1] ??
+      li.variant?.id?.match(/Product\/(\d+)/)?.[1] ??
+      null;
     const fixedRule = resolveInStockFixedPriceRule({ sku, title, productId });
 
     let supplierCost: number;
@@ -258,7 +268,7 @@ export async function upsertAutoOrderMatchesForPaidOrder(
     let stockxStatus: string;
     let stockxOrderPrefix: string;
     let matchReasons: string[];
-    let bucket: "fixed" | "mk" | "phys";
+    let bucket: "fixed" | "mk" | "physCost" | "physZero";
 
     if (fixedRule) {
       supplierCost = Number((fixedRule.costChf * qty).toFixed(2));
@@ -288,13 +298,24 @@ export async function upsertAutoOrderMatchesForPaidOrder(
       ];
       bucket = "mk";
     } else {
-      // Physical location sans rule (chaussures, retours…) → coût 0 (déjà expensé)
-      supplierCost = 0;
+      const unitCostRaw = Number(li.variant?.inventoryItem?.unitCost?.amount ?? 0);
       matchType = PHYSICAL_FULFILLMENT_MATCH_TYPE;
       stockxStatus = PHYSICAL_FULFILLMENT_STATUS;
       stockxOrderPrefix = "PHYS";
-      matchReasons = ["physical_fulfillment_zero_cost", `location:${loc.locationName}`];
-      bucket = "phys";
+      if (Number.isFinite(unitCostRaw) && unitCostRaw > 0) {
+        const unitCost = Number(unitCostRaw.toFixed(4));
+        supplierCost = Number((unitCost * qty).toFixed(2));
+        matchReasons = [
+          "physical_location_unit_cost",
+          `location:${loc.locationName}`,
+          `unit_cost:${unitCost}`,
+        ];
+        bucket = "physCost";
+      } else {
+        supplierCost = 0;
+        matchReasons = ["physical_fulfillment_zero_cost", `location:${loc.locationName}`];
+        bucket = "physZero";
+      }
     }
 
     const marginAmount = Number((revenue - supplierCost).toFixed(2));
@@ -351,6 +372,7 @@ export async function upsertAutoOrderMatchesForPaidOrder(
       });
       if (bucket === "fixed") result.fixedRule += 1;
       else if (bucket === "mk") result.moneyKickz += 1;
+      else if (bucket === "physCost") result.physicalUnitCost += 1;
       else result.physicalZero += 1;
     } catch (err: any) {
       result.errors.push(`line ${lineItemGid}: ${err?.message ?? String(err)}`);
