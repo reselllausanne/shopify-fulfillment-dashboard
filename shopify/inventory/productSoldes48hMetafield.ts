@@ -14,9 +14,7 @@
  *
  * Idempotent: writes only when the product-level value differs.
  */
-import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL, type ShopifyGraphQLResult } from "@/lib/shopifyAdmin";
-import { PHYSICAL_LOCATIONS } from "@/shopify/inventory/locationConfig";
 
 export const PRODUCT_SOLDES_48H_METAFIELD = {
   namespace: "custom",
@@ -127,9 +125,8 @@ export async function syncProductSoldes48hForVariant(
   }
 }
 
-// Cheap sweep query: variant IDs only (no per-variant metafields). Physical
-// stock is resolved from the DB mirror, so we never pay Shopify query cost for
-// delivery_48h across the whole soldes set (that read throttles hard).
+// Sweep products still flagged soldes_48h; clear when no variant has live
+// delivery_48h (same rule as syncProductSoldes48hMetafield).
 const RECONCILE_SOLDES_QUERY = /* GraphQL */ `
 query ReconcileSoldes48h($cursor: String) {
   products(first: 10, after: $cursor, query: "metafields.custom.soldes_48h:true") {
@@ -138,7 +135,11 @@ query ReconcileSoldes48h($cursor: String) {
       id
       handle
       soldes: metafield(namespace: "custom", key: "soldes_48h") { value }
-      variants(first: 40) { nodes { id } }
+      variants(first: 100) {
+        nodes {
+          delivery48h: metafield(namespace: "custom", key: "delivery_48h") { value }
+        }
+      }
     }
   }
 }
@@ -148,7 +149,7 @@ type ReconcileNode = {
   id: string;
   handle: string;
   soldes: { value: string | null } | null;
-  variants: { nodes: Array<{ id: string }> };
+  variants: { nodes: Array<{ delivery48h: { value: string | null } | null }> };
 };
 type ReconcileResponse = {
   products: {
@@ -156,21 +157,6 @@ type ReconcileResponse = {
     nodes: ReconcileNode[];
   };
 };
-
-/** Physical on-hand qty across express/soldes-capable locations for a variant set. */
-async function physicalQtyForVariantIds(variantIds: string[]): Promise<number> {
-  if (variantIds.length === 0) return 0;
-  const physIds = PHYSICAL_LOCATIONS.map((l) => l.id);
-  const rows = await prisma.$queryRaw<Array<{ qty: number }>>`
-    SELECT COALESCE(SUM(s."available"), 0)::int AS qty
-    FROM "public"."ShopifyVariantLocationStock" s
-    WHERE s."shopifyVariantId" = ANY(${variantIds}::text[])
-      AND s."sourceType" = 'physical'
-      AND s."locationId" = ANY(${physIds}::text[])
-      AND s."available" > 0
-  `;
-  return Number(rows[0]?.qty ?? 0);
-}
 
 export type ReconcileSoldes48hResult = {
   scanned: number;
@@ -182,8 +168,8 @@ export type ReconcileSoldes48hResult = {
 
 /**
  * Full sweep over products currently flagged `custom.soldes_48h:true`.
- * Clears the flag when no variant has delivery_48h=true (i.e. no live soldes
- * stock). Idempotent; dry-run supported.
+ * Clears when no variant has delivery_48h=true (retail warehouse stock must not
+ * keep a stuck SALES badge). Idempotent; dry-run supported.
  */
 export async function reconcileProductSoldes48hMetafields(options?: {
   dryRun?: boolean;
@@ -213,9 +199,8 @@ export async function reconcileProductSoldes48hMetafields(options?: {
     for (const p of conn.nodes) {
       if (!isTrue(p.soldes?.value)) continue;
       scanned += 1;
-      const variantIds = (p.variants?.nodes ?? []).map((v) => v.id).filter(Boolean);
-      const physicalQty = await physicalQtyForVariantIds(variantIds);
-      if (physicalQty > 0) continue; // still holds local stock — keep soldes as-is
+      const want = (p.variants?.nodes ?? []).some((v) => isTrue(v.delivery48h?.value));
+      if (want) continue;
       try {
         if (!dryRun) await writeProductSoldes48h(p.id, false);
         cleared += 1;

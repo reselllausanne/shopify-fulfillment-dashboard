@@ -566,6 +566,8 @@ async function main() {
       }
 
       bulkVariants.push({ id: node.id, price: normalSell.toFixed(2) });
+      // express_price only — never touch express_available (physical 48h gate;
+      // owned by expressRepriceSync). Writing true here bloated express-delivery.
       if (expressSell != null) {
         metafields.push({
           ownerId: node.id,
@@ -573,21 +575,6 @@ async function main() {
           key: "express_price",
           type: "money",
           value: JSON.stringify({ amount: expressSell.toFixed(2), currency_code: "CHF" }),
-        });
-        metafields.push({
-          ownerId: node.id,
-          namespace: "custom",
-          key: "express_available",
-          type: "boolean",
-          value: "true",
-        });
-      } else {
-        metafields.push({
-          ownerId: node.id,
-          namespace: "custom",
-          key: "express_available",
-          type: "boolean",
-          value: "false",
         });
       }
       if (row.providerKey) {
