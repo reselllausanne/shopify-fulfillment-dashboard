@@ -40,6 +40,37 @@ mutation CreateReverseDeliveryWithExternalLabel(
 }
 `;
 
+const ORDER_AWAITING_PAYMENT_HOLDS_QUERY = /* GraphQL */ `
+query ExchangeAwaitingPaymentHolds($id: ID!) {
+  order(id: $id) {
+    fulfillmentOrders(first: 25) {
+      nodes {
+        id
+        status
+        fulfillmentHolds {
+          reason
+        }
+      }
+    }
+  }
+}
+`;
+
+const FULFILLMENT_ORDER_RELEASE_HOLD_MUTATION = /* GraphQL */ `
+mutation ReleasePaidExchangeFulfillmentHold($id: ID!) {
+  fulfillmentOrderReleaseHold(id: $id) {
+    fulfillmentOrder {
+      id
+      status
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+`;
+
 type ShopifyReturnUserError = { field?: string[] | null; message: string };
 
 function assertNoReturnUserErrors(step: string, userErrors: ShopifyReturnUserError[] | undefined) {
@@ -139,13 +170,52 @@ function isExchangePriceDifferenceOrder(payload: OrderPaidPayload): boolean {
   );
 }
 
+async function releasePaidExchangeFulfillmentHolds(orderId: string): Promise<string[]> {
+  const holdResult = await shopifyGraphQL<{
+    order?: {
+      fulfillmentOrders?: {
+        nodes?: Array<{
+          id: string;
+          status: string;
+          fulfillmentHolds?: Array<{ reason?: string | null }>;
+        }>;
+      };
+    } | null;
+  }>(ORDER_AWAITING_PAYMENT_HOLDS_QUERY, { id: orderId });
+  if (holdResult.errors?.length) {
+    throw new Error("Shopify exchange fulfillment hold lookup failed");
+  }
+  const heldIds = (holdResult.data?.order?.fulfillmentOrders?.nodes ?? [])
+    .filter(
+      (order) =>
+        String(order.status).toUpperCase() === "ON_HOLD" &&
+        (order.fulfillmentHolds ?? []).some(
+          (hold) => String(hold.reason).toUpperCase() === "AWAITING_PAYMENT"
+        )
+    )
+    .map((order) => order.id);
+
+  for (const id of heldIds) {
+    const releaseResult = await shopifyGraphQL<{
+      fulfillmentOrderReleaseHold?: {
+        userErrors?: ShopifyReturnUserError[];
+      };
+    }>(FULFILLMENT_ORDER_RELEASE_HOLD_MUTATION, { id });
+    if (releaseResult.errors?.length) {
+      throw new Error("Shopify exchange fulfillment hold release failed");
+    }
+    assertNoReturnUserErrors(
+      "fulfillmentOrderReleaseHold",
+      releaseResult.data?.fulfillmentOrderReleaseHold?.userErrors
+    );
+  }
+  return heldIds;
+}
+
 export async function tryCompleteExchangeReturnAfterOrderPaid(
   payload: OrderPaidPayload
 ): Promise<{ handled: boolean; returnId?: string; error?: string }> {
-  if (!isExchangePriceDifferenceOrder(payload)) {
-    return { handled: false };
-  }
-
+  const legacySeparatePaymentOrder = isExchangePriceDifferenceOrder(payload);
   const returnName =
     noteAttribute(payload, "return_name") ||
     noteAttribute(payload, "return_name".toUpperCase()) ||
@@ -155,20 +225,44 @@ export async function tryCompleteExchangeReturnAfterOrderPaid(
   const paidOrderGid = String(payload.admin_graphql_api_id ?? "").trim();
   const paidOrderIdNum = String(payload.id ?? "").trim();
 
-  if (!shopifyReturnGid) {
-    console.warn("[returns][exchange-payment] missing shopify_return_id note attribute", {
-      returnName,
+  let row = shopifyReturnGid
+    ? await prisma.marketplaceReturn.findFirst({
+        where: { platform: "shopify", externalReturnId: shopifyReturnGid },
+      })
+    : null;
+
+  // Native Shopify exchange: the balance and invoice live on the ORIGINAL
+  // order, so orders/paid has no custom tags/note attributes. Match the
+  // awaiting return by original order GID recorded in rawJson.
+  if (!row && paidOrderGid) {
+    const awaiting = await prisma.marketplaceReturn.findMany({
+      where: {
+        platform: "shopify",
+        processStep: "awaiting_exchange_payment",
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 100,
     });
-    return { handled: true, error: "missing_shopify_return_id" };
+    row =
+      awaiting.find((candidate) => {
+        const raw = (candidate.rawJson ?? {}) as Record<string, unknown>;
+        const originalOrder = raw.order as
+          | { id?: string | null; name?: string | null }
+          | undefined;
+        return String(originalOrder?.id ?? "").trim() === paidOrderGid;
+      }) ?? null;
   }
 
-  const row = await prisma.marketplaceReturn.findFirst({
-    where: { platform: "shopify", externalReturnId: shopifyReturnGid },
-  });
-
   if (!row) {
-    console.warn("[returns][exchange-payment] no marketplace row", { returnName, shopifyReturnGid });
-    return { handled: true, error: "return_not_found" };
+    if (legacySeparatePaymentOrder || shopifyReturnGid) {
+      console.warn("[returns][exchange-payment] no marketplace row", {
+        returnName,
+        shopifyReturnGid,
+        paidOrderGid,
+      });
+      return { handled: true, error: "return_not_found" };
+    }
+    return { handled: false };
   }
 
   if (row.labelKey) {
@@ -199,6 +293,9 @@ export async function tryCompleteExchangeReturnAfterOrderPaid(
   }
 
   try {
+    const releasedFulfillmentOrderIds = paidOrderGid
+      ? await releasePaidExchangeFulfillmentHolds(paidOrderGid)
+      : [];
     const shipped = await attachShopifyReturnShippingLabel({
       reverseFulfillmentOrderId,
       reference: returnRef,
@@ -243,6 +340,7 @@ export async function tryCompleteExchangeReturnAfterOrderPaid(
             step: "exchange_price_paid_label_created",
             ok: true,
             paidOrderId: paidOrderGid || paidOrderIdNum,
+            releasedFulfillmentOrderIds,
           },
         ],
       },

@@ -196,6 +196,11 @@ function PublicReturnsWizard() {
   const [replacementLoading, setReplacementLoading] = useState<Record<string, boolean>>({});
   const [sizeFitByLine, setSizeFitByLine] = useState<Record<string, ProductSizeFit | null>>({});
   const [submitState, setSubmitState] = useState<SubmitState>({ type: "idle" });
+  const [exchangeQuote, setExchangeQuote] = useState<{
+    due: number;
+    credit: number;
+  } | null>(null);
+  const [exchangeQuoteLoading, setExchangeQuoteLoading] = useState(false);
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
 
@@ -277,6 +282,7 @@ function PublicReturnsWizard() {
     if (!validateStep1()) return;
     setLoadingItems(true);
     setSubmitState({ type: "idle" });
+    setExchangeQuote(null);
     try {
       const response = await fetch("/api/shopify/returns/returnable", {
         method: "POST",
@@ -480,24 +486,6 @@ function PublicReturnsWizard() {
     returnAmount: number | null;
   }>;
 
-  const exchangeTotals = (() => {
-    if (!isExchangeFlow) return { due: 0, credit: 0, known: false };
-    let due = 0;
-    let credit = 0;
-    let known = false;
-    for (const line of selectedLineSummaries) {
-      if (line.lineDelta == null) continue;
-      known = true;
-      if (line.lineDelta > 0) due += line.lineDelta;
-      if (line.lineDelta < 0) credit += Math.abs(line.lineDelta);
-    }
-    return {
-      due: Number(due.toFixed(2)),
-      credit: Number(credit.toFixed(2)),
-      known,
-    };
-  })();
-
   const returnRefundEstimate = (() => {
     if (isExchangeFlow) return null;
     let sum = 0;
@@ -511,7 +499,7 @@ function PublicReturnsWizard() {
     return Number(sum.toFixed(2));
   })();
 
-  function goToStep3() {
+  async function goToStep3() {
     if (selectedCount === 0) {
       setSubmitState({
         type: "error",
@@ -546,6 +534,48 @@ function PublicReturnsWizard() {
         });
         return;
       }
+      setExchangeQuoteLoading(true);
+      setExchangeQuote(null);
+      try {
+        const items = Object.entries(selectedItems)
+          .filter(([, value]) => value.checked && value.quantity > 0)
+          .map(([fulfillmentLineItemId, value]) => ({
+            fulfillmentLineItemId,
+            quantity: value.quantity,
+            replacementVariantId: value.replacementVariantId,
+          }));
+        const response = await fetch("/api/shopify/returns/exchange-preview", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            orderNumber,
+            email: orderEmail.trim().toLowerCase(),
+            items,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data?.success) {
+          const code = String(data?.error ?? "");
+          setSubmitState({
+            type: "error",
+            code,
+            message: messageForPublicError(code, data?.message, copy),
+          });
+          return;
+        }
+        setExchangeQuote({
+          due: Number(data?.priceDifferenceDue ?? 0),
+          credit: Number(data?.priceCreditDue ?? 0),
+        });
+      } catch (error: any) {
+        setSubmitState({
+          type: "error",
+          message: String(error?.message ?? copy.lookupFailed),
+        });
+        return;
+      } finally {
+        setExchangeQuoteLoading(false);
+      }
     }
     setSubmitState({ type: "idle" });
     setConsentAccepted(false);
@@ -562,6 +592,8 @@ function PublicReturnsWizard() {
     setReplacementOptions({});
     setReplacementLoading({});
     setSizeFitByLine({});
+    setExchangeQuote(null);
+    setExchangeQuoteLoading(false);
     setReturnableItems([]);
     setExcludedItems([]);
     setSelectedItems({});
@@ -968,8 +1000,13 @@ function PublicReturnsWizard() {
                 <button type="button" onClick={() => setStep(1)} className={btnSecondary}>
                   {copy.back}
                 </button>
-                <button type="button" onClick={goToStep3} className={btnPrimary}>
-                  {copy.continue}
+                <button
+                  type="button"
+                  onClick={goToStep3}
+                  disabled={exchangeQuoteLoading}
+                  className={btnPrimary}
+                >
+                  {exchangeQuoteLoading ? copy.checking : copy.continue}
                 </button>
               </div>
             </div>
@@ -1019,19 +1056,19 @@ function PublicReturnsWizard() {
                     {copy.reasons[reason] ?? reason}
                   </span>
                 </p>
-                {isExchangeFlow && exchangeTotals.known ? (
+                {isExchangeFlow && exchangeQuote ? (
                   <p className="mt-2 text-sm text-neutral-600">
                     {copy.confirmMoneyTitle}:{" "}
                     <span className="font-medium text-neutral-900">
-                      {exchangeTotals.due > 0
+                      {exchangeQuote.due > 0
                         ? copy.confirmAmountDue.replace(
                             "{amount}",
-                            exchangeTotals.due.toFixed(2)
+                            exchangeQuote.due.toFixed(2)
                           )
-                        : exchangeTotals.credit > 0
+                        : exchangeQuote.credit > 0
                           ? copy.confirmAmountSave.replace(
                               "{amount}",
-                              exchangeTotals.credit.toFixed(2)
+                              exchangeQuote.credit.toFixed(2)
                             )
                           : copy.confirmAmountEven}
                     </span>

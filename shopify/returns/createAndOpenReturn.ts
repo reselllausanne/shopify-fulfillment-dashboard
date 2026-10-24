@@ -3,7 +3,6 @@ import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { attachShopifyReturnShippingLabel } from "@/shopify/returns/exchangeReturnShipping";
 import {
   computeUnitPriceDelta,
-  createExchangePriceDifferenceDraftOrder,
   snapshotReplacementVariant,
   type PublicCustomerExchangeLine,
 } from "@/shopify/returns/publicCustomerExchange";
@@ -1112,6 +1111,26 @@ type CreateAndOpenResult = {
   labelPendingPayment?: boolean;
 };
 
+type OpenedShopifyReturn = {
+  id: string;
+  name: string;
+  status: string;
+  reverseFulfillmentOrders?: {
+    edges?: Array<{ node?: { id?: string | null } | null }>;
+    nodes?: Array<{ id?: string | null }>;
+  } | null;
+  order?: {
+    id: string;
+    name: string;
+    statusPageUrl?: string | null;
+    customer?: {
+      id?: string | null;
+      email?: string | null;
+      defaultEmailAddress?: { emailAddress?: string | null } | null;
+    } | null;
+  } | null;
+};
+
 type ReturnableItemsResult = {
   success: true;
   orderId: string;
@@ -1198,101 +1217,140 @@ export async function createAndOpenReturnFromFormData(
     validated.details
   );
 
-  const returnLineItems = selectedLines.map((entry) => ({
-    fulfillmentLineItemId: entry.line.fulfillmentLineItemId,
-    quantity: entry.quantity,
-    returnReason: entry.reason,
-    customerNote: entry.customerNote,
-    restockingFee: defaultReturnRestockingFeeInput(),
-  }));
+  const isCustomerExchange = !staffMode && validated.intent === "exchange";
+  let requestedReturn: OpenedShopifyReturn;
+  let approvedReturn: OpenedShopifyReturn;
+  let reverseFulfillmentOrderId: string | null = null;
+  let nativeExchangeResult:
+    | Awaited<
+        ReturnType<
+          typeof import("@/shopify/returns/customerNativeExchange").openNativeCustomerExchange
+        >
+      >
+    | null = null;
 
-  const requestResult = await shopifyGraphQL<{
-    returnRequest: {
-      return?: { id: string; name: string; status: string; order?: { id: string; name: string } | null } | null;
-      userErrors: ShopifyReturnUserError[];
-    };
-  }>(RETURN_REQUEST_MUTATION, {
-    input: {
+  if (isCustomerExchange) {
+    const requestedByFli = new Map(
+      validated.requestedItems
+        .filter((item) => item.fulfillmentLineItemId)
+        .map((item) => [item.fulfillmentLineItemId!, item])
+    );
+    const nativeExchangeLines = selectedLines.map((entry) => {
+      const replacementVariantId = String(
+        requestedByFli.get(entry.line.fulfillmentLineItemId)?.replacementVariantId ?? ""
+      ).trim();
+      if (!replacementVariantId) {
+        throw new ShopifyReturnRequestError(
+          "VALIDATION_ERROR",
+          "Exchange requires a replacement variant for each selected item",
+          400
+        );
+      }
+      return { variantId: replacementVariantId, quantity: entry.quantity };
+    });
+    const { openNativeCustomerExchange } = await import(
+      "@/shopify/returns/customerNativeExchange"
+    );
+    nativeExchangeResult = await openNativeCustomerExchange({
       orderId: order.id,
-      returnLineItems,
-    },
-  });
+      customerEmail: orderNodeEmail(order),
+      returnLines: selectedLines.map((entry) => ({
+        fulfillmentLineItemId: entry.line.fulfillmentLineItemId,
+        quantity: entry.quantity,
+        reasonNote: [mapReasonLabel(entry.reason), entry.customerNote]
+          .filter(Boolean)
+          .join(" — "),
+      })),
+      exchangeLines: nativeExchangeLines,
+    });
+    requestedReturn = nativeExchangeResult.return;
+    approvedReturn = nativeExchangeResult.return;
+    reverseFulfillmentOrderId = nativeExchangeResult.reverseFulfillmentOrderId;
+  } else {
+    const returnLineItems = selectedLines.map((entry) => ({
+      fulfillmentLineItemId: entry.line.fulfillmentLineItemId,
+      quantity: entry.quantity,
+      returnReason: entry.reason,
+      customerNote: entry.customerNote,
+      restockingFee: defaultReturnRestockingFeeInput(),
+    }));
 
-  if (requestResult.errors?.length) {
-    throw new ShopifyReturnRequestError(
-      "SERVER_ERROR",
-      "Shopify returnRequest failed",
-      502,
-      requestResult.errors
+    const requestResult = await shopifyGraphQL<{
+      returnRequest: {
+        return?: OpenedShopifyReturn | null;
+        userErrors: ShopifyReturnUserError[];
+      };
+    }>(RETURN_REQUEST_MUTATION, {
+      input: {
+        orderId: order.id,
+        returnLineItems,
+      },
+    });
+
+    if (requestResult.errors?.length) {
+      throw new ShopifyReturnRequestError(
+        "SERVER_ERROR",
+        "Shopify returnRequest failed",
+        502,
+        requestResult.errors
+      );
+    }
+
+    assertNoReturnUserErrors("returnRequest", requestResult.data?.returnRequest?.userErrors);
+    const requested = requestResult.data?.returnRequest?.return;
+    if (!requested?.id) {
+      throw new ShopifyReturnRequestError(
+        "SERVER_ERROR",
+        "Shopify returnRequest returned no return id",
+        502
+      );
+    }
+    requestedReturn = requested;
+
+    const approveResult = await shopifyGraphQL<{
+      returnApproveRequest: {
+        return?: OpenedShopifyReturn | null;
+        userErrors: ShopifyReturnUserError[];
+      };
+    }>(RETURN_APPROVE_MUTATION, {
+      input: { id: requestedReturn.id, notifyCustomer: false },
+    });
+
+    if (approveResult.errors?.length) {
+      throw new ShopifyReturnRequestError(
+        "SERVER_ERROR",
+        "Shopify returnApproveRequest failed",
+        502,
+        approveResult.errors
+      );
+    }
+
+    assertNoReturnUserErrors(
+      "returnApproveRequest",
+      approveResult.data?.returnApproveRequest?.userErrors
     );
+
+    const approved = approveResult.data?.returnApproveRequest?.return;
+    if (!approved?.id) {
+      throw new ShopifyReturnRequestError(
+        "SERVER_ERROR",
+        "Shopify returnApproveRequest returned no return id",
+        502
+      );
+    }
+    approvedReturn = approved;
+    if (String(approvedReturn.status).toUpperCase() !== "OPEN") {
+      throw new ShopifyReturnRequestError(
+        "SHOPIFY_USER_ERROR",
+        "Return was created but not opened",
+        422,
+        { returnId: approvedReturn.id, status: approvedReturn.status }
+      );
+    }
+    reverseFulfillmentOrderId =
+      approvedReturn.reverseFulfillmentOrders?.edges?.[0]?.node?.id ?? null;
   }
 
-  assertNoReturnUserErrors("returnRequest", requestResult.data?.returnRequest?.userErrors);
-  const requestedReturn = requestResult.data?.returnRequest?.return;
-  if (!requestedReturn?.id) {
-    throw new ShopifyReturnRequestError(
-      "SERVER_ERROR",
-      "Shopify returnRequest returned no return id",
-      502
-    );
-  }
-
-  const approveResult = await shopifyGraphQL<{
-    returnApproveRequest: {
-      return?: {
-        id: string;
-        name: string;
-        status: string;
-        reverseFulfillmentOrders?: { edges?: Array<{ node?: { id?: string | null } | null }> } | null;
-        order?: {
-          id: string;
-          name: string;
-          customer?: {
-            id?: string | null;
-            email?: string | null;
-            defaultEmailAddress?: { emailAddress?: string | null } | null;
-          } | null;
-        } | null;
-      } | null;
-      userErrors: ShopifyReturnUserError[];
-    };
-  }>(RETURN_APPROVE_MUTATION, {
-    input: { id: requestedReturn.id, notifyCustomer: false },
-  });
-
-  if (approveResult.errors?.length) {
-    throw new ShopifyReturnRequestError(
-      "SERVER_ERROR",
-      "Shopify returnApproveRequest failed",
-      502,
-      approveResult.errors
-    );
-  }
-
-  assertNoReturnUserErrors(
-    "returnApproveRequest",
-    approveResult.data?.returnApproveRequest?.userErrors
-  );
-
-  const approvedReturn = approveResult.data?.returnApproveRequest?.return;
-  if (!approvedReturn?.id) {
-    throw new ShopifyReturnRequestError(
-      "SERVER_ERROR",
-      "Shopify returnApproveRequest returned no return id",
-      502
-    );
-  }
-  if (String(approvedReturn.status).toUpperCase() !== "OPEN") {
-    throw new ShopifyReturnRequestError(
-      "SHOPIFY_USER_ERROR",
-      "Return was created but not opened",
-      422,
-      { returnId: approvedReturn.id, status: approvedReturn.status }
-    );
-  }
-
-  let reverseFulfillmentOrderId =
-    approvedReturn.reverseFulfillmentOrders?.edges?.[0]?.node?.id ?? null;
   if (!reverseFulfillmentOrderId) {
     const reverseResult = await shopifyGraphQL<{
       return?: { reverseFulfillmentOrders?: { edges?: Array<{ node?: { id?: string | null } | null }> } | null } | null;
@@ -1350,10 +1408,9 @@ export async function createAndOpenReturnFromFormData(
     ? `Customer declared order email: ${validated.customerProvidedEmail}`
     : null;
 
-  const isCustomerExchange = !staffMode && validated.intent === "exchange";
   const exchangeLines: PublicCustomerExchangeLine[] = [];
-  let priceDifferenceDue = 0;
-  let priceCreditDue = 0;
+  let priceDifferenceDue = nativeExchangeResult?.priceDifferenceDue ?? 0;
+  let priceCreditDue = nativeExchangeResult?.priceCreditDue ?? 0;
 
   if (isCustomerExchange) {
     const byFli = new Map(
@@ -1367,10 +1424,6 @@ export async function createAndOpenReturnFromFormData(
       if (!replacementVariantId) continue;
       const snap = await snapshotReplacementVariant(replacementVariantId);
       const unitDelta = computeUnitPriceDelta(entry.line.unitAmount, snap.unitPrice);
-      const lineDelta =
-        unitDelta != null ? Number((unitDelta * entry.quantity).toFixed(2)) : 0;
-      if (lineDelta > 0) priceDifferenceDue += lineDelta;
-      if (lineDelta < 0) priceCreditDue += Math.abs(lineDelta);
       exchangeLines.push({
         fulfillmentLineItemId: entry.line.fulfillmentLineItemId,
         replacementVariantId,
@@ -1379,31 +1432,23 @@ export async function createAndOpenReturnFromFormData(
         unitPriceDelta: unitDelta,
       });
     }
-    priceDifferenceDue = Number(priceDifferenceDue.toFixed(2));
-    priceCreditDue = Number(priceCreditDue.toFixed(2));
   }
 
-  let exchangeDraft: {
-    draftOrderId: string;
-    draftOrderName: string | null;
+  const exchangePayment: {
+    orderId: string;
+    orderName: string | null;
     invoiceUrl: string | null;
-  } | null = null;
+  } | null = nativeExchangeResult
+    ? {
+        // Native exchange invoice belongs to the original order.
+        orderId: order.id,
+        orderName: order.name,
+        invoiceUrl: nativeExchangeResult.invoiceUrl,
+      }
+    : null;
 
   const deferLabelUntilExchangePayment =
     isCustomerExchange && priceDifferenceDue > 0 && !staffMode;
-
-  if (isCustomerExchange && priceDifferenceDue > 0 && customerEmail.includes("@")) {
-    exchangeDraft = await createExchangePriceDifferenceDraftOrder({
-      customerId,
-      customerEmail,
-      orderName: order.name,
-      returnName: approvedReturn.name ?? approvedReturn.id,
-      shopifyReturnId: approvedReturn.id,
-      currencyCode: currency,
-      totalDue: priceDifferenceDue,
-      note: `Écart échange — retour ${approvedReturn.name ?? approvedReturn.id} (commande ${order.name})`,
-    });
-  }
 
   type GeneratedLabel = Awaited<
     ReturnType<typeof attachShopifyReturnShippingLabel>
@@ -1447,7 +1492,7 @@ export async function createAndOpenReturnFromFormData(
 
   const exchangeCreditRefundPreference =
     isCustomerExchange && priceCreditDue > 0
-      ? refundPreferenceForAmount(priceCreditDue)
+      ? nativeExchangeResult?.refundPreference ?? refundPreferenceForAmount(priceCreditDue)
       : null;
 
   const customerExchangePayload = isCustomerExchange
@@ -1460,13 +1505,10 @@ export async function createAndOpenReturnFromFormData(
         paymentRequired: priceDifferenceDue > 0,
         exchangePaymentStatus: deferLabelUntilExchangePayment
           ? ("pending" as const)
-          : priceDifferenceDue > 0
-            ? ("paid" as const)
-            : ("not_required" as const),
+          : ("not_required" as const),
         publicBaseUrl: publicBaseUrl || null,
-        /** Unpaid Shopify order for price gap (not a draft — app lacks write_draft_orders). */
-        paymentOrder: exchangeDraft,
-        draftOrder: exchangeDraft,
+        /** Native Shopify exchange balance on the original order. */
+        paymentOrder: exchangePayment,
       }
     : undefined;
 
@@ -1509,7 +1551,7 @@ export async function createAndOpenReturnFromFormData(
       step: "exchange_payment_required_before_label",
       ok: true,
       priceDifferenceDue,
-      draftOrderId: exchangeDraft?.draftOrderId ?? null,
+      orderId: exchangePayment?.orderId ?? order.id,
     });
   } else if (reverseDelivery && label) {
     auditEntries.push({
@@ -1649,7 +1691,7 @@ export async function createAndOpenReturnFromFormData(
     intent: validated.intent,
     priceDifferenceDue: isCustomerExchange ? priceDifferenceDue : null,
     priceCreditDue: isCustomerExchange && priceCreditDue > 0 ? priceCreditDue : null,
-    exchangeInvoiceUrl: exchangeDraft?.invoiceUrl ?? null,
+    exchangeInvoiceUrl: exchangePayment?.invoiceUrl ?? null,
     labelPendingPayment: deferLabelUntilExchangePayment,
   };
 }
