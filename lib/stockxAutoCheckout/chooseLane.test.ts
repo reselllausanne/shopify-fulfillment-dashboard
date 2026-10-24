@@ -143,6 +143,21 @@ CHF 125.12
     expect(parsed.find((l) => l.label === "EXPRESS")?.totalChf).toBe(128.44);
     expect(countDistinctShippingTierInText(text)).toBeGreaterThanOrEqual(2);
   });
+
+  it("parses fr-CH date-only cards (nov. + CHF suffix) — false-OOS fix", () => {
+    const text = `
+Choisissez votre mode de livraison
+2 nov. – 11 nov.
+127,50 CHF
+28 oct. – 2 nov.
+318,85 CHF
+Sous-total
+127,50 CHF
+    `;
+    const parsed = parseLaneCardsFromText(text);
+    expect(parsed.find((l) => l.label === "STANDARD")?.totalChf).toBe(127.5);
+    expect(parsed.find((l) => l.label === "EXPRESS")?.totalChf).toBe(318.85);
+  });
 });
 
 describe("chooseLaneByCsAtMargin", () => {

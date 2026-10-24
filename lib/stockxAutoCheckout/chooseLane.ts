@@ -39,6 +39,8 @@ export function extractCheckoutSubtotalChf(text: string): number | null {
   const patterns = [
     new RegExp(String.raw`Subtotal\s+CHF\s*${MONEY_RE}`, "i"),
     new RegExp(String.raw`Subtotal\s*${MONEY_RE}\s*CHF`, "i"),
+    new RegExp(String.raw`Sous[- ]?total\s+CHF\s*${MONEY_RE}`, "i"),
+    new RegExp(String.raw`Sous[- ]?total\s*${MONEY_RE}\s*CHF`, "i"),
     new RegExp(String.raw`Total(?:\s*Price)?\s+CHF\s*${MONEY_RE}`, "i"),
     new RegExp(String.raw`Total(?:\s*Price)?\s*${MONEY_RE}\s*CHF`, "i"),
     new RegExp(String.raw`Total\s*à\s*payer\s*${MONEY_RE}\s*CHF`, "i"),
@@ -46,6 +48,7 @@ export function extractCheckoutSubtotalChf(text: string): number | null {
   for (const re of patterns) {
     const m = text.match(re);
     const n = moneyToNumber(m?.[1] ?? null);
+    // Ignore 0,00 placeholder before lane select.
     if (n != null && n >= LANE_MIN_ALL_IN_CHF) return n;
   }
   return null;
@@ -77,17 +80,25 @@ function pushLane(
   out.push({ label, rawLabel, totalChf, eta });
 }
 
-/** en-GB often shows date rows + "CHF 122.13" without Standard/Express words. */
+/**
+ * Date-only shipping rows without Standard/Express words.
+ * en-GB: "3 Nov – 12 Nov\nCHF 122.13"
+ * fr-CH: "2 nov. – 11 nov.\n127,50 CHF"  ← was false-OOS killer
+ */
 function parseDateTierLanes(text: string): StockxLaneCard[] {
   const dateRows: Array<{ eta: string; totalChf: number }> = [];
-  const dateRe = new RegExp(
-    String.raw`((?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)?\s*\d{1,2}\s+[A-Za-z]+(?:\s*[–—-]\s*\d{1,2}\s+[A-Za-z]+)?)\s*\n?\s*CHF\s*${MONEY_RE}`,
-    "gi"
-  );
-  for (const m of text.matchAll(dateRe)) {
-    const totalChf = moneyToNumber(m[2]);
-    if (totalChf == null || totalChf < LANE_MIN_ALL_IN_CHF) continue;
-    dateRows.push({ eta: String(m[1] || "").replace(/\s+/g, " ").trim(), totalChf });
+  const monthTok = String.raw`[A-Za-zÀ-ÿ]{3,12}\.?`;
+  const dateSpan = String.raw`((?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)?\s*\d{1,2}\s+${monthTok}(?:\s*[–—-]\s*\d{1,2}\s+${monthTok})?)`;
+  const patterns = [
+    new RegExp(String.raw`${dateSpan}\s*\n?\s*CHF\s*${MONEY_RE}`, "gi"),
+    new RegExp(String.raw`${dateSpan}\s*\n?\s*${MONEY_RE}\s*CHF`, "gi"),
+  ];
+  for (const dateRe of patterns) {
+    for (const m of text.matchAll(dateRe)) {
+      const totalChf = moneyToNumber(m[2]);
+      if (totalChf == null || totalChf < LANE_MIN_ALL_IN_CHF) continue;
+      dateRows.push({ eta: String(m[1] || "").replace(/\s+/g, " ").trim(), totalChf });
+    }
   }
   // Dedup by price (keep first eta)
   const byPrice = new Map<string, { eta: string; totalChf: number }>();
