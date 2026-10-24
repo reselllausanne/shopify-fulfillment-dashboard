@@ -200,7 +200,27 @@ async function upsertRow(location: LocationConfig, row: SeenRow, now: Date): Pro
   await upsertLocationStockRow(location, row, now);
 }
 
-async function zeroOutUnseen(location: LocationConfig, seenIds: string[], now: Date): Promise<number> {
+async function zeroOutUnseen(
+  location: LocationConfig,
+  seenIds: string[],
+  now: Date,
+  options: { allowEmptySeen?: boolean } = {}
+): Promise<number> {
+  // Empty seen + allowEmptySeen=false → refuse wipe. Bulk JSONL can miss every
+  // stocked level (parent/child order) and previously zeroed the whole warehouse.
+  if (seenIds.length === 0 && options.allowEmptySeen !== true) {
+    const previous = await prisma.shopifyVariantLocationStock.count({
+      where: { locationId: location.id, available: { gt: 0 } },
+    });
+    if (previous > 0) {
+      console.error(
+        `[LOCATION-MIRROR] refuse zero-out ${location.name}: seen=0 but mirror still has ${previous} stocked rows`
+      );
+      return 0;
+    }
+    return 0;
+  }
+
   const toZero =
     seenIds.length > 0
       ? await prisma.shopifyVariantLocationStock.findMany({
@@ -260,7 +280,10 @@ export async function syncAllLocations(options: {
     const { rows, pages, capped } = await pageLocationLevels(location, maxPages, delayMs);
     const now = new Date();
     for (const row of rows) await upsertRow(location, row, now);
-    const zeroedOut = await zeroOutUnseen(location, rows.map((r) => r.shopifyVariantId), now);
+    // Paginated path: empty seen is trustworthy (we walked the location).
+    const zeroedOut = await zeroOutUnseen(location, rows.map((r) => r.shopifyVariantId), now, {
+      allowEmptySeen: true,
+    });
     results.push({
       locationName: location.name,
       sourceType: location.sourceType,
@@ -390,12 +413,24 @@ export async function syncAllLocationsBulk(options: { timeoutMs?: number } = {})
   // inventory-level lines. In bulk exports an inventory-level's __parentId is
   // the ProductVariant id (the inline `inventoryItem` is NOT a separate node),
   // so we key the map by variant id.
-  const variantById = new Map<
-    string,
-    { variantId: string; inventoryItemId: string; sku: string | null; gtin: string | null }
-  >();
+  type VariantInfo = {
+    variantId: string;
+    inventoryItemId: string;
+    sku: string | null;
+    gtin: string | null;
+  };
+  type PendingLevel = {
+    parentId: string;
+    locId: string;
+    available: number;
+  };
+
+  const variantById = new Map<string, VariantInfo>();
   const seenByLocation = new Map<string, Set<string>>();
   for (const l of PHYSICAL_LOCATIONS) seenByLocation.set(l.id, new Set());
+  // InventoryLevel lines can arrive before their ProductVariant parent in JSONL.
+  const pendingByParent = new Map<string, PendingLevel[]>();
+  let orphanLevelsDropped = 0;
 
   const now = new Date();
   let variantsSeen = 0;
@@ -403,6 +438,39 @@ export async function syncAllLocationsBulk(options: { timeoutMs?: number } = {})
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+
+  const applyLevel = async (variant: VariantInfo, locId: string, available: number) => {
+    if (available <= 0) return;
+    if (isRetiredSupplierSku(variant.sku)) return;
+    const location = PHYSICAL_LOCATIONS.find((l) => l.id === locId);
+    if (!location) return;
+    await upsertRow(
+      location,
+      {
+        shopifyVariantId: variant.variantId,
+        inventoryItemId: variant.inventoryItemId,
+        sku: variant.sku,
+        gtin: variant.gtin,
+        available,
+      },
+      now
+    );
+    seenByLocation.get(locId)!.add(variant.variantId);
+  };
+
+  const flushPendingFor = async (parentKey: string) => {
+    const pending = pendingByParent.get(parentKey);
+    if (!pending?.length) return;
+    pendingByParent.delete(parentKey);
+    const variant = variantById.get(parentKey);
+    if (!variant) {
+      orphanLevelsDropped += pending.length;
+      return;
+    }
+    for (const level of pending) {
+      await applyLevel(variant, level.locId, level.available);
+    }
+  };
 
   const handleLine = async (line: string) => {
     if (!line.trim()) return;
@@ -417,7 +485,7 @@ export async function syncAllLocationsBulk(options: { timeoutMs?: number } = {})
     // it to the variant id or the inventoryItem id.
     if (typeof obj.id === "string" && obj.id.includes("/ProductVariant/")) {
       variantsSeen += 1;
-      const info = {
+      const info: VariantInfo = {
         variantId: obj.id,
         inventoryItemId: obj.inventoryItem?.id ?? "",
         sku: obj.sku ?? null,
@@ -425,9 +493,11 @@ export async function syncAllLocationsBulk(options: { timeoutMs?: number } = {})
       };
       variantById.set(obj.id, info);
       if (info.inventoryItemId) variantById.set(info.inventoryItemId, info);
+      await flushPendingFor(obj.id);
+      if (info.inventoryItemId) await flushPendingFor(info.inventoryItemId);
       return;
     }
-    // Inventory-level line: __parentId = ProductVariant id, plus location.
+    // Inventory-level line: __parentId = ProductVariant or InventoryItem id.
     if (obj.__parentId && obj.location?.id) {
       const locId = obj.location.id;
       if (!physicalIds.has(locId)) return;
@@ -436,17 +506,13 @@ export async function syncAllLocationsBulk(options: { timeoutMs?: number } = {})
         : 0;
       if (available <= 0) return;
       const variant = variantById.get(obj.__parentId);
-      if (!variant) return;
-      if (isRetiredSupplierSku(variant.sku)) return;
-      const location = PHYSICAL_LOCATIONS.find((l) => l.id === locId)!;
-      await upsertRow(location, {
-        shopifyVariantId: variant.variantId,
-        inventoryItemId: variant.inventoryItemId,
-        sku: variant.sku,
-        gtin: variant.gtin,
-        available,
-      }, now);
-      seenByLocation.get(locId)!.add(variant.variantId);
+      if (!variant) {
+        const list = pendingByParent.get(obj.__parentId) ?? [];
+        list.push({ parentId: obj.__parentId, locId, available });
+        pendingByParent.set(obj.__parentId, list);
+        return;
+      }
+      await applyLevel(variant, locId, available);
     }
   };
 
@@ -464,10 +530,37 @@ export async function syncAllLocationsBulk(options: { timeoutMs?: number } = {})
   }
   if (buffer.trim()) await handleLine(buffer);
 
+  // Leftover levels whose parent never appeared — do not invent stock; count only.
+  for (const [, pending] of pendingByParent) orphanLevelsDropped += pending.length;
+  pendingByParent.clear();
+  if (orphanLevelsDropped > 0) {
+    console.warn(`[LOCATION-MIRROR] bulk orphan inventory levels dropped=${orphanLevelsDropped}`);
+  }
+
+  const totalStocked = Array.from(seenByLocation.values()).reduce((n, s) => n + s.size, 0);
+  if (totalStocked === 0 && variantsSeen > 1000) {
+    console.error(
+      `[LOCATION-MIRROR] bulk saw variants=${variantsSeen} but stocked=0 — skip zero-out, abort ok=false`
+    );
+    return {
+      ok: false,
+      locations: PHYSICAL_LOCATIONS.map((location) => ({
+        locationName: location.name,
+        sourceType: location.sourceType,
+        stocked: 0,
+        zeroedOut: 0,
+        pages: 0,
+        capped: false,
+      })),
+      variantsSeen,
+      ms: Date.now() - startedAt,
+    };
+  }
+
   const results: LocationSyncResult[] = [];
   for (const location of PHYSICAL_LOCATIONS) {
     const seen = Array.from(seenByLocation.get(location.id) ?? []);
-    const zeroedOut = await zeroOutUnseen(location, seen, now);
+    const zeroedOut = await zeroOutUnseen(location, seen, now, { allowEmptySeen: false });
     results.push({
       locationName: location.name,
       sourceType: location.sourceType,
