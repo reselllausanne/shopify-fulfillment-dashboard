@@ -25,6 +25,11 @@ import {
 } from "@/lib/stockxAutoCheckout/sizeUsFallback";
 import { linkStockxBuyToShopify } from "@/lib/stockxAutoCheckout/linkAfterBuy";
 import {
+  prebuyBlocksNewPurchase,
+  runPrebuyDedupeCheck,
+  sizeFromSku,
+} from "@/lib/stockxAutoCheckout/prebuyDedupe";
+import {
   MAX_ALL_IN_CHF,
   type StockxDesiredLane,
   type StockxLaneCard,
@@ -894,6 +899,47 @@ export async function runStockxAutoCheckoutForOrder(options: {
         detail: existing.stockxOrderNumber,
       });
       return { kind: "skipped", reason: "already_matched", needsHuman: nh };
+    }
+  }
+
+  // Pre-buy dedupe: Gmail (StockX+GOAT) + both StockX account histories.
+  // Clear unlinked STX match → link (no new purchase). GOAT-only → block.
+  if (shopify.shopifyLineItemId && shopify.shopifyOrderId && shopify.createdAt) {
+    const slugHint = (options.slug || (await resolveSlugFromSku(shopify.sku)) || "").trim();
+    const prebuy = await runPrebuyDedupeCheck(
+      {
+        shopifyOrderName: shopify.orderName,
+        shopifyOrderId: shopify.shopifyOrderId,
+        shopifyLineItemId: shopify.shopifyLineItemId,
+        shopifyCreatedAt: shopify.createdAt,
+        title: shopify.title,
+        sku: shopify.sku || null,
+        sizeEU: shopify.sizeEU || sizeFromSku(shopify.sku),
+        urlKeyHint: slugHint || null,
+      },
+      { linkIfClear: true }
+    );
+    if (prebuyBlocksNewPurchase(prebuy)) {
+      const reason: StockxNeedsHumanReason =
+        prebuy.verdict === "ALREADY_MATCHED" ? "already_matched" : "prebuy_dedupe";
+      const nh = needsHumanBase(shopify, {
+        reason,
+        desiredLane: "STANDARD",
+        detail: `${prebuy.verdict}: ${prebuy.detail}`,
+        slug: slugHint || null,
+      });
+      console.log(
+        `[STOCKX-AUTO] prebuy block ${shopify.orderName}: ${prebuy.verdict} ${prebuy.detail}`
+      );
+      return {
+        kind: prebuy.verdict === "ALREADY_MATCHED" || prebuy.linkedStockxOrderNumber
+          ? "skipped"
+          : "needs_human",
+        reason,
+        detail: prebuy.detail,
+        stockxOrderNumber: prebuy.linkedStockxOrderNumber ?? null,
+        needsHuman: nh,
+      };
     }
   }
 

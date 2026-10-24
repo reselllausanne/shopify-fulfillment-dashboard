@@ -26,7 +26,8 @@ export type StockxNeedsHumanReason =
   | "slug"
   | "already_matched"
   | "physical_stock"
-  | "pickup";
+  | "pickup"
+  | "prebuy_dedupe";
 
 export type StockxAutoOutcomeKind = "easy_buy" | "needs_human" | "skipped";
 
@@ -68,4 +69,6 @@ export const STOCKX_NEEDS_HUMAN_REASON_FR: Record<StockxNeedsHumanReason, string
   already_matched: "Déjà matché (StockX lié)",
   physical_stock: "Stock physique magasin — skip auto",
   pickup: "Retrait magasin — skip auto",
+  prebuy_dedupe:
+    "Pré-achat: Gmail (StockX/GOAT) ou achat StockX non lié — pas de nouvel achat",
 };
