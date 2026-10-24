@@ -220,7 +220,7 @@ describe("resolveStxWebsiteSellPrices", () => {
     expect(r.expressSell).toBe(280);
   });
 
-  it("distinct dual lanes → express = calc(express) + 20", () => {
+  it("distinct dual lanes → express = calc(express), no +20", () => {
     const r = resolveStxWebsiteSellPrices({
       standardBuyPrice: 100,
       expressBuyPrice: 130,
@@ -228,10 +228,11 @@ describe("resolveStxWebsiteSellPrices", () => {
     });
     expect(r.mode).toBe("dual_lane");
     expect(r.normalSell).toBe(120);
-    expect(r.expressSell).toBe(190);
+    // calc(express)=170; no flat surcharge
+    expect(r.expressSell).toBe(170);
   });
 
-  it("express ask cheaper than standard → express = standard + 20", () => {
+  it("express ask cheaper than standard → floor at standard (no +20)", () => {
     const r = resolveStxWebsiteSellPrices({
       standardBuyPrice: 200,
       expressBuyPrice: 120,
@@ -239,7 +240,8 @@ describe("resolveStxWebsiteSellPrices", () => {
     });
     expect(r.mode).toBe("dual_lane");
     expect(r.normalSell).toBe(250);
-    expect(r.expressSell).toBe(270);
+    // calc(120)=170 < standard 250 → floor at standard
+    expect(r.expressSell).toBe(250);
   });
 
   it("identical dual buys treat as single_plus20", () => {
