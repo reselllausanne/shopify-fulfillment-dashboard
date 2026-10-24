@@ -49,9 +49,29 @@ CM2 fair : `% cost complete` = parmi commandes **product-matched** (pas unbought
 - 0 doublon `checkout_completed`
 - Approbation → G2 (déjà passé côté sGTM/GA4 TEST)
 
+## Dual-CTA (modal taille) — à tracker
+
+Post-add panel : **Checkout** (`source=panel_checkout`) vs **Voir le panier** (`source=panel_cart`).
+Pas d’A/B on/off — les deux restent ; on mesure lequel est le plus cliqué.
+
+- Theme : `rs-ab.liquid` + `product-size-selection-modal.js` → `Shopify.analytics.publish`
+  (`flow_checkout_redirect` / `flow_cart_opened`).
+- Pixel : doit inclure ces events en `CUSTOM_EVENTS` + flush immédiat (docs `shopify-custom-pixel.js`
+  ≥ `2026-10-24.p4`). Si Admin pixel plus vieux → re-coller le fichier.
+- Compte : `funnel_events` où `event_name` + `props->>'source'`.
+
+```sql
+SELECT event_name, props->>'source' AS source, count(*)
+FROM funnel_events
+WHERE created_at > now() - interval '7 days'
+  AND event_name IN ('flow_checkout_redirect','flow_cart_opened')
+GROUP BY 1,2;
+```
+
 ## G4 / G5 / G8
 
 - **G4** Secondary revenue : upload quotidien (timer). Observer 2–4 sem. vs Simprosys.
+  Ads UI peut rester « Awaiting conversions » jusqu’à ~48 h après les 1ers uploads.
 - **G5** profit : seulement si cost-complete **parmi matched** ≥ 90 % + action `TEST purchase_profit`.
 - **G8** cutover Primary : après ≥ 4 sem. parité. Pas avant.
 
