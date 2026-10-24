@@ -25,7 +25,7 @@ import {
 } from "@/lib/stockxCheckout";
 import { buildStockxBuyUrl } from "@/lib/stockxAutoCheckout/sizeUsFallback";
 import { detectShopifyExpress } from "@/lib/stockxAutoCheckout/detectShopifyExpress";
-import { MAX_ALL_IN_CHF } from "@/lib/stockxAutoCheckout/types";
+import { MAX_ALL_IN_CHF, type StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
 import type { BrowserContext, Page } from "playwright";
 
 /** Sit on CF then abort — never rotate through 20 stickies. */
@@ -37,6 +37,11 @@ export type ShopifyBatchBuyItem = {
   slug: string;
   sizeEU: string;
   lineItemId?: string | null;
+  /**
+   * Buy lane. If omitted, resolved from the customer's Shopify delivery choice
+   * (Express → EXPRESS, else STANDARD). Set explicitly to force a lane.
+   */
+  ship?: StockxDesiredLane;
 };
 
 export type ShopifyBatchBuyItemResult = {
@@ -46,12 +51,14 @@ export type ShopifyBatchBuyItemResult = {
   stickyRotates: number;
   proxyLabel: string | null;
   navMethod?: "soft_search" | "hard_goto" | "cf" | "skipped" | "direct";
+  lane?: StockxDesiredLane;
   result: StockxAutoCheckoutResult | { kind: "aborted"; reason: string; detail?: string };
 };
 
 export type ShopifyBatchBuySummary = {
   dryRun: boolean;
-  desiredLane: "STANDARD";
+  /** Dominant lane used across the batch (per-item lane is on each result). */
+  desiredLane: StockxDesiredLane | "MIXED";
   attempted: number;
   bought: number;
   aborted: number;
@@ -310,7 +317,6 @@ export async function runShopifyBatchBuy(options: {
   maxAllInChf?: number;
 }): Promise<ShopifyBatchBuySummary> {
   const dryRun = options.confirmLive === true ? false : options.dryRun !== false;
-  const desiredLane = "STANDARD" as const;
   const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
 
   const out: ShopifyBatchBuyItemResult[] = [];
@@ -320,6 +326,7 @@ export async function runShopifyBatchBuy(options: {
   let needsHuman = 0;
   let stoppedOn402 = false;
   let bandwidthMb = 0;
+  const lanesUsed = new Set<StockxDesiredLane>();
 
   // Express-priority: buy customer-chosen Express orders first (stable sort).
   const expressFlags = await resolveExpressFlags(options.items);
@@ -460,6 +467,11 @@ export async function runShopifyBatchBuy(options: {
         continue;
       }
 
+      // Lane = explicit item.ship override, else the customer's Shopify Express choice.
+      const itemLane: StockxDesiredLane =
+        item.ship ?? (expressFlags.get(orderName) ? "EXPRESS" : "STANDARD");
+      lanesUsed.add(itemLane);
+
       const result = await runStockxAutoCheckoutForOrder({
         orderName,
         lineItemId: item.lineItemId,
@@ -467,7 +479,7 @@ export async function runShopifyBatchBuy(options: {
         sizeEUOverride: sizeEU,
         maxAllInChf,
         dryRun,
-        desiredLane,
+        desiredLane: itemLane,
         reuse: { ctx: session.ctx, page: session.page },
         skipGoto: true,
       });
@@ -480,6 +492,7 @@ export async function runShopifyBatchBuy(options: {
         orderName,
         slug,
         sizeEU,
+        lane: itemLane,
         stickyRotates: session.stickyUsed,
         proxyLabel: session.proxy?.label ?? null,
         navMethod: session.proxy ? nav.method : "direct",
@@ -509,6 +522,9 @@ export async function runShopifyBatchBuy(options: {
       `[SHOPIFY-BATCH-BUY] total transfer ~${bandwidthMb.toFixed(1)}MB (bought=${bought} attempted=${out.length})`
     );
   }
+
+  const desiredLane: StockxDesiredLane | "MIXED" =
+    lanesUsed.size > 1 ? "MIXED" : (Array.from(lanesUsed)[0] ?? "STANDARD");
 
   return {
     dryRun,

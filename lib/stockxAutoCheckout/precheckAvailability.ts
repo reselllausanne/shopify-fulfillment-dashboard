@@ -294,7 +294,7 @@ function toSnapshot(row: SupplierVariantRow): SupplierVariantSnapshot {
 }
 
 /** KickDB styleId → StockX slug (urlKey). Local copy to avoid pulling in Playwright. */
-async function resolveSlugFromStyleId(styleId: string): Promise<string | null> {
+export async function resolveSlugFromStyleId(styleId: string): Promise<string | null> {
   const id = styleId.trim();
   if (!id) return null;
   const product = await prisma.kickDBProduct.findFirst({
