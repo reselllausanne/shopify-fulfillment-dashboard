@@ -41,6 +41,36 @@ model ShopifyOrder {
   @@schema("public")
 }
 
+/// DB-only StockX pre-check verdict per Shopify order line (no browser/proxy).
+/// Lets the auto-buy candidate engine skip known-unbuyable items (oos_no_ask /
+/// too_expensive) without recompute, while allowing retry of stale_data.
+model PrecheckResult {
+  id                String   @id @default(uuid())
+  shopifyOrderName  String
+  /// "" when the order has no resolved line item id (keeps the unique key usable).
+  shopifyLineItemId String   @default("")
+  /// StockxPrecheckStatus: buyable|oos_no_ask|too_expensive|stale_data|no_variant_match
+  status            String
+  /// Human-readable detail from the pre-check (margin %, lane gaps, …).
+  reason            String?
+  /// STANDARD | EXPRESS (lane the verdict was computed for).
+  lane              String?
+  expectedBuyChf    Decimal? @db.Decimal(10, 2)
+  sellChf           Decimal? @db.Decimal(10, 2)
+  /// Fraction (0.05 = 5%).
+  marginPct         Decimal? @db.Decimal(6, 4)
+  stock             Int?
+  supplierVariantId String?
+  checkedAt         DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([shopifyOrderName, shopifyLineItemId])
+  @@index([status])
+  @@index([checkedAt])
+  @@schema("public")
+}
+
 enum SupplierSource {
   STOCKX
   MANUAL

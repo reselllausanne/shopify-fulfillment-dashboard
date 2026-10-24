@@ -26,15 +26,29 @@ import "dotenv/config";
 
 import { prisma } from "@/app/lib/prisma";
 import { getStockxCheckoutState } from "@/lib/stockxCheckout";
+import {
+  defaultSinceDate,
+  selectBuyCandidates,
+  type ShopifyLineLoader,
+} from "@/lib/stockxAutoCheckout/buyCandidates";
 
 export type OosReportReason =
   | "oos_no_ask"
+  | "too_expensive"
+  | "buyable"
   | "express_only"
   | "negative_margin"
   | "price_moved"
+  | "stale_data"
+  | "no_variant_match"
   | "other";
 
-export type OosReportGroup = "true_oos" | "buyable_missed" | "other";
+export type OosReportGroup =
+  | "true_oos"
+  | "too_expensive"
+  | "buyable"
+  | "buyable_missed"
+  | "other";
 
 export type OosReportRow = {
   orderName: string;
@@ -47,15 +61,21 @@ export type OosReportRow = {
 
 export type OosReportGroups = {
   true_oos: OosReportRow[];
+  too_expensive: OosReportRow[];
+  buyable: OosReportRow[];
   buyable_missed: OosReportRow[];
   other: OosReportRow[];
 };
 
-/** Map a raw needs_human reason (or anything) to a report reason bucket. */
+/** Map a raw needs_human / precheck reason (or anything) to a report reason bucket. */
 export function normalizeOosReason(raw: string | null | undefined): OosReportReason {
   switch (String(raw || "").trim()) {
     case "oos_no_ask":
       return "oos_no_ask";
+    case "too_expensive":
+      return "too_expensive";
+    case "buyable":
+      return "buyable";
     case "express_only":
       return "express_only";
     case "margin":
@@ -63,6 +83,10 @@ export function normalizeOosReason(raw: string | null | undefined): OosReportRea
       return "negative_margin";
     case "price_moved":
       return "price_moved";
+    case "stale_data":
+      return "stale_data";
+    case "no_variant_match":
+      return "no_variant_match";
     default:
       return "other";
   }
@@ -71,12 +95,20 @@ export function normalizeOosReason(raw: string | null | undefined): OosReportRea
 /** Which action group a report reason belongs to. */
 export function groupForOosReason(reason: OosReportReason): OosReportGroup {
   if (reason === "oos_no_ask") return "true_oos";
+  if (reason === "too_expensive") return "too_expensive";
+  if (reason === "buyable") return "buyable";
   if (reason === "express_only" || reason === "price_moved") return "buyable_missed";
-  return "other";
+  return "other"; // negative_margin / stale_data / no_variant_match / other
 }
 
 export function groupOosRows(rows: OosReportRow[]): OosReportGroups {
-  const groups: OosReportGroups = { true_oos: [], buyable_missed: [], other: [] };
+  const groups: OosReportGroups = {
+    true_oos: [],
+    too_expensive: [],
+    buyable: [],
+    buyable_missed: [],
+    other: [],
+  };
   for (const row of rows) groups[groupForOosReason(row.reason)].push(row);
   return groups;
 }
@@ -124,7 +156,7 @@ export function buildOosReportEmailable(groups: OosReportGroups): {
   creditCandidates: OosReportRow[];
 } {
   const creditCandidates = groups.true_oos; // oos_no_ask only
-  const subject = `[Resell] StockX OOS report — ${creditCandidates.length} true OOS, ${groups.buyable_missed.length} buyable-missed`;
+  const subject = `[Resell] StockX OOS report — ${creditCandidates.length} true OOS, ${groups.buyable.length} buyable, ${groups.too_expensive.length} too-expensive`;
   const lines: string[] = [
     subject,
     `À: ${new Date().toISOString()}`,
@@ -132,10 +164,16 @@ export function buildOosReportEmailable(groups: OosReportGroups): {
     "TRUE OOS (save customer — credit candidates):",
     formatOosReportTable(groups.true_oos),
     "",
+    "BUYABLE (DB says in stock + margin OK — buy these):",
+    formatOosReportTable(groups.buyable),
+    "",
+    "TOO EXPENSIVE (margin below floor — skip, do NOT tell customer OOS):",
+    formatOosReportTable(groups.too_expensive),
+    "",
     "Buyable-but-missed (express_only / price_moved — re-buy, do NOT tell customer OOS):",
     formatOosReportTable(groups.buyable_missed),
     "",
-    "Other (negative margin / unknown):",
+    "Other (stale / no-variant-match / negative margin / unknown):",
     formatOosReportTable(groups.other),
     "",
     "TODO(credit-email): send +max(10%, 20 CHF) credit to the TRUE OOS customers above.",
@@ -160,18 +198,50 @@ export async function rowsFromStoredNeedsHuman(): Promise<OosReportRow[]> {
 }
 
 /**
- * Recent Shopify orders with no linked StockX purchase yet.
- * Read-only. Excludes cancelled and ones already present in `knownOrderNames`
- * (those already have a richer stored reason).
+ * Shopify orders with no linked StockX purchase, enriched with the DB pre-check
+ * (title + sizeEU + reason). Read-only; `loadLine` is injected so the pure helpers
+ * stay importable without Playwright. Excludes orders already in `knownOrderNames`.
+ */
+export async function rowsFromPrecheck(
+  loadLine: ShopifyLineLoader,
+  sinceDate: Date,
+  knownOrderNames: Set<string>,
+  now: Date = new Date(),
+  maxCount = 500
+): Promise<OosReportRow[]> {
+  const { candidates } = await selectBuyCandidates({
+    sinceDate,
+    maxCount,
+    loadLine,
+    now,
+    persist: true,
+    force: true, // report must see oos_no_ask / too_expensive too
+  });
+  const rows: OosReportRow[] = [];
+  for (const c of candidates) {
+    if (knownOrderNames.has(c.orderName)) continue; // stored reason wins
+    rows.push({
+      orderName: c.orderName,
+      title: c.title,
+      sizeEU: c.sizeEU,
+      saleChf: c.precheck.sellChf || null,
+      reason: normalizeOosReason(c.precheck.status),
+      lastSeen: c.orderDate ? c.orderDate.toISOString().slice(0, 10) : null,
+    });
+  }
+  return rows;
+}
+
+/**
+ * Fallback (no line loader): recent unmatched Shopify orders with unknown classify.
+ * Used only when `buildOosReport` is called without a `loadLine` (e.g. pure tests).
  */
 export async function rowsFromUnmatchedShopify(
-  days: number,
-  knownOrderNames: Set<string>,
-  now: Date = new Date()
+  sinceDate: Date,
+  knownOrderNames: Set<string>
 ): Promise<OosReportRow[]> {
-  const since = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
   const orders = await prisma.shopifyOrder.findMany({
-    where: { createdAt: { gte: since }, cancelledAt: null },
+    where: { createdAt: { gte: sinceDate }, cancelledAt: null },
     select: {
       shopifyOrderId: true,
       orderName: true,
@@ -222,40 +292,79 @@ export async function rowsFromUnmatchedShopify(
 }
 
 export async function buildOosReport(opts?: {
-  days?: number;
+  sinceDate?: Date;
   now?: Date;
+  loadLine?: ShopifyLineLoader;
+  maxCount?: number;
 }): Promise<{ rows: OosReportRow[]; groups: OosReportGroups }> {
-  const days = opts?.days ?? 30;
+  const now = opts?.now ?? new Date();
+  const sinceDate = opts?.sinceDate ?? defaultSinceDate(now);
   const stored = await rowsFromStoredNeedsHuman();
   const known = new Set(stored.map((r) => r.orderName));
-  const unmatched = await rowsFromUnmatchedShopify(days, known, opts?.now);
-  const rows = [...stored, ...unmatched];
+  const scanned = opts?.loadLine
+    ? await rowsFromPrecheck(opts.loadLine, sinceDate, known, now, opts?.maxCount)
+    : await rowsFromUnmatchedShopify(sinceDate, known);
+  const rows = [...stored, ...scanned];
   return { rows, groups: groupOosRows(rows) };
 }
 
-function parseDaysArg(argv: string[]): number {
-  const raw = argv.find((a) => a.startsWith("--days="));
-  const n = raw ? Number(raw.split("=")[1]) : NaN;
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 30;
+/** Optional `--since=YYYY-MM-DD` override; default = Oct 1 of the current year. */
+function parseSinceArg(argv: string[], now: Date = new Date()): Date {
+  const raw = argv.find((a) => a.startsWith("--since="));
+  const val = raw ? raw.split("=")[1] : "";
+  const d = val ? new Date(val) : null;
+  return d && !Number.isNaN(d.getTime()) ? d : defaultSinceDate(now);
 }
 
 async function main(): Promise<void> {
-  const days = parseDaysArg(process.argv.slice(2));
-  const { rows, groups } = await buildOosReport({ days });
+  const now = new Date();
+  const sinceDate = parseSinceArg(process.argv.slice(2), now);
+  // Script run → enrich with precheck via the real Shopify line loader.
+  const { loadShopifyLine } = await import("@/lib/stockxCheckout");
+  const loadLine: ShopifyLineLoader = async (orderName) => {
+    try {
+      const l = await loadShopifyLine(orderName);
+      return {
+        sku: l.sku,
+        gtin: l.gtin,
+        sizeEU: l.sizeEU,
+        title: l.title,
+        saleChf: l.saleChf,
+        shopifyLineItemId: l.shopifyLineItemId,
+        deliveryMode: l.deliveryMode,
+        deliveryModeLabel: l.deliveryModeLabel,
+        shippingLineTitles: l.shippingLineTitles,
+      };
+    } catch {
+      return null;
+    }
+  };
 
-  console.info(`\nStockX OOS report — last ${days}d, ${rows.length} unmatched rows\n`);
+  const { rows, groups } = await buildOosReport({ sinceDate, now, loadLine });
+
+  console.info(
+    `\nStockX OOS report — since ${sinceDate.toISOString().slice(0, 10)}, ${rows.length} rows\n`
+  );
 
   console.info("TRUE OOS (save customer — credit candidates):");
   console.info(formatOosReportTable(groups.true_oos));
   console.info("");
+  console.info("BUYABLE (buy these):");
+  console.info(formatOosReportTable(groups.buyable));
+  console.info("");
+  console.info("TOO EXPENSIVE (margin below floor — skip, NOT OOS):");
+  console.info(formatOosReportTable(groups.too_expensive));
+  console.info("");
   console.info("Buyable-but-missed (express_only / price_moved — re-buy, NOT OOS):");
   console.info(formatOosReportTable(groups.buyable_missed));
   console.info("");
-  console.info("Other (negative margin / unknown):");
+  console.info("Other (stale / no-variant-match / negative margin / unknown):");
   console.info(formatOosReportTable(groups.other));
   console.info("");
   console.info(
     `Summary: true_oos=${groups.true_oos.length} ` +
+      `buyable=${groups.buyable.length} ` +
+      `too_expensive=${groups.too_expensive.length} ` +
       `buyable_missed=${groups.buyable_missed.length} ` +
       `other=${groups.other.length} total=${rows.length}`
   );

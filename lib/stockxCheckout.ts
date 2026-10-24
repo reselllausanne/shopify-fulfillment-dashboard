@@ -691,12 +691,13 @@ async function resolveSlugFromSku(sku: string): Promise<string | null> {
   return product?.urlKey?.trim() || null;
 }
 
-type ShopifyLineCtx = {
+export type ShopifyLineCtx = {
   shopifyOrderId: string | null;
   orderName: string;
   shopifyLineItemId: string | null;
   title: string;
   sku: string;
+  gtin: string | null;
   sizeEU: string;
   saleChf: number | null;
   createdAt: string | null;
@@ -708,7 +709,7 @@ type ShopifyLineCtx = {
   physicalStockQty: number | null;
 };
 
-async function loadShopifyLine(
+export async function loadShopifyLine(
   orderName: string,
   lineItemId?: string | null
 ): Promise<ShopifyLineCtx> {
@@ -741,6 +742,7 @@ async function loadShopifyLine(
     shopifyLineItemId: String(line.lineItemId || "") || null,
     title: String(line.title || ""),
     sku: String(line.sku || "").trim(),
+    gtin: String(line.gtin || line.barcode || "").trim() || null,
     sizeEU: String(line.sizeEU || line.variantTitle || "").replace(/^EU\s*/i, "EU ").trim() || "EU ?",
     saleChf: moneyToNumber(String(line.totalPrice ?? line.price ?? "")),
     createdAt: line.createdAt ? String(line.createdAt) : null,

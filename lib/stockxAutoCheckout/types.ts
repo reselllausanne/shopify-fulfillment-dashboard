@@ -2,6 +2,22 @@ export const MAX_ALL_IN_CHF = 250;
 
 export type StockxDesiredLane = "STANDARD" | "EXPRESS";
 
+/**
+ * DB-only pre-check verdict for an automatic StockX buy (no browser, no proxy).
+ * Computed from `SupplierVariant` (StockX CH availability+price, KickDB SSE fed).
+ *  - buyable         → stock>0, lane price present, margin ≥ floor, data fresh.
+ *  - oos_no_ask      → stock ≤ 0 (true OOS — safe to tell the customer, do not re-probe).
+ *  - too_expensive   → margin below floor (skip; re-check only on price change).
+ *  - stale_data      → no usable price OR lastSyncAt older than staleHours (caller may refresh + retry).
+ *  - no_variant_match→ no StockX SupplierVariant matched the line (gtin / sku+size).
+ */
+export type StockxPrecheckStatus =
+  | "buyable"
+  | "oos_no_ask"
+  | "too_expensive"
+  | "stale_data"
+  | "no_variant_match";
+
 export type StockxLaneLabel = "STANDARD" | "EXPRESS" | "UNKNOWN";
 
 export type StockxLaneCard = {
