@@ -352,8 +352,10 @@ export async function searchGmailPurchaseHits(
 }
 
 export async function findUnlinkedStockxMatches(
-  line: PrebuyDedupeInput
+  line: PrebuyDedupeInput,
+  opts?: { forceRefresh?: boolean }
 ): Promise<PrebuyStxHit[]> {
+  const forceRefresh = opts?.forceRefresh === true;
   const accounts = await listStockxAccountTokens();
   if (!accounts.length) {
     throw new Error("No StockX account tokens — cannot run STX prebuy dedupe");
@@ -374,11 +376,13 @@ export async function findUnlinkedStockxMatches(
       state: "PENDING",
       first: 100,
       maxPages: 5,
+      forceRefresh,
     });
     const hist = await getCachedStockxBuyingOrders(acc.token, {
       state: "HISTORICAL",
       first: 100,
       maxPages: 3,
+      forceRefresh,
     });
     const nodes = [...pending.nodes, ...hist.nodes];
     const nums = nodes.map((n) => n.orderNumber).filter(Boolean) as string[];

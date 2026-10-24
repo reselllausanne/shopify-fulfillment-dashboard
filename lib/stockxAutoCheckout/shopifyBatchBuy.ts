@@ -31,6 +31,15 @@ import type { BrowserContext, Page } from "playwright";
 /** Sit on CF then abort — never rotate through 20 stickies. */
 const CF_ABORT_MS = 45_000;
 const CF_PROBE_MS = 8_000;
+/**
+ * The FIRST direct (datacenter) attempt almost always hits Cloudflare on the VPS, so
+ * don't waste the full 45s sitting on it — probe briefly then fall back to one sticky.
+ * Env STOCKX_CF_DIRECT_PROBE_MS (default 12s). Saves ~33s per batch on the VPS.
+ */
+const CF_DIRECT_PROBE_MS = Math.max(
+  4_000,
+  Number(process.env.STOCKX_CF_DIRECT_PROBE_MS ?? "12000")
+);
 
 export type ShopifyBatchBuyItem = {
   orderName: string;
@@ -173,7 +182,10 @@ async function sitCfOrAbort(page: Page, budgetMs = CF_ABORT_MS): Promise<boolean
   return !(await isCf(page));
 }
 
-async function warmBuyingOrders(page: Page): Promise<{ ok: boolean; cf: boolean }> {
+async function warmBuyingOrders(
+  page: Page,
+  cfBudgetMs = CF_ABORT_MS
+): Promise<{ ok: boolean; cf: boolean }> {
   try {
     await page.goto("https://stockx.com/buying/orders", {
       waitUntil: "domcontentloaded",
@@ -185,7 +197,7 @@ async function warmBuyingOrders(page: Page): Promise<{ ok: boolean; cf: boolean 
   }
   await page.waitForTimeout(Math.min(CF_PROBE_MS, 6_000));
   if (await isCf(page)) {
-    const cleared = await sitCfOrAbort(page, CF_ABORT_MS);
+    const cleared = await sitCfOrAbort(page, cfBudgetMs);
     return { ok: cleared, cf: !cleared };
   }
   return { ok: true, cf: false };
@@ -271,11 +283,12 @@ async function openSession(opts: {
 async function ensureWarmSession(): Promise<LiveSession> {
   // Never force MODE=always here — that burned ~10GB via challenges.cloudflare.com.
   let session = await openSession({ proxy: null, stickyUsed: 0 });
-  let warm = await warmBuyingOrders(session.page);
+  // Short probe on the doomed direct attempt, then fall straight to one sticky.
+  let warm = await warmBuyingOrders(session.page, CF_DIRECT_PROBE_MS);
 
   if (warm.cf && stockxBrowserProxyMode() !== "off") {
     console.warn(
-      "[SHOPIFY-BATCH-BUY] direct CF after ≤45s sit — trying ONE sticky (no rotate storm)"
+      `[SHOPIFY-BATCH-BUY] direct CF after ≤${Math.round(CF_DIRECT_PROBE_MS / 1000)}s probe — trying ONE sticky (no rotate storm)`
     );
     await session.ctx.close().catch(() => undefined);
     const sticky = nextStockxPlaywrightProxy();
