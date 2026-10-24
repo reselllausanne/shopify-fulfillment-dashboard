@@ -1,5 +1,19 @@
 # StockX session / vacation remint
 
+## LemonPrime bandwidth (mandatory)
+
+| Rule | Value |
+|---|---|
+| `STOCKX_BROWSER_PROXY_MODE` | **`on_fail`** (never `always` on VPS) |
+| Warm / remint when Auth0 cookies valid | **direct first** — proxy only if remint fails / 403 |
+| CF on sticky | sit ≤**45s** then fail — **no** sticky-rotate storm |
+| CF sticky-rotates | ≤**2 / hour** total (`lib/stockxProxyCfBudget.ts`) |
+| Checkout batch | one persistent session; direct → at most **one** sticky |
+| Cron refresh | if JWT still **>6h** left → **skip Playwright** (token file check only) |
+| Expected GB / order | **≪100 MB** when session warm (direct). GB-scale = CF thrash bug |
+
+Pool file (VPS only, chmod 600, **not git**): `.data/stockx-lemonprime-proxies.txt`.
+
 ## Why JWT dies (and cookies do not)
 
 | Artifact | Lifetime | Role |
@@ -14,13 +28,14 @@ Deploy does **not** wipe profiles: `docker-compose.yml` bind-mounts `./.data:/ap
 
 `lib/stockxSessionRefresh.ts` → playwright:
 
-1. **Reuse** JWT if >6h remain **and** last mint <90m ago.
+1. **Reuse** JWT if >6h remain — **skip browser** (light token check). No 90m Playwright keep-alive on cron.
 2. **Auth0 `refresh_token` grant** (HTTP, no browser) if token file stored one from a prior silent mint (`offline_access`).
-3. **Warm CDP attach** (`http://127.0.0.1:9222` default / `:9223` galaxus) — no cold Chromium.
-4. Else **headed launch** on `DISPLAY=:99`, **leaveWarm** with remote debugging, cookie-first `buying/orders`.
-5. **Sit-still** on Cloudflare — do **not** cycle soft URLs while Turnstile is up (reloads reset the challenge).
-6. **Silent Auth0** `prompt=none` authorize (`client_id=OVxrt4VJqTx7LIUKd661W0DuVMpcFByD`, redirect `https://stockx.com`) once CF is clear.
-7. Credentials `/login` **only** when Auth0 cookies are gone. Never burn SSO.
+3. **Warm CDP attach** (`http://127.0.0.1:9222` default / `:9223` galaxus) — **direct** IP when `on_fail`.
+4. Else **headed launch** on `DISPLAY=:99`, **leaveWarm**, cookie-first `buying/orders` (direct).
+5. **Sit-still** on Cloudflare — do **not** cycle soft URLs / stickies while Turnstile is up.
+6. Only if direct fails: **proxy remint** — one sticky ≤45s; ≤2 CF rotates/hour.
+7. **Silent Auth0** `prompt=none` once CF is clear.
+8. Credentials `/login` **only** when Auth0 cookies are gone. Never burn SSO.
 
 Alert email/Slack fires only after these paths fail.
 

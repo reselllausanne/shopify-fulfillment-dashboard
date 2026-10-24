@@ -11,7 +11,9 @@
 import "dotenv/config";
 import {
   runShopifyBatchBuy,
+  SHOPIFY_BUY_OK_9,
   SHOPIFY_STANDARD_BATCH_13,
+  type ShopifyBatchBuyItem,
 } from "@/lib/stockxAutoCheckout/shopifyBatchBuy";
 
 function printList() {
@@ -59,8 +61,12 @@ async function main() {
     console.log("[SHOPIFY-BATCH-BUY] dry-run (pass --go for live)");
   }
 
+  const want9 = args.has("--buy-ok-9") || args.has("--9");
+  const items: ShopifyBatchBuyItem[] = want9 ? SHOPIFY_BUY_OK_9 : SHOPIFY_STANDARD_BATCH_13;
+  console.log(`[SHOPIFY-BATCH-BUY] items=${items.length} cohort=${want9 ? "BUY_OK_9" : "BATCH_13"}`);
+
   const summary = await runShopifyBatchBuy({
-    items: SHOPIFY_STANDARD_BATCH_13,
+    items,
     dryRun: !confirmLive,
     confirmLive,
   });

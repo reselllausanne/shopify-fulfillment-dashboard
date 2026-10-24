@@ -59,11 +59,10 @@ export function parseStockxRefreshAccount(raw: unknown): StockxRefreshAccount {
 
 /**
  * StockX bearers live ~12h. Remint while ≥6h remain so a failed night still leaves buffer.
- * Dead cookies cannot remint — proactive keep-alive is what prevents VNC every morning.
+ * Cron must NOT open Playwright when JWT still has >6h — that was a LemonPrime GB burn.
+ * Warm daemon (direct IP) handles cookie keep-alive separately.
  */
 const REFRESH_WHEN_LESS_THAN_MS = 6 * 60 * 60 * 1000;
-/** Touch StockX / warm browser every ~90m so cf session never goes cold on vacation. */
-const KEEP_ALIVE_EVERY_MS = 90 * 60 * 1000;
 
 export type StockxRefreshResult = {
   ok: boolean;
@@ -150,7 +149,12 @@ export async function refreshStockxToken(
   let remintReason: StockxRefreshResult["reason"] = "missing";
   if (force) {
     remintReason = "forced";
-  } else if (existingToken && existingRemaining > REFRESH_WHEN_LESS_THAN_MS && ageMs < KEEP_ALIVE_EVERY_MS) {
+  } else if (existingToken && existingRemaining > REFRESH_WHEN_LESS_THAN_MS) {
+    // Light touch: JWT exp check only — skip Playwright entirely when >6h left.
+    // (Previously keep_alive every 90m opened headed Chromium → CF → LemonPrime GB.)
+    console.log(
+      `[STOCKX-REFRESH] reuse account=${account} jwtRemainingMs=${existingRemaining} ageMs=${ageMs} — skip browser`
+    );
     return {
       ok: true,
       token: existingToken,
@@ -161,8 +165,6 @@ export async function refreshStockxToken(
       error: null,
       reason: "reused",
     };
-  } else if (existingToken && existingRemaining > REFRESH_WHEN_LESS_THAN_MS) {
-    remintReason = "keep_alive";
   } else if (existingToken) {
     remintReason = "near_expiry";
   }
@@ -229,7 +231,8 @@ export async function refreshStockxToken(
     console.log(`[STOCKX-REFRESH] proxy-first remint account=${account}`);
     const proxyFirst = await remintStockxTokenViaProxy({
       account,
-      maxWaitMs: Math.min(Number(options.maxWaitMs ?? 240000), 420000),
+      maxProxyAttempts: 1,
+      maxWaitMs: Math.min(Number(options.maxWaitMs ?? 90_000), 120_000),
     });
     if (proxyFirst.ok && proxyFirst.token) {
       await markWarmToken(account).catch(() => undefined);
@@ -308,7 +311,9 @@ export async function refreshStockxToken(
     );
     const proxyResult = await remintStockxTokenViaProxy({
       account,
-      maxWaitMs: Math.min(Number(options.maxWaitMs ?? 240000), 420000),
+      // One sticky + optional second only if CF budget allows (≤2/h).
+      maxProxyAttempts: 1,
+      maxWaitMs: Math.min(Number(options.maxWaitMs ?? 90_000), 120_000),
     });
     if (proxyResult.ok && proxyResult.token) {
       await markWarmToken(account).catch(() => undefined);

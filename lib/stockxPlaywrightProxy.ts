@@ -8,9 +8,11 @@
  *
  * Mode:
  *   STOCKX_BROWSER_PROXY_MODE=off | on_fail | always
- *   default on_fail — try direct/warm first, then proxy remint
+ *   default / VPS: **on_fail** — direct/warm first, proxy remint only on fail
+ *   never leave VPS on `always` (residential CF thrash → multi-GB burn)
  *
  * STOCKX_PROXY_FILE is StockX-only; does not touch SCRAPER_PROXY_FILE.
+ * Expected GB/order ≪100MB when session warm; see docs/STOCKX-SESSION.md.
  */
 import fs from "node:fs";
 import { nextScraperProxyUrl, scraperProxyPool } from "@/app/lib/scraperProxy";

@@ -1,12 +1,13 @@
 /**
- * Shopify StockX batch buy — fast path vs cold PDP Turnstile hell.
+ * Shopify StockX batch buy — bandwidth-safe.
  *
  * Rules:
- * 1. LemonPrime sticky from first navigation; warm /buying/orders before PDP
- * 2. Fail fast: max 2 sticky rotates then abort item (no 30min loops)
- * 3. Soft nav search→PDP when possible (hard goto only as fallback)
- * 4. One browser session for the whole batch (no relaunch per SKU)
- * 5. desiredLane forced STANDARD + selectAndVerifyStockxLane
+ * 1. Prefer DIRECT browser when Auth0/session warm (STOCKX_BROWSER_PROXY_MODE=on_fail).
+ *    Proxy only if direct hits CF — ONE sticky max for whole batch.
+ * 2. On CF: sit ≤45s then abort item — NO sticky-rotate storm loading challenge JS.
+ * 3. One persistent browser session for the whole batch.
+ * 4. desiredLane forced STANDARD + selectAndVerifyStockxLane.
+ * 5. Stop batch on LemonPrime 402 (quota).
  *
  * Default dryRun=true — never Place Order unless confirmLive / --go.
  */
@@ -14,6 +15,7 @@ import { prisma } from "@/app/lib/prisma";
 import { pageLooksLikeCloudflare } from "@/lib/stockxAutoLogin";
 import {
   nextStockxPlaywrightProxy,
+  stockxBrowserProxyMode,
   type PlaywrightProxyConfig,
 } from "@/lib/stockxPlaywrightProxy";
 import {
@@ -25,8 +27,9 @@ import { buildStockxBuyUrl } from "@/lib/stockxAutoCheckout/sizeUsFallback";
 import { MAX_ALL_IN_CHF } from "@/lib/stockxAutoCheckout/types";
 import type { BrowserContext, Page } from "playwright";
 
-const MAX_STICKY_ROTATES = 2;
-const CF_PROBE_MS = 12_000;
+/** Sit on CF then abort — never rotate through 20 stickies. */
+const CF_ABORT_MS = 45_000;
+const CF_PROBE_MS = 8_000;
 
 export type ShopifyBatchBuyItem = {
   orderName: string;
@@ -41,7 +44,7 @@ export type ShopifyBatchBuyItemResult = {
   sizeEU: string;
   stickyRotates: number;
   proxyLabel: string | null;
-  navMethod?: "soft_search" | "hard_goto" | "cf" | "skipped";
+  navMethod?: "soft_search" | "hard_goto" | "cf" | "skipped" | "direct";
   result: StockxAutoCheckoutResult | { kind: "aborted"; reason: string; detail?: string };
 };
 
@@ -53,6 +56,7 @@ export type ShopifyBatchBuySummary = {
   aborted: number;
   skipped: number;
   needsHuman: number;
+  stoppedOn402: boolean;
   items: ShopifyBatchBuyItemResult[];
 };
 
@@ -60,13 +64,35 @@ type LiveSession = {
   ctx: BrowserContext;
   page: Page;
   proxy: PlaywrightProxyConfig | null;
-  rotatesUsed: number;
+  /** 0 = direct; 1 = one sticky fallback for whole batch. */
+  stickyUsed: number;
 };
+
+class Proxy402Error extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = "Proxy402Error";
+  }
+}
+
+function looksProxy402(msg: string): boolean {
+  return /\b402\b|payment required|quota|bandwidth|out of credit|insufficient/i.test(msg);
+}
 
 async function isCf(page: Page): Promise<boolean> {
   const title = await page.title().catch(() => "");
   const body = (await page.locator("body").innerText().catch(() => "")) || "";
   return pageLooksLikeCloudflare(page.url(), title, body);
+}
+
+/** Sit still on CF up to CF_ABORT_MS; return true if cleared. */
+async function sitCfOrAbort(page: Page, budgetMs = CF_ABORT_MS): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < budgetMs) {
+    if (!(await isCf(page))) return true;
+    await page.waitForTimeout(2000);
+  }
+  return !(await isCf(page));
 }
 
 async function warmBuyingOrders(page: Page): Promise<{ ok: boolean; cf: boolean }> {
@@ -75,12 +101,16 @@ async function warmBuyingOrders(page: Page): Promise<{ ok: boolean; cf: boolean 
       waitUntil: "domcontentloaded",
       timeout: 45_000,
     });
-  } catch {
-    // network/timeout — still probe CF
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    if (looksProxy402(msg)) throw new Proxy402Error(msg);
   }
-  await page.waitForTimeout(Math.min(CF_PROBE_MS, 8_000));
-  const cf = await isCf(page);
-  return { ok: !cf, cf };
+  await page.waitForTimeout(Math.min(CF_PROBE_MS, 6_000));
+  if (await isCf(page)) {
+    const cleared = await sitCfOrAbort(page, CF_ABORT_MS);
+    return { ok: cleared, cf: !cleared };
+  }
+  return { ok: true, cf: false };
 }
 
 async function softNavToPdp(
@@ -106,75 +136,81 @@ async function softNavToPdp(
       if (await link.isVisible({ timeout: 2500 }).catch(() => false)) {
         await link.click();
         await page.waitForTimeout(2000);
-        if (await isCf(page)) return { ok: false, method: "cf" };
+        if (await isCf(page)) {
+          const cleared = await sitCfOrAbort(page, CF_ABORT_MS);
+          if (!cleared) return { ok: false, method: "cf" };
+        }
         if (page.url().includes(slugTail)) return { ok: true, method: "soft_search" };
       }
     }
-  } catch {
-    // fall through
+  } catch (e: any) {
+    if (looksProxy402(String(e?.message || e))) throw new Proxy402Error(String(e?.message || e));
   }
 
   try {
     await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
-  } catch {
-    // ignore
+  } catch (e: any) {
+    if (looksProxy402(String(e?.message || e))) throw new Proxy402Error(String(e?.message || e));
   }
   await page.waitForTimeout(2500);
-  if (await isCf(page)) return { ok: false, method: "cf" };
+  if (await isCf(page)) {
+    const cleared = await sitCfOrAbort(page, CF_ABORT_MS);
+    if (!cleared) return { ok: false, method: "cf" };
+  }
   return { ok: true, method: "hard_goto" };
 }
 
-async function openStickySession(
-  rotatesUsed = 0,
-  proxy?: PlaywrightProxyConfig | null
-): Promise<LiveSession> {
-  const sticky = proxy === undefined ? nextStockxPlaywrightProxy() : proxy;
-  if (sticky) {
+async function openSession(opts: {
+  proxy: PlaywrightProxyConfig | null;
+  stickyUsed: number;
+}): Promise<LiveSession> {
+  if (opts.proxy) {
     console.log(
-      `[SHOPIFY-BATCH-BUY] sticky${rotatesUsed ? ` rotate=${rotatesUsed}` : "-first"} proxy=${sticky.label}`
+      `[SHOPIFY-BATCH-BUY] launch sticky proxy=${opts.proxy.label} (fallback after direct CF)`
     );
   } else {
-    console.warn("[SHOPIFY-BATCH-BUY] no proxy pool — direct launch (CF risk)");
+    console.log(
+      `[SHOPIFY-BATCH-BUY] launch DIRECT (mode=${stockxBrowserProxyMode()}) — prefer warm Auth0 session`
+    );
   }
   const launched = await launchStockxContext({
-    proxy: sticky,
-    useStickyProxy: Boolean(sticky),
+    proxy: opts.proxy,
+    useStickyProxy: Boolean(opts.proxy),
   });
   return {
     ctx: launched.ctx,
     page: launched.page,
     proxy: launched.proxy,
-    rotatesUsed,
+    stickyUsed: opts.stickyUsed,
   };
 }
 
-async function rotateSticky(session: LiveSession): Promise<LiveSession> {
-  await session.ctx.close().catch(() => undefined);
-  if (session.rotatesUsed >= MAX_STICKY_ROTATES) {
-    throw new Error(`Sticky rotate budget exhausted (max ${MAX_STICKY_ROTATES})`);
-  }
-  const next = nextStockxPlaywrightProxy();
-  if (!next) throw new Error("No LemonPrime/StockX sticky left in pool");
-  console.warn(
-    `[SHOPIFY-BATCH-BUY] sticky rotate ${session.rotatesUsed + 1}/${MAX_STICKY_ROTATES} → ${next.label}`
-  );
-  const launched = await openStickySession(session.rotatesUsed + 1, next);
-  await warmBuyingOrders(launched.page);
-  return launched;
-}
-
+/**
+ * Direct first. Only if /buying/orders stuck on CF → ONE sticky for whole batch.
+ * Never rotate stickies on CF (GB killer).
+ */
 async function ensureWarmSession(): Promise<LiveSession> {
-  process.env.STOCKX_BROWSER_PROXY_MODE = "always";
-  let session = await openStickySession(0);
+  // Never force MODE=always here — that burned ~10GB via challenges.cloudflare.com.
+  let session = await openSession({ proxy: null, stickyUsed: 0 });
   let warm = await warmBuyingOrders(session.page);
-  while (warm.cf && session.rotatesUsed < MAX_STICKY_ROTATES) {
-    session = await rotateSticky(session);
+
+  if (warm.cf && stockxBrowserProxyMode() !== "off") {
+    console.warn(
+      "[SHOPIFY-BATCH-BUY] direct CF after ≤45s sit — trying ONE sticky (no rotate storm)"
+    );
+    await session.ctx.close().catch(() => undefined);
+    const sticky = nextStockxPlaywrightProxy();
+    if (!sticky) {
+      throw new Error("Direct CF and no LemonPrime sticky in pool — abort batch");
+    }
+    session = await openSession({ proxy: sticky, stickyUsed: 1 });
     warm = await warmBuyingOrders(session.page);
   }
+
   if (warm.cf) {
     await session.ctx.close().catch(() => undefined);
     throw new Error(
-      `Cloudflare/Turnstile after ${MAX_STICKY_ROTATES} sticky rotates on /buying/orders — abort batch`
+      "Cloudflare/Turnstile after direct + one sticky (≤45s sit each) — abort batch, no further rotates"
     );
   }
   return session;
@@ -191,7 +227,7 @@ async function alreadyMatchedOrder(orderName: string): Promise<string | null> {
 }
 
 /**
- * Sequential Shopify buys on one sticky session.
+ * Sequential Shopify buys on one session (direct or one sticky).
  * dryRun default true; confirmLive/GO required to Place Order.
  */
 export async function runShopifyBatchBuy(options: {
@@ -210,6 +246,7 @@ export async function runShopifyBatchBuy(options: {
   let aborted = 0;
   let skipped = 0;
   let needsHuman = 0;
+  let stoppedOn402 = false;
 
   let session: LiveSession | null = null;
   try {
@@ -229,7 +266,7 @@ export async function runShopifyBatchBuy(options: {
           orderName,
           slug,
           sizeEU,
-          stickyRotates: session.rotatesUsed,
+          stickyRotates: session.stickyUsed,
           proxyLabel: session.proxy?.label ?? null,
           navMethod: "skipped",
           result: {
@@ -242,24 +279,89 @@ export async function runShopifyBatchBuy(options: {
         continue;
       }
 
-      let nav = await softNavToPdp(session.page, slug, null);
-      while (!nav.ok && nav.method === "cf" && session.rotatesUsed < MAX_STICKY_ROTATES) {
-        session = await rotateSticky(session);
+      let nav: { ok: boolean; method: "soft_search" | "hard_goto" | "cf" };
+      try {
         nav = await softNavToPdp(session.page, slug, null);
+      } catch (e) {
+        if (e instanceof Proxy402Error) {
+          stoppedOn402 = true;
+          aborted += 1;
+          out.push({
+            orderName,
+            slug,
+            sizeEU,
+            stickyRotates: session.stickyUsed,
+            proxyLabel: session.proxy?.label ?? null,
+            navMethod: "cf",
+            result: { kind: "aborted", reason: "proxy_402", detail: e.message },
+          });
+          console.error("[SHOPIFY-BATCH-BUY] LemonPrime 402 — STOP batch");
+          break;
+        }
+        throw e;
       }
+
+      if (!nav.ok) {
+        // One sticky fallback for whole batch if still on direct.
+        if (session.stickyUsed === 0 && stockxBrowserProxyMode() !== "off") {
+          console.warn(
+            `[SHOPIFY-BATCH-BUY] CF on ${orderName} via direct — switching to ONE sticky for rest of batch`
+          );
+          await session.ctx.close().catch(() => undefined);
+          const sticky = nextStockxPlaywrightProxy();
+          if (!sticky) {
+            aborted += 1;
+            out.push({
+              orderName,
+              slug,
+              sizeEU,
+              stickyRotates: 0,
+              proxyLabel: null,
+              navMethod: "cf",
+              result: {
+                kind: "aborted",
+                reason: "cf_no_sticky",
+                detail: "CF on direct; no sticky left",
+              },
+            });
+            continue;
+          }
+          session = await openSession({ proxy: sticky, stickyUsed: 1 });
+          const warm = await warmBuyingOrders(session.page);
+          if (warm.cf) {
+            aborted += 1;
+            out.push({
+              orderName,
+              slug,
+              sizeEU,
+              stickyRotates: 1,
+              proxyLabel: session.proxy?.label ?? null,
+              navMethod: "cf",
+              result: {
+                kind: "aborted",
+                reason: "cf_sticky_abort",
+                detail: "CF after ≤45s on one sticky — abort item (no rotate)",
+              },
+            });
+            continue;
+          }
+          nav = await softNavToPdp(session.page, slug, null);
+        }
+      }
+
       if (!nav.ok) {
         aborted += 1;
         out.push({
           orderName,
           slug,
           sizeEU,
-          stickyRotates: session.rotatesUsed,
+          stickyRotates: session.stickyUsed,
           proxyLabel: session.proxy?.label ?? null,
           navMethod: "cf",
           result: {
             kind: "aborted",
-            reason: "cf_sticky_exhausted",
-            detail: `CF after ${session.rotatesUsed} sticky rotates (max ${MAX_STICKY_ROTATES})`,
+            reason: "cf_abort_45s",
+            detail: "CF after ≤45s sit — abort item, no sticky rotate",
           },
         });
         await warmBuyingOrders(session.page).catch(() => undefined);
@@ -286,14 +388,27 @@ export async function runShopifyBatchBuy(options: {
         orderName,
         slug,
         sizeEU,
-        stickyRotates: session.rotatesUsed,
+        stickyRotates: session.stickyUsed,
         proxyLabel: session.proxy?.label ?? null,
-        navMethod: nav.method,
+        navMethod: session.proxy ? nav.method : "direct",
         result,
       });
 
-      // Soft reset to buying/orders between SKUs (keep same sticky session).
-      await warmBuyingOrders(session.page).catch(() => undefined);
+      // Soft reset to buying/orders between SKUs (keep same session).
+      await warmBuyingOrders(session.page).catch((e: any) => {
+        if (looksProxy402(String(e?.message || e))) {
+          stoppedOn402 = true;
+          console.error("[SHOPIFY-BATCH-BUY] LemonPrime 402 mid-batch — STOP");
+        }
+      });
+      if (stoppedOn402) break;
+    }
+  } catch (e: any) {
+    if (e instanceof Proxy402Error || looksProxy402(String(e?.message || e))) {
+      stoppedOn402 = true;
+      console.error("[SHOPIFY-BATCH-BUY] LemonPrime 402 — STOP batch", e?.message || e);
+    } else {
+      throw e;
     }
   } finally {
     await session?.ctx.close().catch(() => undefined);
@@ -307,6 +422,7 @@ export async function runShopifyBatchBuy(options: {
     aborted,
     skipped,
     needsHuman,
+    stoppedOn402,
     items: out,
   };
 }
@@ -331,6 +447,31 @@ export const SHOPIFY_STANDARD_BATCH_13: ShopifyBatchBuyItem[] = [
     slug: "adidas-adi-racer-lo-core-black-silver-metallic-womens",
     sizeEU: "43 1/3",
   },
+  { orderName: "#7538", slug: "puma-stewie-4-timeless-womens", sizeEU: "40" },
+  {
+    orderName: "#7535",
+    slug: "adidas-handball-spezial-aurora-ivy-ash-green-womens",
+    sizeEU: "36 2/3",
+  },
+  {
+    orderName: "#7540",
+    slug: "nike-air-force-1-low-cow-print-field-brown-womens",
+    sizeEU: "36.5",
+  },
+  { orderName: "#7532", slug: "adidas-la-trainer-weave-triple-black", sizeEU: "44 2/3" },
+  {
+    orderName: "#7542",
+    slug: "saucony-progrid-omni-9-white-black-silver-pink",
+    sizeEU: "38",
+  },
+  { orderName: "#7536", slug: "adidas-ultra-boost-4-0-running-white", sizeEU: "42" },
+  { orderName: "#7534", slug: "supreme-backpack-ss26-red-camo", sizeEU: "OS" },
+];
+
+/** User GO cohort 2026-10-24 (9 STANDARD BUY_OK). */
+export const SHOPIFY_BUY_OK_9: ShopifyBatchBuyItem[] = [
+  { orderName: "#7298", slug: "nike-air-max-plus-triple-black-gs", sizeEU: "39" },
+  { orderName: "#7302", slug: "nike-air-max-pulse-black-grey-laser-blue", sizeEU: "47" },
   { orderName: "#7538", slug: "puma-stewie-4-timeless-womens", sizeEU: "40" },
   {
     orderName: "#7535",

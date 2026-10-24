@@ -4,6 +4,12 @@
  * VPS datacenter IP often stuck on Turnstile; LemonProxy residential IP can clear CF
  * while Auth0 SSO cookies still mint a bearer — no human click when session is valid.
  *
+ * Bandwidth rules (mandatory):
+ * - Prefer direct/warm remint first (caller: STOCKX_BROWSER_PROXY_MODE=on_fail).
+ * - One sticky sit ≤45s on CF then fail — do NOT rotate through the whole pool loading
+ *   challenges.cloudflare.com JS (GB killer).
+ * - CF sticky-rotate budget ≤2/hour process-wide (see stockxProxyCfBudget).
+ *
  * Does NOT write proxy cookies back into the VPS profile/session (keeps direct path clean).
  */
 import fs from "node:fs/promises";
@@ -14,11 +20,14 @@ import {
   stockxPlaywrightProxyAvailable,
   type PlaywrightProxyConfig,
 } from "@/lib/stockxPlaywrightProxy";
+import { tryConsumeStockxCfRotateBudget } from "@/lib/stockxProxyCfBudget";
 import { writeStockxTokenFile } from "@/lib/stockxSilentAuth0";
 import { stockxTokenExpiresAt } from "@/lib/stockxServerToken";
 import type { StockxWarmAccount } from "@/lib/stockxWarmBrowser";
 
 const DATA_DIR = path.join(process.cwd(), ".data");
+/** Sit on CF then abort this sticky — never burn full maxWaitMs loading challenge JS. */
+const CF_ABORT_MS = 45_000;
 
 export type StockxProxyRemintAccount = StockxWarmAccount;
 
@@ -180,16 +189,16 @@ async function remintOnceViaProxy(opts: {
       );
       const cf = looksCloudflare(url, title, body);
       if (cf) stuckOnTurnstile = true;
-      // LemonProxy often gets bare StockX "Error" title (HTTP 403) — rotate early.
+      // LemonProxy often gets bare StockX "Error" title (HTTP 403) — may rotate if budget.
       if (/^error$/i.test(title.trim()) || /\baccess denied\b/i.test(body)) {
         stockxHardBlock = true;
-        console.warn(`[STOCKX-PROXY-REMINT] hard block title=${title} — rotate proxy`);
+        console.warn(`[STOCKX-PROXY-REMINT] hard block title=${title} — abort sticky`);
         break;
       }
-      // Turnstile not clearing on this sticky → rotate (don't burn full maxWaitMs).
-      if (cf && Date.now() - startedAt > 45_000) {
+      // CF: sit still ≤45s on THIS sticky then abort — never reload/rotate thrash.
+      if (cf && Date.now() - startedAt > CF_ABORT_MS) {
         console.warn(
-          `[STOCKX-PROXY-REMINT] Turnstile stuck >45s on ${proxy.label} — rotate sticky`
+          `[STOCKX-PROXY-REMINT] Turnstile stuck >${CF_ABORT_MS / 1000}s on ${proxy.label} — abort sticky (no CF JS thrash)`
         );
         break;
       }
@@ -259,18 +268,23 @@ async function remintOnceViaProxy(opts: {
 }
 
 /**
- * Headed Chromium through residential proxy; retries a few pool IPs on hard 403.
+ * Headed Chromium through residential proxy.
+ * Default: ONE sticky. Extra sticky only if CF/403 and hourly CF-rotate budget allows (≤2/h).
  */
 export async function remintStockxTokenViaProxy(options: {
   account: StockxProxyRemintAccount;
   maxWaitMs?: number;
   proxy?: PlaywrightProxyConfig | null;
-  /** Extra pool rotations after hard 403 (default 2 → up to 3 attempts). */
+  /**
+   * Extra pool rotations after first sticky fails (default 0 → one sticky only).
+   * Hard cap 1; still gated by CF rotate budget ≤2/hour.
+   */
   maxProxyAttempts?: number;
 }): Promise<StockxProxyRemintResult> {
   const account = options.account;
-  const maxWaitMs = Math.min(Math.max(options.maxWaitMs ?? 240_000, 30_000), 420_000);
-  const maxAttempts = Math.min(Math.max(options.maxProxyAttempts ?? 2, 0), 4) + 1;
+  const maxWaitMs = Math.min(Math.max(options.maxWaitMs ?? 90_000, 30_000), 180_000);
+  // Default 0 extra → 1 sticky. Cap at 1 extra (2 stickies max per call).
+  const maxAttempts = Math.min(Math.max(options.maxProxyAttempts ?? 0, 0), 1) + 1;
 
   if (!stockxPlaywrightProxyAvailable() && !options.proxy) {
     return {
@@ -312,8 +326,8 @@ export async function remintStockxTokenViaProxy(options: {
         ? options.proxy
         : nextStockxPlaywrightProxy();
     if (!proxy) break;
-    // Shorter sit per attempt when rotating — don't burn 4min × N on 403/Turnstile.
-    const perAttemptMs = Math.min(maxWaitMs, attempt === 0 ? Math.min(maxWaitMs, 90_000) : 60_000);
+    // Cap sit: CF abort is 45s; don't burn minutes on a dead sticky.
+    const perAttemptMs = Math.min(maxWaitMs, CF_ABORT_MS + 15_000);
     last = await remintOnceViaProxy({
       account,
       proxy,
@@ -322,14 +336,26 @@ export async function remintStockxTokenViaProxy(options: {
       tokenFile,
     });
     if (last.ok) return last;
-    // Rotate LemonPrime stickies on hard 403 or Turnstile — not only first sticky.
-    const rotate =
+
+    const wantRotate =
       Boolean(last.stuckOnTurnstile) ||
       Boolean(last.error?.includes("403/Error")) ||
       Boolean(last.error?.includes("pool may be blocked"));
-    if (!rotate) break;
+    if (!wantRotate || attempt + 1 >= maxAttempts) break;
+
+    // CF sticky rotate burns challenge JS — hard budget ≤2/hour.
+    const ok = await tryConsumeStockxCfRotateBudget(
+      last.stuckOnTurnstile ? "remint_cf" : "remint_403"
+    );
+    if (!ok) {
+      last = {
+        ...last,
+        error: `${last.error || "proxy remint failed"} — CF sticky-rotate budget exhausted (≤2/h)`,
+      };
+      break;
+    }
     console.warn(
-      `[STOCKX-PROXY-REMINT] attempt=${attempt + 1}/${maxAttempts} fail=${last.error} — next sticky`
+      `[STOCKX-PROXY-REMINT] attempt=${attempt + 1}/${maxAttempts} fail=${last.error} — next sticky (budget ok)`
     );
   }
   return last;
