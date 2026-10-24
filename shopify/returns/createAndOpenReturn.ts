@@ -7,6 +7,7 @@ import {
   snapshotReplacementVariant,
   type PublicCustomerExchangeLine,
 } from "@/shopify/returns/publicCustomerExchange";
+import { refundPreferenceForAmount } from "@/shopify/returns/refundPreference";
 import { fetchShopifyReturnLineItems } from "@/shopify/returns/returnLineItemsForReceipt";
 import { defaultReturnRestockingFeeInput } from "@/shopify/returns/restockingFee";
 import { parseStrictPublicOrderNumber } from "@/shopify/returns/publicOrderNumber";
@@ -1439,12 +1440,18 @@ export async function createAndOpenReturnFromFormData(
     };
   }
 
+  const exchangeCreditRefundPreference =
+    isCustomerExchange && priceCreditDue > 0
+      ? refundPreferenceForAmount(priceCreditDue)
+      : null;
+
   const customerExchangePayload = isCustomerExchange
     ? {
         intent: "exchange" as const,
         lines: exchangeLines,
         priceDifferenceDue,
         priceCreditDue: priceCreditDue > 0 ? priceCreditDue : null,
+        creditRefundPreference: exchangeCreditRefundPreference,
         paymentRequired: priceDifferenceDue > 0,
         exchangePaymentStatus: deferLabelUntilExchangePayment
           ? ("pending" as const)

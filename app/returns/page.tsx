@@ -11,6 +11,17 @@ import {
 } from "@/shopify/returns/publicOrderNumber";
 import type { ProductSizeFit } from "@/shopify/returns/productSizeFit";
 import { customerSizeFitLine } from "@/shopify/returns/productSizeFit";
+import {
+  ORIGINAL_PAYMENT_REFUND_MAX_CHF,
+  refundPreferenceForAmount,
+  unitPriceDelta,
+} from "@/shopify/returns/refundPreference";
+
+function formatDeltaLabel(delta: number | null, copy: ReturnsCopy): string {
+  if (delta == null || Math.abs(delta) < 0.005) return copy.priceDiffSame;
+  if (delta > 0) return copy.priceDiffPlus.replace("{amount}", delta.toFixed(2));
+  return copy.priceDiffMinus.replace("{amount}", Math.abs(delta).toFixed(2));
+}
 
 type FlowPath = "return" | "exchange";
 
@@ -425,6 +436,15 @@ function PublicReturnsWizard() {
     .map((item) => {
       const state = selectedItems[item.fulfillmentLineItemId];
       if (!state?.checked || state.quantity <= 0) return null;
+      let lineDelta: number | null = null;
+      if (isExchangeFlow && state.replacementVariantId) {
+        const opt = (replacementOptions[item.fulfillmentLineItemId] ?? []).find(
+          (o) => o.variantId === state.replacementVariantId
+        );
+        const unit = unitPriceDelta(item.unitAmount, opt?.unitPrice ?? null);
+        lineDelta =
+          unit != null ? Number((unit * state.quantity).toFixed(2)) : null;
+      }
       return {
         id: item.fulfillmentLineItemId,
         title: item.title ?? item.sku ?? "—",
@@ -432,6 +452,11 @@ function PublicReturnsWizard() {
         replacement: isExchangeFlow
           ? replacementLabelForLine(item.fulfillmentLineItemId, state.replacementVariantId)
           : null,
+        lineDelta,
+        returnAmount:
+          item.unitAmount != null
+            ? Number((item.unitAmount * state.quantity).toFixed(2))
+            : null,
       };
     })
     .filter(Boolean) as Array<{
@@ -439,7 +464,40 @@ function PublicReturnsWizard() {
     title: string;
     quantity: number;
     replacement: string | null;
+    lineDelta: number | null;
+    returnAmount: number | null;
   }>;
+
+  const exchangeTotals = (() => {
+    if (!isExchangeFlow) return { due: 0, credit: 0, known: false };
+    let due = 0;
+    let credit = 0;
+    let known = false;
+    for (const line of selectedLineSummaries) {
+      if (line.lineDelta == null) continue;
+      known = true;
+      if (line.lineDelta > 0) due += line.lineDelta;
+      if (line.lineDelta < 0) credit += Math.abs(line.lineDelta);
+    }
+    return {
+      due: Number(due.toFixed(2)),
+      credit: Number(credit.toFixed(2)),
+      known,
+    };
+  })();
+
+  const returnRefundEstimate = (() => {
+    if (isExchangeFlow) return null;
+    let sum = 0;
+    let known = false;
+    for (const line of selectedLineSummaries) {
+      if (line.returnAmount == null) continue;
+      known = true;
+      sum += line.returnAmount;
+    }
+    if (!known) return null;
+    return Number(sum.toFixed(2));
+  })();
 
   function goToStep3() {
     if (selectedCount === 0) {
@@ -518,35 +576,41 @@ function PublicReturnsWizard() {
         }
       >
         {!embed ? (
-          <>
-            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm font-semibold tracking-wide text-neutral-500">{copy.brand}</p>
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-neutral-500">{copy.langLabel}</span>
-                {RETURNS_LOCALES.map((code) => (
-                  <button
-                    key={code}
-                    type="button"
-                    onClick={() => setLocale(code)}
-                    className={`min-h-10 rounded-sm px-3 uppercase ${
-                      locale === code
-                        ? "bg-neutral-900 text-white"
-                        : "border border-neutral-300 bg-white text-neutral-700"
-                    }`}
-                  >
-                    {code}
-                  </button>
-                ))}
-              </div>
+          <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+            <a
+              href="https://www.resell-lausanne.ch"
+              target="_blank"
+              rel="noreferrer"
+              className="block"
+              aria-label={copy.brand}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- static brand asset in /public */}
+              <img
+                src="/resell-lausanne-logo.png"
+                alt={copy.brand}
+                width={220}
+                height={39}
+                className="h-9 w-auto max-w-[220px] object-contain object-left md:h-11 md:max-w-[280px]"
+              />
+            </a>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-neutral-500">{copy.langLabel}</span>
+              {RETURNS_LOCALES.map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => setLocale(code)}
+                  className={`min-h-10 rounded-sm px-3 uppercase ${
+                    locale === code
+                      ? "bg-neutral-900 text-white"
+                      : "border border-neutral-300 bg-white text-neutral-700"
+                  }`}
+                >
+                  {code}
+                </button>
+              ))}
             </div>
-
-            <header className="mb-8">
-              <h1 className="text-[3rem] font-semibold leading-[1.1] tracking-normal text-neutral-900 md:text-[4.5rem]">
-                {copy.pageTitle}
-              </h1>
-              <p className="mt-3 text-lg leading-relaxed text-neutral-600">{copy.pageSubtitle}</p>
-            </header>
-          </>
+          </header>
         ) : null}
 
         <section
@@ -780,36 +844,78 @@ function PublicReturnsWizard() {
                               <span className="mb-2 block text-sm font-medium">
                                 {copy.replacementLabel}
                               </span>
+                              <p className="mb-2 text-xs text-neutral-500">{copy.priceDiffHint}</p>
                               {replacementLoading[item.fulfillmentLineItemId] ? (
                                 <p className="text-sm text-neutral-500">{copy.replacementLoading}</p>
                               ) : (replacementOptions[item.fulfillmentLineItemId] ?? []).length ===
                                 0 ? (
                                 <p className="text-sm text-amber-800">{copy.replacementNone}</p>
                               ) : (
-                                <select
-                                  value={state.replacementVariantId ?? ""}
-                                  onChange={(e) => {
-                                    const replacementVariantId = e.target.value || null;
-                                    setSelectedItems((prev) => ({
-                                      ...prev,
-                                      [item.fulfillmentLineItemId]: {
-                                        ...state,
-                                        replacementVariantId,
-                                      },
-                                    }));
-                                  }}
-                                  className="min-h-12 w-full rounded-sm border border-neutral-300 px-3 text-sm"
-                                >
-                                  <option value="">—</option>
-                                  {(replacementOptions[item.fulfillmentLineItemId] ?? []).map(
-                                    (opt) => (
-                                      <option key={opt.variantId} value={opt.variantId}>
-                                        {opt.optionLabel || opt.title || opt.sku || opt.variantId}
-                                        {opt.unitPrice != null ? ` · CHF ${opt.unitPrice}` : ""}
-                                      </option>
-                                    )
-                                  )}
-                                </select>
+                                <>
+                                  <select
+                                    value={state.replacementVariantId ?? ""}
+                                    onChange={(e) => {
+                                      const replacementVariantId = e.target.value || null;
+                                      setSelectedItems((prev) => ({
+                                        ...prev,
+                                        [item.fulfillmentLineItemId]: {
+                                          ...state,
+                                          replacementVariantId,
+                                        },
+                                      }));
+                                    }}
+                                    className="min-h-12 w-full rounded-sm border border-neutral-300 px-3 text-sm"
+                                  >
+                                    <option value="">—</option>
+                                    {(replacementOptions[item.fulfillmentLineItemId] ?? []).map(
+                                      (opt) => {
+                                        const delta = unitPriceDelta(
+                                          item.unitAmount,
+                                          opt.unitPrice
+                                        );
+                                        const label =
+                                          opt.optionLabel ||
+                                          opt.title ||
+                                          opt.sku ||
+                                          opt.variantId;
+                                        return (
+                                          <option key={opt.variantId} value={opt.variantId}>
+                                            {label} · {formatDeltaLabel(delta, copy)}
+                                          </option>
+                                        );
+                                      }
+                                    )}
+                                  </select>
+                                  {state.replacementVariantId ? (
+                                    (() => {
+                                      const opt = (
+                                        replacementOptions[item.fulfillmentLineItemId] ?? []
+                                      ).find((o) => o.variantId === state.replacementVariantId);
+                                      const delta = unitPriceDelta(
+                                        item.unitAmount,
+                                        opt?.unitPrice ?? null
+                                      );
+                                      const line =
+                                        delta != null
+                                          ? Number((delta * state.quantity).toFixed(2))
+                                          : null;
+                                      const tone =
+                                        line == null || Math.abs(line) < 0.005
+                                          ? "text-neutral-700"
+                                          : line > 0
+                                            ? "text-amber-900"
+                                            : "text-emerald-800";
+                                      return (
+                                        <p
+                                          className={`mt-2 text-sm font-semibold ${tone}`}
+                                          aria-live="polite"
+                                        >
+                                          {formatDeltaLabel(line, copy)}
+                                        </p>
+                                      );
+                                    })()
+                                  ) : null}
+                                </>
                               )}
                             </div>
                           ) : null}
@@ -884,6 +990,11 @@ function PublicReturnsWizard() {
                         <p className="mt-1 text-sm text-neutral-600">
                           {copy.confirmReplacement}:{" "}
                           <span className="font-medium text-neutral-900">{line.replacement}</span>
+                          {line.lineDelta != null ? (
+                            <span className="ml-2 font-semibold text-neutral-900">
+                              ({formatDeltaLabel(line.lineDelta, copy)})
+                            </span>
+                          ) : null}
                         </p>
                       ) : null}
                     </li>
@@ -896,6 +1007,84 @@ function PublicReturnsWizard() {
                   </span>
                 </p>
               </div>
+
+              {isExchangeFlow && exchangeTotals.known ? (
+                <div className="rounded-sm border border-amber-200 bg-amber-50 p-4">
+                  <h3 className="text-base font-semibold text-amber-950">
+                    {copy.confirmMoneyTitle}
+                  </h3>
+                  {exchangeTotals.due > 0 ? (
+                    <>
+                      <p className="mt-2 text-lg font-semibold text-amber-950">
+                        {copy.confirmAmountDue.replace(
+                          "{amount}",
+                          exchangeTotals.due.toFixed(2)
+                        )}
+                      </p>
+                      <p className="mt-1 text-sm text-amber-900">{copy.confirmPayBeforeShip}</p>
+                    </>
+                  ) : null}
+                  {exchangeTotals.credit > 0 ? (
+                    <>
+                      <p className="mt-2 text-lg font-semibold text-emerald-900">
+                        {copy.confirmAmountSave.replace(
+                          "{amount}",
+                          exchangeTotals.credit.toFixed(2)
+                        )}
+                      </p>
+                      <p className="mt-2 text-sm text-neutral-800">
+                        {refundPreferenceForAmount(exchangeTotals.credit) ===
+                        "original_payment"
+                          ? copy.confirmRefundOriginal.replace(
+                              "{amount}",
+                              exchangeTotals.credit.toFixed(2)
+                            )
+                          : copy.confirmRefundStoreCredit.replace(
+                              "{amount}",
+                              exchangeTotals.credit.toFixed(2)
+                            )}
+                      </p>
+                    </>
+                  ) : null}
+                  {exchangeTotals.due <= 0 && exchangeTotals.credit <= 0 ? (
+                    <p className="mt-2 text-base font-medium text-neutral-800">
+                      {copy.confirmAmountEven}
+                    </p>
+                  ) : null}
+                  <p className="mt-3 text-xs text-neutral-600">{copy.confirmRefundRuleHint}</p>
+                </div>
+              ) : null}
+
+              {!isExchangeFlow && returnRefundEstimate != null ? (
+                <div className="rounded-sm border border-neutral-200 bg-neutral-50 p-4">
+                  <h3 className="text-base font-semibold text-neutral-900">
+                    {copy.confirmReturnRefundTitle}
+                  </h3>
+                  <p className="mt-2 text-lg font-semibold text-neutral-900">
+                    {copy.confirmReturnRefundAmount.replace(
+                      "{amount}",
+                      returnRefundEstimate.toFixed(2)
+                    )}
+                  </p>
+                  <p className="mt-2 text-sm text-neutral-800">
+                    {refundPreferenceForAmount(returnRefundEstimate) === "original_payment"
+                      ? copy.confirmRefundOriginal.replace(
+                          "{amount}",
+                          returnRefundEstimate.toFixed(2)
+                        )
+                      : copy.confirmRefundStoreCredit.replace(
+                          "{amount}",
+                          returnRefundEstimate.toFixed(2)
+                        )}
+                  </p>
+                  <p className="mt-3 text-xs text-neutral-600">
+                    {copy.confirmRefundRuleHint.replace(
+                      "50",
+                      String(ORIGINAL_PAYMENT_REFUND_MAX_CHF)
+                    )}
+                  </p>
+                </div>
+              ) : null}
 
               <label className="block">
                 <span className="mb-1.5 flex items-baseline gap-2">

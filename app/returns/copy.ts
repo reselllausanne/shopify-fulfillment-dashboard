@@ -77,6 +77,21 @@ export type ReturnsCopy = {
   confirmReplacement: string;
   confirmPathReturn: string;
   confirmPathExchange: string;
+  /** Size picker: only show Δ vs ordered pair */
+  priceDiffSame: string;
+  priceDiffPlus: string;
+  priceDiffMinus: string;
+  priceDiffHint: string;
+  confirmMoneyTitle: string;
+  confirmAmountDue: string;
+  confirmAmountSave: string;
+  confirmAmountEven: string;
+  confirmPayBeforeShip: string;
+  confirmRefundOriginal: string;
+  confirmRefundStoreCredit: string;
+  confirmRefundRuleHint: string;
+  confirmReturnRefundTitle: string;
+  confirmReturnRefundAmount: string;
 };
 
 const REASONS_FR = {
@@ -112,8 +127,8 @@ const REASONS_DE = {
 export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
   fr: {
     brand: "Resell Lausanne",
-    pageTitle: "Demande de retours",
-    pageSubtitle: "Demandez votre retours en ligne rapidement",
+    pageTitle: "Resell Lausanne",
+    pageSubtitle: "",
     steps: { order: "1. Commande", products: "2. Article", confirm: "3. Confirmer" },
     langLabel: "Langue",
     orderNumberLabel: "Numero de commande",
@@ -214,11 +229,29 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     confirmReplacement: "Remplacement",
     confirmPathReturn: "Retour (avoir)",
     confirmPathExchange: "Echange",
+    priceDiffSame: "meme prix",
+    priceDiffPlus: "+ CHF {amount}",
+    priceDiffMinus: "− CHF {amount}",
+    priceDiffHint: "Difference vs votre paire actuelle (pas le prix total).",
+    confirmMoneyTitle: "Difference de prix",
+    confirmAmountDue: "A payer : CHF {amount}",
+    confirmAmountSave: "Economie : CHF {amount}",
+    confirmAmountEven: "Meme prix — rien a payer.",
+    confirmPayBeforeShip:
+      "Pas d'expedition / etiquette avant reglement de la difference.",
+    confirmRefundOriginal:
+      "Remboursement de CHF {amount} sur votre moyen de paiement initial (ecart ≤ CHF 50).",
+    confirmRefundStoreCredit:
+      "Avoir magasin de CHF {amount} (ecart > CHF 50).",
+    confirmRefundRuleHint:
+      "Ecart ≤ CHF 50 → remboursement sur le moyen de paiement d'origine. Au-dela → avoir magasin.",
+    confirmReturnRefundTitle: "Remboursement apres controle",
+    confirmReturnRefundAmount: "Montant estime : CHF {amount}",
   },
   en: {
     brand: "Resell Lausanne",
-    pageTitle: "Return request",
-    pageSubtitle: "Request your return online quickly",
+    pageTitle: "Resell Lausanne",
+    pageSubtitle: "",
     steps: { order: "1. Order", products: "2. Item", confirm: "3. Confirm" },
     langLabel: "Language",
     orderNumberLabel: "Order number",
@@ -316,11 +349,27 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     confirmReplacement: "Replacement",
     confirmPathReturn: "Return (credit)",
     confirmPathExchange: "Exchange",
+    priceDiffSame: "same price",
+    priceDiffPlus: "+ CHF {amount}",
+    priceDiffMinus: "− CHF {amount}",
+    priceDiffHint: "Difference vs your current pair (not the full price).",
+    confirmMoneyTitle: "Price difference",
+    confirmAmountDue: "Amount due: CHF {amount}",
+    confirmAmountSave: "You save: CHF {amount}",
+    confirmAmountEven: "Same price — nothing to pay.",
+    confirmPayBeforeShip: "No label / shipping until the difference is paid.",
+    confirmRefundOriginal:
+      "CHF {amount} refunded to your original payment method (gap ≤ CHF 50).",
+    confirmRefundStoreCredit: "CHF {amount} store credit (gap > CHF 50).",
+    confirmRefundRuleHint:
+      "Gap ≤ CHF 50 → refund to original payment. Above → store credit.",
+    confirmReturnRefundTitle: "Refund after inspection",
+    confirmReturnRefundAmount: "Estimated amount: CHF {amount}",
   },
   de: {
     brand: "Resell Lausanne",
-    pageTitle: "Retourenanfrage",
-    pageSubtitle: "Retoure schnell online anfragen",
+    pageTitle: "Resell Lausanne",
+    pageSubtitle: "",
     steps: { order: "1. Bestellung", products: "2. Artikel", confirm: "3. Bestaetigen" },
     langLabel: "Sprache",
     orderNumberLabel: "Bestellnummer",
@@ -418,6 +467,22 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     confirmReplacement: "Ersatz",
     confirmPathReturn: "Retoure",
     confirmPathExchange: "Umtausch",
+    priceDiffSame: "gleicher Preis",
+    priceDiffPlus: "+ CHF {amount}",
+    priceDiffMinus: "− CHF {amount}",
+    priceDiffHint: "Differenz zu Ihrem aktuellen Paar (nicht der Gesamtpreis).",
+    confirmMoneyTitle: "Preisdifferenz",
+    confirmAmountDue: "Zu zahlen: CHF {amount}",
+    confirmAmountSave: "Ersparnis: CHF {amount}",
+    confirmAmountEven: "Gleicher Preis — nichts zu zahlen.",
+    confirmPayBeforeShip: "Kein Label / Versand vor Zahlung der Differenz.",
+    confirmRefundOriginal:
+      "CHF {amount} Rueckerstattung auf die urspruengliche Zahlung (Differenz ≤ CHF 50).",
+    confirmRefundStoreCredit: "CHF {amount} Store-Guthaben (Differenz > CHF 50).",
+    confirmRefundRuleHint:
+      "Differenz ≤ CHF 50 → Rueckerstattung auf Originalzahlung. Darueber → Store-Guthaben.",
+    confirmReturnRefundTitle: "Rueckerstattung nach Kontrolle",
+    confirmReturnRefundAmount: "Geschaetzter Betrag: CHF {amount}",
   },
 };
 

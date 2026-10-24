@@ -9,8 +9,8 @@ const instrumentSans = Instrument_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Demande de retour",
-  description: "Demandez un retour pour votre commande",
+  title: "Resell Lausanne — Retours",
+  description: "Retours et echanges Resell Lausanne",
   robots: { index: false, follow: false },
 };
 
