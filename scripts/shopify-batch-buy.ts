@@ -62,8 +62,31 @@ async function main() {
   }
 
   const want9 = args.has("--buy-ok-9") || args.has("--9");
-  const items: ShopifyBatchBuyItem[] = want9 ? SHOPIFY_BUY_OK_9 : SHOPIFY_STANDARD_BATCH_13;
-  console.log(`[SHOPIFY-BATCH-BUY] items=${items.length} cohort=${want9 ? "BUY_OK_9" : "BATCH_13"}`);
+  let items: ShopifyBatchBuyItem[] = want9 ? SHOPIFY_BUY_OK_9 : SHOPIFY_STANDARD_BATCH_13;
+  const ordersArg = [...args].find((a) => a.startsWith("--orders="));
+  if (ordersArg) {
+    const want = new Set(
+      ordersArg
+        .slice("--orders=".length)
+        .split(",")
+        .map((s) => s.trim().replace(/^#/, ""))
+        .filter(Boolean)
+    );
+    items = items.filter((i) => want.has(i.orderName.replace(/^#/, "")));
+    if (!items.length) {
+      // Allow orders from BUY_OK_9 even when default cohort is BATCH_13
+      items = SHOPIFY_BUY_OK_9.filter((i) => want.has(i.orderName.replace(/^#/, "")));
+    }
+    if (!items.length) {
+      console.error(`[SHOPIFY-BATCH-BUY] --orders matched nothing: ${[...want].join(",")}`);
+      process.exit(2);
+    }
+  }
+  console.log(
+    `[SHOPIFY-BATCH-BUY] items=${items.length} cohort=${want9 ? "BUY_OK_9" : "BATCH_13"} orders=${items
+      .map((i) => i.orderName)
+      .join(",")}`
+  );
 
   const summary = await runShopifyBatchBuy({
     items,

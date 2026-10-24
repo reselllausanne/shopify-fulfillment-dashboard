@@ -217,6 +217,14 @@ describe("subtotal verify", () => {
     expect(laneMatchesSubtotal(lane, 128.44)).toBe(true);
     expect(laneMatchesSubtotal(lane, 125.12)).toBe(false);
   });
+
+  it("detects stuck Express vs Standard pick (prior #7298/#7542)", () => {
+    const std = lanes([["Standard", 127.5]])[0]!;
+    const exp = lanes([["Express", 318.85]])[0]!;
+    expect(laneMatchesSubtotal(std, 318.85)).toBe(false);
+    expect(laneMatchesSubtotal(exp, 318.85)).toBe(true);
+    expect(laneMatchesSubtotal(std, 127.5)).toBe(true);
+  });
 });
 
 describe("marginOk", () => {

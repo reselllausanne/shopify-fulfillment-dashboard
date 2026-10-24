@@ -340,10 +340,11 @@ export async function runShopifyBatchBuy(options: {
               result: {
                 kind: "aborted",
                 reason: "cf_sticky_abort",
-                detail: "CF after ≤45s on one sticky — abort item (no rotate)",
+                detail: "CF after ≤45s on one sticky — STOP batch (no rotate)",
               },
             });
-            continue;
+            console.error("[SHOPIFY-BATCH-BUY] one sticky CF — STOP batch (no pool burn)");
+            break;
           }
           nav = await softNavToPdp(session.page, slug, null);
         }
@@ -361,9 +362,16 @@ export async function runShopifyBatchBuy(options: {
           result: {
             kind: "aborted",
             reason: "cf_abort_45s",
-            detail: "CF after ≤45s sit — abort item, no sticky rotate",
+            detail:
+              session.stickyUsed >= 1
+                ? "CF on sole sticky ≤45s — STOP batch (no rotate)"
+                : "CF after ≤45s sit — abort item, no sticky rotate",
           },
         });
+        if (session.stickyUsed >= 1) {
+          console.error("[SHOPIFY-BATCH-BUY] sole sticky CF mid-batch — STOP");
+          break;
+        }
         await warmBuyingOrders(session.page).catch(() => undefined);
         continue;
       }
