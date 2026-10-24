@@ -217,8 +217,11 @@ describe("createAndOpenReturnFromFormData", () => {
     expect(mapFormReasonToShopify("WRONG_ITEM_RECEIVED")).toBe("WRONG_ITEM");
     expect(mapFormReasonToShopify("DAMAGED")).toBe("DEFECTIVE");
     expect(mapFormReasonToShopify("DEFECTIVE_ITEM")).toBe("DEFECTIVE");
-    expect(mapFormReasonToShopify("CHANGE_OF_MIND")).toBe("OTHER");
-    expect(mapFormReasonToShopify("NON_CONFORMITY")).toBe("OTHER");
+    expect(mapFormReasonToShopify("CHANGE_OF_MIND")).toBe("UNWANTED");
+    expect(mapFormReasonToShopify("NON_CONFORMITY")).toBe("NOT_AS_DESCRIBED");
+    expect(mapFormReasonToShopify("SIZE_TOO_LARGE")).toBe("SIZE_TOO_LARGE");
+    expect(mapFormReasonToShopify("STYLE")).toBe("STYLE");
+    expect(mapFormReasonToShopify("COLOR")).toBe("COLOR");
     expect(mapFormReasonToShopify("OTHER")).toBe("OTHER");
     expect(mapFormReasonToShopify("RANDOM")).toBe("OTHER");
   });

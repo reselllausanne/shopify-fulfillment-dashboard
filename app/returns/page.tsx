@@ -64,12 +64,14 @@ function messageForPublicError(
 }
 
 type ReturnReason =
-  | "EXCHANGE_SIZE_OR_MODEL"
-  | "SIZE_CHANGE"
-  | "CHANGE_OF_MIND"
-  | "DEFECTIVE_ITEM"
-  | "WRONG_ITEM_RECEIVED"
-  | "NON_CONFORMITY"
+  | "SIZE_TOO_SMALL"
+  | "SIZE_TOO_LARGE"
+  | "UNWANTED"
+  | "NOT_AS_DESCRIBED"
+  | "WRONG_ITEM"
+  | "DEFECTIVE"
+  | "STYLE"
+  | "COLOR"
   | "OTHER";
 
 type SubmitState =
@@ -178,8 +180,9 @@ function PublicReturnsWizard() {
   const [orderEmail, setOrderEmail] = useState("");
   const [orderNumberError, setOrderNumberError] = useState<string | null>(null);
   const [emailError, setEmailError] = useState<string | null>(null);
-  const [reason, setReason] = useState<ReturnReason>("SIZE_CHANGE");
-  const isExchangeFlow = reason === "EXCHANGE_SIZE_OR_MODEL";
+  const [flowPath, setFlowPath] = useState<FlowPath>("return");
+  const [reason, setReason] = useState<ReturnReason>("SIZE_TOO_SMALL");
+  const isExchangeFlow = flowPath === "exchange";
   const [details, setDetails] = useState("");
   const [loadingItems, setLoadingItems] = useState(false);
   const [returnableItems, setReturnableItems] = useState<ReturnableItem[]>([]);
@@ -416,7 +419,8 @@ function PublicReturnsWizard() {
       });
       setOrderDigits("");
       setOrderEmail("");
-      setReason("SIZE_CHANGE");
+      setFlowPath("return");
+      setReason("SIZE_TOO_SMALL");
       setReplacementOptions({});
       setReplacementLoading({});
       setSizeFitByLine({});
@@ -602,7 +606,8 @@ function PublicReturnsWizard() {
     setStep(1);
     setOrderDigits("");
     setOrderEmail("");
-    setReason("SIZE_CHANGE");
+    setFlowPath("return");
+    setReason("SIZE_TOO_SMALL");
     setDetails("");
     setReplacementOptions({});
     setReplacementLoading({});
@@ -774,14 +779,14 @@ function PublicReturnsWizard() {
               </div>
 
               <label className="block">
-                <span className="mb-2 block text-base font-medium">{copy.reasonLabel}</span>
+                <span className="mb-2 block text-base font-medium">{copy.pathTitle}</span>
                 <select
-                  value={reason}
+                  value={flowPath}
                   onChange={(e) => {
-                    const next = e.target.value as ReturnReason;
-                    setReason(next);
+                    const next = e.target.value as FlowPath;
+                    setFlowPath(next);
                     setSubmitState({ type: "idle" });
-                    if (next === "EXCHANGE_SIZE_OR_MODEL") {
+                    if (next === "exchange") {
                       for (const item of returnableItems) {
                         const st = selectedItems[item.fulfillmentLineItemId];
                         if (st?.checked) {
@@ -797,6 +802,21 @@ function PublicReturnsWizard() {
                         return out;
                       });
                     }
+                  }}
+                  className={fieldClass}
+                >
+                  <option value="return">{copy.pathReturnTitle}</option>
+                  <option value="exchange">{copy.pathExchangeTitle}</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-base font-medium">{copy.reasonLabel}</span>
+                <select
+                  value={reason}
+                  onChange={(e) => {
+                    setReason(e.target.value as ReturnReason);
+                    setSubmitState({ type: "idle" });
                   }}
                   className={fieldClass}
                 >

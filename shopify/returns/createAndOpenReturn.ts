@@ -34,6 +34,13 @@ export type ReturnFormReason =
   | "DEFECTIVE_ITEM"
   | "WRONG_ITEM_RECEIVED"
   | "NON_CONFORMITY"
+  | "SIZE_TOO_SMALL"
+  | "SIZE_TOO_LARGE"
+  | "UNWANTED"
+  | "NOT_AS_DESCRIBED"
+  | "DEFECTIVE"
+  | "STYLE"
+  | "COLOR"
   | "OTHER";
 
 export type ShopifyReturnRequestInput = {
@@ -385,6 +392,13 @@ const RETURN_REASON_LABELS: Record<string, string> = {
   DEFECTIVE_ITEM: "Article recu defectueux",
   WRONG_ITEM_RECEIVED: "Mauvais article recu",
   NON_CONFORMITY: "Non-conformite",
+  SIZE_TOO_SMALL: "Taille trop petite",
+  SIZE_TOO_LARGE: "Taille trop grande",
+  UNWANTED: "Changement d'avis",
+  NOT_AS_DESCRIBED: "Article non conforme",
+  DEFECTIVE: "Article endommage ou defectueux",
+  STYLE: "Style",
+  COLOR: "Couleur",
   OTHER: "Autre",
 };
 
@@ -396,8 +410,15 @@ const RETURN_REASON_MAP: Record<string, string> = {
   WRONG_ITEM_RECEIVED: "WRONG_ITEM",
   DAMAGED: "DEFECTIVE",
   DEFECTIVE_ITEM: "DEFECTIVE",
-  CHANGE_OF_MIND: "OTHER",
-  NON_CONFORMITY: "OTHER",
+  CHANGE_OF_MIND: "UNWANTED",
+  NON_CONFORMITY: "NOT_AS_DESCRIBED",
+  SIZE_TOO_SMALL: "SIZE_TOO_SMALL",
+  SIZE_TOO_LARGE: "SIZE_TOO_LARGE",
+  UNWANTED: "UNWANTED",
+  NOT_AS_DESCRIBED: "NOT_AS_DESCRIBED",
+  DEFECTIVE: "DEFECTIVE",
+  STYLE: "STYLE",
+  COLOR: "COLOR",
   OTHER: "OTHER",
 };
 
@@ -1257,6 +1278,7 @@ export async function createAndOpenReturnFromFormData(
       returnLines: selectedLines.map((entry) => ({
         fulfillmentLineItemId: entry.line.fulfillmentLineItemId,
         quantity: entry.quantity,
+        returnReason: entry.reason,
         reasonNote: [mapReasonLabel(entry.reason), entry.customerNote]
           .filter(Boolean)
           .join(" — "),

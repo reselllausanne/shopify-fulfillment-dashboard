@@ -16,6 +16,7 @@ type MoneyBag = {
 type NativeReturnLine = {
   fulfillmentLineItemId: string;
   quantity: number;
+  returnReason: string;
   reasonNote?: string | null;
 };
 
@@ -112,6 +113,18 @@ mutation CustomerExchangeReturnCreate($returnInput: ReturnInput!) {
       code
       field
       message
+    }
+  }
+}
+`;
+
+const RETURN_REASON_DEFINITIONS = /* GraphQL */ `
+query CustomerExchangeReturnReasonDefinitions($handles: [String!]) {
+  returnReasonDefinitions(first: 50, handles: $handles) {
+    nodes {
+      id
+      handle
+      deleted
     }
   }
 }
@@ -318,6 +331,44 @@ function amountFromBag(bag: MoneyBag | null | undefined): number {
   return Number.isFinite(raw) ? Number(raw.toFixed(2)) : 0;
 }
 
+const RETURN_REASON_HANDLES: Record<string, string> = {
+  SIZE_TOO_SMALL: "too-small",
+  SIZE_TOO_LARGE: "too-big",
+  UNWANTED: "changed-my-mind",
+  NOT_AS_DESCRIBED: "item-not-as-described",
+  WRONG_ITEM: "received-the-wrong-item",
+  DEFECTIVE: "damaged-or-defective",
+  STYLE: "style",
+  COLOR: "color",
+  OTHER: "other-reason",
+};
+
+const returnReasonDefinitionCache = new Map<string, string>();
+
+async function resolveReturnReasonDefinitionId(reason: string): Promise<string> {
+  const handle = RETURN_REASON_HANDLES[String(reason).toUpperCase()] ?? "other-reason";
+  const cached = returnReasonDefinitionCache.get(handle);
+  if (cached) return cached;
+  const result = await shopifyGraphQL<{
+    returnReasonDefinitions?: {
+      nodes?: Array<{ id: string; handle: string; deleted: boolean }>;
+    };
+  }>(RETURN_REASON_DEFINITIONS, { handles: [handle] });
+  assertNoErrors("returnReasonDefinitions", result.errors, undefined);
+  const definition = (result.data?.returnReasonDefinitions?.nodes ?? []).find(
+    (node) => node.handle === handle && !node.deleted
+  );
+  if (!definition?.id) {
+    throw new ShopifyReturnRequestError(
+      "SERVER_ERROR",
+      `Shopify return reason definition is unavailable: ${handle}`,
+      502
+    );
+  }
+  returnReasonDefinitionCache.set(handle, definition.id);
+  return definition.id;
+}
+
 type CalculatedLine = {
   quantity: number;
   subtotalSet: { presentmentMoney: { amount: string; currencyCode: string } };
@@ -472,6 +523,9 @@ export async function openNativeCustomerExchange(input: {
   invoiceUrl: string | null;
   refundPreference: "original_payment" | "store_credit" | null;
 }> {
+  const returnReasonDefinitionIds = await Promise.all(
+    input.returnLines.map((line) => resolveReturnReasonDefinitionId(line.returnReason))
+  );
   const createdResult = await shopifyGraphQL<{
     returnCreate?: {
       return?: NativeReturnShape | null;
@@ -481,9 +535,10 @@ export async function openNativeCustomerExchange(input: {
     returnInput: {
       orderId: input.orderId,
       requestedAt: new Date().toISOString(),
-      returnLineItems: input.returnLines.map((line) => ({
+      returnLineItems: input.returnLines.map((line, index) => ({
         fulfillmentLineItemId: line.fulfillmentLineItemId,
         quantity: line.quantity,
+        returnReasonDefinitionId: returnReasonDefinitionIds[index],
         returnReasonNote: String(line.reasonNote ?? "").slice(0, 255),
       })),
       exchangeLineItems: input.exchangeLines.map((line) => ({
