@@ -41,6 +41,8 @@ function isShopifyInstallRequest(pathname: string, searchParams: URLSearchParams
 const PUBLIC_PATHS = [
   "/login",
   "/returns",
+  // Brand asset for /returns header (public folder).
+  "/resell-lausanne-logo.png",
   "/auth",
   "/api/auth",
   "/api/auth/login",
