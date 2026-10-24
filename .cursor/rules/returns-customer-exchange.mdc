@@ -27,8 +27,14 @@ alwaysApply: false
 - After `git switch feat/returns-customer-exchange`: `git pull --ff-only` if clean.
 - Recover WIP: `git stash list` → look for messages containing `returns`; `git stash apply` on **this** branch only.
 
+## Localhost (Mac)
+
+- **Returns UI dev** uses worktree `.worktrees/returns-local` (branch pinned) — main repo may stay on another branch.
+- Start: `./scripts/dev-returns-localhost.sh` → http://localhost:3000/returns
+- Stay synced with other agents: `./scripts/install-returns-local-sync-agent.sh` (pull every 2 min when worktree is clean).
+
 ## Agent checklist
 
-- Confirm `git rev-parse --abbrev-ref HEAD` is `feat/returns-customer-exchange` before editing returns.
+- Confirm `git rev-parse --abbrev-ref HEAD` is `feat/returns-customer-exchange` before editing returns (edit in worktree or switch main repo to that branch).
 - After meaningful changes: commit + push in the same session unless the user forbids commit.
 - Do not `git switch -C feat/returns-customer-exchange origin/main` without user ask (wipes unpushed commits on that branch name).
