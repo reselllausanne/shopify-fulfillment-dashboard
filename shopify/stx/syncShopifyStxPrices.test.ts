@@ -111,7 +111,7 @@ describe("syncShopifyStxPricesForSupplierVariantIds", () => {
         data: { productVariantsBulkUpdate: { userErrors: [] } },
         errors: undefined,
       })
-      // EXPRESS_METAFIELD_MUTATION (express_price only — not express_available)
+      // EXPRESS_METAFIELD_MUTATION (express_price + express_available)
       .mockResolvedValueOnce({
         data: { metafieldsSet: { userErrors: [] } },
         errors: undefined,
