@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { SHOPIFY_STANDARD_BATCH_13 } from "@/lib/stockxAutoCheckout/shopifyBatchBuy";
+import {
+  SHOPIFY_BUY_OK_9,
+  SHOPIFY_STANDARD_BATCH_13,
+} from "@/lib/stockxAutoCheckout/shopifyBatchBuy";
 
 describe("SHOPIFY_STANDARD_BATCH_13", () => {
   it("has 13 planned STANDARD items with slug + EU size", () => {
@@ -15,5 +18,23 @@ describe("SHOPIFY_STANDARD_BATCH_13", () => {
     const names = new Set(SHOPIFY_STANDARD_BATCH_13.map((i) => i.orderName));
     expect(names.has("#7424")).toBe(false);
     expect(names.has("#7513")).toBe(false);
+  });
+});
+
+describe("SHOPIFY_BUY_OK_9", () => {
+  it("has the 9 GO cohort orders", () => {
+    expect(SHOPIFY_BUY_OK_9).toHaveLength(9);
+    const names = SHOPIFY_BUY_OK_9.map((i) => i.orderName);
+    expect(names).toEqual([
+      "#7298",
+      "#7302",
+      "#7538",
+      "#7535",
+      "#7540",
+      "#7532",
+      "#7542",
+      "#7536",
+      "#7534",
+    ]);
   });
 });
