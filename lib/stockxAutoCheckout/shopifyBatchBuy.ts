@@ -57,6 +57,8 @@ export type ShopifyBatchBuySummary = {
   skipped: number;
   needsHuman: number;
   stoppedOn402: boolean;
+  /** Total residential/direct transfer MB across all sessions this batch. */
+  bandwidthMb: number;
   items: ShopifyBatchBuyItemResult[];
 };
 
@@ -66,6 +68,8 @@ type LiveSession = {
   proxy: PlaywrightProxyConfig | null;
   /** 0 = direct; 1 = one sticky fallback for whole batch. */
   stickyUsed: number;
+  /** Cumulative transfer MB for this session (metered + capped). */
+  bandwidthMb: () => number;
 };
 
 class Proxy402Error extends Error {
@@ -182,6 +186,7 @@ async function openSession(opts: {
     page: launched.page,
     proxy: launched.proxy,
     stickyUsed: opts.stickyUsed,
+    bandwidthMb: () => launched.bandwidth.mb(),
   };
 }
 
@@ -247,6 +252,7 @@ export async function runShopifyBatchBuy(options: {
   let skipped = 0;
   let needsHuman = 0;
   let stoppedOn402 = false;
+  let bandwidthMb = 0;
 
   let session: LiveSession | null = null;
   try {
@@ -307,6 +313,7 @@ export async function runShopifyBatchBuy(options: {
           console.warn(
             `[SHOPIFY-BATCH-BUY] CF on ${orderName} via direct — switching to ONE sticky for rest of batch`
           );
+          bandwidthMb += session.bandwidthMb();
           await session.ctx.close().catch(() => undefined);
           const sticky = nextStockxPlaywrightProxy();
           if (!sticky) {
@@ -419,7 +426,11 @@ export async function runShopifyBatchBuy(options: {
       throw e;
     }
   } finally {
+    if (session) bandwidthMb += session.bandwidthMb();
     await session?.ctx.close().catch(() => undefined);
+    console.log(
+      `[SHOPIFY-BATCH-BUY] total transfer ~${bandwidthMb.toFixed(1)}MB (bought=${bought} attempted=${out.length})`
+    );
   }
 
   return {
@@ -431,6 +442,7 @@ export async function runShopifyBatchBuy(options: {
     skipped,
     needsHuman,
     stoppedOn402,
+    bandwidthMb: Number(bandwidthMb.toFixed(1)),
     items: out,
   };
 }
