@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluatePrecheck,
+  isStockxAutoBuyExcluded,
   type SupplierVariantSnapshot,
 } from "@/lib/stockxAutoCheckout/precheckAvailability";
 
@@ -148,6 +149,15 @@ describe("evaluatePrecheck", () => {
     });
     expect(r.status).toBe("stale_data");
     expect(r.detail).toContain("no usable price");
+  });
+
+  it("excludes non-website brands (BAPE / Essentials / Crocs)", () => {
+    expect(isStockxAutoBuyExcluded({ title: "Fear of God Essentials Fleece Hoodie" }).excluded).toBe(
+      true
+    );
+    expect(isStockxAutoBuyExcluded({ title: "BAPE Shark Full Zip Hoodie" }).excluded).toBe(true);
+    expect(isStockxAutoBuyExcluded({ title: "Crocs Classic Clog Black" }).excluded).toBe(true);
+    expect(isStockxAutoBuyExcluded({ title: "Nike Dunk Low Panda" }).excluded).toBe(false);
   });
 
   it("sellChf 0 → cannot make margin → too_expensive", () => {

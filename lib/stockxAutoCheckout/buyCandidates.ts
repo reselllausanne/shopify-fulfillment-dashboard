@@ -87,6 +87,7 @@ const DEFAULT_MAX_COUNT = 100;
 const STICKY_UNBUYABLE: ReadonlySet<StockxPrecheckStatus> = new Set([
   "oos_no_ask",
   "too_expensive",
+  "excluded_brand",
 ]);
 
 /** First day of October of the given date's year (default scan window start). */

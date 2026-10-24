@@ -8,15 +8,18 @@ export type StockxDesiredLane = "STANDARD" | "EXPRESS";
  *  - buyable         → stock>0, lane price present, margin ≥ floor, data fresh.
  *  - oos_no_ask      → stock ≤ 0 (true OOS — safe to tell the customer, do not re-probe).
  *  - too_expensive   → margin below floor (skip; re-check only on price change).
- *  - stale_data      → no usable price OR lastSyncAt older than staleHours (caller may refresh + retry).
+ *  - stale_data      → no usable price OR the StockX feed went silent (caller may refresh + retry).
  *  - no_variant_match→ no StockX SupplierVariant matched the line (gtin / sku+size).
+ *  - excluded_brand  → brand/line we must not source on StockX (BAPE / Essentials / Crocs
+ *                      / non-website stock) — never auto-buy (sticky).
  */
 export type StockxPrecheckStatus =
   | "buyable"
   | "oos_no_ask"
   | "too_expensive"
   | "stale_data"
-  | "no_variant_match";
+  | "no_variant_match"
+  | "excluded_brand";
 
 export type StockxLaneLabel = "STANDARD" | "EXPRESS" | "UNKNOWN";
 
