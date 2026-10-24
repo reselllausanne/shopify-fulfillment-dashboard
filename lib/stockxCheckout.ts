@@ -19,6 +19,7 @@ import {
   classifyLaneLabel,
   countDistinctShippingTierInText,
   extractCheckoutSubtotalChf,
+  LANE_MIN_ALL_IN_CHF,
   laneMatchesSubtotal,
   marginOk,
   moneyToNumber,
@@ -577,6 +578,9 @@ export async function selectAndVerifyStockxLane(
 
   let picked: StockxLaneCard | null = null;
   let pickReason = "";
+  // Single-price Xpress direct-ship: no lane cards; live checkout subtotal is the
+  // authoritative all-in (the synthesized lane holds only the item price).
+  let singleXpressSynth = false;
 
   if (options.policy === "galaxus_csat") {
     const pick = chooseLaneByCsAtMargin(options.sellChf, lanes, {
@@ -612,6 +616,7 @@ export async function selectAndVerifyStockxLane(
             };
             lanes = [synth];
             picked = synth;
+            singleXpressSynth = true;
             pickReason = `single-xpress:item=${itemPriceChf}`;
             console.warn(
               `[STOCKX-CHECKOUT] single-price Xpress — synthesized EXPRESS lane ${itemPriceChf} CHF (live subtotal still gates)`
@@ -686,6 +691,31 @@ export async function selectAndVerifyStockxLane(
       lanes,
       detail: `STANDARD click did not stick — live subtotal still Express ${verifiedSubtotal} (want ${picked.totalChf}) clicked=${clicked} (${pickReason})`,
     };
+  }
+
+  // Single-price Xpress: there are no lane cards to click; the live checkout subtotal
+  // is the real all-in (item price + fees/ship). Accept it as the verified total and
+  // enforce the cap here; margin is gated downstream on this live subtotal. Fail closed
+  // (no item-price fallback) when no live subtotal appears.
+  if (singleXpressSynth) {
+    if (verifiedSubtotal == null || verifiedSubtotal < LANE_MIN_ALL_IN_CHF) {
+      return {
+        ok: false,
+        reason: "express_unparsed",
+        lanes,
+        detail: `single-xpress: no live subtotal (item=${picked.totalChf}) clicked=${clicked}`,
+      };
+    }
+    if (verifiedSubtotal > maxAllInChf) {
+      return {
+        ok: false,
+        reason: "cap",
+        lanes,
+        detail: `single-xpress all-in ${verifiedSubtotal} > cap ${maxAllInChf} (item=${picked.totalChf})`,
+      };
+    }
+    const lane: StockxLaneCard = { ...picked, totalChf: verifiedSubtotal };
+    return { ok: true, lane, lanes: [lane], pickReason, subtotalChf: verifiedSubtotal };
   }
 
   // fr-CH Sous-total 0,00 until "Vérifier": never invent match from card price when
