@@ -37,6 +37,7 @@ import {
 } from "@/lib/stockxAutoCheckout/sizeUsFallback";
 import { linkStockxBuyToShopify } from "@/lib/stockxAutoCheckout/linkAfterBuy";
 import {
+  findUnlinkedStockxMatches,
   prebuyBlocksNewPurchase,
   runPrebuyDedupeCheck,
   sizeFromSku,
@@ -1529,21 +1530,64 @@ export async function runStockxAutoCheckoutForOrder(options: {
     const orderMatch =
       after.match(/\b(0[1-3]-[A-Z0-9]{8,})\b/) ||
       after.match(/numéro de commande[^\n]*([0-9A-Z-]{8,})/i);
-    const stockxOrderNumber = orderMatch?.[1] ?? null;
+    let stockxOrderNumber = orderMatch?.[1] ?? null;
+    if (!stockxOrderNumber) {
+      // Auto-resolve "paid but confirmation spinner hung": payment went through but the
+      // order number never rendered. Force-refresh the buying API and match this exact
+      // line (product+size, unlinked) via the same prebuy-dedupe matcher. A single
+      // unambiguous fresh match → use it; otherwise fall through to human.
+      try {
+        const hits = await findUnlinkedStockxMatches(
+          {
+            shopifyOrderName: shopify.orderName,
+            shopifyOrderId: shopify.shopifyOrderId ?? "",
+            shopifyLineItemId: shopify.shopifyLineItemId ?? "",
+            shopifyCreatedAt: shopify.createdAt ?? new Date().toISOString(),
+            title: shopify.title,
+            sku: shopify.sku ?? null,
+            sizeEU: shopify.sizeEU ?? null,
+          },
+          { forceRefresh: true }
+        );
+        const sorted = [...hits].sort((a, b) => {
+          const ta = a.purchaseDate ? Date.parse(a.purchaseDate) : 0;
+          const tb = b.purchaseDate ? Date.parse(b.purchaseDate) : 0;
+          return tb - ta;
+        });
+        if (sorted.length === 1 && sorted[0]?.orderNumber) {
+          stockxOrderNumber = sorted[0].orderNumber;
+          console.warn(
+            `[STOCKX-CHECKOUT] bot_fail auto-resolved via buying API → ${stockxOrderNumber}`
+          );
+        } else if (sorted.length > 1) {
+          console.warn(
+            `[STOCKX-CHECKOUT] bot_fail: ${sorted.length} unlinked candidates (${sorted
+              .map((h) => h.orderNumber)
+              .join(",")}) — ambiguous, needs human`
+          );
+        }
+      } catch (e: any) {
+        console.warn(
+          `[STOCKX-CHECKOUT] bot_fail auto-resolve failed: ${e?.message || e}`
+        );
+      }
+    }
     if (!stockxOrderNumber) {
       return fail("bot_fail", {
         lanes,
         recommended: pick.lane,
-        detail: "Paid but no StockX order number parsed — check VNC / account",
+        detail: "Paid but no StockX order number parsed (buying API had no single match) — check VNC / account",
       });
     }
 
-    // 01- = Express, 03- = Standard — reject Express number if Shopify was Standard
-    if (!shopifyExpress && stockxOrderNumber.startsWith("01-")) {
+    // 01- = Express, 03- = Standard. Reject an Express number only when we actually PICKED
+    // a STANDARD lane (a deliberate upgrade / single-Xpress-only page legitimately yields
+    // an Express order), so key on the chosen lane, not the customer's original choice.
+    if (pick.lane.label === "STANDARD" && stockxOrderNumber.startsWith("01-")) {
       return fail("wrong_lane_only", {
         lanes,
         recommended: pick.lane,
-        detail: `Got Express order ${stockxOrderNumber} on Standard Shopify`,
+        detail: `Got Express order ${stockxOrderNumber} on picked STANDARD lane`,
       });
     }
 
