@@ -15,6 +15,7 @@ if [ ! -d "$WT" ]; then
 fi
 
 "$ROOT/scripts/returns-exchange-auto-sync.sh" "$WT" || true
+"$ROOT/scripts/returns-local-link-env.sh"
 
 cd "$WT"
 if [ ! -d node_modules ]; then
