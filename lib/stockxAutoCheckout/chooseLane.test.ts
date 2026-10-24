@@ -44,10 +44,10 @@ describe("chooseLane", () => {
     }
   });
 
-  it("never returns Express when desired STANDARD", () => {
+  it("takes Express when desired STANDARD but only Express available (don't refuse)", () => {
     const result = chooseLane("STANDARD", lanes([["Express", 90]]));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe("wrong_lane_only");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("EXPRESS");
   });
 
   it("picks Express when Shopify Express + under cap", () => {
@@ -145,10 +145,42 @@ describe("chooseLane", () => {
     if (!result.ok) expect(result.reason).toBe("multi_price");
   });
 
-  it("STANDARD never escalates to EXPEDITED", () => {
+  it("STANDARD takes Expedited when only Expedited available (don't refuse)", () => {
     const result = chooseLane("STANDARD", lanes([["Express Expedited", 150]]));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe("wrong_lane_only");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("EXPEDITED");
+  });
+
+  it("STANDARD upgrades to Express when ~same price (+7 CHF, screenshot case)", () => {
+    const result = chooseLane("STANDARD", lanes([
+      ["Standard", 209.23],
+      ["Express", 216.84],
+    ]));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("EXPRESS");
+  });
+
+  it("STANDARD keeps Standard when faster lane far more expensive", () => {
+    const result = chooseLane("STANDARD", lanes([
+      ["Standard", 100],
+      ["Express", 160],
+    ]));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("STANDARD");
+  });
+
+  it("STANDARD upgrade respects pct=0/delta=0 opts (keep standard)", () => {
+    const result = chooseLane(
+      "STANDARD",
+      lanes([
+        ["Standard", 209.23],
+        ["Express", 216.84],
+      ]),
+      250,
+      { standardUpgradeMaxPct: 0, standardUpgradeMaxDeltaChf: 0 }
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("STANDARD");
   });
 
   it("EXPRESS: respects configurable thresholds via opts", () => {

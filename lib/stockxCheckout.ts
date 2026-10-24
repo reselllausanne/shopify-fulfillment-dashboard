@@ -651,8 +651,11 @@ export async function selectAndVerifyStockxLane(
     return { ok: false, reason: "oos", lanes };
   }
 
+  // Guard "express subtotal while we wanted standard" only when we actually PICKED a
+  // standard lane. A deliberate STANDARD→faster upgrade (chooseLane) legitimately shows
+  // an express subtotal, so base the check on the picked lane, not the original desire.
   const desiredForVerify: StockxDesiredLane | null =
-    options.policy === "desired" ? options.desired : picked.label === "STANDARD" ? "STANDARD" : null;
+    picked.label === "STANDARD" ? "STANDARD" : null;
 
   let clicked = false;
   let verifiedSubtotal: number | null = null;
