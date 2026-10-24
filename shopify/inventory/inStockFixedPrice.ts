@@ -115,10 +115,14 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
       "15356478325122", // Check by Bathing Tee White/Beige
       "15356478357890", // Big Ape Head Tee White
     ],
-    // Titles only for the two warehouse retail SKUs — never all BAPE * Tee (dropship).
+    // Warehouse retail tees only — never all BAPE * Tee (dropship / MK).
+    skuBases: [
+      "8d665d38-a271-46ee-9b51-9da28c3bbb6c", // Sakura Tree Tee Black
+    ],
     titlePatterns: [
       /^BAPE A Bathing Ape Check by Bathing Tee White\/Beige\b/i,
       /^BAPE Big Ape Head Tee White\b/i,
+      /^BAPE Sakura Tree Tee Black\b/i,
     ],
   },
   {

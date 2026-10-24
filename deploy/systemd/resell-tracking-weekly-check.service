@@ -1,0 +1,10 @@
+[Unit]
+Description=Resell tracking Friday digeste
+After=network.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/resell
+ExecStart=/usr/bin/env bash -lc 'bash scripts/tracking-weekly-check.sh'
+StandardOutput=journal
+StandardError=journal

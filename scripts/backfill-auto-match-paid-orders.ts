@@ -48,9 +48,23 @@ async function main() {
   });
   console.log(`[backfill-auto-match] scanning ${orders.length} orders (${DAYS}d)`);
 
-  const totals = { fixedRule: 0, moneyKickz: 0, physicalZero: 0, skippedProtected: 0, skippedNoLocation: 0, errors: 0 };
+  const totals = {
+    fixedRule: 0,
+    moneyKickz: 0,
+    physicalUnitCost: 0,
+    physicalZero: 0,
+    skippedProtected: 0,
+    skippedNoLocation: 0,
+    errors: 0,
+  };
   const errorSamples: Array<{ order: string; err: string }> = [];
-  const changed: Array<{ order: string; fixedRule: number; moneyKickz: number; physicalZero: number }> = [];
+  const changed: Array<{
+    order: string;
+    fixedRule: number;
+    moneyKickz: number;
+    physicalUnitCost: number;
+    physicalZero: number;
+  }> = [];
 
   for (let i = 0; i < orders.length; i += 1) {
     const o = orders[i];
@@ -58,13 +72,20 @@ async function main() {
       const res = await upsertAutoOrderMatchesForPaidOrder(toGid(o.shopifyOrderId));
       totals.fixedRule += res.fixedRule;
       totals.moneyKickz += res.moneyKickz;
+      totals.physicalUnitCost += res.physicalUnitCost;
       totals.physicalZero += res.physicalZero;
       totals.skippedProtected += res.skippedProtected;
       totals.skippedNoLocation += res.skippedNoLocation;
       totals.errors += res.errors.length;
-      const created = res.fixedRule + res.moneyKickz + res.physicalZero;
+      const created = res.fixedRule + res.moneyKickz + res.physicalUnitCost + res.physicalZero;
       if (created > 0) {
-        changed.push({ order: o.orderName, fixedRule: res.fixedRule, moneyKickz: res.moneyKickz, physicalZero: res.physicalZero });
+        changed.push({
+          order: o.orderName,
+          fixedRule: res.fixedRule,
+          moneyKickz: res.moneyKickz,
+          physicalUnitCost: res.physicalUnitCost,
+          physicalZero: res.physicalZero,
+        });
       }
       if (res.errors.length && errorSamples.length < 20) {
         errorSamples.push({ order: o.orderName, err: res.errors.slice(0, 3).join(" | ") });
@@ -74,7 +95,9 @@ async function main() {
       if (errorSamples.length < 20) errorSamples.push({ order: o.orderName, err: err?.message ?? String(err) });
     }
     if ((i + 1) % 25 === 0) {
-      console.log(`  [${i + 1}/${orders.length}] fix=${totals.fixedRule} mk=${totals.moneyKickz} phys=${totals.physicalZero} err=${totals.errors}`);
+      console.log(
+        `  [${i + 1}/${orders.length}] fix=${totals.fixedRule} mk=${totals.moneyKickz} physCost=${totals.physicalUnitCost} phys0=${totals.physicalZero} err=${totals.errors}`,
+      );
     }
     // Shopify rate limit safety
     await new Promise((r) => setTimeout(r, 120));

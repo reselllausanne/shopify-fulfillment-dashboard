@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily G4 Secondary Ads upload
+
+[Timer]
+OnCalendar=*-*-* 08:30:00
+Persistent=true
+Unit=resell-tracking-secondary-upload.service
+
+[Install]
+WantedBy=timers.target

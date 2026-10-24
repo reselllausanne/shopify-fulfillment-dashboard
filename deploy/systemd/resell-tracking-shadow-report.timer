@@ -1,8 +1,8 @@
 [Unit]
-Description=Daily funnel shadow coverage check (G1)
+Description=Daily Resell tracking shadow report
 
 [Timer]
-OnCalendar=*-*-* 05:30:00
+OnCalendar=*-*-* 07:15:00
 Persistent=true
 Unit=resell-tracking-shadow-report.service
 

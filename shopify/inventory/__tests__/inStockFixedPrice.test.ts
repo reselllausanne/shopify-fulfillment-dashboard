@@ -42,6 +42,15 @@ describe("inStockFixedPrice", () => {
     expect(r?.expressChf).toBe(99);
   });
 
+  it("resolves Bape Sakura Tree by title / SKU base with fixed COGS", () => {
+    expect(
+      resolveInStockFixedPrice({ title: "BAPE Sakura Tree Tee Black" })?.costChf,
+    ).toBe(35);
+    expect(
+      resolveInStockFixedPrice({ sku: "8d665d38-a271-46ee-9b51-9da28c3bbb6c-M" })?.costChf,
+    ).toBe(35);
+  });
+
   it("resolves Audemars x Travis by title with fixed COGS and sell 89/109", () => {
     const r = resolveInStockFixedPrice({
       title: "Travis Scott CJ x Audemars Piguet Vintage Tee Black",

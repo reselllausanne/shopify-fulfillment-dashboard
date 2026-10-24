@@ -1,0 +1,11 @@
+[Unit]
+Description=Resell G4 Secondary Ads click conversion upload (last 2d)
+After=network.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/resell
+# Requires TRACKING_GOOGLE_ADS_SECONDARY_* on VPS .env (gate). Dry days=2 live.
+ExecStart=/usr/bin/env bash -lc 'docker compose exec -T web npx tsx scripts/tracking-upload-secondary.ts --days=2 --live'
+StandardOutput=journal
+StandardError=journal
