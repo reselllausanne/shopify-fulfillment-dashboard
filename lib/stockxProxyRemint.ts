@@ -233,17 +233,37 @@ async function remintOnceViaProxy(opts: {
     // yields a token. Fall through to credential + Gmail/IMAP OTP login IN THIS proxy
     // context (CF already clear here), then capture the fresh JWT. This is the robust
     // "datacenter IP can't pass Turnstile" escape: residential IP + real login.
-    if (!captured && !stockxHardBlock) {
+    const creds = stockxCredentialsFromEnv(account);
+    if (!captured && creds) {
+      // Even on a stockx.com hard-block (403) or cold SSO, try the Auth0 login ORIGIN
+      // directly. accounts.stockx.com is a separate host that is often reachable even
+      // when stockx.com/buying/orders 403s via this proxy IP, so a /buying/orders 403
+      // must NOT skip the credential login entirely (durable #234 fix). We only give up
+      // if the login origin ITSELF is blocked.
+      if (
+        stockxHardBlock ||
+        !/accounts\.stockx\.com|\/login|identifier/i.test(page.url())
+      ) {
+        await page
+          .goto("https://accounts.stockx.com/u/login/identifier", {
+            waitUntil: "domcontentloaded",
+            timeout: 60_000,
+          })
+          .catch(() => undefined);
+      }
       const url = page.url();
       const title = await page.title().catch(() => "");
       const body = (await page.locator("body").innerText().catch(() => "")) || "";
+      const loginOriginBlocked =
+        /^error$/i.test(title.trim()) ||
+        /\baccess denied\b/i.test(body) ||
+        looksCloudflare(url, title, body);
       const onLoginWall =
         /accounts\.stockx\.com|\/login|identifier/i.test(url) ||
         /log in|se connecter/i.test(title);
-      const creds = stockxCredentialsFromEnv(account);
-      if (onLoginWall && creds && !looksCloudflare(url, title, body)) {
+      if (onLoginWall && !loginOriginBlocked) {
         console.log(
-          `[STOCKX-PROXY-REMINT] SSO cold (login wall, CF clear) → credential + OTP login via ${proxy.label}`
+          `[STOCKX-PROXY-REMINT] login origin reachable (hardBlock=${stockxHardBlock}) → credential + OTP login account=${account} via ${proxy.label}`
         );
         const login = await tryStockxCredentialLogin(page, creds);
         console.log(
@@ -266,6 +286,10 @@ async function remintOnceViaProxy(opts: {
           }
           await page.waitForTimeout(3000);
         }
+      } else {
+        console.warn(
+          `[STOCKX-PROXY-REMINT] login origin unreachable (blocked=${loginOriginBlocked} title=${title.slice(0, 40)}) — cannot credential-login via ${proxy.label} (proxy pool likely burned)`
+        );
       }
     }
 
