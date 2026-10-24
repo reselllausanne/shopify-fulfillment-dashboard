@@ -1,5 +1,18 @@
 # Agent instructions
 
+## Parallel agents & Macs (read first)
+
+Several Cursor chats (Cloud + local) may edit this repo at once. **Coordinate only via GitHub**, not local disk.
+
+1. **Start:** `git fetch origin` → work on the **feature branch for this task** (user or chat must name it). Example: customer `/returns` exchange → `feat/returns-customer-exchange`. If none exists: `git switch -c feat/<topic> origin/main`.
+2. **During:** One topic per branch. Do not mix unrelated files. Untracked files need `git add` + commit (or `git stash push -u`); plain stash drops untracked.
+3. **Before switching branch or ending:** commit on that branch → `git push -u origin HEAD`. Unpushed work is invisible to other agents/Macs.
+4. **Never** `git switch` with tracked dirty files on the wrong topic; never `switch -C` a feature branch onto `main` without explicit user OK.
+5. **Helpers:** `./scripts/safe-sync.sh`, `./scripts/safe-push.sh`; returns WIP → `./scripts/returns-exchange-guard.sh` and `.cursor/rules/returns-customer-exchange.mdc`.
+6. Full playbook: [`docs/PARALLEL-AGENTS.md`](docs/PARALLEL-AGENTS.md).
+
+**Default user prompt for parallel work:** state **topic + branch**; ask agents to stay on that branch and push before stopping.
+
 ## GitHub source of truth (mandatory)
 
 - **GitHub `main`** is the only shared source of truth for both Macs and the VPS.
