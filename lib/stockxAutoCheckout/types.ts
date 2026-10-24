@@ -21,7 +21,7 @@ export type StockxPrecheckStatus =
   | "no_variant_match"
   | "excluded_brand";
 
-export type StockxLaneLabel = "STANDARD" | "EXPRESS" | "UNKNOWN";
+export type StockxLaneLabel = "STANDARD" | "EXPRESS" | "EXPEDITED" | "UNKNOWN";
 
 export type StockxLaneCard = {
   label: StockxLaneLabel;

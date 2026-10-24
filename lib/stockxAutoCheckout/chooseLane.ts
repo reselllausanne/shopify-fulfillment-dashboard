@@ -14,13 +14,59 @@ export const LANE_MIN_ALL_IN_CHF = 80;
 
 /** Require decimals — bare `\d{1,3}` alone matches "86" from "86,74 CHF" and drops under min. */
 const MONEY_RE = String.raw`(\d{1,3}(?:[’'\s]\d{3})*[.,]\d{2})`;
-const LANE_LABEL_RE = String.raw`(Standard|Express|Xpress|Fastest)`;
+/** Money w/ optional decimals — single-price Xpress shows "119 CHF" (no decimals). */
+const MONEY_OPT_DEC_RE = String.raw`(\d{1,3}(?:[’'\s]\d{3})*(?:[.,]\d{2})?)`;
+const LANE_LABEL_RE = String.raw`(Standard|Express|Xpress|Fastest|Expedited)`;
+
+/** Default StockX express→expedited upgrade thresholds (env-overridable). */
+export const EXPEDITED_UPGRADE_MAX_PCT_DEFAULT = 0.05;
+export const EXPEDITED_UPGRADE_MAX_DELTA_CHF_DEFAULT = 10;
+
+function envNum(name: string, def: number): number {
+  const v = process.env[name];
+  if (v == null || v === "") return def;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : def;
+}
 
 export function classifyLaneLabel(raw: string): StockxLaneLabel {
   const t = String(raw || "").toLowerCase();
-  if (/\b(express|xpress|fastest)\b/.test(t)) return "EXPRESS";
+  if (/\b(expedited|fastest)\b/.test(t)) return "EXPEDITED";
+  if (/\b(express|xpress)\b/.test(t)) return "EXPRESS";
   if (/\bstandard\b/.test(t)) return "STANDARD";
   return "UNKNOWN";
+}
+
+/** Express family = normal express or the fastest/expedited tier. */
+export function isExpressFamily(label: StockxLaneLabel): boolean {
+  return label === "EXPRESS" || label === "EXPEDITED";
+}
+
+/**
+ * Single-price Xpress direct-ship pages show only an item price
+ * ("Prix de l'article 119 CHF" / "Item price") and no Standard/Express cards.
+ * Parse that item price so a single EXPRESS lane can be synthesized.
+ */
+export function parseSingleXpressItemPriceChf(
+  body: string | null | undefined
+): number | null {
+  const t = String(body || "");
+  const patterns = [
+    new RegExp(
+      String.raw`Prix de l['’]article\s*(?:CHF\s*)?${MONEY_OPT_DEC_RE}(?:\s*CHF)?`,
+      "i"
+    ),
+    new RegExp(
+      String.raw`Item price\s*(?:CHF\s*)?${MONEY_OPT_DEC_RE}(?:\s*CHF)?`,
+      "i"
+    ),
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    const n = moneyToNumber(m?.[1] ?? null);
+    if (n != null && n >= LANE_MIN_ALL_IN_CHF) return n;
+  }
+  return null;
 }
 
 export function moneyToNumber(raw: string | null | undefined): number | null {
@@ -70,8 +116,7 @@ function pushLane(
   totalChf: number,
   eta: string | null = null
 ): void {
-  let label = classifyLaneLabel(rawLabel);
-  if (label === "UNKNOWN" && /^fastest$/i.test(rawLabel)) label = "EXPRESS";
+  const label = classifyLaneLabel(rawLabel);
   if (label === "UNKNOWN") return;
   if (!(totalChf >= LANE_MIN_ALL_IN_CHF)) return;
   const key = `${label}:${totalChf.toFixed(2)}`;
@@ -232,19 +277,66 @@ export type ChooseLaneResult =
 export function chooseLane(
   desired: StockxDesiredLane,
   lanes: StockxLaneCard[],
-  maxAllInChf: number = MAX_ALL_IN_CHF
+  maxAllInChf: number = MAX_ALL_IN_CHF,
+  opts?: {
+    /** Expedited accepted if <= normal*(1+pct). Default env STOCKX_EXPEDITED_UPGRADE_MAX_PCT. */
+    expeditedUpgradeMaxPct?: number;
+    /** …or if (expedited-normal) <= delta CHF. Default env STOCKX_EXPEDITED_UPGRADE_MAX_DELTA_CHF. */
+    expeditedUpgradeMaxDeltaChf?: number;
+  }
 ): ChooseLaneResult {
   if (!lanes.length) return { ok: false, reason: "oos", lane: null };
 
   const underCap = lanes.filter((l) => l.totalChf <= maxAllInChf);
-  const desiredUnderCap = underCap.filter((l) => l.label === desired);
+
+  if (desired === "EXPRESS") {
+    const pct =
+      opts?.expeditedUpgradeMaxPct ??
+      envNum("STOCKX_EXPEDITED_UPGRADE_MAX_PCT", EXPEDITED_UPGRADE_MAX_PCT_DEFAULT);
+    const delta =
+      opts?.expeditedUpgradeMaxDeltaChf ??
+      envNum("STOCKX_EXPEDITED_UPGRADE_MAX_DELTA_CHF", EXPEDITED_UPGRADE_MAX_DELTA_CHF_DEFAULT);
+
+    const normals = underCap
+      .filter((l) => l.label === "EXPRESS")
+      .sort((a, b) => a.totalChf - b.totalChf);
+    const expedited = underCap
+      .filter((l) => l.label === "EXPEDITED")
+      .sort((a, b) => a.totalChf - b.totalChf);
+
+    if (!normals.length && !expedited.length) {
+      const anyExpress = lanes.filter((l) => isExpressFamily(l.label));
+      if (anyExpress.length > 0) return { ok: false, reason: "cap", lane: null };
+      const otherUnderCap = underCap.filter((l) => l.label === "STANDARD");
+      if (otherUnderCap.length > 0) return { ok: false, reason: "wrong_lane_only", lane: null };
+      return { ok: false, reason: "oos", lane: null };
+    }
+
+    // Ambiguous only when 2+ DISTINCT normal-express prices (not express vs expedited).
+    const normalPrices = new Set(normals.map((l) => l.totalChf.toFixed(2)));
+    if (normalPrices.size > 1) return { ok: false, reason: "multi_price", lane: null };
+
+    const chosenNormal = normals[0] ?? null;
+    const cheapestExpedited = expedited[0] ?? null;
+
+    if (chosenNormal && cheapestExpedited) {
+      const upgrade =
+        cheapestExpedited.totalChf <= chosenNormal.totalChf * (1 + pct) ||
+        cheapestExpedited.totalChf - chosenNormal.totalChf <= delta;
+      return { ok: true, lane: upgrade ? cheapestExpedited : chosenNormal };
+    }
+    if (chosenNormal) return { ok: true, lane: chosenNormal };
+    // Only expedited present → use it.
+    return { ok: true, lane: cheapestExpedited! };
+  }
+
+  // desired === "STANDARD" — never escalate to EXPRESS / EXPEDITED.
+  const desiredUnderCap = underCap.filter((l) => l.label === "STANDARD");
 
   if (desiredUnderCap.length === 0) {
-    const desiredAny = lanes.filter((l) => l.label === desired);
+    const desiredAny = lanes.filter((l) => l.label === "STANDARD");
     if (desiredAny.length > 0) return { ok: false, reason: "cap", lane: null };
-    const otherUnderCap = underCap.filter(
-      (l) => l.label === "STANDARD" || l.label === "EXPRESS"
-    );
+    const otherUnderCap = underCap.filter((l) => isExpressFamily(l.label));
     if (otherUnderCap.length > 0) return { ok: false, reason: "wrong_lane_only", lane: null };
     return { ok: false, reason: "oos", lane: null };
   }
@@ -253,10 +345,6 @@ export function chooseLane(
   if (priceKeys.size > 1) return { ok: false, reason: "multi_price", lane: null };
 
   const lane = [...desiredUnderCap].sort((a, b) => a.totalChf - b.totalChf)[0]!;
-  // Safety: never escalate to Express unless requested
-  if (desired === "STANDARD" && lane.label === "EXPRESS") {
-    return { ok: false, reason: "wrong_lane_only", lane: null };
-  }
   return { ok: true, lane };
 }
 
@@ -292,7 +380,7 @@ export function chooseLaneByCsAtMargin(
       (l) =>
         l.totalChf >= LANE_MIN_ALL_IN_CHF &&
         l.totalChf <= maxAllInChf &&
-        (l.label === "EXPRESS" || l.label === "STANDARD")
+        (isExpressFamily(l.label) || l.label === "STANDARD")
     )
     .sort((a, b) => a.totalChf - b.totalChf);
 
@@ -300,7 +388,8 @@ export function chooseLaneByCsAtMargin(
     return { ok: false, reason: "no_lane_under_cap", detail: `sell=${sellChf}` };
   }
 
-  const exp = under.filter((l) => l.label === "EXPRESS")[0];
+  // Expedited counts as express-equivalent (cheapest express-family lane).
+  const exp = under.filter((l) => isExpressFamily(l.label))[0];
   const std = under.filter((l) => l.label === "STANDARD")[0];
   const tiers =
     options?.shippingTierInText ??
