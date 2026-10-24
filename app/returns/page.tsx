@@ -841,6 +841,14 @@ function PublicReturnsWizard() {
                                   )}
                                 </div>
                               ) : null}
+                              {item.unitAmount != null ? (
+                                <p className="mb-2 text-sm font-medium text-neutral-800">
+                                  {copy.paidPairLabel.replace(
+                                    "{amount}",
+                                    item.unitAmount.toFixed(2)
+                                  )}
+                                </p>
+                              ) : null}
                               <span className="mb-2 block text-sm font-medium">
                                 {copy.replacementLabel}
                               </span>
@@ -1013,6 +1021,7 @@ function PublicReturnsWizard() {
                   <h3 className="text-base font-semibold text-amber-950">
                     {copy.confirmMoneyTitle}
                   </h3>
+                  <p className="mt-1 text-xs text-amber-900/80">{copy.priceDiffHint}</p>
                   {exchangeTotals.due > 0 ? (
                     <>
                       <p className="mt-2 text-lg font-semibold text-amber-950">

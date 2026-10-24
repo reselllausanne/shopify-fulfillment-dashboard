@@ -21,6 +21,7 @@ import {
   splitReturnableByEligibility,
   type ReturnExcludeReason,
 } from "@/shopify/returns/returnEligibility";
+import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
 
 export type CustomerReturnIntent = "return" | "exchange";
 
@@ -197,6 +198,12 @@ query FulfilledLineItemsForOrder($orderId: ID!) {
                   currencyCode
                 }
               }
+              discountedUnitPriceAfterAllDiscountsSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
               variant {
                 id
                 title
@@ -261,6 +268,12 @@ query ReturnableFulfillmentsForOrder($orderId: ID!, $first: Int!) {
                     url(transform: { maxWidth: 128, maxHeight: 128 })
                   }
                   originalUnitPriceSet {
+                    shopMoney {
+                      amount
+                      currencyCode
+                    }
+                  }
+                  discountedUnitPriceAfterAllDiscountsSet {
                     shopMoney {
                       amount
                       currencyCode
@@ -560,6 +573,10 @@ type ReturnLineItemFields = {
   originalUnitPriceSet?: {
     shopMoney?: { amount?: string | null; currencyCode?: string | null } | null;
   } | null;
+  /** What the customer actually paid per unit after line + order discounts (excludes other lines). */
+  discountedUnitPriceAfterAllDiscountsSet?: {
+    shopMoney?: { amount?: string | null; currencyCode?: string | null } | null;
+  } | null;
   variant?: {
     id?: string | null;
     title?: string | null;
@@ -596,6 +613,34 @@ export type CreateReturnOptions = {
   enforceReturnWindow?: boolean;
 };
 
+function moneyAmount(
+  set:
+    | { shopMoney?: { amount?: string | null; currencyCode?: string | null } | null }
+    | null
+    | undefined
+): { amount: number | null; currencyCode: string | null } {
+  const amountRaw = Number(set?.shopMoney?.amount ?? NaN);
+  const currencyCode = set?.shopMoney?.currencyCode
+    ? String(set.shopMoney.currencyCode)
+    : null;
+  return {
+    amount: Number.isFinite(amountRaw) ? amountRaw : null,
+    currencyCode,
+  };
+}
+
+/**
+ * Paid unit for this line only (after cart/order discounts).
+ * Not order total — package protection / upsells are other line items.
+ */
+export function paidUnitAmountFromLineItem(
+  lineItem: ReturnLineItemFields | null | undefined
+): { amount: number | null; currencyCode: string | null } {
+  const paid = moneyAmount(lineItem?.discountedUnitPriceAfterAllDiscountsSet);
+  if (paid.amount != null) return paid;
+  return moneyAmount(lineItem?.originalUnitPriceSet);
+}
+
 function buildReturnableLine(
   fulfillmentLineItemId: string,
   quantity: number,
@@ -603,7 +648,13 @@ function buildReturnableLine(
 ): ReturnableLine | null {
   if (!fulfillmentLineItemId || quantity <= 0) return null;
 
-  const amountRaw = Number(lineItem?.originalUnitPriceSet?.shopMoney?.amount ?? NaN);
+  // Protection colis / shipping protection = separate SKU — never exchange base.
+  if (isPackageProtectionShopifyLine(lineItem?.title, lineItem?.sku)) {
+    return null;
+  }
+
+  const paid = paidUnitAmountFromLineItem(lineItem);
+  const list = moneyAmount(lineItem?.originalUnitPriceSet);
   const compareAtRaw = Number(lineItem?.variant?.compareAtPrice ?? NaN);
   const collectionHandles = (lineItem?.variant?.product?.collections?.nodes ?? [])
     .map((node) => String(node?.handle ?? "").trim())
@@ -621,8 +672,9 @@ function buildReturnableLine(
     variantLabel: lineItemVariantLabel(lineItem),
     imageUrl: lineItemImageUrl(lineItem),
     lineItemId: lineItem?.id ?? null,
-    unitAmount: Number.isFinite(amountRaw) ? amountRaw : null,
-    currencyCode: lineItem?.originalUnitPriceSet?.shopMoney?.currencyCode ?? null,
+    // Exchange Δ = replacement catalog − what customer paid for this pair.
+    unitAmount: paid.amount,
+    currencyCode: paid.currencyCode ?? list.currencyCode,
     compareAtPrice: Number.isFinite(compareAtRaw) ? compareAtRaw : null,
     delivery48h: lineItem?.variant?.delivery48h?.value ?? null,
     priceLocked: lineItem?.variant?.priceLocked?.value ?? null,
@@ -844,25 +896,7 @@ async function listReturnableLineItems(orderId: string): Promise<ReturnableLine[
                 quantity: number;
                 fulfillmentLineItem: {
                   id: string;
-                  lineItem?: {
-                    id?: string | null;
-                    title?: string | null;
-                    sku?: string | null;
-                    originalUnitPriceSet?: {
-                      shopMoney?: { amount?: string | null; currencyCode?: string | null } | null;
-                    } | null;
-                    variant?: {
-                      id?: string | null;
-                      compareAtPrice?: string | null;
-                      delivery48h?: { value?: string | null } | null;
-                      priceLocked?: { value?: string | null } | null;
-                      product?: {
-                        id?: string | null;
-                        tags?: string[] | null;
-                        collections?: { nodes?: Array<{ handle?: string | null } | null> | null } | null;
-                      } | null;
-                    } | null;
-                  } | null;
+                  lineItem?: ReturnLineItemFields | null;
                 };
               };
             }>;

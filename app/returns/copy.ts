@@ -82,6 +82,8 @@ export type ReturnsCopy = {
   priceDiffPlus: string;
   priceDiffMinus: string;
   priceDiffHint: string;
+  /** What customer paid for this line at checkout (pair only, not protection/upsell). */
+  paidPairLabel: string;
   confirmMoneyTitle: string;
   confirmAmountDue: string;
   confirmAmountSave: string;
@@ -232,7 +234,9 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     priceDiffSame: "meme prix",
     priceDiffPlus: "+ CHF {amount}",
     priceDiffMinus: "− CHF {amount}",
-    priceDiffHint: "Difference vs votre paire actuelle (pas le prix total).",
+    priceDiffHint:
+      "Difference vs le prix paye pour cette paire au checkout (sans protection colis ni upsell).",
+    paidPairLabel: "Paye pour cette paire : CHF {amount}",
     confirmMoneyTitle: "Difference de prix",
     confirmAmountDue: "A payer : CHF {amount}",
     confirmAmountSave: "Economie : CHF {amount}",
@@ -352,7 +356,9 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     priceDiffSame: "same price",
     priceDiffPlus: "+ CHF {amount}",
     priceDiffMinus: "− CHF {amount}",
-    priceDiffHint: "Difference vs your current pair (not the full price).",
+    priceDiffHint:
+      "Difference vs what you paid for this pair at checkout (no package protection or upsell).",
+    paidPairLabel: "Paid for this pair: CHF {amount}",
     confirmMoneyTitle: "Price difference",
     confirmAmountDue: "Amount due: CHF {amount}",
     confirmAmountSave: "You save: CHF {amount}",
@@ -470,7 +476,9 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     priceDiffSame: "gleicher Preis",
     priceDiffPlus: "+ CHF {amount}",
     priceDiffMinus: "− CHF {amount}",
-    priceDiffHint: "Differenz zu Ihrem aktuellen Paar (nicht der Gesamtpreis).",
+    priceDiffHint:
+      "Differenz zum bezahlten Paarpreis im Checkout (ohne Paketschutz / Upsell).",
+    paidPairLabel: "Fuer dieses Paar bezahlt: CHF {amount}",
     confirmMoneyTitle: "Preisdifferenz",
     confirmAmountDue: "Zu zahlen: CHF {amount}",
     confirmAmountSave: "Ersparnis: CHF {amount}",
