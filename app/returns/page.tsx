@@ -423,6 +423,9 @@ function PublicReturnsWizard() {
       setConsentAccepted(false);
       setConsentError(null);
       setStep(4);
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
     } catch (error: any) {
       setSubmitState({
         type: "error",
@@ -621,22 +624,26 @@ function PublicReturnsWizard() {
               : "returns-wizard rounded-sm border border-neutral-200 bg-white p-6 shadow-sm md:p-8"
           }
         >
-          <div className="flex flex-wrap gap-2 text-sm">
-            {[
-              { key: 1, label: copy.steps.order },
-              { key: 2, label: copy.steps.products },
-              { key: 3, label: copy.steps.confirm },
-            ].map((item) => (
-              <span
-                key={item.key}
-                className={`rounded-sm px-3 py-1.5 ${
-                  step >= item.key ? "bg-neutral-900 text-white" : "bg-neutral-100 text-neutral-500"
-                }`}
-              >
-                {item.label}
-              </span>
-            ))}
-          </div>
+          {step !== 4 ? (
+            <div className="flex flex-wrap gap-2 text-sm">
+              {[
+                { key: 1, label: copy.steps.order },
+                { key: 2, label: copy.steps.products },
+                { key: 3, label: copy.steps.confirm },
+              ].map((item) => (
+                <span
+                  key={item.key}
+                  className={`rounded-sm px-3 py-1.5 ${
+                    step >= item.key
+                      ? "bg-neutral-900 text-white"
+                      : "bg-neutral-100 text-neutral-500"
+                  }`}
+                >
+                  {item.label}
+                </span>
+              ))}
+            </div>
+          ) : null}
 
           {step === 1 && (
             <div className="mt-6 space-y-5">
@@ -1100,31 +1107,69 @@ function PublicReturnsWizard() {
           )}
 
           {step === 4 && submitState.type === "success" && (
-            <div className="mt-6 space-y-5">
-              <div className="rounded-sm border border-emerald-200 bg-emerald-50 p-5">
-                <h3 className="text-2xl font-semibold text-emerald-950">
+            <div className="mt-2 space-y-5">
+              <div className="border-b border-neutral-200 pb-5">
+                <p className="text-sm font-medium uppercase tracking-wide text-neutral-500">
+                  {copy.brand}
+                </p>
+                <h3 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-900">
                   {submitState.labelPendingPayment
                     ? copy.exchangePayBeforeLabelTitle
                     : submitState.intent === "exchange"
                       ? copy.successTitleExchange
-                      : copy.successTitle}
+                      : copy.successRequestReceivedTitle}
                 </h3>
-                <p className="mt-2 text-base leading-relaxed text-emerald-900">
+                <p className="mt-3 text-base leading-relaxed text-neutral-700">
                   {submitState.labelPendingPayment
                     ? copy.exchangePayBeforeLabelBody
                     : submitState.intent === "exchange"
                       ? copy.successBodyExchange
-                      : copy.successBody}
+                      : copy.successRequestReceivedBody}
                 </p>
-                {submitState.trackingNumber ? (
-                  <p className="mt-3 text-sm text-emerald-900">
-                    {copy.tracking}: <strong>{submitState.trackingNumber}</strong>
+                <p className="mt-2 text-sm text-neutral-500">{copy.successEmailHint}</p>
+                {submitState.message && submitState.message !== "ok" ? (
+                  <p className="mt-3 text-sm text-neutral-600">
+                    Ref.{" "}
+                    <span className="font-medium text-neutral-900">{submitState.message}</span>
                   </p>
                 ) : null}
               </div>
 
-              <div className="rounded-sm border border-neutral-200 bg-neutral-50 p-5">
-                <h4 className="text-lg font-semibold">{copy.successNextTitle}</h4>
+              {submitState.priceDifferenceDue != null && submitState.priceDifferenceDue > 0 ? (
+                <div className="space-y-3">
+                  <p className="text-lg font-semibold text-neutral-900">
+                    {copy.exchangePriceDiffDue.replace(
+                      "{amount}",
+                      submitState.priceDifferenceDue.toFixed(2)
+                    )}
+                  </p>
+                  {submitState.exchangeInvoiceUrl ? (
+                    <>
+                      <p className="text-sm text-neutral-600">{copy.successPayEmailHint}</p>
+                      <a
+                        href={submitState.exchangeInvoiceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex min-h-14 items-center justify-center rounded-sm bg-neutral-900 px-5 text-base font-semibold text-white"
+                      >
+                        {copy.payExchangeDiff}
+                      </a>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {submitState.priceCreditDue != null && submitState.priceCreditDue > 0 ? (
+                <p className="text-base font-medium text-neutral-900">
+                  {copy.exchangeCreditDue.replace(
+                    "{amount}",
+                    submitState.priceCreditDue.toFixed(2)
+                  )}
+                </p>
+              ) : null}
+
+              <div>
+                <h4 className="text-base font-semibold text-neutral-900">{copy.successNextTitle}</h4>
                 <ol className="mt-3 space-y-2 text-base text-neutral-700">
                   {(submitState.labelPendingPayment
                     ? copy.exchangePayBeforeLabelNext
@@ -1140,33 +1185,10 @@ function PublicReturnsWizard() {
                 </ol>
               </div>
 
-              {submitState.priceDifferenceDue != null && submitState.priceDifferenceDue > 0 ? (
-                <p className="text-base">
-                  {copy.exchangePriceDiffDue.replace(
-                    "{amount}",
-                    submitState.priceDifferenceDue.toFixed(2)
-                  )}
+              {submitState.trackingNumber ? (
+                <p className="text-sm text-neutral-700">
+                  {copy.tracking}: <strong>{submitState.trackingNumber}</strong>
                 </p>
-              ) : null}
-
-              {submitState.priceCreditDue != null && submitState.priceCreditDue > 0 ? (
-                <p className="text-base">
-                  {copy.exchangeCreditDue.replace(
-                    "{amount}",
-                    submitState.priceCreditDue.toFixed(2)
-                  )}
-                </p>
-              ) : null}
-
-              {submitState.exchangeInvoiceUrl ? (
-                <a
-                  href={submitState.exchangeInvoiceUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex min-h-14 items-center justify-center rounded-sm bg-neutral-900 px-5 text-base font-semibold text-white"
-                >
-                  {copy.payExchangeDiff}
-                </a>
               ) : null}
 
               {submitState.labelUrl && !submitState.labelPendingPayment ? (

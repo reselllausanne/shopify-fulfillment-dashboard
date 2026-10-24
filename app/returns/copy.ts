@@ -70,6 +70,10 @@ export type ReturnsCopy = {
   exchangePayBeforeLabelTitle: string;
   exchangePayBeforeLabelBody: string;
   exchangePayBeforeLabelNext: string[];
+  successRequestReceivedTitle: string;
+  successRequestReceivedBody: string;
+  successEmailHint: string;
+  successPayEmailHint: string;
   exchangeCreditDue: string;
   confirmSummaryTitle: string;
   confirmEditProducts: string;
@@ -209,23 +213,30 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     exchangePriceDiffDue: "Difference a regler : CHF {amount}",
     payExchangeDiff: "Payer la difference (lien securise)",
     validateExchange: "Valider mon echange",
-    successTitleExchange: "Echange enregistre",
+    successTitleExchange: "Demande d'echange prise en compte",
     successBodyExchange:
-      "Suivez les etapes ci-dessous. Nous preparons le remplacement apres reception.",
+      "Merci. Votre demande est enregistree. Vous allez recevoir un e-mail avec la suite.",
     successNextExchange: [
-      "Payez la difference si un lien est affiche.",
-      "Apres paiement, etiquette de retour par e-mail.",
-      "Deposez le colis a la Poste.",
-      "Controle puis expedition du remplacement.",
+      "Surveillez votre e-mail pour l'etiquette / la suite.",
+      "Emballez la paire dans sa boite d'origine.",
+      "Deposez le colis a la Poste avec l'etiquette.",
+      "Apres controle, nous envoyons le remplacement.",
     ],
-    exchangePayBeforeLabelTitle: "Paiement avant l'etiquette",
+    exchangePayBeforeLabelTitle: "Demande d'echange enregistree",
     exchangePayBeforeLabelBody:
-      "Reglez la difference de prix pour recevoir l'etiquette de retour.",
+      "Merci. Votre demande est prise en compte. Reglez la difference pour recevoir l'etiquette de retour par e-mail.",
     exchangePayBeforeLabelNext: [
-      "Payez via le lien ci-dessous.",
-      "Etiquette generee apres paiement.",
+      "Un e-mail de facture Shopify vous a ete envoye pour payer la difference.",
+      "Ou utilisez le bouton ci-dessous pour payer maintenant.",
+      "Apres paiement, vous recevez l'etiquette de retour.",
       "Ensuite seulement, envoyez votre paire.",
     ],
+    successRequestReceivedTitle: "Demande prise en compte",
+    successRequestReceivedBody:
+      "Votre demande a bien ete enregistree. Vous allez recevoir un e-mail avec la suite.",
+    successEmailHint: "Verifiez votre boite mail (et les spams).",
+    successPayEmailHint:
+      "Facture de la difference envoyee par e-mail — vous pouvez aussi payer via le bouton.",
     exchangeCreditDue: "Avoir prevu apres controle : CHF {amount}",
     confirmSummaryTitle: "Recapitulatif",
     confirmEditProducts: "Modifier",
@@ -334,21 +345,29 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     exchangePriceDiffDue: "Amount due: CHF {amount}",
     payExchangeDiff: "Pay difference (secure link)",
     validateExchange: "Confirm exchange",
-    successTitleExchange: "Exchange registered",
-    successBodyExchange: "Follow the steps below.",
+    successTitleExchange: "Exchange request received",
+    successBodyExchange:
+      "Thanks — your request is registered. You will get an email with next steps.",
     successNextExchange: [
-      "Pay the difference if shown.",
-      "Return label by email after payment.",
-      "Drop parcel at Post Office.",
-      "Replacement ships after inspection.",
+      "Watch your email for the label / next steps.",
+      "Pack the pair in its original box.",
+      "Drop the parcel at the Post Office with the label.",
+      "After inspection we ship the replacement.",
     ],
-    exchangePayBeforeLabelTitle: "Payment before label",
-    exchangePayBeforeLabelBody: "Pay the price difference to get the return label.",
+    exchangePayBeforeLabelTitle: "Exchange request registered",
+    exchangePayBeforeLabelBody:
+      "Thanks — your request is recorded. Pay the difference to receive the return label by email.",
     exchangePayBeforeLabelNext: [
-      "Pay using the link below.",
-      "Label after payment.",
-      "Then send your pair back.",
+      "A Shopify invoice email was sent for the price difference.",
+      "Or pay now with the button below.",
+      "After payment you get the return label.",
+      "Only then send your pair back.",
     ],
+    successRequestReceivedTitle: "Request received",
+    successRequestReceivedBody:
+      "Your request is registered. You will get an email with next steps.",
+    successEmailHint: "Check your inbox (and spam).",
+    successPayEmailHint: "Invoice emailed — you can also pay with the button.",
     exchangeCreditDue: "Store credit after inspection: CHF {amount}",
     confirmSummaryTitle: "Summary",
     confirmEditProducts: "Edit",
@@ -455,21 +474,29 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     exchangePriceDiffDue: "Zu zahlen: CHF {amount}",
     payExchangeDiff: "Differenz bezahlen",
     validateExchange: "Umtausch bestaetigen",
-    successTitleExchange: "Umtausch erfasst",
-    successBodyExchange: "Schritte unten befolgen.",
+    successTitleExchange: "Umtausch-Anfrage erhalten",
+    successBodyExchange:
+      "Danke — Ihre Anfrage ist erfasst. Sie erhalten eine E-Mail mit den naechsten Schritten.",
     successNextExchange: [
-      "Differenz bezahlen falls noetig.",
-      "Label per E-Mail nach Zahlung.",
-      "Paket zur Post.",
-      "Ersatz nach Kontrolle.",
+      "E-Mail fuer Label / naechste Schritte pruefen.",
+      "Paar in Originalbox verpacken.",
+      "Paket mit Label zur Post bringen.",
+      "Nach Kontrolle senden wir den Ersatz.",
     ],
-    exchangePayBeforeLabelTitle: "Zahlung vor Label",
-    exchangePayBeforeLabelBody: "Preisdifferenz zahlen fuer Retourenlabel.",
+    exchangePayBeforeLabelTitle: "Umtausch-Anfrage erfasst",
+    exchangePayBeforeLabelBody:
+      "Danke — Ihre Anfrage ist erfasst. Zahlen Sie die Differenz, um das Retourenlabel per E-Mail zu erhalten.",
     exchangePayBeforeLabelNext: [
-      "Link unten.",
-      "Label nach Zahlung.",
-      "Dann Paar zuruecksenden.",
+      "Eine Shopify-Rechnungs-E-Mail fuer die Differenz wurde gesendet.",
+      "Oder jetzt mit dem Button unten bezahlen.",
+      "Nach Zahlung erhalten Sie das Retourenlabel.",
+      "Erst dann das Paar zuruecksenden.",
     ],
+    successRequestReceivedTitle: "Anfrage erhalten",
+    successRequestReceivedBody:
+      "Ihre Anfrage ist erfasst. Sie erhalten eine E-Mail mit den naechsten Schritten.",
+    successEmailHint: "Posteingang und Spam pruefen.",
+    successPayEmailHint: "Rechnung per E-Mail — oder Button unten.",
     exchangeCreditDue: "Guthaben nach Kontrolle: CHF {amount}",
     confirmSummaryTitle: "Zusammenfassung",
     confirmEditProducts: "Aendern",

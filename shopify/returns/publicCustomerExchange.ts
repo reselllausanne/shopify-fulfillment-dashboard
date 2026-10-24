@@ -82,15 +82,29 @@ query ExchangeVariantSnapshot($id: ID!) {
 }
 `;
 
-/** App token has write_orders but NOT write_draft_orders — use unpaid order + status page. */
+/** App token has write_orders but NOT write_draft_orders — unpaid fee order + invoice email. */
 const EXCHANGE_GAP_ORDER_CREATE = /* GraphQL */ `
-mutation ExchangeGapOrderCreate($order: OrderCreateOrderInput!) {
-  orderCreate(order: $order) {
+mutation ExchangeGapOrderCreate($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
+  orderCreate(order: $order, options: $options) {
     order {
       id
       name
       statusPageUrl
       displayFinancialStatus
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+`;
+
+const ORDER_INVOICE_SEND = /* GraphQL */ `
+mutation ExchangeGapInvoiceSend($id: ID!) {
+  orderInvoiceSend(id: $id) {
+    order {
+      id
     }
     userErrors {
       field
@@ -477,7 +491,7 @@ export async function createExchangePriceDifferenceDraftOrder(input: {
       email: input.customerEmail,
       currency,
       financialStatus: "PENDING",
-      tags: ["exchange-price-difference", "returns-portal"],
+      tags: ["exchange-price-difference", "returns-portal", "no-fulfill"],
       note: input.note,
       customAttributes: [
         { key: "source", value: "returns-portal-exchange" },
@@ -490,7 +504,7 @@ export async function createExchangePriceDifferenceDraftOrder(input: {
       ],
       lineItems: [
         {
-          title: `Écart échange (${input.returnName})`,
+          title: `Différence d'échange — ${input.orderName}`,
           quantity: 1,
           priceSet: {
             shopMoney: { amount: input.totalDue.toFixed(2), currencyCode: currency },
@@ -499,6 +513,12 @@ export async function createExchangePriceDifferenceDraftOrder(input: {
           requiresShipping: false,
         },
       ],
+    },
+    options: {
+      // Do not treat as a normal product sale (no receipt / no stock move).
+      sendReceipt: false,
+      sendFulfillmentReceipt: false,
+      inventoryBehaviour: "BYPASS",
     },
   });
 
@@ -524,6 +544,20 @@ export async function createExchangePriceDifferenceDraftOrder(input: {
   const order = data?.orderCreate?.order;
   if (!order?.id) {
     throw new ShopifyReturnRequestError("SERVER_ERROR", "Payment order missing id", 502);
+  }
+
+  // Invoice email = pay link in inbox (statusPageUrl alone is easy to miss on the portal).
+  const invoice = await shopifyGraphQL<{
+    orderInvoiceSend?: {
+      userErrors?: Array<{ message?: string | null }>;
+    };
+  }>(ORDER_INVOICE_SEND, { id: order.id });
+  if (invoice.errors?.length || invoice.data?.orderInvoiceSend?.userErrors?.length) {
+    console.warn("[returns][exchange] orderInvoiceSend failed", {
+      orderId: order.id,
+      errors: invoice.errors,
+      userErrors: invoice.data?.orderInvoiceSend?.userErrors,
+    });
   }
 
   return {
