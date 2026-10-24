@@ -24,6 +24,7 @@ import {
   type StockxAutoCheckoutResult,
 } from "@/lib/stockxCheckout";
 import { buildStockxBuyUrl } from "@/lib/stockxAutoCheckout/sizeUsFallback";
+import { detectShopifyExpress } from "@/lib/stockxAutoCheckout/detectShopifyExpress";
 import { MAX_ALL_IN_CHF } from "@/lib/stockxAutoCheckout/types";
 import type { BrowserContext, Page } from "playwright";
 
@@ -71,6 +72,72 @@ type LiveSession = {
   /** Cumulative transfer MB for this session (metered + capped). */
   bandwidthMb: () => number;
 };
+
+/**
+ * Stable sort: items the CUSTOMER chose Express for come FIRST, everything else
+ * keeps original order. Express orders are time-critical and get forgotten, so
+ * buy them before the browser session risks CF / 402.
+ */
+export function sortExpressFirst<T>(
+  items: T[],
+  isExpress: (item: T) => boolean
+): { sorted: T[]; expressCount: number } {
+  const express: T[] = [];
+  const rest: T[] = [];
+  for (const item of items) {
+    if (isExpress(item)) express.push(item);
+    else rest.push(item);
+  }
+  return { sorted: [...express, ...rest], expressCount: express.length };
+}
+
+function normalizeOrderName(orderName: string): string {
+  return orderName.startsWith("#") ? orderName : `#${orderName}`;
+}
+
+/**
+ * Resolve customer Express choice per batch item via Shopify order-by-name.
+ * Read-only lookup (no browser / proxy). Ambiguous / failure → Standard (false).
+ */
+async function resolveExpressFlags(
+  items: ShopifyBatchBuyItem[]
+): Promise<Map<string, boolean>> {
+  const flags = new Map<string, boolean>();
+  const { POST } = await import("@/app/api/shopify/order-by-name/route");
+  for (const item of items) {
+    const name = normalizeOrderName(item.orderName);
+    if (flags.has(name)) continue;
+    try {
+      const res = await POST(
+        new Request("http://local/api/shopify/order-by-name", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ orderName: name }),
+        }) as any
+      );
+      const json: any = await res.json();
+      const lines: any[] = Array.isArray(json?.lineItems) ? json.lineItems : [];
+      const line =
+        (item.lineItemId
+          ? lines.find((l) => String(l.lineItemId) === String(item.lineItemId))
+          : null) ?? lines[0];
+      const express = line
+        ? detectShopifyExpress({
+            deliveryMode: line.deliveryMode ?? null,
+            deliveryModeLabel: line.deliveryModeLabel ?? null,
+            shippingLineTitles: line.shippingLineTitles ?? null,
+          })
+        : false;
+      flags.set(name, express);
+    } catch (e: any) {
+      console.warn(
+        `[SHOPIFY-BATCH-BUY] express detect failed for ${name}: ${e?.message || e}`
+      );
+      flags.set(name, false);
+    }
+  }
+  return flags;
+}
 
 class Proxy402Error extends Error {
   constructor(detail: string) {
@@ -254,11 +321,21 @@ export async function runShopifyBatchBuy(options: {
   let stoppedOn402 = false;
   let bandwidthMb = 0;
 
+  // Express-priority: buy customer-chosen Express orders first (stable sort).
+  const expressFlags = await resolveExpressFlags(options.items);
+  const { sorted: orderedItems, expressCount } = sortExpressFirst(
+    options.items,
+    (it) => expressFlags.get(normalizeOrderName(it.orderName)) ?? false
+  );
+  console.log(
+    `[SHOPIFY-BATCH-BUY] express-priority: ${expressCount} express first`
+  );
+
   let session: LiveSession | null = null;
   try {
     session = await ensureWarmSession();
 
-    for (const item of options.items) {
+    for (const item of orderedItems) {
       const orderName = item.orderName.startsWith("#")
         ? item.orderName
         : `#${item.orderName}`;
