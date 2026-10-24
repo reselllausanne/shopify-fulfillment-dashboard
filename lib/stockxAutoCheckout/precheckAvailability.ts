@@ -70,6 +70,33 @@ export type PrecheckOptions = {
 const DEFAULT_MARGIN_FLOOR_PCT = 0.05;
 const DEFAULT_STALE_HOURS = 24;
 
+/**
+ * Brands / lines we must NOT source on StockX (not website stock). These almost never
+ * make sense to auto-buy on StockX: BAPE, Fear of God *Essentials*, Crocs. Extendable
+ * via STOCKX_AUTOBUY_EXCLUDE_KEYWORDS (comma-separated, case-insensitive substring).
+ */
+const BASE_EXCLUDE_KEYWORDS = ["bape", "bathing ape", "essentials", "crocs"] as const;
+
+function excludeKeywords(): string[] {
+  const extra = (process.env.STOCKX_AUTOBUY_EXCLUDE_KEYWORDS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return [...BASE_EXCLUDE_KEYWORDS, ...extra];
+}
+
+/** True when a line's title/sku matches an excluded (non-website-stock) brand. */
+export function isStockxAutoBuyExcluded(line: { title?: string | null; sku?: string | null }): {
+  excluded: boolean;
+  keyword?: string;
+} {
+  const hay = `${line.title ?? ""} ${line.sku ?? ""}`.toLowerCase();
+  for (const kw of excludeKeywords()) {
+    if (kw && hay.includes(kw)) return { excluded: true, keyword: kw };
+  }
+  return { excluded: false };
+}
+
 function decToNum(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const n = typeof value === "number" ? value : Number(String(value));
@@ -352,6 +379,22 @@ export async function getStockxFeedHeartbeat(now: Date = new Date()): Promise<Da
  * pure verdict. Zero StockX network — only reads already-synced DB rows.
  */
 export async function precheckStockxBuyability(opts: PrecheckOptions): Promise<PrecheckResult> {
+  // Brand guard first — cheapest check, and some excluded lines (Essentials) ARE on
+  // StockX so we must bail before resolving a variant / marking them buyable.
+  const excl = isStockxAutoBuyExcluded(opts.line);
+  if (excl.excluded) {
+    return {
+      status: "excluded_brand",
+      lane: opts.desiredLane,
+      expectedBuyChf: null,
+      stock: 0,
+      sellChf: Number(opts.line.saleChf ?? 0),
+      marginPct: null,
+      detail: `excluded brand/line (not website stock): "${excl.keyword}" — never auto-buy on StockX`,
+      supplierVariantId: null,
+    };
+  }
+
   const variant = await resolveSupplierVariantForLine(opts.line);
   // Resolve (+cache) the feed heartbeat unless the caller supplied one explicitly.
   const feedLastSyncAt =
