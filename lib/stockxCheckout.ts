@@ -9,6 +9,10 @@ import {
 } from "@/lib/stockxPlaywrightProxy";
 import { stockxAccountFiles } from "@/lib/stockxSessionRefresh";
 import {
+  attachStockxBandwidthGuard,
+  type BandwidthTracker,
+} from "@/lib/stockxBandwidthGuard";
+import {
   chooseLane,
   chooseLaneByCsAtMargin,
   classifyLaneLabel,
@@ -739,7 +743,12 @@ export async function launchStockxContext(options?: {
   proxy?: PlaywrightProxyConfig | null;
   /** When true (default if STOCKX_BROWSER_PROXY_MODE=always), pick next sticky. */
   useStickyProxy?: boolean;
-}): Promise<{ ctx: BrowserContext; page: Page; proxy: PlaywrightProxyConfig | null }> {
+}): Promise<{
+  ctx: BrowserContext;
+  page: Page;
+  proxy: PlaywrightProxyConfig | null;
+  bandwidth: BandwidthTracker;
+}> {
   const files = stockxAccountFiles("default");
   // VPS Xvfb / VNC: without DISPLAY Chromium dies. Default :99 like stockx login.
   if (!process.env.DISPLAY) process.env.DISPLAY = ":99";
@@ -782,8 +791,13 @@ export async function launchStockxContext(options?: {
           }
         : {}),
     });
+    // Block image/media/font + trackers, meter bytes, hard-cap runaway CF loops.
+    const bandwidth = attachStockxBandwidthGuard(ctx, {
+      proxyLabel: proxy?.label ?? null,
+      context: "stockx-checkout",
+    });
     const page = ctx.pages()[0] || (await ctx.newPage());
-    return { ctx, page, proxy };
+    return { ctx, page, proxy, bandwidth };
   } catch (e: any) {
     const msg = e?.message || String(e);
     throw new Error(
