@@ -26,6 +26,10 @@ import {
 import { assignGtinToVariantExclusive } from "@/shopify/restock/gtinResolution";
 import { resolveKickdbSlugForGtin } from "@/shopify/restock/resolveKickdbSlugForGtin";
 import { ensureManualSizeVariant, isManualPriceRequiredError } from "@/shopify/restock/createManualVariant";
+import {
+  createSimpleCatalogProduct,
+  loadSimpleCatalogSourceByGtin,
+} from "@/shopify/restock/createSimpleCatalogProduct";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { prisma } from "@/app/lib/prisma";
 import { releasePhysicalLiquidationLocksBeforeDetach } from "@/shopify/inventory/staleLiquidationLocks";
@@ -1671,6 +1675,66 @@ export async function applyScanRestock(input: {
   if (duplicateGuard) {
     duplicateGuard.db = await runDbImport();
     return duplicateGuard;
+  }
+
+  // B.3b — Non-StockX catalog good (Pokémon / TCG / card games / accessory):
+  // these live only in our DB SupplierVariant table (no StockX slug, no size
+  // matrix). The Python StockX pipeline cannot build them, so create a simple
+  // sizeless product directly from DB data (title / brand / type / image /
+  // price / GTIN) then stock at the physical location.
+  if (!isManualOnlyGtin(gtin)) {
+    const simpleSource = await loadSimpleCatalogSourceByGtin(gtin);
+    if (simpleSource) {
+      const simple = await createSimpleCatalogProduct(gtin, {
+        manualSellPrice: input.salePrice ?? null,
+        dryRun: input.dryRun,
+      });
+      warnings.push(...simple.warnings);
+      if (!simple.ok) {
+        return {
+          ok: false,
+          status: simple.error === "manual_price_required" ? "manual-price-required" : "error",
+          gtin,
+          error: simple.error ?? "Création produit catalogue échouée",
+          warnings,
+        };
+      }
+      if (input.dryRun) {
+        return {
+          ok: true,
+          status: "created-restocked",
+          gtin,
+          shopify: { created: true, productId: simple.productId },
+          warnings,
+        };
+      }
+      const restock = await restockShopifyVariantByGtin({
+        gtin,
+        quantity: input.quantity,
+        salePrice: input.salePrice ?? simple.priceUsed ?? null,
+        compareAtPrice: input.compareAtPrice ?? null,
+        dryRun: false,
+        locationId: input.locationId ?? null,
+        variantId: simple.variantId ?? undefined,
+        requireExplicitLocation: true,
+      });
+      if (!restock.found) {
+        return {
+          ok: false,
+          status: "error",
+          gtin,
+          error: restock.warnings.join("; ") || "Restock produit catalogue échoué",
+          warnings: [...warnings, ...restock.warnings],
+        };
+      }
+      return {
+        ok: true,
+        status: "created-restocked",
+        gtin,
+        shopify: { created: true, productId: simple.productId, restock },
+        warnings: [...warnings, ...restock.warnings],
+      };
+    }
   }
 
   if (!slug) {
