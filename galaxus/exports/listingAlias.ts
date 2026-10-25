@@ -95,20 +95,35 @@ export async function loadGalaxusListingIdentities(
   if (bySv.size === 0) return new Map();
 
   const svIds = Array.from(bySv.keys());
-  const clsRows = await (prisma as any).channelListingState.findMany({
-    where: {
-      channel: "GALAXUS",
-      supplierVariantId: { in: svIds },
-      archivedAt: null,
-    },
-    select: {
-      supplierVariantId: true,
-      providerKey: true,
-      createdAt: true,
-      status: true,
-    },
-    orderBy: { createdAt: "asc" },
-  });
+  // Postgres prepared-statement bind limit is 32767 — one bind var per IN value.
+  // At catalog scale (NER ~1M SVs) a single findMany blows the limit, which is
+  // what killed every stock/offer push. Chunk the IN list like every other
+  // large export loader (availableStock / evidenceStock use the same pattern).
+  const CLS_CHUNK_SIZE = 5000;
+  const clsRows: Array<{
+    supplierVariantId: string;
+    providerKey: string;
+    createdAt: Date;
+    status: string;
+  }> = [];
+  for (let offset = 0; offset < svIds.length; offset += CLS_CHUNK_SIZE) {
+    const chunk = svIds.slice(offset, offset + CLS_CHUNK_SIZE);
+    const batch = await (prisma as any).channelListingState.findMany({
+      where: {
+        channel: "GALAXUS",
+        supplierVariantId: { in: chunk },
+        archivedAt: null,
+      },
+      select: {
+        supplierVariantId: true,
+        providerKey: true,
+        createdAt: true,
+        status: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    clsRows.push(...batch);
+  }
 
   const clsBySv = new Map<string, string[]>();
   for (const row of clsRows as Array<{ supplierVariantId: string; providerKey: string }>) {
