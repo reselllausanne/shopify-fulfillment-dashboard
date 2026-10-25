@@ -305,12 +305,17 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
           })
         : null;
 
-      const [masterRes, stockRes, offerRes, specsRes] = await Promise.all([
-        needsMaster ? runGalaxusExportGET(masterUrl) : Promise.resolve(null),
-        needsStock && !stockFromSnapshot ? runGalaxusExportGET(stockUrl) : Promise.resolve(null),
-        needsOffer && !offerFromSnapshot ? runGalaxusExportGET(offerUrl) : Promise.resolve(null),
-        needsSpecs ? runGalaxusExportGET(specsUrl) : Promise.resolve(null),
-      ]);
+      // Serialize the export GETs (was Promise.all). Each export route runs heavy
+      // chunked queries over the full catalog (NER ~1M). Running master+stock+offer+
+      // specs concurrently starved the small Prisma pool (connection_limit) and
+      // produced "Unable to start a transaction in the given time" at scale. One at
+      // a time keeps each export within the pool budget; ticks are slower but reliable.
+      const masterRes = needsMaster ? await runGalaxusExportGET(masterUrl) : null;
+      const stockRes =
+        needsStock && !stockFromSnapshot ? await runGalaxusExportGET(stockUrl) : null;
+      const offerRes =
+        needsOffer && !offerFromSnapshot ? await runGalaxusExportGET(offerUrl) : null;
+      const specsRes = needsSpecs ? await runGalaxusExportGET(specsUrl) : null;
 
       if (masterRes && !masterRes.ok) {
         const body = await masterRes.text().catch(() => "");
