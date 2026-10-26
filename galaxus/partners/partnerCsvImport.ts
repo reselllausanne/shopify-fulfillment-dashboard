@@ -8,6 +8,7 @@ import {
   bulkUpsertSupplierVariantsPartnerImport,
   bulkUpsertVariantMappings,
   bulkUpdateSupplierVariants,
+  bulkTouchSupplierVariantsLastSync,
   chunkArray,
   remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
@@ -318,14 +319,42 @@ export async function runPartnerCsvImport(
   if (!dryRun && validImports.length > 0) {
     const now = new Date();
     const uniqueIds = [...new Set(validImports.map((v) => v.supplierVariantId))];
-    const existingById = new Map<string, { gtin: string | null; providerKey: string | null }>();
+    const existingById = new Map<
+      string,
+      {
+        gtin: string | null;
+        providerKey: string | null;
+        price: number | null;
+        stock: number | null;
+        sizeRaw: string | null;
+        sizeNormalized: string | null;
+        supplierSku: string | null;
+      }
+    >();
     for (const batch of chunkArray(uniqueIds, 500)) {
       const found = await prismaAny.supplierVariant.findMany({
         where: { supplierVariantId: { in: batch } },
-        select: { supplierVariantId: true, gtin: true, providerKey: true },
+        select: {
+          supplierVariantId: true,
+          gtin: true,
+          providerKey: true,
+          price: true,
+          stock: true,
+          sizeRaw: true,
+          sizeNormalized: true,
+          supplierSku: true,
+        },
       });
       for (const r of found) {
-        existingById.set(r.supplierVariantId, { gtin: r.gtin ?? null, providerKey: r.providerKey ?? null });
+        existingById.set(r.supplierVariantId, {
+          gtin: r.gtin ?? null,
+          providerKey: r.providerKey ?? null,
+          price: r.price ?? null,
+          stock: r.stock ?? null,
+          sizeRaw: r.sizeRaw ?? null,
+          sizeNormalized: r.sizeNormalized ?? null,
+          supplierSku: r.supplierSku ?? null,
+        });
       }
     }
 
@@ -475,9 +504,54 @@ export async function runPartnerCsvImport(
     }
     const variantBulk = [...variantBulkDedup.values()];
 
-    for (const batch of chunkArray(variantBulk, 400)) {
+    // Diff vs DB: only rows whose import values differ need the heavy upsert. Existing rows
+    // that are byte-identical just get lastSyncAt/updatedAt bumped (same effect the upsert's
+    // ON CONFLICT path has on an unchanged row), turning most of NER's ~1M re-import rows
+    // into cheap bulk touches. Conservative: anything not provably identical is fully upserted.
+    const rowIsUnchanged = (
+      existing: {
+        gtin: string | null;
+        providerKey: string | null;
+        price: number | null;
+        stock: number | null;
+        sizeRaw: string | null;
+        sizeNormalized: string | null;
+        supplierSku: string | null;
+      } | undefined,
+      row: VariantBulkRow
+    ): boolean => {
+      if (!existing) return false;
+      if (Number(existing.price) !== Number(row.price)) return false;
+      if (Number(existing.stock) !== Number(row.stock)) return false;
+      if ((existing.sizeRaw ?? null) !== (row.sizeRaw ?? null)) return false;
+      if ((existing.sizeNormalized ?? null) !== (row.sizeNormalized ?? null)) return false;
+      if ((existing.supplierSku ?? null) !== (row.supplierSku ?? null)) return false;
+      // Upsert does gtin = COALESCE(existing, excluded): only changes when existing is null.
+      if (existing.gtin == null && row.gtin != null) return false;
+      // Upsert providerKey CASE: only changes when excluded.gtin set, existing key null, new key set.
+      if (row.gtin != null && existing.providerKey == null && row.providerKey != null) return false;
+      return true;
+    };
+
+    const changedRows: VariantBulkRow[] = [];
+    const unchangedIds: string[] = [];
+    for (const row of variantBulk) {
+      if (rowIsUnchanged(existingById.get(row.supplierVariantId), row)) {
+        unchangedIds.push(row.supplierVariantId);
+      } else {
+        changedRows.push(row);
+      }
+    }
+
+    for (const batch of chunkArray(changedRows, 400)) {
       await bulkUpsertSupplierVariantsPartnerImport(batch, now);
     }
+    await bulkTouchSupplierVariantsLastSync(unchangedIds, now);
+    console.info("[PARTNER-IMPORT] supplier-variant write diff", {
+      total: variantBulk.length,
+      changed: changedRows.length,
+      unchangedTouched: unchangedIds.length,
+    });
     for (const batch of chunkArray(mappingUpserts, 200)) {
       if (batch.length === 0) continue;
       await bulkUpsertVariantMappings(batch, now, { doNotDowngradeFromMatched: false });
