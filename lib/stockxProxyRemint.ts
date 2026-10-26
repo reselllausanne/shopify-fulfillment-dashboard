@@ -14,7 +14,10 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chromium } from "playwright";
+// Patchright (stealth Playwright) so the unattended cron remint uses the same
+// CDP-leak-patched engine as the interactive login — vanilla Playwright gets
+// fingerprinted by Cloudflare Turnstile + PerimeterX on accounts.stockx.com.
+import { chromium } from "patchright";
 import {
   nextStockxPlaywrightProxy,
   stockxPlaywrightProxyAvailable,
@@ -126,8 +129,10 @@ async function remintOnceViaProxy(opts: {
     `[STOCKX-PROXY-REMINT] account=${account} proxy=${proxy.label} auth0Cookies=${seed.auth0Count}`
   );
 
+  const chromeChannel = String(process.env.STOCKX_CHROME_CHANNEL ?? "").trim() || undefined;
   const browser = await chromium.launch({
     headless: false,
+    ...(chromeChannel ? { channel: chromeChannel } : {}),
     proxy: {
       server: proxy.server,
       username: proxy.username,
@@ -153,9 +158,9 @@ async function remintOnceViaProxy(opts: {
       storageState: seededPath,
       locale: "fr-FR",
       timezoneId: "Europe/Zurich",
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-      viewport: { width: 1440, height: 900 },
+      // Stealth: no fake UA / forced viewport (Patchright best practice — a hand-set
+      // UA that disagrees with the real browser is a stronger bot signal than none).
+      viewport: null,
     });
     await ctx.addInitScript(() => {
       Object.defineProperty(navigator, "webdriver", { get: () => undefined });
