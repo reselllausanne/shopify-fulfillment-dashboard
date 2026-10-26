@@ -7,8 +7,9 @@ import { describe, expect, it } from "vitest";
  * `server-only` into a bad boundary and killed every Galaxus feed push.
  */
 describe("feedPipeline upload path regression", () => {
+  // Logic lives in feedPipelineCore.ts; feedPipeline.ts is a thin server-only re-export.
   const pipelineSrc = fs.readFileSync(
-    path.join(process.cwd(), "galaxus/ops/feedPipeline.ts"),
+    path.join(process.cwd(), "galaxus/ops/feedPipelineCore.ts"),
     "utf8"
   );
   const uploadRouteSrc = fs.readFileSync(

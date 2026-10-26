@@ -227,6 +227,40 @@ function feedPushLockKey(scope: FeedScope) {
   return `galaxus:feed-push:${scope}`;
 }
 
+/**
+ * Which scopes a given scope fully covers. A `stock-price` run produces the exact same
+ * StockData + PriceData CSVs as separate `stock` and `price` runs; `full` additionally
+ * produces master+specs. So a superset run/trigger makes its subsets redundant — and
+ * running the subset too would re-scan the ~1M catalog for nothing. Used to collapse
+ * (when both PENDING, identical freshness) or defer (subset while a superset is live).
+ */
+const SCOPE_COVERAGE: Record<FeedScope, FeedScope[]> = {
+  full: ["master-specs", "stock-price", "stock", "price"],
+  "stock-price": ["stock", "price"],
+  "master-specs": [],
+  stock: [],
+  price: [],
+};
+
+/** True when `superset` strictly covers `subset` (same scope is not subsumption). */
+function scopeSubsumes(superset: FeedScope, subset: FeedScope): boolean {
+  if (superset === subset) return false;
+  return (SCOPE_COVERAGE[superset] ?? []).includes(subset);
+}
+
+/** Any in-flight run whose scope strictly covers `scope` (e.g. stock-price covers stock). */
+async function supersetRunActive(scope: FeedScope): Promise<FeedScope | null> {
+  const supersets = (Object.keys(SCOPE_COVERAGE) as FeedScope[]).filter((s) =>
+    scopeSubsumes(s, scope)
+  );
+  if (supersets.length === 0) return null;
+  const active = await (prisma as any).galaxusFeedRun.findFirst({
+    where: { finishedAt: null, scope: { in: supersets } },
+    select: { scope: true },
+  });
+  return (active?.scope as FeedScope) ?? null;
+}
+
 /** Active run for one scope — feeds no longer block each other globally. */
 export async function getActiveFeedRun(
   scope?: FeedScope,
@@ -311,20 +345,32 @@ export async function coalesceDuplicatePendingTriggers(): Promise<number> {
       select: { id: true, scope: true, requestedAt: true },
     });
   const keepByScope = new Map<string, string>();
-  const dropIds: string[] = [];
+  const dropIds = new Set<string>();
   for (const row of pending) {
     if (!keepByScope.has(row.scope)) {
       keepByScope.set(row.scope, row.id);
       continue;
     }
-    dropIds.push(row.id);
+    dropIds.add(row.id);
   }
-  if (dropIds.length === 0) return 0;
+  // Cross-scope subsumption: when a superset scope is also PENDING (e.g. stock-price
+  // alongside stock and price), the subset triggers are redundant — all are unstarted so
+  // the superset run will push identical, equally-fresh StockData/PriceData. Collapsing
+  // them turns 2-3 full catalog scans into one. Never drops a scope a superset does not
+  // cover (master-specs stays unless a `full` is pending).
+  const keptScopes = Array.from(keepByScope.keys()) as FeedScope[];
+  for (const subset of keptScopes) {
+    if (keptScopes.some((superset) => scopeSubsumes(superset, subset))) {
+      const id = keepByScope.get(subset);
+      if (id) dropIds.add(id);
+    }
+  }
+  if (dropIds.size === 0) return 0;
   await prismaAny.galaxusFeedTrigger.updateMany({
-    where: { id: { in: dropIds } },
+    where: { id: { in: Array.from(dropIds) } },
     data: { status: "FAILED", consumedAt: new Date() },
   });
-  return dropIds.length;
+  return dropIds.size;
 }
 
 async function finalizeFeedTrigger(params: {
@@ -613,10 +659,13 @@ export async function startFeedPushAsync(params: {
       params.scope === "price" &&
       params.triggerSource === "shopify-post-sale" &&
       (await postSalePriceFeedCoolingDown());
+    // Defer a subset while a superset run is live (stock-price/full already produce this
+    // scope's data): enqueue so it drains after, never a dropped push.
+    const covering = !active && (await supersetRunActive(params.scope));
     // Give master-specs the box to itself — queue lighter pushes while it builds.
     const heavyMasterActive =
       params.scope !== "master-specs" && (await masterSpecsRunActive());
-    if (active || delegateToWorker || cooldown || heavyMasterActive) {
+    if (active || covering || delegateToWorker || cooldown || heavyMasterActive) {
       const queued = await enqueueFeedPushTrigger({
         scope: params.scope,
         triggerSource: params.triggerSource,
@@ -661,6 +710,12 @@ async function tryStartPendingFeedPush(
     // Reconcile already ran in drainFeedPushQueue, outside this lock — keep the tx short.
     const active = await getActiveFeedRun(scope, { reconcile: false });
     if (active) return null;
+
+    // Defer (never drop) a subset while a superset run is live: stock-price/full already
+    // produce this scope's data. The row stays PENDING and drains after the superset
+    // finishes (finalize -> drainFeedPushQueue) with fresh DB values, so no push is lost.
+    const coveringScope = await supersetRunActive(scope);
+    if (coveringScope) return null;
 
     // Leave lighter pushes PENDING while master-specs builds — they drain next tick.
     if (scope !== "master-specs" && (await masterSpecsRunActive())) return null;

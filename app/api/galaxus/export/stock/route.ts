@@ -126,6 +126,13 @@ export async function GET(request: Request) {
   const timing: Record<string, number> = {};
   const mark = (phase: string, from: number) => {
     timing[phase] = Date.now() - from;
+    // Emit per-phase immediately so a run killed mid-build (deploy recreate) still
+    // reveals where time goes — the end-of-route summary never prints otherwise.
+    console.info("[GALAXUS][EXPORT][STOCK][PHASE]", {
+      phase,
+      ms: timing[phase],
+      sinceStartMs: Date.now() - tStart,
+    });
   };
   try {
     const { searchParams } = new URL(request.url);
