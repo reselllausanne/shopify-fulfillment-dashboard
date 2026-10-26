@@ -59,7 +59,22 @@ set -e
 REFRESH_RESP="$(cat /tmp/stockx-awb-refresh-body.json 2>/dev/null || true)"
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] refresh http=$REFRESH_HTTP curl=$REFRESH_CURL resp=${REFRESH_RESP:0:800}" | tee -a "$LOG_FILE"
 
-# 2) AWB / auto-link / status — never force remint again (tokens just written above).
+# 1.5) Auto-link only — link Galaxus + Shopify orders to their StockX buys.
+#      Own curl so a hung AWB backfill (step 2) can never starve linking. Tokens are
+#      valid from step 1; no browser/remint here.
+LINK_BODY='{"autoLinkOnly":true,"forceRefresh":false}'
+set +e
+LINK_HTTP=$(curl -sS -o /tmp/stockx-awb-link-body.json -w "%{http_code}" \
+  -X POST "$BASE_URL/api/admin/stockx-awb-sync" \
+  -H "content-type: application/json" \
+  -d "$LINK_BODY" \
+  --max-time 700)
+LINK_CURL=$?
+set -e
+LINK_RESP="$(cat /tmp/stockx-awb-link-body.json 2>/dev/null || true)"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] autolink http=$LINK_HTTP curl=$LINK_CURL resp=${LINK_RESP:0:600}" | tee -a "$LOG_FILE"
+
+# 2) AWB / status — never force remint again (tokens just written above).
 BODY=$(printf '{"days":%s,"limit":%s,"forceRefresh":false}' "$DAYS" "$LIMIT")
 set +e
 HTTP=$(curl -sS -o /tmp/stockx-awb-sync-body.json -w "%{http_code}" \

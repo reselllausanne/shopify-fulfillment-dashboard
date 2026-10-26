@@ -44,6 +44,10 @@ export async function POST(req: NextRequest) {
     const forceRefresh = Boolean(body?.forceRefresh ?? false);
     // Cron splits remint from AWB so a hung backfill cannot starve token refresh.
     const refreshOnly = Boolean(body?.refreshOnly ?? false);
+    // Auto-link-only: run the Galaxus + Shopify link sweeps then return, skipping the
+    // heavy AWB backfill (which makes the full POST exceed the 780s cron timeout and
+    // starves the link step). Lets linking run reliably 2×/day on its own.
+    const autoLinkOnly = Boolean(body?.autoLinkOnly ?? false);
     // 45d window: recent matched buys that still need AWB / chainId (cron, not historical dump).
     const days = Number(body?.days ?? 45);
     const limit = Number(body?.limit ?? 60);
@@ -164,6 +168,19 @@ export async function POST(req: NextRequest) {
     // Match new STX buys first so AWB pass can fill them same hour.
     const galaxusAutoLink = await runGalaxusAutoLink();
     const shopifyAutoLink = await runShopifyAutoLink();
+
+    if (autoLinkOnly) {
+      return NextResponse.json({
+        ok: true,
+        autoLinkOnly: true,
+        refresh: { ok: refresh.ok, reused: refresh.reused, error: refresh.error },
+        galaxusRefresh: galaxusRefresh
+          ? { ok: galaxusRefresh.ok, reused: galaxusRefresh.reused, error: galaxusRefresh.error }
+          : null,
+        galaxusAutoLink,
+        shopifyAutoLink,
+      });
+    }
 
     const shared = { token, days, limit, dryRun, includeFulfilled: false as const };
     // Shopify: newly linked OrderMatches (above) + enrich missing chainId + AWB/status.
