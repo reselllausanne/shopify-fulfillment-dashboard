@@ -120,6 +120,13 @@ function buildForceZeroStockRow(
 }
 
 export async function GET(request: Request) {
+  // Per-phase timing so we can see where a full ~1M build spends its minutes
+  // (pagination vs listing-alias vs availableStock vs rows) instead of guessing.
+  const tStart = Date.now();
+  const timing: Record<string, number> = {};
+  const mark = (phase: string, from: number) => {
+    timing[phase] = Date.now() - from;
+  };
   try {
     const { searchParams } = new URL(request.url);
     const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
@@ -218,6 +225,8 @@ export async function GET(request: Request) {
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
 
+  mark("paginate", tStart);
+  const tAlias = Date.now();
   const candidates = Array.from(bestByGtin.values()).filter((candidate: any) => {
     const key = String(candidate?.providerKey ?? "");
     return Boolean(key);
@@ -258,6 +267,8 @@ export async function GET(request: Request) {
     rows.push(buildForceZeroStockRow(supersededKey, null, null, "listing-alias-superseded"));
   }
 
+  mark("listingAlias", tAlias);
+  const tStx = Date.now();
   const stxGtins = Array.from(
     new Set(
       exportCandidates
@@ -331,14 +342,20 @@ export async function GET(request: Request) {
     }
   }
 
+  mark("stxEta", tStx);
+  const tAvailStock = Date.now();
   const stockBySupplierVariantId = await attachAvailableStock(
     exportCandidates
       .map((candidate: any) => candidate?.variant)
       .filter((variant: any) => Boolean(variant))
   );
+  mark("availableStock", tAvailStock);
+  const tEvidence = Date.now();
   const evidenceBySupplierVariantId = await loadGalaxusStockEvidence(
     exportCandidates.map((candidate: any) => String(candidate?.variant?.supplierVariantId ?? ""))
   );
+  mark("evidence", tEvidence);
+  const tRows = Date.now();
   let evidenceStockRows = 0;
   let evidenceStockPositive = 0;
 
@@ -572,6 +589,13 @@ export async function GET(request: Request) {
       }
     }
 
+    mark("rowsAndAlternatives", tRows);
+    timing.total = Date.now() - tStart;
+    console.info("[GALAXUS][EXPORT][STOCK][TIMING] phase ms", {
+      ...timing,
+      candidates: exportCandidates.length,
+      rows: finalRows.length,
+    });
     const csv = toCsv(headers, finalRows);
     const filename = `galaxus-stock-${supplier ?? "all"}-${Date.now()}.csv`;
     const trmExcluded = totalTrmFeedExclusions(trmExclusionStats);
