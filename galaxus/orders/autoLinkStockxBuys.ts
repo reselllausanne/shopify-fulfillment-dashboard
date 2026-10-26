@@ -59,6 +59,23 @@ export type AutoLinkGalaxusStockxBuysOptions = {
   }>;
 };
 
+/**
+ * Resolve the StockX variant ids (stx_ prefix stripped) for an order's STX lines.
+ * Cheap pre-filter: lets a bulk sweep skip the heavy procurement reconcile for orders
+ * whose lines cannot possibly match any prefetched buy.
+ */
+export async function resolveGalaxusOrderStxVariantIds(order: {
+  lines?: any[] | null;
+}): Promise<string[]> {
+  const out: string[] = [];
+  for (const line of order.lines ?? []) {
+    if (!isGalaxusStxSupplierLine(line) || galaxusLineWarehouseStockHint(line)) continue;
+    const svid = await resolveSupplierVariantIdForGalaxusLine(line).catch(() => null);
+    if (svid) out.push(svid.replace(/^stx_/i, "").trim());
+  }
+  return out;
+}
+
 export function filterGalaxusLinesNeedingStockxAutoLink(
   lines: any[],
   matches: Array<{ galaxusOrderLineId?: unknown; stockxOrderNumber?: string | null }>
