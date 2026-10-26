@@ -135,13 +135,13 @@ export async function loadGalaxusListingIdentities(
     clsBySv.set(svId, list);
   }
 
-  const allKeys = Array.from(
-    new Set(
-      Array.from(clsBySv.values())
-        .flat()
-        .concat(Array.from(bySv.values()).filter((v): v is string => Boolean(v)))
-    )
-  );
+  // Master-presence is only ever consulted for CLS providerKeys (pickGalaxusListingProviderKey
+  // calls masterProviderKeys.has(k) for k in clsProviderKeys — never for a SV's current key).
+  // The old `.concat(bySv.values())` added the current providerKey of all ~1.2M SVs, so this
+  // membership loop ran ~4800 IN(500) round-trips (the 21min `listingAlias` phase). CLS keys
+  // only exist for remapped/listed SVs (tens of thousands), so scoping to them is identical in
+  // result and cuts the loop to a handful of queries.
+  const allKeys = Array.from(new Set(Array.from(clsBySv.values()).flat()));
 
   // "Master catalog keys" = providerKeys Galaxus already ingested. There is no
   // GalaxusFeedMasterSnapshot model (schema only has Stock/Offer snapshots), so the
