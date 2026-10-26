@@ -1225,7 +1225,9 @@ function PublicReturnsWizard() {
                       ? copy.successBodyExchange
                       : copy.successRequestReceivedBody}
                 </p>
-                <p className="mt-2 text-sm text-neutral-500">{copy.successEmailHint}</p>
+                {!submitState.labelPendingPayment ? (
+                  <p className="mt-2 text-sm text-neutral-500">{copy.successEmailHint}</p>
+                ) : null}
                 {submitState.message && submitState.message !== "ok" ? (
                   <p className="mt-3 text-sm text-neutral-600">
                     Ref.{" "}
@@ -1243,17 +1245,14 @@ function PublicReturnsWizard() {
                     )}
                   </p>
                   {submitState.exchangeInvoiceUrl ? (
-                    <>
-                      <p className="text-sm text-neutral-600">{copy.successPayEmailHint}</p>
-                      <a
-                        href={submitState.exchangeInvoiceUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex min-h-14 items-center justify-center rounded-sm bg-neutral-900 px-5 text-base font-semibold text-white"
-                      >
-                        {copy.payExchangeDiff}
-                      </a>
-                    </>
+                    <a
+                      href={submitState.exchangeInvoiceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex min-h-14 items-center justify-center rounded-sm bg-neutral-900 px-5 text-base font-semibold text-white"
+                    >
+                      {copy.payExchangeDiff}
+                    </a>
                   ) : null}
                 </div>
               ) : null}
@@ -1267,22 +1266,28 @@ function PublicReturnsWizard() {
                 </p>
               ) : null}
 
-              <div>
-                <h4 className="text-base font-semibold text-neutral-900">{copy.successNextTitle}</h4>
-                <ol className="mt-3 space-y-2 text-base text-neutral-700">
-                  {(submitState.labelPendingPayment
-                    ? copy.exchangePayBeforeLabelNext
-                    : submitState.intent === "exchange"
+              {submitState.labelPendingPayment ? (
+                <p className="text-base text-neutral-700">
+                  {copy.exchangePayBeforeLabelAfterPay}
+                </p>
+              ) : (
+                <div>
+                  <h4 className="text-base font-semibold text-neutral-900">
+                    {copy.successNextTitle}
+                  </h4>
+                  <ol className="mt-3 space-y-2 text-base text-neutral-700">
+                    {(submitState.intent === "exchange"
                       ? copy.successNextExchange
                       : copy.successNext
-                  ).map((item, index) => (
-                    <li key={item} className="flex gap-3">
-                      <span className="font-semibold text-neutral-900">{index + 1}.</span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
+                    ).map((item, index) => (
+                      <li key={item} className="flex gap-3">
+                        <span className="font-semibold text-neutral-900">{index + 1}.</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
 
               {submitState.trackingNumber ? (
                 <p className="text-sm text-neutral-700">

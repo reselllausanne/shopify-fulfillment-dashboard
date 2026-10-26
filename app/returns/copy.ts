@@ -70,6 +70,8 @@ export type ReturnsCopy = {
   successNextExchange: string[];
   exchangePayBeforeLabelTitle: string;
   exchangePayBeforeLabelBody: string;
+  /** One line after the pay button when label waits on payment. */
+  exchangePayBeforeLabelAfterPay: string;
   exchangePayBeforeLabelNext: string[];
   successRequestReceivedTitle: string;
   successRequestReceivedBody: string;
@@ -217,7 +219,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
       "Plusieurs paires sur cette ligne : une seule nouvelle taille s'appliquera a toutes les quantites retournees.",
     replacementPickRequired: "Choisissez une variante de remplacement pour chaque article.",
     exchangePriceDiffDue: "Différence à régler : CHF {amount}",
-    payExchangeDiff: "Traitement prioritaire du retour — payer la différence (lien sécurisé)",
+    payExchangeDiff: "Payer la différence (lien sécurisé)",
     validateExchange: "Valider mon échange",
     successTitleExchange: "Demande d'echange prise en compte",
     successBodyExchange:
@@ -230,19 +232,17 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     ],
     exchangePayBeforeLabelTitle: "Demande d'échange enregistrée",
     exchangePayBeforeLabelBody:
-      "Merci. Votre demande est prise en compte. La facture de la différence vous est envoyée par e-mail. Pour un traitement prioritaire, payez directement la différence via le lien sécurisé ci-dessous — vous recevrez ensuite l'étiquette de retour.",
+      "Merci, votre échange est enregistré. Une facture pour la différence part aussi par e-mail. Payez via le bouton ci-dessous (paiement sécurisé) pour recevoir l'étiquette.",
+    exchangePayBeforeLabelAfterPay:
+      "Une fois le paiement validé, vous recevrez par e-mail l'étiquette pour renvoyer la paire et les instructions.",
     exchangePayBeforeLabelNext: [
-      "Facture de la différence envoyée par e-mail — vous pouvez aussi payer via le bouton.",
-      "Traitement prioritaire : payez la différence maintenant sur le lien sécurisé.",
-      "Après paiement, vous recevez l'étiquette de retour par e-mail.",
-      "Ensuite seulement, renvoyez votre paire.",
+      "Une fois le paiement validé, vous recevrez par e-mail l'étiquette pour renvoyer la paire et les instructions.",
     ],
     successRequestReceivedTitle: "Demande prise en compte",
     successRequestReceivedBody:
       "Votre demande a bien ete enregistree. Vous allez recevoir un e-mail avec la suite.",
     successEmailHint: "Verifiez votre boite mail (et les spams).",
-    successPayEmailHint:
-      "Facture de la différence envoyée par e-mail — vous pouvez aussi payer via le bouton (paiement sécurisé).",
+    successPayEmailHint: "",
     exchangeCreditDue: "Avoir prevu apres controle : CHF {amount}",
     confirmSummaryTitle: "Recapitulatif",
     confirmEditProducts: "Modifier",
@@ -348,7 +348,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
       "Multiple pairs on this line: one replacement size applies to all returned units.",
     replacementPickRequired: "Pick a replacement for each item.",
     exchangePriceDiffDue: "Amount due: CHF {amount}",
-    payExchangeDiff: "Priority return processing — pay the difference (secure link)",
+    payExchangeDiff: "Pay the difference (secure link)",
     validateExchange: "Confirm exchange",
     successTitleExchange: "Exchange request received",
     successBodyExchange:
@@ -361,19 +361,17 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     ],
     exchangePayBeforeLabelTitle: "Exchange request registered",
     exchangePayBeforeLabelBody:
-      "Thanks — your request is recorded. The price-difference invoice is sent by email. For priority processing, pay the difference now via the secure link below — you will then receive the return label.",
+      "Thanks — your exchange is registered. An invoice for the difference is also emailed. Pay via the button below (secure payment) to receive the return label.",
+    exchangePayBeforeLabelAfterPay:
+      "Once payment is confirmed, you will receive the return label and instructions by email.",
     exchangePayBeforeLabelNext: [
-      "Price-difference invoice sent by email — you can also pay with the button.",
-      "Priority processing: pay the difference now on the secure link.",
-      "After payment, you receive the return label by email.",
-      "Only then send your pair back.",
+      "Once payment is confirmed, you will receive the return label and instructions by email.",
     ],
     successRequestReceivedTitle: "Request received",
     successRequestReceivedBody:
       "Your request is registered. You will get an email with next steps.",
     successEmailHint: "Check your inbox (and spam).",
-    successPayEmailHint:
-      "Price-difference invoice sent by email — you can also pay with the button (secure payment).",
+    successPayEmailHint: "",
     exchangeCreditDue: "Store credit after inspection: CHF {amount}",
     confirmSummaryTitle: "Summary",
     confirmEditProducts: "Edit",
@@ -477,7 +475,7 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
       "Mehrere Paare in dieser Zeile: eine Ersatzgroesse gilt fuer alle zurueckgesendeten Stueck.",
     replacementPickRequired: "Ersatz pro Artikel waehlen.",
     exchangePriceDiffDue: "Zu zahlen: CHF {amount}",
-    payExchangeDiff: "Prioritaets-Retoure — Differenz bezahlen (sichere Zahlung)",
+    payExchangeDiff: "Differenz bezahlen (sichere Zahlung)",
     validateExchange: "Umtausch bestaetigen",
     successTitleExchange: "Umtausch-Anfrage erhalten",
     successBodyExchange:
@@ -490,19 +488,17 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     ],
     exchangePayBeforeLabelTitle: "Umtausch-Anfrage erfasst",
     exchangePayBeforeLabelBody:
-      "Danke — Ihre Anfrage ist erfasst. Die Differenzrechnung wird per E-Mail gesendet. Fuer eine prioritaere Bearbeitung zahlen Sie die Differenz jetzt ueber den sicheren Link unten — danach erhalten Sie das Retourenlabel.",
+      "Danke — Ihr Umtausch ist erfasst. Eine Rechnung fuer die Differenz geht auch per E-Mail. Zahlen Sie ueber den Button unten (sichere Zahlung), um das Retourenlabel zu erhalten.",
+    exchangePayBeforeLabelAfterPay:
+      "Nach bestaetigter Zahlung erhalten Sie per E-Mail das Retourenlabel und die Anweisungen.",
     exchangePayBeforeLabelNext: [
-      "Differenzrechnung per E-Mail gesendet — Sie koennen auch ueber den Button zahlen.",
-      "Prioritaets-Retoure: Differenz jetzt ueber den sicheren Link bezahlen.",
-      "Nach Zahlung erhalten Sie das Retourenlabel per E-Mail.",
-      "Erst dann das Paar zuruecksenden.",
+      "Nach bestaetigter Zahlung erhalten Sie per E-Mail das Retourenlabel und die Anweisungen.",
     ],
     successRequestReceivedTitle: "Anfrage erhalten",
     successRequestReceivedBody:
       "Ihre Anfrage ist erfasst. Sie erhalten eine E-Mail mit den naechsten Schritten.",
     successEmailHint: "Posteingang und Spam pruefen.",
-    successPayEmailHint:
-      "Differenzrechnung per E-Mail — Sie koennen auch ueber den Button zahlen (sichere Zahlung).",
+    successPayEmailHint: "",
     exchangeCreditDue: "Guthaben nach Kontrolle: CHF {amount}",
     confirmSummaryTitle: "Zusammenfassung",
     confirmEditProducts: "Aendern",
