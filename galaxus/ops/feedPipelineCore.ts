@@ -399,7 +399,41 @@ function scheduleAsyncFeedRun(params: {
 
   // Start immediately. after()/unref'd setTimeout silently drop work after ops/run returns 202,
   // leaving galaxusFeedRun rows stuck with finishedAt=null (countsJson=null) until stale reaper kills them.
-  void start();
+  // Track the in-flight promise so the worker can drain gracefully on SIGTERM (deploy) instead of
+  // killing a half-built feed mid-run ("crash recovery" loop that never ships).
+  const p = start();
+  activeFeedRunPromises.add(p);
+  void p.finally(() => activeFeedRunPromises.delete(p));
+}
+
+/** In-process registry of detached feed-run promises for graceful shutdown. */
+const activeFeedRunPromises = new Set<Promise<unknown>>();
+
+/** How many feed runs are executing in this process right now. */
+export function activeFeedRunCount(): number {
+  return activeFeedRunPromises.size;
+}
+
+/**
+ * Wait for all in-flight feed runs in this process to settle, up to `timeoutMs`.
+ * Returns true if drained cleanly, false if the timeout elapsed first.
+ * Called by the feed worker on SIGTERM so a deploy's container recreate lets the
+ * current build finish (and populate the snapshot) instead of tearing it down.
+ */
+export async function awaitActiveFeedRuns(timeoutMs: number): Promise<boolean> {
+  if (activeFeedRunPromises.size === 0) return true;
+  const all = Promise.allSettled(Array.from(activeFeedRunPromises));
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    await all;
+    return true;
+  }
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  const drained = await Promise.race([all.then(() => true as const), timeout]);
+  if (timer) clearTimeout(timer);
+  return drained;
 }
 
 async function beginAsyncFeedRun(params: {
