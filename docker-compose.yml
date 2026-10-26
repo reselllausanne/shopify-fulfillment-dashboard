@@ -135,6 +135,10 @@ services:
       - GALAXUS_FEED_STALE_MINUTES=${GALAXUS_FEED_STALE_MINUTES:-45}
       - GALAXUS_PAUSE_HEAVY_FEEDS=${GALAXUS_PAUSE_HEAVY_FEEDS:-0}
     command: ["npx", "tsx", "scripts/workers/galaxusFeedWorker.ts"]
+    # Deploy recreate sends SIGTERM; the worker drains the in-flight build (up to
+    # GALAXUS_FEED_WORKER_DRAIN_MS=25min) before exit. Grace must exceed that budget
+    # so docker does not SIGKILL mid-build (the old "crash recovery" loop).
+    stop_grace_period: 30m
     volumes:
       - ./.data:/app/.data
     restart: unless-stopped

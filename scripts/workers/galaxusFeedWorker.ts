@@ -18,6 +18,8 @@
  */
 import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 import {
+  activeFeedRunCount,
+  awaitActiveFeedRuns,
   coalesceDuplicatePendingTriggers,
   countPendingFeedPushTriggers,
   drainFeedPushQueue,
@@ -29,6 +31,12 @@ import {
 
 const POLL_MS = Number(process.env.GALAXUS_FEED_WORKER_POLL_MS ?? 30_000);
 const STALE_MINUTES = Number(process.env.GALAXUS_FEED_STALE_MINUTES ?? 45);
+// On SIGTERM (deploy recreate) finish the in-flight build before exiting, up to this budget.
+// Must be < compose stop_grace_period or docker SIGKILLs us mid-drain. Default 25min.
+const DRAIN_MS = Number(process.env.GALAXUS_FEED_WORKER_DRAIN_MS ?? 25 * 60_000);
+
+/** Set by SIGTERM/SIGINT: stop starting new runs, let the current one finish. */
+let draining = false;
 const ORIGIN =
   resolveAppOriginForPartnerJobs(process.env.GALAXUS_FEED_WORKER_ORIGIN) ??
   "http://127.0.0.1:3000";
@@ -38,6 +46,8 @@ function sleep(ms: number) {
 }
 
 async function tick() {
+  // While draining, don't start new pending triggers — just let the active run finish.
+  if (draining) return;
   const startedAt = new Date().toISOString();
   if (Number.isFinite(STALE_MINUTES) && STALE_MINUTES > 0) {
     await reconcileStaleFeedRuns(STALE_MINUTES * 60 * 1000);
@@ -89,15 +99,43 @@ async function main() {
     );
   }
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+  let shutdown: ((signal: string) => void) | null = null;
+  const stopped = new Promise<string>((resolve) => {
+    shutdown = (signal: string) => resolve(signal);
+  });
+  for (const sig of ["SIGTERM", "SIGINT"] as const) {
+    process.on(sig, () => {
+      if (draining) return;
+      draining = true;
+      console.warn("[WORKER][GALAXUS_FEED] drain requested", {
+        signal: sig,
+        activeRuns: activeFeedRunCount(),
+        drainBudgetMs: DRAIN_MS,
+      });
+      shutdown?.(sig);
+    });
+  }
+
+  while (!draining) {
     try {
       await tick();
     } catch (err: unknown) {
       console.error("[WORKER][GALAXUS_FEED] tick failed", err instanceof Error ? err.message : err);
     }
-    await sleep(POLL_MS);
+    // Wake early if a shutdown signal arrives mid-sleep.
+    await Promise.race([sleep(POLL_MS), stopped]);
   }
+
+  // Graceful drain: let the in-flight build finish (and populate the snapshot) so a deploy's
+  // container recreate no longer tears down a half-built feed into the "crash recovery" loop.
+  const t0 = Date.now();
+  const clean = await awaitActiveFeedRuns(DRAIN_MS);
+  console.warn("[WORKER][GALAXUS_FEED] drain complete", {
+    clean,
+    waitedMs: Date.now() - t0,
+    remainingRuns: activeFeedRunCount(),
+  });
+  process.exit(0);
 }
 
 main().catch((err) => {
