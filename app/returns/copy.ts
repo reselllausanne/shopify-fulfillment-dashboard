@@ -70,6 +70,9 @@ export type ReturnsCopy = {
   successNextExchange: string[];
   exchangePayBeforeLabelTitle: string;
   exchangePayBeforeLabelBody: string;
+  /** Lead-in before mailto contact on payment-pending success. */
+  exchangePayBeforeLabelContact: string;
+  exchangeContactEmail: string;
   /** One line after the pay button when label waits on payment. */
   exchangePayBeforeLabelAfterPay: string;
   exchangePayBeforeLabelNext: string[];
@@ -232,7 +235,10 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     ],
     exchangePayBeforeLabelTitle: "Demande d'échange enregistrée",
     exchangePayBeforeLabelBody:
-      "Merci, votre échange est enregistré. Une facture pour la différence part aussi par e-mail. Payez via le bouton ci-dessous (paiement sécurisé) pour recevoir l'étiquette.",
+      "Merci, vous recevrez un e-mail avec les informations de paiement séparément. Si vous voulez un traitement prioritaire de votre commande, vous pouvez finaliser le paiement directement sur cette page. Veuillez noter que vous ne recevrez l'étiquette pour renvoyer la paire uniquement après le paiement de la différence.",
+    exchangePayBeforeLabelContact:
+      "Si vous avez des questions, contactez-nous par e-mail avec la référence du retour :",
+    exchangeContactEmail: "contact@resell-lausanne.ch",
     exchangePayBeforeLabelAfterPay:
       "Une fois le paiement validé, vous recevrez par e-mail l'étiquette pour renvoyer la paire et les instructions.",
     exchangePayBeforeLabelNext: [
@@ -361,7 +367,10 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     ],
     exchangePayBeforeLabelTitle: "Exchange request registered",
     exchangePayBeforeLabelBody:
-      "Thanks — your exchange is registered. An invoice for the difference is also emailed. Pay via the button below (secure payment) to receive the return label.",
+      "Thank you — you will receive a separate email with the payment details. For priority processing, you can complete payment directly on this page. Please note: you will only receive the return label after the price difference is paid.",
+    exchangePayBeforeLabelContact:
+      "If you have questions, email us with your return reference:",
+    exchangeContactEmail: "contact@resell-lausanne.ch",
     exchangePayBeforeLabelAfterPay:
       "Once payment is confirmed, you will receive the return label and instructions by email.",
     exchangePayBeforeLabelNext: [
@@ -488,7 +497,10 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     ],
     exchangePayBeforeLabelTitle: "Umtausch-Anfrage erfasst",
     exchangePayBeforeLabelBody:
-      "Danke — Ihr Umtausch ist erfasst. Eine Rechnung fuer die Differenz geht auch per E-Mail. Zahlen Sie ueber den Button unten (sichere Zahlung), um das Retourenlabel zu erhalten.",
+      "Danke — Sie erhalten eine separate E-Mail mit den Zahlungsinformationen. Fuer eine prioritaere Bearbeitung koennen Sie die Zahlung direkt auf dieser Seite abschliessen. Bitte beachten Sie: Das Retourenlabel erhalten Sie erst nach Zahlung der Differenz.",
+    exchangePayBeforeLabelContact:
+      "Bei Fragen kontaktieren Sie uns per E-Mail mit Ihrer Retourenreferenz:",
+    exchangeContactEmail: "contact@resell-lausanne.ch",
     exchangePayBeforeLabelAfterPay:
       "Nach bestaetigter Zahlung erhalten Sie per E-Mail das Retourenlabel und die Anweisungen.",
     exchangePayBeforeLabelNext: [

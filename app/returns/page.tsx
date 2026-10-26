@@ -1225,9 +1225,21 @@ function PublicReturnsWizard() {
                       ? copy.successBodyExchange
                       : copy.successRequestReceivedBody}
                 </p>
-                {!submitState.labelPendingPayment ? (
+                {submitState.labelPendingPayment ? (
+                  <p className="mt-3 text-sm text-neutral-600">
+                    {copy.exchangePayBeforeLabelContact}{" "}
+                    <a
+                      href={`mailto:${copy.exchangeContactEmail}?subject=${encodeURIComponent(
+                        `Retour / échange ${submitState.message && submitState.message !== "ok" ? submitState.message : ""}`.trim()
+                      )}`}
+                      className="font-medium text-neutral-900 underline"
+                    >
+                      {copy.exchangeContactEmail}
+                    </a>
+                  </p>
+                ) : (
                   <p className="mt-2 text-sm text-neutral-500">{copy.successEmailHint}</p>
-                ) : null}
+                )}
                 {submitState.message && submitState.message !== "ok" ? (
                   <p className="mt-3 text-sm text-neutral-600">
                     Ref.{" "}
