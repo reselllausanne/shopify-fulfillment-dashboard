@@ -48,8 +48,8 @@ export async function POST(req: NextRequest) {
     // heavy AWB backfill (which makes the full POST exceed the 780s cron timeout and
     // starves the link step). Lets linking run reliably 2×/day on its own.
     const autoLinkOnly = Boolean(body?.autoLinkOnly ?? false);
-    // 45d window: recent matched buys that still need AWB / chainId (cron, not historical dump).
-    const days = Number(body?.days ?? 45);
+    // 30d window: recent matched buys that still need AWB / chainId (cron, not historical dump).
+    const days = Number(body?.days ?? 30);
     const limit = Number(body?.limit ?? 60);
     const dryRun = Boolean(body?.dryRun ?? false);
 

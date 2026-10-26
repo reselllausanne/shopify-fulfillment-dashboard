@@ -21,7 +21,7 @@
 #
 set -euo pipefail
 
-DAYS="${STOCKX_AWB_DAYS:-45}"
+DAYS="${STOCKX_AWB_DAYS:-30}"
 LIMIT="${STOCKX_AWB_LIMIT:-60}"
 BASE_URL="${STOCKX_AWB_BASE_URL:-http://127.0.0.1:3000}"
 LOG_DIR="${STOCKX_AWB_LOG_DIR:-/var/log/resell}"
