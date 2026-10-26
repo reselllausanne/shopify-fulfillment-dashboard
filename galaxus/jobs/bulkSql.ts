@@ -318,6 +318,33 @@ export async function bulkUpsertSupplierVariantsPartnerImport(
   );
 }
 
+/**
+ * Mark existing SupplierVariant rows as "seen in this import" without rewriting
+ * price/stock/sku/size — used for rows whose import values are byte-identical to the DB.
+ *
+ * This is exactly the effect bulkUpsertSupplierVariantsPartnerImport's ON CONFLICT path
+ * has on an unchanged row (it only bumps lastSyncAt + updatedAt there too), so it is
+ * observationally identical — just a single-column write with no VALUES/ON CONFLICT
+ * overhead. At NER scale (~1M rows, most unchanged on a re-import) this turns thousands
+ * of heavy upserts into a handful of cheap bulk updates. lastSyncAt MUST still be bumped
+ * so availableStock delta windows and delist-after-absence logic stay correct.
+ */
+export async function bulkTouchSupplierVariantsLastSync(
+  supplierVariantIds: string[],
+  now: Date
+): Promise<void> {
+  if (supplierVariantIds.length === 0) return;
+  for (const batch of chunkArray(supplierVariantIds, 10000)) {
+    await prisma.$executeRaw(
+      Prisma.sql`
+        UPDATE "public"."SupplierVariant"
+        SET "lastSyncAt" = ${now}, "updatedAt" = ${now}
+        WHERE "supplierVariantId" IN (${Prisma.join(batch)})
+      `
+    );
+  }
+}
+
 export async function bulkUpdateSupplierVariantsByProviderKeyGtin(
   rows: Array<{
     providerKey: string;
