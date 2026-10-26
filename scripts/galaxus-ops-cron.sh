@@ -270,7 +270,12 @@ run_image_sync_full() {
 run_snapshot_rebuild() {
   log "START rebuild-feed-snapshots (tsx, off web HTTP)"
   snapshot_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  if ! docker compose exec -T web npx tsx scripts/run-feed-snapshot-rebuild.ts; then
+  # Run in a one-off container (`run`), NOT `exec -T web`: the ~80min rebuild used to die
+  # whenever a deploy recreated the web container mid-run, so the snapshot never refreshed
+  # (stale > 48h -> fast snapshot path disabled -> every push fell back to the 80min live
+  # build -> also killed). A `compose run` container is not managed by `up -d`, so deploys
+  # no longer tear it down. worker-ops-background image carries the 8GB heap this needs.
+  if ! docker compose run --rm --no-deps worker-ops-background npx tsx scripts/run-feed-snapshot-rebuild.ts; then
     log "WARN: rebuild-feed-snapshots tsx failed — continuing with best-available snapshots"
     return 0
   fi
