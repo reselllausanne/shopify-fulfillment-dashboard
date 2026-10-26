@@ -6,6 +6,7 @@ import { runDecathlonAwbBackfill } from "@/lib/decathlonAwbBackfill";
 import { runGalaxusAwbBackfill } from "@/lib/galaxusAwbBackfill";
 import { runAwbBackfill } from "@/lib/stockxAwbBackfill";
 import { notifyStockxAuthBroken } from "@/lib/stockxAuthAlert";
+import { runStockxOrderOpsAlerts } from "@/lib/stockxOpsAlerts";
 import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
 import { canRefreshStockxAccount, refreshStockxToken } from "@/lib/stockxSessionRefresh";
 import { readServerStockxToken, stockxTokenExpiresAt } from "@/lib/stockxServerToken";
@@ -170,6 +171,15 @@ export async function POST(req: NextRequest) {
     const shopifyAutoLink = await runShopifyAutoLink();
 
     if (autoLinkOnly) {
+      // Operator alerts (cancel/refund/delay/not-purchased) fire here — this lightweight
+      // path always completes, so the operator is notified reliably every run (to me first;
+      // customer milestone flow already skips cancelled/delayed).
+      const opsAlerts = dryRun
+        ? null
+        : await runStockxOrderOpsAlerts({ days }).catch((err: any) => ({
+            ok: false,
+            error: String(err?.message ?? err),
+          }));
       return NextResponse.json({
         ok: true,
         autoLinkOnly: true,
@@ -179,6 +189,7 @@ export async function POST(req: NextRequest) {
           : null,
         galaxusAutoLink,
         shopifyAutoLink,
+        opsAlerts,
       });
     }
 
@@ -200,6 +211,13 @@ export async function POST(req: NextRequest) {
         console.warn("[STOCKX-AWB-SYNC] stx-resync failed:", error?.message ?? error);
       }
     }
+
+    const opsAlerts = dryRun
+      ? null
+      : await runStockxOrderOpsAlerts({ days }).catch((err: any) => ({
+          ok: false,
+          error: String(err?.message ?? err),
+        }));
 
     const abortedReason =
       shopify.abortedReason || galaxus.abortedReason || decathlon.abortedReason || null;
@@ -227,6 +245,7 @@ export async function POST(req: NextRequest) {
       galaxusAutoLink,
       shopifyAutoLink,
       stxResync,
+      opsAlerts,
       scanned: shopify.scanned + galaxus.scanned + decathlon.scanned,
       candidates: shopify.candidates + galaxus.candidates + decathlon.candidates,
       updated: shopify.updated + galaxus.updated + decathlon.updated,
