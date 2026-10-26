@@ -99,18 +99,23 @@ describe("galaxusAssortmentBlockReason", () => {
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
   });
 
-  it("keeps exempt BWZ Lansinoh SKUs despite BWZ delist + fashion-only", () => {
+  it("delists former BWZ Lansinoh trial SKUs after Monday rollback", () => {
     delete process.env.GALAXUS_DISABLED_SUPPLIERS;
     delete process.env.GALAXUS_FASHION_ONLY;
-    for (const providerKey of ["BWZ_5060420232721", "BWZ_5060420233353"]) {
-      expect(
-        galaxusAssortmentBlockReason({
-          providerKey,
-          title: "Lansinoh cream",
-          suggestedRetailInclVatChf: 20,
-        })
-      ).toBeNull();
-    }
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "BWZ_5060420232721",
+        title: "Lansinoh Intim-Dusche",
+        suggestedRetailInclVatChf: 20,
+      })
+    ).toBe("supplier_disabled");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "BWZ_5060420233353",
+        title: "Lansinoh HPA Lanolin cream",
+        suggestedRetailInclVatChf: 20,
+      })
+    ).toBe("category_block");
   });
 
   it("NER: keeps clothing and shoes only", () => {
@@ -404,7 +409,8 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBeNull();
   });
 
-  it("keeps LEGO and collectibles above 300 CHF", () => {
+  it("blocks LEGO above absolute 300 CHF; still keeps LEGO under the cap (fashion-exempt kind)", () => {
+    delete process.env.GALAXUS_MAX_RETAIL_CHF;
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_7",
@@ -412,13 +418,13 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 1100,
       })
-    ).toBeNull();
+    ).toBe("price_outlier");
     expect(
       galaxusAssortmentBlockReason({
-        providerKey: "STX_8",
-        title: "KAWS Companion Open Edition Vinyl Figure Black",
-        brand: "KAWS",
-        suggestedRetailInclVatChf: 450,
+        providerKey: "STX_7b",
+        title: "LEGO Star Wars Advent Calendar Set 75340",
+        brand: "LEGO",
+        suggestedRetailInclVatChf: 96,
       })
     ).toBeNull();
   });
@@ -480,7 +486,7 @@ describe("galaxusAssortmentBlockReason", () => {
   });
 
 
-  it("keeps LEGO Art sets above the absolute fashion cap", () => {
+  it("blocks LEGO Art sets above the absolute fashion cap after Monday rollback", () => {
     delete process.env.GALAXUS_MAX_RETAIL_CHF;
     expect(
       galaxusAssortmentBlockReason({
@@ -488,6 +494,14 @@ describe("galaxusAssortmentBlockReason", () => {
         title: "LEGO Art: Gustav Klimt The Kiss Set #31221",
         brand: "LEGO",
         suggestedRetailInclVatChf: 407.55,
+      })
+    ).toBe("price_outlier");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_673419345705",
+        title: "LEGO Winter Christmas Penguin Set 40498",
+        brand: "LEGO",
+        suggestedRetailInclVatChf: 92.09,
       })
     ).toBeNull();
   });
