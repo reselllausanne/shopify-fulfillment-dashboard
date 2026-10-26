@@ -1,4 +1,9 @@
-import type { MailSendResult, Mailer, StockXMilestoneEmailInput } from "@/app/lib/mailer/types";
+import type {
+  MailSendResult,
+  Mailer,
+  RawEmailInput,
+  StockXMilestoneEmailInput,
+} from "@/app/lib/mailer/types";
 import type { StockXState } from "@/app/lib/stockxTracking";
 import { resolveSwissPostCustomerTracking } from "@/app/lib/swissPostCustomerTracking";
 
@@ -528,6 +533,53 @@ export function createPostmarkMailer(): Mailer {
         to,
         providerMessageId: json?.MessageID,
       };
+    },
+
+    async sendRawEmail(input: RawEmailInput): Promise<MailSendResult> {
+      const overrideTo = (process.env.POSTMARK_OVERRIDE_TO || "").trim();
+      const to = input.ignoreOverride ? input.to : overrideTo || input.to;
+
+      if (!token || !from) {
+        return {
+          ok: false,
+          provider: "postmark",
+          to,
+          skipped: true,
+          error:
+            "Postmark not configured (missing POSTMARK_SERVER_TOKEN and/or POSTMARK_FROM_EMAIL).",
+        };
+      }
+      if (!to) {
+        return { ok: false, provider: "postmark", to: "", skipped: true, error: "No recipient" };
+      }
+
+      const res = await fetch("https://api.postmarkapp.com/email", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Postmark-Server-Token": token,
+        },
+        body: JSON.stringify({
+          From: fromHeader,
+          To: to,
+          Subject: input.subject,
+          TextBody: input.textBody,
+          ...(input.htmlBody ? { HtmlBody: input.htmlBody } : {}),
+          MessageStream: messageStream,
+        }),
+      });
+
+      const json = (await res.json().catch(() => null)) as PostmarkSendResponse | null;
+      if (!res.ok) {
+        return {
+          ok: false,
+          provider: "postmark",
+          to,
+          error: `Postmark HTTP ${res.status}: ${JSON.stringify(json)}`,
+        };
+      }
+      return { ok: true, provider: "postmark", to, providerMessageId: json?.MessageID };
     },
   };
 }

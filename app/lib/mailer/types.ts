@@ -35,7 +35,17 @@ export type StockXMilestoneEmailInput = {
   };
 };
 
+export type RawEmailInput = {
+  to: string;
+  subject: string;
+  textBody: string;
+  htmlBody?: string;
+  /** Internal/ops mail must ignore POSTMARK_OVERRIDE_TO (always reach the operator). */
+  ignoreOverride?: boolean;
+};
+
 export type Mailer = {
   sendStockXMilestoneEmail(input: StockXMilestoneEmailInput): Promise<MailSendResult>;
+  sendRawEmail(input: RawEmailInput): Promise<MailSendResult>;
 };
 

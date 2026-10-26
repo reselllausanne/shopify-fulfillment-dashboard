@@ -3556,3 +3556,23 @@ model FunnelEvent {
   @@map("funnel_events")
   @@schema("public")
 }
+
+/// Operator-facing StockX order issue alerts (cancel / refund / delay / not-purchased).
+/// One row per (scope, alertType, refKey) dedupes repeat emails for the same issue.
+model StockxOrderAlert {
+  id                String   @id @default(cuid())
+  scope             String // "shopify" | "galaxus"
+  alertType         String // "CANCELLED" | "REFUNDED" | "DELAYED" | "NOT_PURCHASED"
+  refKey            String // orderMatch.id (shopify) or galaxusOrder.id (galaxus)
+  orderRef          String? // human ref: Shopify order name / Galaxus order ref
+  stockxOrderNumber String?
+  productTitle      String?
+  detail            String?
+  emailTo           String?
+  sentAt            DateTime @default(now())
+  createdAt         DateTime @default(now())
+
+  @@unique([scope, alertType, refKey])
+  @@index([sentAt])
+  @@schema("public")
+}
