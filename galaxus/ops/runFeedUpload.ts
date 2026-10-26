@@ -103,6 +103,33 @@ function hashContent(value: string | Buffer): string {
   return hash.digest("hex");
 }
 
+/**
+ * Checksum of the last feed we actually uploaded to a given SFTP path. Used to skip
+ * a byte-identical re-upload (Galaxus drops identical files anyway). Keyed by
+ * storagePointer so per-supplier filenames never collide. Fail-safe: any lookup
+ * error returns null so the caller uploads rather than wrongly skipping.
+ */
+async function lastPushedChecksum(
+  exportType: string,
+  storagePointer: string
+): Promise<string | null> {
+  try {
+    const row = await (prisma as any).galaxusExportManifest.findFirst({
+      where: {
+        exportType,
+        storagePointer,
+        uploadStatus: "uploaded",
+        checksum: { not: null },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { checksum: true },
+    });
+    return row?.checksum ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function extractSupplierKeysFromCsv(csv: string | Buffer): string[] {
   // Never materialize a multi-hundred-MB Buffer as one string — sample is enough for prefixes.
   const text = Buffer.isBuffer(csv)
@@ -646,6 +673,43 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
     const specsName = buildFeedFilename("specifications", providerName, assortmentFile);
 
     const uploads: UploadedFile[] = [];
+
+    // Skip-unchanged (#1): Galaxus silently drops a byte-identical re-upload, so don't
+    // waste the SFTP transfer on a feed we already pushed. Compare each file's sha256 to
+    // the last manifest for the same path. Stock<->offer must keep row parity, so push
+    // both when either changed. Fail-safe: a null last-checksum (first run / lookup error)
+    // forces an upload.
+    const feedsBase = GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "");
+    const masterSha = needsMaster ? (masterStreamFile?.sha256 ?? hashContent(masterCsv)) : null;
+    const stockSha = needsStock ? hashContent(stockCsv) : null;
+    const offerSha = needsOffer ? hashContent(offerCsv) : null;
+    const specsSha = needsSpecs ? (specsStreamFile?.sha256 ?? hashContent(specsCsv)) : null;
+    const [lastMasterSha, lastStockSha, lastOfferSha, lastSpecsSha] = await Promise.all([
+      needsMaster ? lastPushedChecksum("master", `${feedsBase}/${masterName}`) : Promise.resolve(null),
+      needsStock ? lastPushedChecksum("stock", `${feedsBase}/${stockName}`) : Promise.resolve(null),
+      needsOffer ? lastPushedChecksum("offer", `${feedsBase}/${offerName}`) : Promise.resolve(null),
+      needsSpecs ? lastPushedChecksum("specs", `${feedsBase}/${specsName}`) : Promise.resolve(null),
+    ]);
+    const stockOrOfferChanged =
+      (needsStock && stockSha !== lastStockSha) || (needsOffer && offerSha !== lastOfferSha);
+    const pushMaster = needsMaster && masterSha !== lastMasterSha;
+    const pushStock = needsStock && stockOrOfferChanged;
+    const pushOffer = needsOffer && stockOrOfferChanged;
+    const pushSpecs = needsSpecs && specsSha !== lastSpecsSha;
+    const anyUpload = pushMaster || pushStock || pushOffer || pushSpecs;
+    const skippedUnchanged = [
+      needsMaster && !pushMaster ? "master" : null,
+      needsStock && !pushStock ? "stock" : null,
+      needsOffer && !pushOffer ? "offer" : null,
+      needsSpecs && !pushSpecs ? "specs" : null,
+    ].filter(Boolean);
+    if (skippedUnchanged.length > 0) {
+      console.info("[GALAXUS][FEEDS][UPLOAD] skip unchanged feeds (sha256 == last push)", {
+        runId,
+        skipped: skippedUnchanged,
+      });
+    }
+
     const manifestEntries: Array<{
       exportType: string;
       csv?: string | Buffer;
@@ -657,7 +721,7 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       size: number;
     }> = [];
 
-    await withSftp(
+    if (anyUpload) await withSftp(
       {
         host: GALAXUS_SFTP_HOST,
         port: GALAXUS_SFTP_PORT,
@@ -667,7 +731,7 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       async (client) => {
         const sftpStarted = Date.now();
         // One SFTP client — ops must stay sequential (ssh2-sftp is not concurrent-safe).
-        if (needsMaster) {
+        if (pushMaster) {
           if (masterStreamFile) {
             await uploadLocalFileTempThenRename(
               client,
@@ -700,7 +764,7 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
           });
         }
 
-        if (needsStock) {
+        if (pushStock) {
           await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, stockName, stockCsv);
           uploads.push({
             name: stockName,
@@ -716,7 +780,7 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
             size: Buffer.byteLength(stockCsv),
           });
         }
-        if (needsOffer) {
+        if (pushOffer) {
           await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, offerName, offerCsv);
           uploads.push({
             name: offerName,
@@ -732,7 +796,7 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
             size: Buffer.byteLength(offerCsv),
           });
         }
-        if (needsSpecs) {
+        if (pushSpecs) {
           const specsUploadStarted = Date.now();
           if (specsStreamFile) {
             await uploadLocalFileTempThenRename(
