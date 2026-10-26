@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Suspense, useState } from "react";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { RETURNS_LOCALES, type ReturnsCopy } from "@/app/returns/copy";
 import { useReturnsEmbed } from "@/app/returns/EmbedBootstrap";
 import { useReturnsLocale } from "@/app/returns/locale";
@@ -231,6 +231,14 @@ function PublicReturnsWizard() {
     return ok;
   }
 
+  function inStockOptions(options: ReplacementOption[] | undefined): ReplacementOption[] {
+    if (!options?.length) return [];
+    const stocked = options.filter(
+      (opt) => opt.availableQuantity == null || opt.availableQuantity > 0
+    );
+    return stocked.length ? stocked : [];
+  }
+
   async function loadReplacementOptions(fulfillmentLineItemId: string) {
     setReplacementLoading((prev) => ({ ...prev, [fulfillmentLineItemId]: true }));
     try {
@@ -274,12 +282,31 @@ function PublicReturnsWizard() {
           [fulfillmentLineItemId]: data.productSizeFit as ProductSizeFit,
         }));
       }
-    } catch {
+    } catch (error: any) {
       setReplacementOptions((prev) => ({ ...prev, [fulfillmentLineItemId]: [] }));
+      setSubmitState({
+        type: "error",
+        message: String(error?.message ?? copy.lookupFailed),
+      });
     } finally {
       setReplacementLoading((prev) => ({ ...prev, [fulfillmentLineItemId]: false }));
     }
   }
+
+  // Auto-load sizes whenever exchange is selected + line checked (covers
+  // auto-checked single item and path toggle race where load never fired).
+  useEffect(() => {
+    if (!isExchangeFlow || step !== 2) return;
+    for (const item of returnableItems) {
+      const id = item.fulfillmentLineItemId;
+      const st = selectedItems[id];
+      if (!st?.checked) continue;
+      if (replacementLoading[id]) continue;
+      if (Object.prototype.hasOwnProperty.call(replacementOptions, id)) continue;
+      void loadReplacementOptions(id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: load when path/selection needs options
+  }, [isExchangeFlow, step, returnableItems, selectedItems, replacementOptions, replacementLoading]);
 
   async function loadReturnableItems() {
     if (!validateStep1()) return;
@@ -495,9 +522,11 @@ function PublicReturnsWizard() {
     setSubmitState({ type: "idle" });
     setExchangeQuote(null);
     if (next === "exchange") {
+      // Drop cached empty/error results so useEffect reloads sizes.
+      setReplacementOptions({});
       for (const item of returnableItems) {
         const st = selectedItems[item.fulfillmentLineItemId];
-        if (st?.checked) {
+        if (st?.checked || returnableItems.length === 1) {
           void loadReplacementOptions(item.fulfillmentLineItemId);
         }
       }
@@ -539,11 +568,20 @@ function PublicReturnsWizard() {
         const st = selectedItems[item.fulfillmentLineItemId];
         if (!st?.checked) continue;
         const opts = replacementOptions[item.fulfillmentLineItemId];
+        const stocked = inStockOptions(opts);
         if (opts && opts.length === 0) {
           setSubmitState({
             type: "error",
             code: "VALIDATION_ERROR",
             message: copy.replacementNone,
+          });
+          return;
+        }
+        if (opts && stocked.length === 0) {
+          setSubmitState({
+            type: "error",
+            code: "VALIDATION_ERROR",
+            message: copy.replacementNoneOutOfStock,
           });
           return;
         }
@@ -922,13 +960,39 @@ function PublicReturnsWizard() {
                               <span className="mb-2 block text-sm font-medium">
                                 {copy.replacementLabel}
                               </span>
-                              {replacementLoading[item.fulfillmentLineItemId] ? (
-                                <p className="text-sm text-neutral-500">{copy.replacementLoading}</p>
-                              ) : (replacementOptions[item.fulfillmentLineItemId] ?? []).length ===
-                                0 ? (
-                                <p className="text-sm text-amber-800">{copy.replacementNone}</p>
-                              ) : (
-                                <>
+                              {(() => {
+                                const rawOpts =
+                                  replacementOptions[item.fulfillmentLineItemId];
+                                const loaded = Object.prototype.hasOwnProperty.call(
+                                  replacementOptions,
+                                  item.fulfillmentLineItemId
+                                );
+                                const loading = Boolean(
+                                  replacementLoading[item.fulfillmentLineItemId]
+                                );
+                                const stocked = inStockOptions(rawOpts);
+                                if (loading || (!loaded && isExchangeFlow)) {
+                                  return (
+                                    <p className="text-sm text-neutral-500">
+                                      {copy.replacementLoading}
+                                    </p>
+                                  );
+                                }
+                                if (loaded && (!rawOpts || rawOpts.length === 0)) {
+                                  return (
+                                    <p className="text-sm text-amber-800">
+                                      {copy.replacementNone}
+                                    </p>
+                                  );
+                                }
+                                if (loaded && stocked.length === 0) {
+                                  return (
+                                    <p className="text-sm text-amber-800">
+                                      {copy.replacementNoneOutOfStock}
+                                    </p>
+                                  );
+                                }
+                                return (
                                   <select
                                     value={state.replacementVariantId ?? ""}
                                     onChange={(e) => {
@@ -944,27 +1008,25 @@ function PublicReturnsWizard() {
                                     className="min-h-12 w-full rounded-sm border border-neutral-300 px-3 text-sm"
                                   >
                                     <option value="">—</option>
-                                    {(replacementOptions[item.fulfillmentLineItemId] ?? []).map(
-                                      (opt) => {
-                                        const delta = unitPriceDelta(
-                                          item.unitAmount,
-                                          opt.unitPrice
-                                        );
-                                        const label =
-                                          opt.optionLabel ||
-                                          opt.title ||
-                                          opt.sku ||
-                                          opt.variantId;
-                                        return (
-                                          <option key={opt.variantId} value={opt.variantId}>
-                                            {label} · {formatDeltaLabel(delta, copy)}
-                                          </option>
-                                        );
-                                      }
-                                    )}
+                                    {stocked.map((opt) => {
+                                      const delta = unitPriceDelta(
+                                        item.unitAmount,
+                                        opt.unitPrice
+                                      );
+                                      const label =
+                                        opt.optionLabel ||
+                                        opt.title ||
+                                        opt.sku ||
+                                        opt.variantId;
+                                      return (
+                                        <option key={opt.variantId} value={opt.variantId}>
+                                          {label} · {formatDeltaLabel(delta, copy)}
+                                        </option>
+                                      );
+                                    })}
                                   </select>
-                                </>
-                              )}
+                                );
+                              })()}
                             </div>
                           ) : null}
                         </div>

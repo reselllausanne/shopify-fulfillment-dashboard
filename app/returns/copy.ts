@@ -59,6 +59,7 @@ export type ReturnsCopy = {
   replacementLabel: string;
   replacementLoading: string;
   replacementNone: string;
+  replacementNoneOutOfStock: string;
   exchangeMultiQtyHint: string;
   replacementPickRequired: string;
   exchangePriceDiffDue: string;
@@ -210,6 +211,8 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     replacementLabel: "Nouvelle variante",
     replacementLoading: "Chargement des tailles…",
     replacementNone: "Aucune variante disponible pour un echange en ligne.",
+    replacementNoneOutOfStock:
+      "Les autres tailles de ce modele sont en rupture de stock pour un echange en ligne.",
     exchangeMultiQtyHint:
       "Plusieurs paires sur cette ligne : une seule nouvelle taille s'appliquera a toutes les quantites retournees.",
     replacementPickRequired: "Choisissez une variante de remplacement pour chaque article.",
@@ -339,6 +342,8 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     replacementLabel: "New variant",
     replacementLoading: "Loading sizes…",
     replacementNone: "No variant available online.",
+    replacementNoneOutOfStock:
+      "Other sizes of this model are out of stock for an online exchange.",
     exchangeMultiQtyHint:
       "Multiple pairs on this line: one replacement size applies to all returned units.",
     replacementPickRequired: "Pick a replacement for each item.",
@@ -465,6 +470,8 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     replacementLabel: "Neue Variante",
     replacementLoading: "Groessen laden…",
     replacementNone: "Keine Variante online verfuegbar.",
+    replacementNoneOutOfStock:
+      "Andere Groessen dieses Modells sind fuer einen Online-Umtausch nicht auf Lager.",
     exchangeMultiQtyHint:
       "Mehrere Paare in dieser Zeile: eine Ersatzgroesse gilt fuer alle zurueckgesendeten Stueck.",
     replacementPickRequired: "Ersatz pro Artikel waehlen.",
