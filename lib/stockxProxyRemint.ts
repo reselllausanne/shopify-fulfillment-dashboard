@@ -17,7 +17,10 @@ import path from "node:path";
 // Patchright (stealth Playwright) so the unattended cron remint uses the same
 // CDP-leak-patched engine as the interactive login — vanilla Playwright gets
 // fingerprinted by Cloudflare Turnstile + PerimeterX on accounts.stockx.com.
-import { chromium } from "patchright";
+// Cast to Playwright's chromium type so the page/context stay compatible with the
+// playwright-typed helpers in stockxAutoLogin (identical runtime API).
+import { chromium as patchrightChromium } from "patchright";
+const chromium = patchrightChromium as unknown as typeof import("playwright").chromium;
 import {
   nextStockxPlaywrightProxy,
   stockxPlaywrightProxyAvailable,
