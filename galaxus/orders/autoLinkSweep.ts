@@ -2,11 +2,12 @@ import { prisma } from "@/app/lib/prisma";
 import {
   autoLinkUnclaimedStockxBuysForGalaxusOrder,
   filterGalaxusLinesNeedingStockxAutoLink,
+  resolveGalaxusOrderStxVariantIds,
 } from "@/galaxus/orders/autoLinkStockxBuys";
 import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
 import { shouldSkipGalaxusOrderForMatching } from "@/galaxus/orders/openGalaxusOrderFilter";
 import { getCachedStockxBuyingOrders } from "@/galaxus/stx/buyingOrdersCache";
-import type { StockxBuyingNode } from "@/galaxus/stx/stockxClient";
+import { extractStockxVariantId, type StockxBuyingNode } from "@/galaxus/stx/stockxClient";
 import { listStockxAccountTokens } from "@/lib/stockxToken";
 
 export type GalaxusAutoLinkSweepOptions = {
@@ -140,12 +141,26 @@ export async function runGalaxusStockxAutoLinkSweep(
     return { ...result, ok: false, error: "no_stockx_buys_fetched" };
   }
 
+  // Variant ids present in the prefetched buy pool — orders whose STX lines share none
+  // of these cannot gain a new link, so skip their heavy procurement reconcile.
+  const buyVariantIds = new Set<string>();
+  for (const { node } of prefetchedBuys) {
+    const vid = extractStockxVariantId(node, null);
+    if (vid) buyVariantIds.add(String(vid).trim());
+  }
+
   for (const order of candidates) {
     if (Date.now() - startedAt > budgetMs) {
       result.budgetExhausted = true;
       break;
     }
     try {
+      // Cheap pre-filter: no overlapping variant → no possible new link, skip reconcile.
+      const orderVariantIds = await resolveGalaxusOrderStxVariantIds(order);
+      if (!orderVariantIds.some((v) => buyVariantIds.has(v))) {
+        result.processedOrders += 1;
+        continue;
+      }
       const reconcile = await reconcileGalaxusOrderProcurement(order.id, { skipAutoLink: true });
       if (reconcile.ok) result.ensuredMatches += reconcile.ensuredMatches;
       const linkRes = await autoLinkUnclaimedStockxBuysForGalaxusOrder(order.id, {
