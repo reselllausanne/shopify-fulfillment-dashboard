@@ -21,7 +21,7 @@
  *   GALAXUS_FASHION_ONLY=0 disables.
  * - price_outlier: consumer price above GALAXUS_MAX_RETAIL_CHF (default 300, every supplier).
  *   REI allowlist exempt (curated prior sales — Jetson / GB10 / etc. sit above the fashion cap).
- *   LEGO kind exempt (Art / Icons sets routinely 300–500+ MSRP; fashion cap is for apparel).
+ *   LEGO kind is NOT price-cap exempt (Monday 2026-10-26 rollback closed the weekend Klimt hole).
  *   GALAXUS_PRICE_OUTLIER_FILTER=1 also blocks STX asks far above brand retail.
  * - Per-SKU fashion / supplier-disabled holes: galaxusAssortmentExceptions.ts (Tali mail dump).
  *
@@ -601,8 +601,8 @@ export function galaxusAssortmentBlockReason(
       isGalaxusReiAllowlistEnabled() &&
       (isReiGalaxusAllowlisted(input.providerKey) ||
         isReiGalaxusAllowlisted(input.gtin ? `REI_${String(input.gtin).trim()}` : null));
-    // Fashion-oriented absolute cap; REI allowlist + LEGO sets sit above apparel MSRP.
-    if (!reiAllowlisted && kind !== "lego" && consumer > galaxusMaxRetailChf()) {
+    // Fashion-oriented absolute cap; REI allowlist (NVIDIA Jetson / GB10 / prior sellers) only.
+    if (!reiAllowlisted && consumer > galaxusMaxRetailChf()) {
       return "price_outlier";
     }
     // Optional extra: thin StockX asks far above brand retail.
