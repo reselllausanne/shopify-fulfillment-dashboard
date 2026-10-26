@@ -48,6 +48,8 @@ export type StockxOpsAlertResult = {
   emailTo: string | null;
   byType: Record<AlertType, number>;
   skippedExisting: number;
+  /** First-ever run: backlog recorded without a full per-item email (summary only). */
+  baselineSeeded: boolean;
 };
 
 function statusKey(s: string | null | undefined): string {
@@ -59,6 +61,24 @@ function isCancelledStatus(s: string | null | undefined): boolean {
 }
 function isRefundedStatus(s: string | null | undefined): boolean {
   return statusKey(s).includes("REFUND");
+}
+
+// Statuses that are terminal (already delivered/received/complete) or not a real tracked
+// StockX buy (local physical stock / manual) — never "delayed".
+const NON_DELAYABLE_STATUS = /CANCEL|REFUND|DELIVER|COMPLET|RECEIV|LOCAL|MANUAL/;
+
+/** True only for a genuinely-late tracked buy: real status, ETA just passed (recent window). */
+function isRecentlyLate(
+  status: string | null | undefined,
+  eta: Date | null | undefined,
+  now: number,
+  lateWindowMs: number
+): boolean {
+  const sk = statusKey(status);
+  if (!sk || NON_DELAYABLE_STATUS.test(sk)) return false;
+  if (!eta) return false;
+  const t = new Date(eta).getTime();
+  return t < now && t > now - lateWindowMs;
 }
 
 function fmtDate(d: Date | null | undefined): string {
@@ -73,14 +93,22 @@ function fmtDate(d: Date | null | undefined): string {
 export async function runStockxOrderOpsAlerts(options?: {
   days?: number;
   notPurchasedAgeDays?: number;
+  lateWindowDays?: number;
   dryRun?: boolean;
 }): Promise<StockxOpsAlertResult> {
   const days = Math.max(1, Math.min(120, Number(options?.days ?? 30)));
   const notPurchasedAgeDays = Math.max(1, Math.min(60, Number(options?.notPurchasedAgeDays ?? 2)));
+  // A buy only counts as "delayed" when its ETA passed within this recent window — stops
+  // months-old past-ETA backlog (often already delivered) from flooding the digest.
+  const lateWindowDays = Math.max(1, Math.min(30, Number(options?.lateWindowDays ?? 7)));
+  const lateWindowMs = lateWindowDays * DAY_MS;
+  // Only flag recently-unbought orders (older are known lost causes, not actionable now).
+  const notPurchasedMaxDays = 14;
   const dryRun = Boolean(options?.dryRun);
   const now = Date.now();
   const since = new Date(now - days * DAY_MS);
   const notPurchasedCutoff = new Date(now - notPurchasedAgeDays * DAY_MS);
+  const notPurchasedFloor = new Date(now - notPurchasedMaxDays * DAY_MS);
 
   const result: StockxOpsAlertResult = {
     ok: true,
@@ -90,6 +118,7 @@ export async function runStockxOrderOpsAlerts(options?: {
     emailTo: null,
     byType: { CANCELLED: 0, REFUNDED: 0, DELAYED: 0, NOT_PURCHASED: 0 },
     skippedExisting: 0,
+    baselineSeeded: false,
   };
 
   const prismaAny = prisma as any;
@@ -151,9 +180,12 @@ export async function runStockxOrderOpsAlerts(options?: {
         });
         continue;
       }
-      // Delayed: ETA passed, not fulfilled on Shopify.
+      // Delayed: real buy, ETA recently passed, not fulfilled on Shopify.
       const eta = m.stockxLatestEstimatedDelivery || m.stockxEstimatedDelivery;
-      if (eta && eta.getTime() < now && !fulfilledSet.has(m.shopifyOrderId ?? "")) {
+      if (
+        isRecentlyLate(m.stockxStatus, eta, now, lateWindowMs) &&
+        !fulfilledSet.has(m.shopifyOrderId ?? "")
+      ) {
         pending.push({
           scope: "shopify",
           alertType: "DELAYED",
@@ -212,7 +244,7 @@ export async function runStockxOrderOpsAlerts(options?: {
         continue;
       }
       const eta = m.stockxLatestEstimatedDelivery || m.stockxEstimatedDelivery;
-      if (eta && new Date(eta).getTime() < now) {
+      if (isRecentlyLate(m.stockxStatus, eta, now, lateWindowMs)) {
         pending.push({
           scope: "galaxus",
           alertType: "DELAYED",
@@ -234,7 +266,7 @@ export async function runStockxOrderOpsAlerts(options?: {
       where: {
         archivedAt: null,
         cancelledAt: null,
-        orderDate: { gte: since, lte: notPurchasedCutoff },
+        orderDate: { gte: notPurchasedFloor, lte: notPurchasedCutoff },
         lines: { some: STX_LINE_FILTER },
       },
       include: { lines: true },
@@ -303,6 +335,13 @@ export async function runStockxOrderOpsAlerts(options?: {
   for (const p of fresh) result.byType[p.alertType] += 1;
   result.newAlerts = fresh.length;
 
+  // First-ever run: table empty ⇒ everything is pre-existing backlog. Record it as a
+  // baseline (so future runs only alert on genuinely new issues) and send a short counts
+  // summary instead of a flood of hundreds of historical lines.
+  const totalExisting = await prismaAny.stockxOrderAlert.count().catch(() => 1);
+  const baseline = totalExisting === 0;
+  result.baselineSeeded = baseline;
+
   const operator =
     (process.env.STOCKX_ALERT_EMAIL || "").trim() ||
     (process.env.POSTMARK_FROM_EMAIL || "").trim();
@@ -310,9 +349,11 @@ export async function runStockxOrderOpsAlerts(options?: {
 
   if (dryRun) return result;
 
-  // Send ONE operator digest.
+  // Send ONE operator digest (full list normally; counts-only on baseline seed).
   if (operator) {
-    const { text, html, subject } = buildDigest(fresh, result.byType);
+    const { text, html, subject } = baseline
+      ? buildBaselineSummary(result.byType, fresh.length)
+      : buildDigest(fresh, result.byType);
     try {
       const sendRes = await getMailer().sendRawEmail({
         to: operator,
@@ -364,6 +405,28 @@ const TYPE_LABEL: Record<AlertType, string> = {
   DELAYED: "Retards (ETA depassee)",
   NOT_PURCHASED: "Non achetes (buy manquant)",
 };
+
+function buildBaselineSummary(
+  byType: Record<AlertType, number>,
+  total: number
+): { subject: string; text: string; html: string } {
+  const rows = (["CANCELLED", "REFUNDED", "DELAYED", "NOT_PURCHASED"] as AlertType[])
+    .filter((t) => byType[t] > 0)
+    .map((t) => `${TYPE_LABEL[t]}: ${byType[t]}`);
+  const subject = `[Resell OPS] StockX alertes activees — baseline ${total} enregistree(s)`;
+  const text = [
+    "Systeme d'alertes StockX active.",
+    "",
+    `Backlog actuel enregistre comme baseline (${total}) — PAS de details ici pour eviter le flood.`,
+    "Seuls les NOUVEAUX problemes seront envoyes en detail aux prochains passages.",
+    "",
+    ...rows.map((r) => `- ${r}`),
+  ].join("\n");
+  const html = `<h2 style="font-family:Arial,sans-serif;">Alertes StockX activees</h2>
+<p style="font-family:Arial,sans-serif;">Backlog enregistre comme baseline (<b>${total}</b>). Seuls les nouveaux problemes alerteront en detail.</p>
+<ul style="font-family:Arial,sans-serif;">${rows.map((r) => `<li>${escapeHtml(r)}</li>`).join("")}</ul>`;
+  return { subject, text, html };
+}
 
 function buildDigest(
   alerts: PendingAlert[],
