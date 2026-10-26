@@ -128,6 +128,11 @@ export async function startInteractiveStockxLogin(
     body: JSON.stringify({
       headless: false,
       persistent: true,
+      // Route the interactive VNC login through the residential CH pool. The VPS
+      // datacenter IP is hard-blocked by Cloudflare Turnstile (infinite spinner),
+      // so a human solving the challenge still fails on the direct IP. A residential
+      // proxy makes the Turnstile solvable (this is how the token seed path works).
+      useProxy: true,
       forceLogin: Boolean(options.reset),
       reuseTokenFile: false,
       autoLogin: true,
