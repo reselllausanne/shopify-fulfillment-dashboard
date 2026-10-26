@@ -143,18 +143,31 @@ export async function loadGalaxusListingIdentities(
     )
   );
 
+  // "Master catalog keys" = providerKeys Galaxus already ingested. There is no
+  // GalaxusFeedMasterSnapshot model (schema only has Stock/Offer snapshots), so the
+  // old reference was `undefined.findMany` — it only ever ran once the CLS query
+  // succeeded, which is why chunking the CLS IN list (bind-var fix) unmasked this
+  // crash and killed every push. Use the pushed snapshot keys (stock ∪ offer) as the
+  // master-presence proxy, and guard the model so a missing table degrades to the
+  // CLS-only fallback in pickGalaxusListingProviderKey instead of throwing.
   const masterKeys = new Set<string>();
-  if (allKeys.length > 0) {
+  const snapshotModels = [
+    (prisma as any).galaxusFeedStockSnapshot,
+    (prisma as any).galaxusFeedOfferSnapshot,
+  ].filter((m) => m && typeof m.findMany === "function");
+  if (allKeys.length > 0 && snapshotModels.length > 0) {
     const chunkSize = 500;
-    for (let i = 0; i < allKeys.length; i += chunkSize) {
-      const chunk = allKeys.slice(i, i + chunkSize);
-      const masterRows = await (prisma as any).galaxusFeedMasterSnapshot.findMany({
-        where: { providerKey: { in: chunk } },
-        select: { providerKey: true },
-      });
-      for (const row of masterRows as Array<{ providerKey: string }>) {
-        const pk = String(row.providerKey ?? "").trim();
-        if (pk) masterKeys.add(pk);
+    for (const model of snapshotModels) {
+      for (let i = 0; i < allKeys.length; i += chunkSize) {
+        const chunk = allKeys.slice(i, i + chunkSize);
+        const snapRows = await model.findMany({
+          where: { providerKey: { in: chunk } },
+          select: { providerKey: true },
+        });
+        for (const row of snapRows as Array<{ providerKey: string }>) {
+          const pk = String(row.providerKey ?? "").trim();
+          if (pk) masterKeys.add(pk);
+        }
       }
     }
   }
