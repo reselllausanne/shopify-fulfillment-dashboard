@@ -26,8 +26,13 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm install --include=dev
 
 # Install browser binaries inside image (runtime can launch without reinstall).
+# - Playwright chromium: Firefox/legacy paths + non-StockX scrapers.
+# - Patchright chromium: stealth engine for StockX login/remint (CDP leaks patched).
+# - Real Google Chrome: strongest Turnstile stealth, enabled via STOCKX_CHROME_CHANNEL=chrome.
 RUN mkdir -p /ms-playwright \
-    && npx playwright install --with-deps chromium
+    && npx playwright install --with-deps chromium \
+    && npx patchright install chromium \
+    && (npx patchright install --with-deps chrome || echo "patchright chrome install skipped (channel opt-in via STOCKX_CHROME_CHANNEL)")
 
 COPY . .
 

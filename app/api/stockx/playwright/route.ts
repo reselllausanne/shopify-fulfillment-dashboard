@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chromium, firefox, type Browser, type BrowserContext } from "playwright";
+import { chromium as playwrightChromium, firefox, type Browser, type BrowserContext } from "playwright";
+// Patchright = drop-in Playwright with the CDP/automation leaks patched out
+// (Runtime.enable, navigator.webdriver, closed shadow-root access) that Cloudflare
+// Turnstile + PerimeterX use to fingerprint StockX logins. Chromium path only.
+import { chromium as patchrightChromium } from "patchright";
 import {
   DEFAULT_STOCKX_PERSISTED_HASHES_FILE,
   readStockxPersistedHashes,
@@ -194,9 +198,11 @@ const createEphemeralContext = async ({
 }: {
   browser: Browser;
   sessionFile: string;
-  userAgent: string;
+  // undefined → let the real browser advertise its own UA (stealth chromium).
+  userAgent?: string;
   forceLogin: boolean;
 }): Promise<BrowserContext> => {
+  const uaOpt = userAgent ? { userAgent } : {};
   if (forceLogin) {
     try {
       await fs.unlink(sessionFile);
@@ -204,18 +210,18 @@ const createEphemeralContext = async ({
     } catch {
       // ignore missing file
     }
-    const context = await browser.newContext({ userAgent });
+    const context = await browser.newContext({ ...uaOpt });
     console.log("[STOCKX-PW] Force login: fresh context");
     return context;
   }
 
   try {
     await fs.access(sessionFile);
-    const context = await browser.newContext({ storageState: sessionFile, userAgent });
+    const context = await browser.newContext({ storageState: sessionFile, ...uaOpt });
     console.log("[STOCKX-PW] Loaded existing session");
     return context;
   } catch {
-    const context = await browser.newContext({ userAgent });
+    const context = await browser.newContext({ ...uaOpt });
     console.log("[STOCKX-PW] No session found, fresh context");
     return context;
   }
@@ -238,6 +244,12 @@ export async function POST(req: NextRequest) {
     const defaultHeadless = process.env.NODE_ENV === "production" && !remoteDesktopEnabled;
     const headless = forceHeadless ? true : (requestedHeadless ?? defaultHeadless);
     const browserType = String(body?.browser || "firefox").toLowerCase();
+    // Use the stealth (Patchright) engine for chromium; Firefox keeps vanilla Playwright.
+    const stealthChromium = browserType === "chromium";
+    const chromium = (stealthChromium ? patchrightChromium : playwrightChromium) as typeof playwrightChromium;
+    // Optional real Google Chrome channel (strongest Turnstile stealth). Requires Chrome
+    // installed in the image; unset → Patchright's patched Chromium (safe default).
+    const chromeChannel = String(process.env.STOCKX_CHROME_CHANNEL ?? "").trim() || undefined;
     const sessionFile = String(body?.sessionFile || DEFAULT_SESSION_FILE);
     const sessionMetaFile = String(body?.sessionMetaFile || DEFAULT_SESSION_META_FILE);
     const tokenFile = resolveOptionalFile(body?.tokenFile) ?? DEFAULT_TOKEN_FILE;
@@ -326,6 +338,7 @@ export async function POST(req: NextRequest) {
       headless,
       slowMo: headless ? 0 : 50,
       args: baseArgs,
+      ...(stealthChromium && chromeChannel ? { channel: chromeChannel } : {}),
       ...(playwrightProxy
         ? {
             proxy: {
@@ -403,11 +416,13 @@ export async function POST(req: NextRequest) {
       };
       try {
         if (browserType === "chromium") {
+          // Stealth: no custom UA / viewport override (Patchright best practice —
+          // a hand-set UA that disagrees with real Chrome is a stronger bot signal).
           context = await chromium.launchPersistentContext(userDataDir, {
             ...warmLaunchOptions,
             locale: "fr-FR",
             timezoneId: "Europe/Zurich",
-            userAgent,
+            viewport: null,
           });
         } else {
           context = await firefox.launchPersistentContext(userDataDir, {
@@ -450,7 +465,7 @@ export async function POST(req: NextRequest) {
               ...warmLaunchOptions,
               locale: "fr-FR",
               timezoneId: "Europe/Zurich",
-              userAgent,
+              viewport: null,
             });
           } else {
             context = await firefox.launchPersistentContext(userDataDir, {
@@ -508,7 +523,7 @@ export async function POST(req: NextRequest) {
           context = await createEphemeralContext({
             browser,
             sessionFile,
-            userAgent,
+            userAgent: stealthChromium ? undefined : userAgent,
             forceLogin,
           });
         }
@@ -521,7 +536,7 @@ export async function POST(req: NextRequest) {
       context = await createEphemeralContext({
         browser,
         sessionFile,
-        userAgent,
+        userAgent: stealthChromium ? undefined : userAgent,
         forceLogin,
       });
     }
