@@ -135,10 +135,17 @@ export async function startInteractiveStockxLogin(
       useProxy: true,
       forceLogin: Boolean(options.reset),
       reuseTokenFile: false,
-      autoLogin: true,
+      // Interactive VNC login = 100% hands-off for the operator. Server-side
+      // autoLogin triggers a 15s kick-navigation loop + Cloudflare reloads that
+      // reset Turnstile under the human's fingers ("page keeps refreshing").
+      // Disable it: the operator solves Turnstile + logs in by hand, and the token
+      // is still captured passively (response listener + cookie/localStorage poll).
+      autoLogin: false,
       browser: "chromium",
       startUrl: "https://stockx.com/login",
-      waitForUserClose: false,
+      // Keep the browser idle (no periodic kick nav) until the operator finishes
+      // and the bearer is captured, or the login window times out.
+      waitForUserClose: true,
       maxWaitMs: LOGIN_WINDOW_MS,
       sessionFile: files.sessionFile,
       sessionMetaFile: files.sessionMetaFile,
