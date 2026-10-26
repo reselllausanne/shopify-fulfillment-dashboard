@@ -134,7 +134,12 @@ services:
       - GALAXUS_FEED_WORKER_ORIGIN=${GALAXUS_FEED_WORKER_ORIGIN:-http://127.0.0.1:3000}
       - GALAXUS_FEED_STALE_MINUTES=${GALAXUS_FEED_STALE_MINUTES:-45}
       - GALAXUS_PAUSE_HEAVY_FEEDS=${GALAXUS_PAUSE_HEAVY_FEEDS:-0}
-    command: ["npx", "tsx", "scripts/workers/galaxusFeedWorker.ts"]
+    # Run node directly (not `npx tsx`): npx is PID1 and does NOT forward SIGTERM to its
+    # child, so the worker's drain handler never fired on deploy recreate and builds died
+    # as "crash recovery". `node --import tsx` makes the script's node process PID1 so it
+    # receives SIGTERM and drains. init: true reaps any grandchildren.
+    command: ["node", "--import", "tsx", "scripts/workers/galaxusFeedWorker.ts"]
+    init: true
     # Deploy recreate sends SIGTERM; the worker drains the in-flight build (up to
     # GALAXUS_FEED_WORKER_DRAIN_MS=25min) before exit. Grace must exceed that budget
     # so docker does not SIGKILL mid-build (the old "crash recovery" loop).
