@@ -23,6 +23,11 @@ describe("styleIdFromSku / sizeFromSku", () => {
   it("handles OS backpack", () => {
     expect(sizeFromSku("1af0c9af-b837-43ab-8e62-ac4eb576f295-OS")).toBe("OS");
   });
+
+  it("strips apparel letter size from styleId", () => {
+    expect(styleIdFromSku("FB8016-010-S")).toBe("FB8016-010");
+    expect(styleIdFromSku("FV1931-107-M")).toBe("FV1931-107");
+  });
 });
 
 describe("sizesCompatible", () => {

@@ -11,6 +11,11 @@ export const GALAXUS_CSAT_MIN_MARGIN = 0.05;
 
 /** Ignore bare ask scraps; checkout all-in lanes are typically ≥ this. */
 export const LANE_MIN_ALL_IN_CHF = 80;
+/**
+ * Single-price Xpress "Prix de l'article" can be well under all-in (fees/ship added
+ * to Sous-total). Live subtotal still gates Place Order — only seed the synth path.
+ */
+export const XPRESS_ITEM_MIN_CHF = 15;
 
 /** Require decimals — bare `\d{1,3}` alone matches "86" from "86,74 CHF" and drops under min. */
 const MONEY_RE = String.raw`(\d{1,3}(?:[’'\s]\d{3})*[.,]\d{2})`;
@@ -59,20 +64,21 @@ export function parseSingleXpressItemPriceChf(
   body: string | null | undefined
 ): number | null {
   const t = String(body || "");
+  // FR sometimes inserts "de" between label and amount ("Prix de l'article\nde\n43 CHF").
   const patterns = [
     new RegExp(
-      String.raw`Prix de l['’]article\s*(?:CHF\s*)?${MONEY_OPT_DEC_RE}(?:\s*CHF)?`,
+      String.raw`Prix de l['’]article\s*(?:de\s*)?(?:CHF\s*)?${MONEY_OPT_DEC_RE}(?:\s*CHF)?`,
       "i"
     ),
     new RegExp(
-      String.raw`Item price\s*(?:CHF\s*)?${MONEY_OPT_DEC_RE}(?:\s*CHF)?`,
+      String.raw`Item price\s*(?:from\s*)?(?:CHF\s*)?${MONEY_OPT_DEC_RE}(?:\s*CHF)?`,
       "i"
     ),
   ];
   for (const re of patterns) {
     const m = t.match(re);
     const n = moneyToNumber(m?.[1] ?? null);
-    if (n != null && n >= LANE_MIN_ALL_IN_CHF) return n;
+    if (n != null && n >= XPRESS_ITEM_MIN_CHF) return n;
   }
   return null;
 }

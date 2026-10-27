@@ -127,8 +127,10 @@ export function sizeFromSku(sku: string | null | undefined): string | null {
 export function styleIdFromSku(sku: string | null | undefined): string | null {
   if (!sku) return null;
   const s = String(sku).trim();
-  // Strip trailing size: -39 | -37.5 | -43 1/3 | -OS
-  const stripped = s.replace(/-(\d{2}(?:\s*[12]\s*\/\s*3|\.\d+)?|OS)\s*$/i, "");
+  // Strip trailing size: -39 | -37.5 | -43 1/3 | -OS | apparel -S/-M/-L/…
+  const stripped = s
+    .replace(/-(\d{2}(?:\s*[12]\s*\/\s*3|\.\d+)?|OS)\s*$/i, "")
+    .replace(/-(XX?S|S|M|L|XX?L|XXXL|[2-4]XL)\s*$/i, "");
   return stripped || s;
 }
 
