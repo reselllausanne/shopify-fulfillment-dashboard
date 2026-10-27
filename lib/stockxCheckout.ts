@@ -628,48 +628,62 @@ export async function selectAndVerifyStockxLane(
   | { ok: false; reason: string; lanes: StockxLaneCard[]; detail?: string }
 > {
   const maxAllInChf = options.maxAllInChf ?? MAX_ALL_IN_CHF;
-  // Shipping cards often paint after Buy Now — empty body → false oos / bodyChars=0.
-  // Wait for real content; one reload on blank CF/proxy shells before fail-closed.
-  const waitShipBody = async () =>
+  // Shipping cards paint late. Product/size chrome alone (~200 chars, gray panel) is NOT
+  // ready — require CHF + lane/date/subtotal, or true OOS copy. Reload on skeleton shells.
+  const waitShipBody = async (timeoutMs = 28_000) =>
     page
       .waitForFunction(
         `() => {
           const t = (document.body && document.body.innerText) || "";
-          if (t.replace(/\\s+/g, "").length < 80) return false;
+          const hasChf = /(?:CHF\\s*\\d)|(?:\\d+[.,]\\d{2}\\s*CHF)/i.test(t);
+          const noAsk = /aucune demande|no asks?|make an offer|faire une offre/i.test(t);
+          if (noAsk && !hasChf) return true;
+          if (!hasChf) return false;
           return (
             /\\b(Standard|Express|Xpress|Fastest|Expedited|Sous[- ]?total|Subtotal)\\b/i.test(t) ||
             /\\d{1,2}\\s+(jan|fév|fev|mar|avr|mai|juin|juil|aoû|aou|sep|oct|nov|déc|dec|janvier|février|mars|avril|juin|juillet|août|septembre|octobre|novembre|décembre)/i.test(t)
           );
         }`,
-        { timeout: 25_000 }
+        { timeout: timeoutMs }
       )
       .then(() => true)
       .catch(() => false);
 
   let shipReady = await waitShipBody();
-  if (!shipReady) {
-    console.warn("[STOCKX-CHECKOUT] blank/incomplete checkout body — reloading once");
+  for (let reload = 0; !shipReady && reload < 2; reload += 1) {
+    console.warn(
+      `[STOCKX-CHECKOUT] checkout shell incomplete (no CHF lanes) — reload ${reload + 1}/2`
+    );
     await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => undefined);
-    await page.waitForTimeout(2500);
-    shipReady = await waitShipBody();
+    await page.waitForTimeout(2800);
+    shipReady = await waitShipBody(22_000);
   }
   if (!shipReady) {
     await page.waitForTimeout(2500);
   }
   let body = await page.locator("body").innerText().catch(() => "");
   let lanes = await parseLanesFromPage(page);
-  // One extra settle if still empty (SPA lag).
-  if (!lanes.length) {
-    await page.waitForTimeout(3000);
+  // Extra settle polls — SPA often injects cards after shell chrome.
+  for (let i = 0; !lanes.length && i < 4; i += 1) {
+    await page.waitForTimeout(2000);
     body = await page.locator("body").innerText().catch(() => "");
     lanes = await parseLanesFromPage(page);
+    if (classifyEmptyLaneReason(body) === "oos_no_ask") break;
   }
-  if (!lanes.length && body.replace(/\s+/g, "").length < 80) {
+  if (!lanes.length && classifyEmptyLaneReason(body) === "proxy_blank") {
+    try {
+      const fs = await import("node:fs/promises");
+      const dump = `/app/.data/stockx-lane-dump-${Date.now().toString(36)}.txt`;
+      await fs.writeFile(dump, body.slice(0, 8000), "utf8");
+      console.warn(`[STOCKX-CHECKOUT] hydrate timeout — dumped ${dump} (${body.length} chars)`);
+    } catch {
+      console.warn(`[STOCKX-CHECKOUT] hydrate timeout — bodyChars=${body.length}`);
+    }
     return {
       ok: false,
       reason: "proxy_blank",
       lanes: [],
-      detail: `checkout body blank after reload (bodyChars=${body.length}) — CF/proxy`,
+      detail: `checkout hydrate timeout — shell/no CHF lanes after reloads (bodyChars=${body.length})`,
     };
   }
   if (!lanes.length) {
@@ -752,7 +766,9 @@ export async function selectAndVerifyStockxLane(
                 ? "page: aucune demande / no ask — true OOS"
                 : refined === "express_only"
                   ? "page shows buyable price/Xpress but STANDARD not parsed"
-                  : `empty lanes, unknown body (bodyChars=${body.length})`,
+                  : refined === "proxy_blank"
+                    ? `checkout hydrate incomplete — not hard OOS (bodyChars=${body.length})`
+                    : `empty lanes, unknown body (bodyChars=${body.length})`,
           };
         }
       } else {

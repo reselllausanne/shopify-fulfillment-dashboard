@@ -250,20 +250,43 @@ export function countDistinctShippingTierInText(
   return prices.size;
 }
 
+/** Product/size chrome without CHF or ask CTA — SPA/CF hydrate incomplete (retryable). */
+export function isCheckoutShellWithoutLanes(body: string | null | undefined): boolean {
+  const t = String(body || "");
+  if (!t.trim()) return true;
+  const noAskRe = /aucune demande|no asks?|make an offer|faire une offre/i;
+  const hasPriceRe = new RegExp(
+    String.raw`(?:CHF\s*${MONEY_RE})|(?:${MONEY_RE}\s*CHF)`,
+    "i"
+  );
+  const hasLaneUi =
+    /\b(standard|express|xpress|fastest|expedited|sous[- ]?total|subtotal)\b/i.test(t) ||
+    hasPriceRe.test(t);
+  if (hasLaneUi || noAskRe.test(t)) return false;
+  // Size-selected buy shell / marketing chrome (Stan Smith #7566 skeleton ~200 chars).
+  const hasShell =
+    /taille\s*:|size\s*:|nouveautés?\s*vérifiées|verified\s*new|\bretour\b|passer au contenu/i.test(
+      t
+    );
+  return hasShell || t.replace(/\s+/g, "").length < 400;
+}
+
 /**
  * When lanes parse EMPTY, read raw checkout/PDP body to tell TRUE out-of-stock
- * from a parser miss (buyable, Express-only). Distinguishes:
+ * from a parser miss (buyable, Express-only) or soft hydrate fail. Distinguishes:
  *  - `oos_no_ask`  : body says "aucune demande" / "no asks" / "make an offer" and
  *                    shows NO CHF price → genuinely nobody selling this size.
  *                    Only this one is safe to tell a customer "unavailable".
  *  - `express_only`: a single buyable signal is present (e.g. "il n'en reste que 1",
  *                    "Prix de l'article", Xpress/Express) but STANDARD was not parsed
  *                    → buyable, NOT out of stock (parser miss).
+ *  - `proxy_blank` : product/size chrome or truncated shell, no CHF/lanes/ask CTA
+ *                    → incomplete hydrate / CF — retry, NOT hard OOS.
  *  - `oos`         : unknown / unparseable (keep the conservative default).
  */
 export function classifyEmptyLaneReason(
   body: string | null | undefined
-): "oos_no_ask" | "express_only" | "oos" {
+): "oos_no_ask" | "express_only" | "proxy_blank" | "oos" {
   const t = String(body || "");
   const noAskRe = /aucune demande|no asks?|make an offer|faire une offre/i;
   const buyableRe =
@@ -277,6 +300,7 @@ export function classifyEmptyLaneReason(
 
   if (noAskRe.test(t) && !hasPrice) return "oos_no_ask";
   if (buyableRe.test(t) || hasPrice) return "express_only";
+  if (isCheckoutShellWithoutLanes(t)) return "proxy_blank";
   return "oos";
 }
 

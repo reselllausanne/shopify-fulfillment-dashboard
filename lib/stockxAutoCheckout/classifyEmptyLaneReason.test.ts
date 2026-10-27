@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { classifyEmptyLaneReason } from "@/lib/stockxAutoCheckout/chooseLane";
+import {
+  classifyEmptyLaneReason,
+  isCheckoutShellWithoutLanes,
+} from "@/lib/stockxAutoCheckout/chooseLane";
 
 describe("classifyEmptyLaneReason", () => {
   it("true OOS — FR 'aucune demande' with no price → oos_no_ask", () => {
@@ -34,8 +37,24 @@ describe("classifyEmptyLaneReason", () => {
     ).toBe("express_only");
   });
 
-  it("unknown / unparseable body → oos (conservative default)", () => {
-    expect(classifyEmptyLaneReason("")).toBe("oos");
-    expect(classifyEmptyLaneReason("loading...")).toBe("oos");
+  it("Stan Smith skeleton chrome (size selected, no CHF) → proxy_blank not oos", () => {
+    // LIVE #7566 IE4634 — gray panel + spinner; marketing chrome only.
+    const body = [
+      "Passer au contenu principal",
+      "FAQ",
+      "Retour",
+      "adidas Stan Smith Cloud Blanc OFF-WHITE Wonder Blanc (femme)",
+      "Taille :",
+      "EU 40",
+      "Nouveautés vérifiées",
+      "StockX : sneakers, streetwear, cartes collector, sacs, montres",
+    ].join("\n");
+    expect(isCheckoutShellWithoutLanes(body)).toBe(true);
+    expect(classifyEmptyLaneReason(body)).toBe("proxy_blank");
+  });
+
+  it("blank / truncated shell → proxy_blank (retryable, not hard OOS)", () => {
+    expect(classifyEmptyLaneReason("")).toBe("proxy_blank");
+    expect(classifyEmptyLaneReason("loading...")).toBe("proxy_blank");
   });
 });
