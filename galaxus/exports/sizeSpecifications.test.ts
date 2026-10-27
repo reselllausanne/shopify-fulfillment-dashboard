@@ -144,6 +144,30 @@ describe("productClassification extended kinds", () => {
     expect(resolveGalaxusProductCategoryPath({ title: "LEGO Star Wars Set", brand: "LEGO" })).not.toContain("Schuhe");
   });
 
+  it("classifies Jellycat / plush as plush, not sneakers", () => {
+    expect(
+      classifyGalaxusProductKind({
+        title: "Jellycat Bashful Bunny 'Snow Suit' Plush",
+        brand: "Jellycat",
+        supplierKey: "stx",
+      })
+    ).toBe("plush");
+    expect(
+      classifyGalaxusProductKind({
+        title: "Jellycat Amuseables Cloud Plush",
+        brand: "Jellycat",
+        supplierKey: "stx",
+      })
+    ).toBe("plush");
+    expect(
+      resolveGalaxusProductCategoryPath({
+        title: "Jellycat Bashful Bunny 'Snow Suit' Plush",
+        brand: "Jellycat",
+        supplierKey: "stx",
+      })
+    ).not.toContain("Schuhe");
+  });
+
   it("classifies Sprayground backpacks", () => {
     expect(classifyGalaxusProductKind({ title: "Sprayground Drip Check Shark Backpack", brand: "Sprayground" })).toBe("backpack");
   });

@@ -96,6 +96,9 @@ const CHARGER_RE = /\b(magsafe|power ?bank|charger|charging station|wireless cha
 const CONSOLE_RE = /\b(playstation|xbox|nintendo switch|games console|retro console|\bn64\b|\bconsole\b)\b/i;
 const CONTROLLER_RE = /\b(dualsense|dualshock|controller|gamepad|joy-?con)\b/i;
 const LEGO_RE = /\b(lego set|lego duplo|building block|construction toy)\b/i;
+/** Soft toys / stuffed animals (Jellycat et al.). Not art figures (Bearbrick / KAWS hard). */
+const PLUSH_RE =
+  /\b(plush(?:ie)?s?|soft ?toys?|stuffed (?:animal|toy)|kuscheltiere?|stofftiere?|peluches?|doudous?)\b/i;
 const TRADINGCARD_RE = /\b(trading card|booster box|blaster box|card box|elite trainer box|pokemon|pokémon|tcg)\b/i;
 const STICKER_RE = /\bstickers?\b/i;
 const SKATEBOARD_RE = /\b(skateboard|skate deck|grip tape)\b/i;
@@ -161,6 +164,8 @@ const STOCKX_ALIAS_TO_KIND: Record<string, GalaxusProductKind> = {
   toys: "lego",
   collectibles: "tradingcard",
   lego: "lego",
+  plush: "plush",
+  "soft toys": "plush",
   "trading-cards": "tradingcard",
   "trading cards": "tradingcard",
   pokemon: "tradingcard",
@@ -172,6 +177,7 @@ const BRAND_CATEGORY: Record<string, GalaxusProductKind> = {
   canon: "camera",
   swatch: "watch",
   lego: "lego",
+  jellycat: "plush",
   pokemon: "tradingcard",
   "pokémon": "tradingcard",
   topps: "tradingcard",
@@ -380,6 +386,8 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
   if (CONSOLE_RE.test(text)) return "console";
   if (CONTROLLER_RE.test(text)) return "controller";
   if (LEGO_RE.test(text)) return "lego";
+  // Before footwear / default sneakers — StockX plush titles otherwise fall into Mode.
+  if (PLUSH_RE.test(text)) return "plush";
   // Sized "Pokémon" rows are collab sneakers / apparel (adidas, Puma, Levi's), not cards.
   if (TRADINGCARD_RE.test(text) && !classifyFromSizeRaw(input.sizeRaw)) return "tradingcard";
   if (STICKER_RE.test(text)) return "sticker";

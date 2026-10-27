@@ -16,6 +16,9 @@
  *   sizes (one Salomon size at 350 while the rest sit at 150 → SAV). Needs the
  *   feed-wide index from buildStxSizePriceMedianIndex. GALAXUS_STX_SIZE_OUTLIER_RATIO=0 disables.
  * - rei_not_allowlisted: REI rows outside reiGalaxusAllowlist (GALAXUS_REI_ALLOWLIST=0 disables).
+ * - plush (Galaxus / Tali, 2026-10-27): soft toys / stuffed animals (Jellycat, "Plush"
+ *   titles). Always blocked — fashion-only alone was not enough (STX defaulted them to
+ *   sneakers). LEGO / trading cards / hard art toys (Bearbrick) stay allowed.
  * - non_fashion (Galaxus, 2026-10-13): only "Mode > …" categories + the sport / bag types on
  *   Galaxus's fashion list. Exempt: LEGO, trading cards, WEL, REI allowlist.
  *   GALAXUS_FASHION_ONLY=0 disables.
@@ -49,6 +52,7 @@ export type GalaxusAssortmentBlockReason =
   | "bulky_shipping"
   | "gift_card"
   | "rei_not_allowlisted"
+  | "plush"
   | "non_fashion"
   | "manual_block"
   | "food"
@@ -196,6 +200,17 @@ function isFoodItem(input: GalaxusAssortmentInput, supplierKey: string): boolean
   if (FOOD_TEXT_RE.test(title)) return true;
   // Brand match NER-only: StockX "GU" is the Uniqlo apparel label.
   return supplierKey === "ner" && FOOD_BRANDS.has(String(input.brand ?? "").trim().toLowerCase());
+}
+
+/** Soft toys — belt-and-braces when classifier kind is not yet plush (stale path / alias). */
+const PLUSH_SOFT_TOY_RE =
+  /\b(plush(?:ie)?s?|soft ?toys?|stuffed (?:animal|toy)|kuscheltiere?|stofftiere?|peluches?|doudous?)\b/i;
+const PLUSH_SOFT_TOY_BRANDS = new Set(["jellycat"]);
+
+function isPlushSoftToy(input: GalaxusAssortmentInput): boolean {
+  if (PLUSH_SOFT_TOY_BRANDS.has(normalizeStxBrand(input.brand))) return true;
+  const text = `${input.title ?? ""} ${input.supplierProductType ?? ""}`;
+  return PLUSH_SOFT_TOY_RE.test(text);
 }
 
 const IT_COMPONENT_BRANDS = new Set([
@@ -592,6 +607,8 @@ export function galaxusAssortmentBlockReason(
   if (GIFT_CARD_RE.test(`${input.title ?? ""} ${input.supplierProductType ?? ""}`)) return "gift_card";
   if (supplierKey === "bwz" && isBwzShippingUnsafe(input)) return "bulky_shipping";
   if (supplierKey !== "wel" && isFoodItem(input, supplierKey)) return "food";
+  // Soft toys: always delist (independent of GALAXUS_FASHION_ONLY).
+  if (kind === "plush" || isPlushSoftToy(input)) return "plush";
   if (isGalaxusFashionOnlyEnabled() && !isGalaxusFashionKept(kind, supplierKey, input)) return "non_fashion";
 
   const consumer = estimateGalaxusConsumerPriceChf(input);
@@ -640,6 +657,7 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
     bulky_shipping: 0,
     gift_card: 0,
     rei_not_allowlisted: 0,
+    plush: 0,
     non_fashion: 0,
     manual_block: 0,
     food: 0,
@@ -650,7 +668,7 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};size_price_outlier=${stats.size_price_outlier};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block};supplier_disabled=${stats.supplier_disabled};ner_not_apparel=${stats.ner_not_apparel}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};size_price_outlier=${stats.size_price_outlier};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};plush=${stats.plush};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block};supplier_disabled=${stats.supplier_disabled};ner_not_apparel=${stats.ner_not_apparel}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
