@@ -12,10 +12,24 @@
  * Dedup: one StockxOrderAlert row per (scope, alertType, refKey). Re-running never re-mails
  * the same issue.
  */
+import { formatInTimeZone } from "date-fns-tz";
 import { prisma } from "@/app/lib/prisma";
 import { getMailer } from "@/app/lib/mailer";
 import { filterGalaxusLinesNeedingStockxAutoLink } from "@/galaxus/orders/autoLinkStockxBuys";
 import { buildLinkedCountByOrderId } from "@/galaxus/orders/lineProcurement";
+import { shopifyGraphQL, type ShopifyGraphQLResult } from "@/lib/shopifyAdmin";
+import {
+  isInStockEssentialLine,
+  isPackageProtectionShopifyLine,
+  isShopifyFinancialRefunded,
+} from "@/app/utils/matching";
+import {
+  lineFulfillableQuantity,
+  shouldSkipOrderForFulfillmentMatching,
+} from "@/app/lib/shopifyOrderFulfillmentFilters";
+import { isStockxAutoBuyExcluded } from "@/lib/stockxAutoCheckout/precheckAvailability";
+
+const SHOP_TIMEZONE = "Europe/Zurich";
 
 const DAY_MS = 86_400_000;
 
@@ -104,6 +118,206 @@ export function detectUnlinkedGalaxusOrders(
   return out;
 }
 
+/**
+ * Brands / lines that must NOT be sourced on StockX (not website-stock StockX pairs):
+ * BAPE, Fear of God *Essentials*, Crocs (via the auto-buy exclude list) + the fixed-price
+ * in-stock lane + explicit Fear of God / watches. Used to keep the hard-unlinked Shopify
+ * alert to real StockX-eligible pairs only (never website-stock apparel / watches).
+ */
+export function isShopifyLineStockxIneligibleForAlert(line: {
+  title?: string | null;
+  sku?: string | null;
+}): boolean {
+  const title = String(line.title ?? "");
+  const sku = line.sku ?? null;
+  if (isInStockEssentialLine(sku, title)) return true;
+  if (isPackageProtectionShopifyLine(title, sku)) return true;
+  if (isStockxAutoBuyExcluded({ title, sku }).excluded) return true;
+  if (/\bfear of god\b/i.test(title)) return true;
+  if (/\bwatch(?:es)?\b/i.test(title)) return true;
+  return false;
+}
+
+/**
+ * Pure detection of HARD-unlinked Shopify orders — the red "unlinked" rows the dashboard
+ * (`/api/notifications/unlinked-orders`) shows: a StockX-eligible, fulfillable line on a
+ * paid / non-cancelled / non-refunded order with NO OrderMatch carrying a real StockX ref.
+ *
+ * Caller must only pass candidate lines already filtered for order financial state
+ * (not cancelled / void / refunded) and `fulfillableQuantity > 0`, mirroring the dashboard.
+ * This fn adds: StockX-eligibility (brand gate), the age window, the "linked" set, and the
+ * "buyable-in-progress / medium-email" exclusion — so no overlap with the medium match email.
+ */
+export type ShopifyUnlinkedLineInput = {
+  shopifyOrderId: string;
+  shopifyOrderName: string;
+  shopifyLineItemId: string;
+  title: string;
+  sku: string | null;
+  createdAtIso: string;
+};
+
+export type UnlinkedShopifyOrderAlert = {
+  shopifyOrderId: string;
+  orderRef: string;
+  productTitle: string | null;
+  unlinkedLineCount: number;
+  createdAtIso: string;
+};
+
+export function detectUnlinkedShopifyOrders(params: {
+  candidateLines: ShopifyUnlinkedLineInput[];
+  /** OrderMatch.shopifyLineItemId values that carry a real (non-empty) StockX ref. */
+  linkedLineItemIds: Set<string> | string[];
+  now: number;
+  /** createdAt must be >= this (within window). */
+  windowFloorMs: number;
+  /** createdAt must be <= this (older than the transient / not-purchased window). */
+  cutoffMs: number;
+  /** Order names to skip (plausible buy candidate / buyable-in-progress / medium email). */
+  excludeOrderNames?: Set<string> | string[];
+}): UnlinkedShopifyOrderAlert[] {
+  const linked =
+    params.linkedLineItemIds instanceof Set
+      ? params.linkedLineItemIds
+      : new Set(params.linkedLineItemIds ?? []);
+  const excluded =
+    params.excludeOrderNames instanceof Set
+      ? params.excludeOrderNames
+      : new Set(params.excludeOrderNames ?? []);
+
+  type Agg = { name: string; createdAtIso: string; titles: string[]; count: number };
+  const byOrder = new Map<string, Agg>();
+
+  for (const line of params.candidateLines ?? []) {
+    if (!line?.shopifyLineItemId) continue;
+    if (linked.has(line.shopifyLineItemId)) continue; // already linked to a real StockX buy
+    if (excluded.has(line.shopifyOrderName)) continue; // buyable-in-progress / medium email
+    if (isShopifyLineStockxIneligibleForAlert(line)) continue; // brand gate
+
+    const createdMs = new Date(line.createdAtIso).getTime();
+    if (!Number.isFinite(createdMs)) continue;
+    if (createdMs < params.windowFloorMs || createdMs > params.cutoffMs) continue; // age window
+
+    const key = String(line.shopifyOrderId);
+    const agg = byOrder.get(key) ?? {
+      name: line.shopifyOrderName,
+      createdAtIso: line.createdAtIso,
+      titles: [],
+      count: 0,
+    };
+    agg.count += 1;
+    if (agg.titles.length < 3 && line.title) agg.titles.push(line.title);
+    byOrder.set(key, agg);
+  }
+
+  const out: UnlinkedShopifyOrderAlert[] = [];
+  for (const [shopifyOrderId, agg] of byOrder) {
+    out.push({
+      shopifyOrderId,
+      orderRef: agg.name,
+      productTitle: agg.titles.join(", ") || null,
+      unlinkedLineCount: agg.count,
+      createdAtIso: agg.createdAtIso,
+    });
+  }
+  out.sort((a, b) => new Date(b.createdAtIso).getTime() - new Date(a.createdAtIso).getTime());
+  return out;
+}
+
+const SHOPIFY_UNLINKED_ORDERS_QUERY = /* GraphQL */ `
+  query OpsAlertUnlinkedShopify($cursor: String, $query: String!) {
+    orders(first: 50, after: $cursor, sortKey: CREATED_AT, reverse: true, query: $query) {
+      pageInfo { hasNextPage endCursor }
+      edges {
+        node {
+          id
+          name
+          createdAt
+          cancelledAt
+          displayFinancialStatus
+          lineItems(first: 50) {
+            edges {
+              node { id title name sku quantity fulfillableQuantity }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+function shopifyGidToNumericId(gid: string): string {
+  const m = String(gid || "").match(/\/(\d+)\s*$/);
+  return m ? m[1]! : String(gid || "");
+}
+
+/**
+ * Fetch candidate Shopify unlinked lines in [floor, cutoff] — mirrors the dashboard
+ * `/api/notifications/unlinked-orders` filters (skip cancelled/void/refunded orders,
+ * drop in-stock-fixed-price lines, require fulfillableQuantity > 0).
+ */
+async function fetchShopifyUnlinkedCandidateLines(
+  floor: Date,
+  cutoff: Date
+): Promise<ShopifyUnlinkedLineInput[]> {
+  const q = `created_at:>=${floor.toISOString().slice(0, 10)} created_at:<=${cutoff
+    .toISOString()
+    .slice(0, 10)}`;
+  type OrdersPage = {
+    orders: {
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      edges: Array<{ node: any }>;
+    };
+  };
+  const out: ShopifyUnlinkedLineInput[] = [];
+  let cursor: string | null = null;
+  let pages = 0;
+  for (;;) {
+    const res: ShopifyGraphQLResult<OrdersPage> = await shopifyGraphQL<OrdersPage>(
+      SHOPIFY_UNLINKED_ORDERS_QUERY,
+      { cursor, query: q }
+    );
+    const errors = res.errors;
+    if (errors?.length) {
+      throw new Error(errors.map((e: any) => e.message).join("; "));
+    }
+    const page = res.data?.orders;
+    if (!page) break;
+    for (const edge of page.edges ?? []) {
+      const order = edge?.node;
+      if (!order) continue;
+      if (shouldSkipOrderForFulfillmentMatching(order)) continue;
+      if (isShopifyFinancialRefunded(order.displayFinancialStatus)) continue;
+      const createdAtIso = formatInTimeZone(
+        new Date(order.createdAt),
+        SHOP_TIMEZONE,
+        "yyyy-MM-dd'T'HH:mm:ssXXX"
+      );
+      for (const liEdge of order.lineItems?.edges ?? []) {
+        const li = liEdge?.node;
+        if (!li?.id) continue;
+        const title = String(li.name ?? li.title ?? "—");
+        const sku = li.sku ? String(li.sku) : null;
+        if (isInStockEssentialLine(sku, title)) continue;
+        if (lineFulfillableQuantity(li) <= 0) continue;
+        out.push({
+          shopifyOrderId: shopifyGidToNumericId(order.id),
+          shopifyOrderName: String(order.name),
+          shopifyLineItemId: String(li.id),
+          title,
+          sku,
+          createdAtIso,
+        });
+      }
+    }
+    if (!page.pageInfo.hasNextPage) break;
+    cursor = page.pageInfo.endCursor;
+    if (++pages > 40) break;
+  }
+  return out;
+}
+
 type PendingAlert = {
   scope: AlertScope;
   alertType: AlertType;
@@ -171,6 +385,8 @@ export async function runStockxOrderOpsAlerts(options?: {
   lateWindowDays?: number;
   /** How far back to scan for dashboard "0/N linked" orders (> not-purchased floor). */
   unlinkedWindowDays?: number;
+  /** Shopify order names to skip in UNLINKED (plausible buy candidate / medium email). */
+  excludeShopifyOrderNames?: string[];
   dryRun?: boolean;
 }): Promise<StockxOpsAlertResult> {
   const days = Math.max(1, Math.min(120, Number(options?.days ?? 30)));
@@ -520,6 +736,55 @@ export async function runStockxOrderOpsAlerts(options?: {
     }
   } catch (err: any) {
     console.warn("[STOCKX][OPS_ALERT] galaxus unlinked scan failed:", err?.message ?? err);
+  }
+
+  // ---- Shopify: hard-unlinked orders (dashboard red "unlinked" rows) ----
+  // StockX-eligible paid Shopify orders older than the transient window with NO OrderMatch
+  // carrying a real StockX ref, and NO plausible buy candidate (buyable-in-progress / medium
+  // email) — i.e. a pair we sold but never bought/linked on StockX.
+  try {
+    const unlinkedWindowDays = Math.max(7, Math.min(180, Number(options?.unlinkedWindowDays ?? 60)));
+    const unlinkedFloor = new Date(now - unlinkedWindowDays * DAY_MS);
+    const unlinkedCutoff = notPurchasedFloor; // older than not-purchased window (>14d)
+
+    const candidateLines = await fetchShopifyUnlinkedCandidateLines(unlinkedFloor, unlinkedCutoff);
+    if (candidateLines.length > 0) {
+      const lineItemIds = candidateLines.map((l) => l.shopifyLineItemId);
+      const matches = await prisma.orderMatch.findMany({
+        where: { shopifyLineItemId: { in: lineItemIds }, stockxOrderNumber: { not: "" } },
+        select: { shopifyLineItemId: true, stockxOrderNumber: true },
+      });
+      const linkedLineItemIds = new Set(
+        matches
+          .filter((m) => String(m.stockxOrderNumber ?? "").trim().length > 0)
+          .map((m) => m.shopifyLineItemId)
+      );
+
+      const detected = detectUnlinkedShopifyOrders({
+        candidateLines,
+        linkedLineItemIds,
+        now,
+        windowFloorMs: unlinkedFloor.getTime(),
+        cutoffMs: unlinkedCutoff.getTime(),
+        excludeOrderNames: options?.excludeShopifyOrderNames ?? [],
+      });
+
+      for (const d of detected) {
+        pending.push({
+          scope: "shopify",
+          alertType: "UNLINKED",
+          refKey: d.shopifyOrderId,
+          orderRef: d.orderRef,
+          stockxOrderNumber: null,
+          productTitle: d.productTitle,
+          detail: `${d.unlinkedLineCount} ligne(s) sans achat StockX (depuis ${fmtDate(
+            new Date(d.createdAtIso)
+          )})`,
+        });
+      }
+    }
+  } catch (err: any) {
+    console.warn("[STOCKX][OPS_ALERT] shopify unlinked scan failed:", err?.message ?? err);
   }
 
   result.candidates = pending.length;
