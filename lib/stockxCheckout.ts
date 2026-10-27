@@ -199,30 +199,109 @@ async function selectSizeEuOrUs(
         : null;
   if (letter) {
     // Deep-link ?size=S / buy page already sized → Buy Now without picker.
-    const url = page.url();
-    const urlSized = new RegExp(`[?&]size=${letter}\\b`, "i").test(url);
+    // Reject size=Tout / empty — that is NOT selected (false-OK caused apparel size_us_map).
+    const urlSized = (u: string) =>
+      new RegExp(`[?&]size=${letter}\\b`, "i").test(u) && !/[?&]size=Tout\b/i.test(u);
+    const sizeAlreadyLocked = async () => {
+      const body = await page.locator("body").innerText().catch(() => "");
+      // FR/EN "Taille : S" / "Size: M" — not "Taille : Tout" / "All".
+      return new RegExp(
+        String.raw`(?:Taille|Size)\s*[:：]?\s*(?:US\s*)?${letter}\b`,
+        "i"
+      ).test(body) && !/(?:Taille|Size)\s*[:：]?\s*(?:Tout|All)\b/i.test(body);
+    };
     const buyReady = page.getByRole("button", { name: /Acheter maintenant|Buy Now|Buy$/i }).first();
-    if (urlSized && (await buyReady.isVisible({ timeout: 2500 }).catch(() => false))) {
+    if (urlSized(page.url()) && (await buyReady.isVisible({ timeout: 2500 }).catch(() => false))) {
       return { ok: true, used: "US" };
     }
-    await page.getByRole("button", { name: /Taille|Size/i }).first().click({ timeout: 8000 }).catch(() => undefined);
-    await page.waitForTimeout(700);
-    const usTab = page.getByRole("button", { name: /^US$/ }).first();
-    if (await usTab.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await usTab.click();
-      await page.waitForTimeout(400);
+    if ((await sizeAlreadyLocked()) && (await buyReady.isVisible({ timeout: 1500 }).catch(() => false))) {
+      return { ok: true, used: "US" };
     }
+
     const letterRe = new RegExp(
       `^(US\\s*)?${letter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
       "i"
     );
-    const letterBtn = page.locator("button").filter({ hasText: letterRe }).first();
-    if (await letterBtn.count()) {
-      await letterBtn.click();
-      return { ok: true, used: "US" };
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      // Wait for size UI / Buy Now to finish shimmer-loading (apparel PDP often laggy).
+      await page
+        .waitForFunction(
+          `() => {
+            const t = (document.body && document.body.innerText) || "";
+            return /\\b(Taille|Size)\\b/i.test(t) || /Acheter maintenant|Buy Now/i.test(t);
+          }`,
+          { timeout: 12_000 }
+        )
+        .catch(() => undefined);
+      await page
+        .getByRole("button", { name: /Taille|Size/i })
+        .first()
+        .click({ timeout: 8000 })
+        .catch(() => undefined);
+      await page.waitForTimeout(900);
+      const usTab = page.getByRole("button", { name: /^US$/ }).first();
+      if (await usTab.isVisible({ timeout: 1000 }).catch(() => false)) {
+        await usTab.click();
+        await page.waitForTimeout(400);
+      }
+      // Buttons, role=option, and plain clickable tiles (StockX apparel grid).
+      const candidates = [
+        page.getByRole("button", { name: letterRe }),
+        page.getByRole("option", { name: letterRe }),
+        page.locator("button,div[role=button],div[role=option],label,li").filter({ hasText: letterRe }),
+      ];
+      for (const loc of candidates) {
+        const el = loc.first();
+        if (await el.isVisible({ timeout: 1200 }).catch(() => false)) {
+          await el.click().catch(() => undefined);
+          await page.waitForTimeout(500);
+          if (urlSized(page.url()) || (await sizeAlreadyLocked())) {
+            return { ok: true, used: "US" };
+          }
+        }
+      }
+      // DOM evaluate fallback — find exact letter tile even if not a <button>.
+      const clicked = await page
+        .evaluate(
+          `({ letter }) => {
+            const re = new RegExp("^(US\\\\s*)?" + letter + "$", "i");
+            const nodes = Array.from(
+              document.querySelectorAll("button,div[role=button],div[role=option],label,li,a,span")
+            );
+            for (const n of nodes) {
+              const t = (n.textContent || "").replace(/\\s+/g, " ").trim();
+              if (!re.test(t)) continue;
+              n.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+              return true;
+            }
+            return false;
+          }`,
+          { letter }
+        )
+        .catch(() => false);
+      if (clicked) {
+        await page.waitForTimeout(600);
+        if (urlSized(page.url()) || (await sizeAlreadyLocked())) {
+          return { ok: true, used: "US" };
+        }
+      }
+      // Deep-link nudge then retry.
+      try {
+        const u = new URL(page.url());
+        u.searchParams.set("size", letter);
+        if (!urlSized(page.url())) {
+          await page.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => undefined);
+          await page.waitForTimeout(1000);
+        }
+      } catch {
+        /* ignore */
+      }
     }
-    // Picker already closed / size locked — Buy Now counts as selected.
-    if (await buyReady.isVisible({ timeout: 1500 }).catch(() => false)) {
+    // Only accept Buy Now if size is actually locked — never on "Tout".
+    if (
+      (urlSized(page.url()) || (await sizeAlreadyLocked())) &&
+      (await buyReady.isVisible({ timeout: 1500 }).catch(() => false))
+    ) {
       return { ok: true, used: "US" };
     }
     // Fall through — may still be numeric EU on rare listings.
@@ -366,7 +445,7 @@ async function parseLanesFromPage(page: Page): Promise<StockxLaneCard[]> {
       if (!labelMatch || !priceMatch) continue;
       const cleaned = priceMatch[1].replace(/[^\d,.-]/g, "").replace(/\s/g, "").replace(",", ".");
       const totalChf = Number(cleaned);
-      if (!Number.isFinite(totalChf) || totalChf < 80) continue;
+      if (!Number.isFinite(totalChf) || totalChf < LANE_MIN_ALL_IN_CHF) continue;
       const etaMatch = text.match(/(?:d['’]ici le|by|ETA)\s*([^·|]{3,40})/i);
       out.push({
         rawLabel: labelMatch[1],
