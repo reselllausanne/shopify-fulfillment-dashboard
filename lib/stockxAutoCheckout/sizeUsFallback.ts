@@ -88,7 +88,12 @@ export function convertEuToUs(
   const index = chart.sizes.EU.findIndex((entry) => euKey(entry) === key);
   if (index < 0 || index >= chart.sizes.US.length) return null;
   const us = chart.sizes.US[index];
-  return us ? String(us).trim() : null;
+  if (!us) return null;
+  const usStr = String(us).trim();
+  // StockX women's footwear deep-links use "8W" not "8" (buy URL ?size=8W).
+  const gender = normalizeGender(opts?.genderHint ?? opts?.title ?? null, sizeEU);
+  if (gender === "women" && /^\d+(\.\d+)?$/.test(usStr)) return `${usStr}W`;
+  return usStr;
 }
 
 export function buildStockxBuyUrl(slug: string, sizeUS?: string | null): string {

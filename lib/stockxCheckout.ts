@@ -358,14 +358,26 @@ async function selectSizeEuOrUs(
     await usTab.click();
     await page.waitForTimeout(400);
   }
-  const usRe = new RegExp(
-    `^(US\\s*)?${sizeUS.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-    "i"
+  // Women's deep-link uses "8W" but picker often shows plain "8" / "US 8".
+  const usVariants = Array.from(
+    new Set(
+      [
+        sizeUS,
+        sizeUS.replace(/W$/i, ""),
+        /^\d+(\.\d+)?$/.test(sizeUS) ? `${sizeUS}W` : null,
+      ].filter((v): v is string => Boolean(v && String(v).trim()))
+    )
   );
-  const usBtn = page.locator("button").filter({ hasText: usRe }).first();
-  if (await usBtn.count()) {
-    await usBtn.click();
-    return { ok: true, used: "US" };
+  for (const variant of usVariants) {
+    const usRe = new RegExp(
+      `^(US\\s*)?${variant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+      "i"
+    );
+    const usBtn = page.locator("button").filter({ hasText: usRe }).first();
+    if (await usBtn.count()) {
+      await usBtn.click();
+      return { ok: true, used: "US" };
+    }
   }
   return { ok: false, used: null };
 }
@@ -485,19 +497,25 @@ async function parseLanesFromPage(page: Page): Promise<StockxLaneCard[]> {
 }
 
 /**
- * Click shipping lane so UI selection sticks (radio / role=radio preferred).
- * Playwright locator clicks often hit wrappers that don't toggle — use DOM evaluate.
+ * Click a shipping card so Sous-total sticks to `lane.totalChf`.
+ * StockX FR date-only cards often have NO "Standard/Xpress" label and may not use
+ * native radios — rank compact date+CHF cards by price and click that card.
+ * Returns true only when live subtotal matches the target (verified).
  */
 async function clickLaneCard(page: Page, lane: StockxLaneCard): Promise<boolean> {
   const targetPrice = lane.totalChf;
-  const targetLabel = String(lane.rawLabel || lane.label || "").trim();
-  const wantStandard = classifyLaneLabel(targetLabel) === "STANDARD" || lane.label === "STANDARD";
+  const wantStandard = lane.label === "STANDARD";
 
-  // Date-only FR cards have no Standard/Xpress words — match shipping radios by CHF price.
-  // Previously only STANDARD clicked radio[0]; Xpress upgrade (+1–2 CHF) left Standard
-  // selected → price_moved (pick=69.75 subtotal=68.75) on IE4634.
-  {
-    const radioClicked = await page
+  const verified = async (): Promise<boolean> => {
+    await page.waitForTimeout(900);
+    const after = await page.locator("body").innerText().catch(() => "");
+    const sub = extractCheckoutSubtotalChf(after);
+    return sub != null && Math.abs(sub - targetPrice) <= 0.51;
+  };
+
+  // Primary: rank compact shipping cards by CHF, click the one matching target price.
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const result = await page
       .evaluate(
         `({ price, wantStd }) => {
           const parsePrice = (t) => {
@@ -505,196 +523,79 @@ async function clickLaneCard(page: Page, lane: StockxLaneCard): Promise<boolean>
               t.match(/CHF\\s*(\\d{1,3}(?:[’'\\s]\\d{3})*(?:[.,]\\d{2})?)/i) ||
               t.match(/(\\d{1,3}(?:[’'\\s]\\d{3})*(?:[.,]\\d{2})?)\\s*CHF/i);
             if (!m) return null;
-            const n = Number(m[1].replace(/[^\\d,.-]/g, "").replace(/\\s/g, "").replace(",", "."));
+            const n = Number((m[1] || m[2]).replace(/[^\\d,.-]/g, "").replace(/\\s/g, "").replace(",", "."));
             return Number.isFinite(n) ? n : null;
           };
-          const radios = Array.from(document.querySelectorAll("input[type=radio]"));
-          const ship = [];
-          for (const r of radios) {
-            const root = r.closest("label,li,div") || r.parentElement;
-            const t = ((root && root.textContent) || "").replace(/\\s+/g, " ");
-            if (!/CHF/i.test(t)) continue;
+          const dateRe = /\\d{1,2}\\s+[A-Za-zÀ-ÿ]{3,}/i;
+          const nodes = Array.from(
+            document.querySelectorAll(
+              "label,li,button,div[role=radio],div[role=button],div[role=option],div"
+            )
+          );
+          const found = [];
+          for (const el of nodes) {
+            const t = ((el.textContent || "") + "").replace(/\\s+/g, " ").trim();
+            if (t.length < 8 || t.length > 220) continue;
+            if (!/CHF/i.test(t) || !dateRe.test(t)) continue;
             const p = parsePrice(t);
-            if (p == null) continue;
-            ship.push({ r, p, t });
+            if (p == null || p < 40) continue;
+            found.push({ el, p, len: t.length });
           }
-          ship.sort((a, b) => a.p - b.p);
-          let target = ship.find((s) => Math.abs(s.p - price) <= 0.51);
-          if (!target && wantStd) target = ship[0];
-          if (!target && !wantStd && ship.length >= 2) {
-            target = ship.length >= 3 ? ship[1] : ship[ship.length - 1];
+          // Dedupe by price — keep shortest card (leaf).
+          const byP = new Map();
+          for (const row of found) {
+            const k = row.p.toFixed(2);
+            const prev = byP.get(k);
+            if (!prev || row.len < prev.len) byP.set(k, row);
           }
-          if (!target) return false;
-          target.r.click();
-          if (!target.r.checked) {
-            target.r.checked = true;
-            target.r.dispatchEvent(new Event("input", { bubbles: true }));
-            target.r.dispatchEvent(new Event("change", { bubbles: true }));
+          const sorted = Array.from(byP.values()).sort((a, b) => a.p - b.p);
+          let target = sorted.find((s) => Math.abs(s.p - price) <= 0.51);
+          if (!target && wantStd) target = sorted[0];
+          if (!target && !wantStd && sorted.length >= 2) {
+            target = sorted.length >= 3 ? sorted[1] : sorted[sorted.length - 1];
           }
-          return true;
+          if (!target) return { ok: false, n: sorted.length, prices: sorted.map((s) => s.p) };
+          target.el.scrollIntoView({ block: "center", inline: "nearest" });
+          const input =
+            (target.el.matches && target.el.matches("input[type=radio]") && target.el) ||
+            target.el.querySelector("input[type=radio]");
+          if (input) {
+            input.click();
+            input.checked = true;
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          target.el.click();
+          // Pointer events — some StockX cards only listen to these.
+          for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
+            target.el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+          }
+          return { ok: true, n: sorted.length, price: target.p };
         }`,
         { price: targetPrice, wantStd: wantStandard }
       )
-      .catch(() => false);
-    if (radioClicked) {
-      // Verify sticky selection via subtotal before claiming success.
-      await page.waitForTimeout(800);
-      const after = await page.locator("body").innerText().catch(() => "");
-      const sub = extractCheckoutSubtotalChf(after);
-      if (sub != null && Math.abs(sub - targetPrice) <= 0.51) return true;
-      // Radio said clicked but Standard stuck — fall through to price-text click.
-    }
+      .catch((e: any) => {
+        console.warn(`[STOCKX-CHECKOUT] rank-click failed: ${e?.message || e}`);
+        return { ok: false };
+      });
+
+    console.warn(
+      `[STOCKX-CHECKOUT] lane click attempt ${attempt} target=${targetPrice} result=${JSON.stringify(result)}`
+    );
+    if ((result as { ok?: boolean })?.ok && (await verified())) return true;
+    await page.waitForTimeout(400);
   }
 
-  // FR date-only cards: click the CHF amount text / card containing the target price.
-  {
-    const fr = targetPrice.toFixed(2).replace(".", ",");
-    const en = targetPrice.toFixed(2);
-    for (const amount of [fr, en]) {
-      const priceLoc = page.locator(`text=/\\b${amount.replace(".", "\\.")}\\s*CHF|CHF\\s*${amount.replace(".", "\\.")}\\b/`).first();
-      if (await priceLoc.isVisible({ timeout: 800 }).catch(() => false)) {
-        // Climb to clickable card (radio/label) then click.
-        const clicked = await priceLoc
-          .evaluate(
-            `(el) => {
-              let n = el;
-              for (let i = 0; i < 8 && n; i++, n = n.parentElement) {
-                const tag = (n.tagName || "").toLowerCase();
-                const role = (n.getAttribute && n.getAttribute("role")) || "";
-                if (
-                  tag === "label" ||
-                  tag === "button" ||
-                  role === "radio" ||
-                  role === "button" ||
-                  (n.querySelector && n.querySelector("input[type=radio]"))
-                ) {
-                  const input = n.querySelector && n.querySelector("input[type=radio]");
-                  if (input) {
-                    input.click();
-                    input.checked = true;
-                    input.dispatchEvent(new Event("input", { bubbles: true }));
-                    input.dispatchEvent(new Event("change", { bubbles: true }));
-                    return true;
-                  }
-                  n.click();
-                  return true;
-                }
-              }
-              el.click();
-              return true;
-            }`
-          )
-          .catch(() => false);
-        if (clicked) {
-          await page.waitForTimeout(900);
-          const after = await page.locator("body").innerText().catch(() => "");
-          const sub = extractCheckoutSubtotalChf(after);
-          if (sub != null && Math.abs(sub - targetPrice) <= 0.51) return true;
-        }
-      }
-    }
-  }
-
-  // String evaluate — tsx/esbuild injects `__name` into function() evaluate bodies (breaks in browser).
-  const viaDom = await page
-    .evaluate(
-      `({ price, label, wantStd }) => {
-        const norm = (s) => (s || "").replace(/\\s+/g, " ").trim();
-        const priceOk = (text) => {
-          const m =
-            text.match(/CHF\\s*(\\d{1,3}(?:[’'\\s]\\d{3})*(?:[.,]\\d{2})?)/i) ||
-            text.match(/(\\d{1,3}(?:[’'\\s]\\d{3})*(?:[.,]\\d{2})?)\\s*CHF/i);
-          if (!m) return false;
-          const n = Number(m[1].replace(/[^\\d,.-]/g, "").replace(/\\s/g, "").replace(",", "."));
-          return Number.isFinite(n) && Math.abs(n - price) <= 0.51;
-        };
-        const labelOk = (text) => {
-          if (!label) return true;
-          if (text.toLowerCase().indexOf(String(label).toLowerCase()) >= 0) return true;
-          if (wantStd && /\\b(express|xpress|fastest|expedited)\\b/i.test(text)) return false;
-          if (wantStd && /\\bstandard\\b/i.test(text)) return true;
-          return !/\\b(express|xpress|fastest|expedited|standard)\\b/i.test(text);
-        };
-        const isInteractive = (el) => {
-          const tag = el.tagName.toLowerCase();
-          if (tag === "button" || tag === "label" || tag === "input") return true;
-          const role = (el.getAttribute("role") || "").toLowerCase();
-          return role === "button" || role === "radio" || role === "option";
-        };
-        const clickEl = (el) => {
-          const input =
-            (el.matches && el.matches("input") ? el : null) ||
-            el.querySelector("input[type=radio],input[type=checkbox]") ||
-            (el.closest("label") && el.closest("label").querySelector("input"));
-          if (input && input.tagName === "INPUT") {
-            input.click();
-            if (!input.checked) {
-              input.checked = true;
-              input.dispatchEvent(new Event("input", { bubbles: true }));
-              input.dispatchEvent(new Event("change", { bubbles: true }));
-            }
-            return true;
-          }
-          el.scrollIntoView({ block: "center", inline: "nearest" });
-          el.click();
-          return true;
-        };
-        const candidates = Array.from(
-          document.querySelectorAll(
-            "button,label,div[role=button],div[role=radio],div[role=option],li[role=option],input[type=radio]"
-          )
-        );
-        const scored = [];
-        for (const el of candidates) {
-          const text = norm(el.textContent || "");
-          if (!priceOk(text) || !labelOk(text)) continue;
-          scored.push({ el, len: text.length, interactive: isInteractive(el) });
-        }
-        scored.sort((a, b) => {
-          if (a.interactive !== b.interactive) return a.interactive ? -1 : 1;
-          return a.len - b.len;
-        });
-        for (const row of scored.slice(0, 6)) {
-          try {
-            if (clickEl(row.el)) return { ok: true, via: "interactive" };
-          } catch (e) {}
-        }
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-        let node;
-        while ((node = walker.nextNode())) {
-          const t = norm(node.textContent || "");
-          if (!priceOk(t)) continue;
-          let el = node.parentElement;
-          for (let i = 0; i < 6 && el; i += 1, el = el.parentElement) {
-            const block = norm(el.textContent || "").slice(0, 280);
-            if (!labelOk(block)) continue;
-            if (!isInteractive(el) && !el.querySelector("input[type=radio]")) continue;
-            try {
-              if (clickEl(el)) return { ok: true, via: "price-text" };
-            } catch (e) {}
-          }
-        }
-        return { ok: false, via: "none" };
-      }`,
-      { price: targetPrice, label: targetLabel, wantStd: wantStandard }
-    )
-    .catch((e: any) => {
-      console.warn(`[STOCKX-CHECKOUT] clickLaneCard evaluate failed: ${e?.message || e}`);
-      return { ok: false, via: "error" };
-    });
-
-  if (viaDom && (viaDom as { ok?: boolean }).ok) return true;
-
-  // Fallback: Playwright locators (force). Always 2 decimals — UI shows 127,50 not 127,5.
-  const priceRe = lane.totalChf.toFixed(2).replace(".", "[,.]");
+  // Fallback: Playwright force-click on compact node containing the CHF amount.
+  const priceRe = targetPrice.toFixed(2).replace(".", "[,.]");
   const byPrice = page
-    .locator("button,label,div[role=radio],div[role=button],div[role=option],li,div")
-    .filter({ hasText: new RegExp(`(?:CHF\\s*)?${priceRe}`) })
+    .locator("label,li,button,div[role=radio],div[role=button]")
+    .filter({ hasText: new RegExp(`${priceRe}\\s*CHF|CHF\\s*${priceRe}`) })
     .first();
-  if (await byPrice.isVisible({ timeout: 1200 }).catch(() => false)) {
+  if (await byPrice.isVisible({ timeout: 1500 }).catch(() => false)) {
     await byPrice.scrollIntoViewIfNeeded().catch(() => undefined);
     await byPrice.click({ force: true }).catch(() => undefined);
-    return true;
+    if (await verified()) return true;
   }
   return false;
 }
@@ -727,21 +628,31 @@ export async function selectAndVerifyStockxLane(
   | { ok: false; reason: string; lanes: StockxLaneCard[]; detail?: string }
 > {
   const maxAllInChf = options.maxAllInChf ?? MAX_ALL_IN_CHF;
-  // Shipping cards often paint after Buy Now — empty body → false oos.
-  // String predicate avoids tsx `__name` injection into waitForFunction bodies.
-  const shipReady = await page
-    .waitForFunction(
-      `() => {
-        const t = document.body && document.body.innerText || "";
-        return (
-          /\\b(Standard|Express|Xpress|Fastest|Expedited)\\b/i.test(t) ||
-          /\\d{1,2}\\s+(jan|fév|fev|mar|avr|mai|juin|juil|aoû|aou|sep|oct|nov|déc|dec|janvier|février|mars|avril|juin|juillet|août|septembre|octobre|novembre|décembre)/i.test(t)
-        );
-      }`,
-      { timeout: 20_000 }
-    )
-    .then(() => true)
-    .catch(() => false);
+  // Shipping cards often paint after Buy Now — empty body → false oos / bodyChars=0.
+  // Wait for real content; one reload on blank CF/proxy shells before fail-closed.
+  const waitShipBody = async () =>
+    page
+      .waitForFunction(
+        `() => {
+          const t = (document.body && document.body.innerText) || "";
+          if (t.replace(/\\s+/g, "").length < 80) return false;
+          return (
+            /\\b(Standard|Express|Xpress|Fastest|Expedited|Sous[- ]?total|Subtotal)\\b/i.test(t) ||
+            /\\d{1,2}\\s+(jan|fév|fev|mar|avr|mai|juin|juil|aoû|aou|sep|oct|nov|déc|dec|janvier|février|mars|avril|juin|juillet|août|septembre|octobre|novembre|décembre)/i.test(t)
+          );
+        }`,
+        { timeout: 25_000 }
+      )
+      .then(() => true)
+      .catch(() => false);
+
+  let shipReady = await waitShipBody();
+  if (!shipReady) {
+    console.warn("[STOCKX-CHECKOUT] blank/incomplete checkout body — reloading once");
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 }).catch(() => undefined);
+    await page.waitForTimeout(2500);
+    shipReady = await waitShipBody();
+  }
   if (!shipReady) {
     await page.waitForTimeout(2500);
   }
@@ -753,16 +664,18 @@ export async function selectAndVerifyStockxLane(
     body = await page.locator("body").innerText().catch(() => "");
     lanes = await parseLanesFromPage(page);
   }
+  if (!lanes.length && body.replace(/\s+/g, "").length < 80) {
+    return {
+      ok: false,
+      reason: "proxy_blank",
+      lanes: [],
+      detail: `checkout body blank after reload (bodyChars=${body.length}) — CF/proxy`,
+    };
+  }
   if (!lanes.length) {
-    const dump = `/app/.data/stockx-lane-dump-${Date.now().toString(36)}.txt`;
-    await page
-      .evaluate((path) => {
-        // path unused in browser — written from Node below
-        void path;
-      }, dump)
-      .catch(() => undefined);
     try {
       const fs = await import("node:fs/promises");
+      const dump = `/app/.data/stockx-lane-dump-${Date.now().toString(36)}.txt`;
       await fs.writeFile(dump, body.slice(0, 8000), "utf8");
       console.warn(`[STOCKX-CHECKOUT] empty lanes — dumped body ${dump} (${body.length} chars)`);
     } catch {
@@ -1669,7 +1582,7 @@ export async function runStockxAutoCheckoutForOrder(options: {
       const cheapest =
         [...lanes].sort((a, b) => a.totalChf - b.totalChf)[0] ?? null;
       const reason = (
-        ["oos", "oos_no_ask", "express_only", "multi_price", "wrong_lane_only", "cap", "express_unparsed", "price_moved", "bot_fail"] as const
+        ["oos", "oos_no_ask", "express_only", "multi_price", "wrong_lane_only", "cap", "express_unparsed", "price_moved", "bot_fail", "proxy_blank"] as const
       ).includes(selected.reason as any)
         ? (selected.reason as StockxNeedsHumanReason)
         : "bot_fail";
