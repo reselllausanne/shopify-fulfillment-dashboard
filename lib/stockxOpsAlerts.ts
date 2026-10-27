@@ -15,6 +15,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { getMailer } from "@/app/lib/mailer";
 import { filterGalaxusLinesNeedingStockxAutoLink } from "@/galaxus/orders/autoLinkStockxBuys";
+import { buildLinkedCountByOrderId } from "@/galaxus/orders/lineProcurement";
 
 const DAY_MS = 86_400_000;
 
@@ -27,7 +28,81 @@ const STX_LINE_FILTER = {
 };
 
 type AlertScope = "shopify" | "galaxus";
-type AlertType = "CANCELLED" | "REFUNDED" | "DELAYED" | "NOT_PURCHASED";
+type AlertType = "CANCELLED" | "REFUNDED" | "DELAYED" | "NOT_PURCHASED" | "UNLINKED";
+
+/**
+ * Pure detection of dashboard "0/N linked" orders (red cards on the direct-delivery list).
+ *
+ * Mirrors EXACTLY the list red tone: an order whose STX/supplier lines still need a buy
+ * (`needsBuy > 0` via the same `buildLinkedCountByOrderId` the orders API uses). Pure so it
+ * is unit-testable without a DB.
+ */
+export type UnlinkedGalaxusOrderInput = {
+  orders: Array<{
+    id: string;
+    galaxusOrderId: string;
+    orderNumber?: string | null;
+    orderDate?: Date | string | null;
+  }>;
+  lines: any[];
+  stockxMatches: any[];
+  stxUnits: any[];
+  externalBuys?: any[];
+};
+
+export type UnlinkedGalaxusOrderAlert = {
+  orderId: string;
+  orderRef: string | null;
+  productTitle: string | null;
+  linkedCount: number;
+  lineCount: number;
+  needsBuyCount: number;
+  orderDate: Date | string | null;
+};
+
+export function detectUnlinkedGalaxusOrders(
+  input: UnlinkedGalaxusOrderInput
+): UnlinkedGalaxusOrderAlert[] {
+  const { linked, needsBuy } = buildLinkedCountByOrderId({
+    orders: input.orders.map((o) => ({ id: o.id, galaxusOrderId: o.galaxusOrderId })),
+    lines: input.lines ?? [],
+    stockxMatches: input.stockxMatches ?? [],
+    stxUnits: input.stxUnits ?? [],
+    externalBuys: input.externalBuys ?? [],
+  });
+
+  const linesByOrder = new Map<string, any[]>();
+  for (const line of input.lines ?? []) {
+    const oid = String(line?.orderId ?? "").trim();
+    if (!oid) continue;
+    const arr = linesByOrder.get(oid) ?? [];
+    arr.push(line);
+    linesByOrder.set(oid, arr);
+  }
+
+  const out: UnlinkedGalaxusOrderAlert[] = [];
+  for (const o of input.orders ?? []) {
+    const id = String(o.id);
+    const need = needsBuy.get(id) ?? 0;
+    if (need <= 0) continue;
+    const orderLines = linesByOrder.get(id) ?? [];
+    const titles = orderLines
+      .map((l: any) => String(l?.productName ?? l?.description ?? "").trim())
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(", ");
+    out.push({
+      orderId: id,
+      orderRef: String(o.orderNumber ?? o.galaxusOrderId ?? id),
+      productTitle: titles || null,
+      linkedCount: linked.get(id) ?? 0,
+      lineCount: orderLines.length,
+      needsBuyCount: need,
+      orderDate: o.orderDate ?? null,
+    });
+  }
+  return out;
+}
 
 type PendingAlert = {
   scope: AlertScope;
@@ -94,6 +169,8 @@ export async function runStockxOrderOpsAlerts(options?: {
   days?: number;
   notPurchasedAgeDays?: number;
   lateWindowDays?: number;
+  /** How far back to scan for dashboard "0/N linked" orders (> not-purchased floor). */
+  unlinkedWindowDays?: number;
   dryRun?: boolean;
 }): Promise<StockxOpsAlertResult> {
   const days = Math.max(1, Math.min(120, Number(options?.days ?? 30)));
@@ -116,7 +193,7 @@ export async function runStockxOrderOpsAlerts(options?: {
     newAlerts: 0,
     emailed: false,
     emailTo: null,
-    byType: { CANCELLED: 0, REFUNDED: 0, DELAYED: 0, NOT_PURCHASED: 0 },
+    byType: { CANCELLED: 0, REFUNDED: 0, DELAYED: 0, NOT_PURCHASED: 0, UNLINKED: 0 },
     skippedExisting: 0,
     baselineSeeded: false,
   };
@@ -309,6 +386,142 @@ export async function runStockxOrderOpsAlerts(options?: {
     console.warn("[STOCKX][OPS_ALERT] galaxus not-purchased scan failed:", err?.message ?? err);
   }
 
+  // ---- Galaxus: unlinked "0/N linked" orders (dashboard red cards) ----
+  // Catches orders older than the not-purchased window that are still not fully linked to a
+  // StockX buy (the red rows on /galaxus/direct-delivery). Uses the SAME needs-buy rule the
+  // orders API uses for the list tone, so this matches exactly what the operator sees.
+  try {
+    const unlinkedWindowDays = Math.max(7, Math.min(180, Number(options?.unlinkedWindowDays ?? 60)));
+    const unlinkedFloor = new Date(now - unlinkedWindowDays * DAY_MS);
+    // Older than the not-purchased floor so the two scans never double-alert the same order.
+    const unlinkedCutoff = notPurchasedFloor;
+
+    const orders = await prismaAny.galaxusOrder.findMany({
+      where: {
+        archivedAt: null,
+        cancelledAt: null,
+        orderDate: { gte: unlinkedFloor, lt: unlinkedCutoff },
+        lines: { some: STX_LINE_FILTER },
+      },
+      select: {
+        id: true,
+        galaxusOrderId: true,
+        orderNumber: true,
+        orderDate: true,
+        lines: {
+          select: {
+            id: true,
+            orderId: true,
+            gtin: true,
+            quantity: true,
+            supplierPid: true,
+            supplierSku: true,
+            supplierVariantId: true,
+            providerKey: true,
+            productName: true,
+            description: true,
+          },
+        },
+      },
+    });
+
+    if (orders.length > 0) {
+      const orderIds = orders.map((o: any) => o.id);
+      const orderRefs = orders.map((o: any) => o.galaxusOrderId).filter(Boolean);
+      const [stockxMatches, stxUnits, externalBuys] = await Promise.all([
+        prismaAny.galaxusStockxMatch
+          .findMany({
+            where: { galaxusOrderId: { in: orderIds } },
+            select: {
+              galaxusOrderId: true,
+              galaxusOrderLineId: true,
+              galaxusGtin: true,
+              unitIndex: true,
+              stockxOrderId: true,
+              stockxOrderNumber: true,
+              stockxAmount: true,
+              stockxCurrencyCode: true,
+              stockxAwb: true,
+              stockxStatus: true,
+              stockxSkuKey: true,
+              matchType: true,
+            },
+          })
+          .catch(() => []),
+        orderRefs.length > 0
+          ? prismaAny.stxPurchaseUnit
+              .findMany({
+                where: {
+                  galaxusOrderId: { in: orderRefs },
+                  stockxOrderId: { not: null },
+                  cancelledAt: null,
+                },
+                select: {
+                  galaxusOrderId: true,
+                  gtin: true,
+                  supplierVariantId: true,
+                  stockxOrderId: true,
+                  stockxOrderNumber: true,
+                  stockxSettledAmount: true,
+                  stockxSettledCurrency: true,
+                  awb: true,
+                  etaMin: true,
+                  etaMax: true,
+                  cancelledAt: true,
+                },
+              })
+              .catch(() => [])
+          : Promise.resolve([]),
+        prismaAny.galaxusExternalBuy
+          .findMany({
+            where: { galaxusOrderId: { in: orderIds }, cancelledAt: null },
+            select: {
+              id: true,
+              galaxusOrderId: true,
+              galaxusOrderLineId: true,
+              unitIndex: true,
+              supplierKey: true,
+              supplierOrderNumber: true,
+              costAmount: true,
+              currencyCode: true,
+              trackingNumber: true,
+              trackingUrl: true,
+              cancelledAt: true,
+            },
+          })
+          .catch(() => []),
+      ]);
+
+      const allLines = orders.flatMap((o: any) =>
+        (o.lines ?? []).map((l: any) => ({ ...l, orderId: l.orderId ?? o.id }))
+      );
+
+      const detected = detectUnlinkedGalaxusOrders({
+        orders,
+        lines: allLines,
+        stockxMatches: Array.isArray(stockxMatches) ? stockxMatches : [],
+        stxUnits: Array.isArray(stxUnits) ? stxUnits : [],
+        externalBuys: Array.isArray(externalBuys) ? externalBuys : [],
+      });
+
+      for (const d of detected) {
+        pending.push({
+          scope: "galaxus",
+          alertType: "UNLINKED",
+          refKey: d.orderId,
+          orderRef: d.orderRef,
+          stockxOrderNumber: null,
+          productTitle: d.productTitle,
+          detail: `${d.linkedCount}/${d.lineCount} linked · ${d.needsBuyCount} ligne(s) sans achat StockX (depuis ${fmtDate(
+            d.orderDate as any
+          )})`,
+        });
+      }
+    }
+  } catch (err: any) {
+    console.warn("[STOCKX][OPS_ALERT] galaxus unlinked scan failed:", err?.message ?? err);
+  }
+
   result.candidates = pending.length;
   if (pending.length === 0) return result;
 
@@ -404,13 +617,14 @@ const TYPE_LABEL: Record<AlertType, string> = {
   REFUNDED: "Remboursements StockX",
   DELAYED: "Retards (ETA depassee)",
   NOT_PURCHASED: "Non achetes (buy manquant)",
+  UNLINKED: "Non lies StockX (0/N linked)",
 };
 
 function buildBaselineSummary(
   byType: Record<AlertType, number>,
   total: number
 ): { subject: string; text: string; html: string } {
-  const rows = (["CANCELLED", "REFUNDED", "DELAYED", "NOT_PURCHASED"] as AlertType[])
+  const rows = (["CANCELLED", "REFUNDED", "DELAYED", "NOT_PURCHASED", "UNLINKED"] as AlertType[])
     .filter((t) => byType[t] > 0)
     .map((t) => `${TYPE_LABEL[t]}: ${byType[t]}`);
   const subject = `[Resell OPS] StockX alertes activees — baseline ${total} enregistree(s)`;
@@ -432,13 +646,14 @@ function buildDigest(
   alerts: PendingAlert[],
   byType: Record<AlertType, number>
 ): { subject: string; text: string; html: string } {
-  const order: AlertType[] = ["CANCELLED", "REFUNDED", "DELAYED", "NOT_PURCHASED"];
+  const order: AlertType[] = ["CANCELLED", "REFUNDED", "DELAYED", "NOT_PURCHASED", "UNLINKED"];
   const parts: string[] = [];
   const subjParts: string[] = [];
   if (byType.CANCELLED) subjParts.push(`${byType.CANCELLED} annul`);
   if (byType.REFUNDED) subjParts.push(`${byType.REFUNDED} remb`);
   if (byType.DELAYED) subjParts.push(`${byType.DELAYED} retard`);
   if (byType.NOT_PURCHASED) subjParts.push(`${byType.NOT_PURCHASED} non-achat`);
+  if (byType.UNLINKED) subjParts.push(`${byType.UNLINKED} non-lie`);
   const subject = `[Resell OPS] StockX: ${alerts.length} alerte(s) — ${subjParts.join(", ")}`;
 
   const lines: string[] = ["Alertes StockX (operateur d'abord):", ""];
