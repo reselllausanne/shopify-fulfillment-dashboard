@@ -189,6 +189,33 @@ async function selectSizeEuOrUs(
   sizeUS: string | null
 ): Promise<{ ok: boolean; used: "EU" | "US" | null }> {
   const size = sizeEU.replace(/^EU\s*/i, "").trim();
+  // Apparel letter sizes (S/M/L…) — StockX shows "S" / "US S", not EU footwear tabs.
+  // Prefer letter click before EU numeric path (convertEuToUs already passthroughs these).
+  const letter =
+    sizeUS && /^(XX?S|S|M|L|XX?L|XXXL|[2-4]XL)$/i.test(sizeUS)
+      ? sizeUS.toUpperCase()
+      : /^(XX?S|S|M|L|XX?L|XXXL|[2-4]XL)$/i.test(size)
+        ? size.toUpperCase()
+        : null;
+  if (letter) {
+    await page.getByRole("button", { name: /Taille|Size/i }).first().click({ timeout: 8000 }).catch(() => undefined);
+    await page.waitForTimeout(700);
+    const usTab = page.getByRole("button", { name: /^US$/ }).first();
+    if (await usTab.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await usTab.click();
+      await page.waitForTimeout(400);
+    }
+    const letterRe = new RegExp(
+      `^(US\\s*)?${letter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+      "i"
+    );
+    const letterBtn = page.locator("button").filter({ hasText: letterRe }).first();
+    if (await letterBtn.count()) {
+      await letterBtn.click();
+      return { ok: true, used: "US" };
+    }
+    // Fall through — may still be numeric EU on rare listings.
+  }
   // One-size / OS accessories — no size picker; Buy Now already sized.
   if (/^(os|one\s*size|o\/s|onesize|-)$/i.test(size)) {
     const buy = page.getByRole("button", { name: /Acheter maintenant|Buy Now|Buy$/i }).first();

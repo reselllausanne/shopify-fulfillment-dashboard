@@ -26,6 +26,14 @@ describe("convertEuToUs", () => {
   it("returns null when chart miss", () => {
     expect(convertEuToUs("EU 99", { brand: "Nike" })).toBeNull();
   });
+
+  it("passthrough apparel letter sizes (no footwear chart)", () => {
+    expect(convertEuToUs("S", { title: "Nike Tech Fleece Hoodie" })).toBe("S");
+    expect(convertEuToUs("M", { title: "NOCTA Jacket" })).toBe("M");
+    expect(convertEuToUs("US S", { title: "Travis Hoodie" })).toBe("S");
+    expect(convertEuToUs("XL", { brand: "Nike" })).toBe("XL");
+    expect(convertEuToUs("2XL", { brand: "Nike" })).toBe("2XL");
+  });
 });
 
 describe("buildStockxBuyUrl", () => {

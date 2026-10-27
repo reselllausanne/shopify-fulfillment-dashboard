@@ -52,7 +52,26 @@ export function inferBrandFromTitle(title?: string | null): string | null {
 }
 
 /**
+ * Apparel letter sizes (S/M/L/XL…). StockX labels them as `S` or `US S` — not footwear EU→US.
+ * Passthrough so checkout can select via the US/letter path (see selectSizeEuOrUs).
+ */
+export function apparelLetterSize(sizeRaw: string | null | undefined): string | null {
+  const raw = String(sizeRaw ?? "")
+    .replace(/^EU\s*/i, "")
+    .replace(/^US\s*/i, "")
+    .trim();
+  if (!raw) return null;
+  const m = raw.match(/^(XX?S|S|M|L|XX?L|XXXL|[2-4]XL)$/i);
+  if (!m) return null;
+  const letter = m[1].toUpperCase();
+  // Normalize xxxl → XXXL, 2xl → 2XL
+  if (/^\dXL$/i.test(letter)) return letter.toUpperCase();
+  return letter;
+}
+
+/**
  * EU → US via KickDB fallback charts. Used when StockX size picker has no EU tab.
+ * Letter apparel sizes pass through as-is (StockX uses S/M/L / "US S").
  */
 export function convertEuToUs(
   sizeEU: string,
@@ -60,6 +79,8 @@ export function convertEuToUs(
 ): string | null {
   const eu = normalizeEu(sizeEU);
   if (!eu) return null;
+  const letter = apparelLetterSize(eu);
+  if (letter) return letter;
   const brand = opts?.brand || inferBrandFromTitle(opts?.title) || null;
   const chart = getChart(brand, opts?.genderHint ?? opts?.title ?? null, sizeEU);
   if (!chart) return null;
