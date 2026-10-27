@@ -317,16 +317,23 @@ async function verifyBuy(orderName: string, cand: Candidate) {
 async function main() {
   console.log(`=== stockx-autobuy-month ${GO ? "LIVE" : "DRY"} @ ${new Date().toISOString()} ===`);
 
-  // 1) Tokens
+  // 1) Tokens — best-effort, time-bounded. A hung remint (CF sit-still) must not
+  //    block the pipeline; dedupe still works on whichever account token is present.
   const tokenHealth: Record<string, string> = {};
+  const TOKEN_TIMEOUT_MS = Number(process.env.AUTOBUY_TOKEN_TIMEOUT_MS ?? "70000");
   for (const account of ["default", "galaxus"] as const) {
     try {
-      const r = await refreshStockxToken({ account });
+      const r = await Promise.race([
+        refreshStockxToken({ account, maxWaitMs: TOKEN_TIMEOUT_MS }),
+        new Promise<never>((_, rej) =>
+          setTimeout(() => rej(new Error("token_refresh_timeout")), TOKEN_TIMEOUT_MS)
+        ),
+      ]);
       tokenHealth[account] = `${r.reason}${r.ok ? " ok" : " FAIL"}`;
-      console.log(`[token] ${account}: ${JSON.stringify(r).slice(0, 200)}`);
+      console.log(`[token] ${account}: ok=${r.ok} reason=${r.reason}`);
     } catch (e: any) {
       tokenHealth[account] = `error:${e?.message || e}`;
-      console.warn(`[token] ${account} refresh error: ${e?.message || e}`);
+      console.warn(`[token] ${account} refresh error (continuing): ${e?.message || e}`);
     }
   }
 
@@ -505,4 +512,7 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect().catch(() => undefined);
+    // Force exit: a timed-out galaxus remint may leave a dangling browser promise
+    // on the event loop which would otherwise keep the process alive forever.
+    setTimeout(() => process.exit(process.exitCode ?? 0), 1500).unref();
   });
