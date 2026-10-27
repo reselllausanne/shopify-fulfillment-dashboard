@@ -87,7 +87,7 @@ export const STOCKX_NEEDS_HUMAN_REASON_FR: Record<StockxNeedsHumanReason, string
   size_us_map: "Taille EU/US non sélectionnable",
   price_moved: "Prix changé entre lane et écran Passer commande",
   bot_fail: "Échec bot (bouton / parsing / numéro commande)",
-  proxy_blank: "Page checkout vide (CF/proxy) — retry sticky",
+  proxy_blank: "Checkout non hydraté (shell/CF/proxy, pas de lanes CHF) — retry",
   setup: "Setup / commande Shopify introuvable",
   margin: "Marge négative (vente < total StockX)",
   slug: "Slug StockX introuvable pour ce SKU",
