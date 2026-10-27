@@ -122,8 +122,9 @@ export default function WarehouseBulkPage() {
     return next != null && Number.isFinite(Number(next.unitIndex)) ? Number(next.unitIndex) : 0;
   };
 
-  const loadOrders = async (opts?: { force?: boolean }) => {
+  const loadOrders = async (opts?: { force?: boolean; silent?: boolean }) => {
     const force = Boolean(opts?.force);
+    const silent = Boolean(opts?.silent);
     const cached = ordersListCacheRef.current;
     if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
       const items = dedupeById(cached.items);
@@ -131,11 +132,13 @@ export default function WarehouseBulkPage() {
       if (items[0]?.id) {
         setSelectedOrderId((prev) => prev || items[0].id);
       }
-      setLoading(false);
+      if (!silent) setLoading(false);
       return;
     }
-    setLoading(true);
-    setError(null);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const res = await fetch(
         "/api/galaxus/orders?view=active&limit=100&excludeDeliveryType=direct_delivery",
@@ -152,9 +155,9 @@ export default function WarehouseBulkPage() {
         setSelectedOrderId((prev) => prev || items[0].id);
       }
     } catch (err: any) {
-      setError(err?.message ?? "Failed to load orders");
+      if (!silent) setError(err?.message ?? "Failed to load orders");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -172,19 +175,26 @@ export default function WarehouseBulkPage() {
     }
   };
 
-  const loadDetail = async (orderId: string, opts?: { force?: boolean }) => {
+  const loadDetail = async (orderId: string, opts?: { force?: boolean; silent?: boolean }) => {
     if (!orderId) {
       setDetail(null);
       return;
     }
     const force = Boolean(opts?.force);
+    const silent = Boolean(opts?.silent);
     const cached = orderDetailCacheRef.current.get(orderId);
     if (!force && cached && Date.now() - cached.at < ORDER_DETAIL_CACHE_TTL_MS) {
       setDetail(cached.order);
       return;
     }
-    setBusy("detail");
-    setError(null);
+    // Keep current order painted during soft/background reloads (no CLS banner).
+    // Only clear when switching to a different order with no usable cache.
+    setDetail((prev) => {
+      if (prev?.id === orderId) return prev;
+      if (cached?.order?.id === orderId) return cached.order;
+      return null;
+    });
+    if (!silent) setError(null);
     try {
       const res = await fetch(
         `/api/galaxus/orders/${orderId}?view=minimal&ensureLocal=0&reserveStx=0`,
@@ -196,9 +206,7 @@ export default function WarehouseBulkPage() {
       orderDetailCacheRef.current.set(orderId, { at: Date.now(), order });
       setDetail(order);
     } catch (err: any) {
-      setError(err?.message ?? "Failed to load order detail");
-    } finally {
-      setBusy(null);
+      if (!silent) setError(err?.message ?? "Failed to load order detail");
     }
   };
 
@@ -516,8 +524,8 @@ export default function WarehouseBulkPage() {
   }, []);
 
   const softRefreshLinked = useCallback(async () => {
-    await loadOrders({ force: true });
-    if (selectedOrderId) await loadDetail(selectedOrderId, { force: true });
+    await loadOrders({ force: true, silent: true });
+    if (selectedOrderId) await loadDetail(selectedOrderId, { force: true, silent: true });
   }, [selectedOrderId]);
 
   useSoftPageRefresh(softRefreshLinked, { intervalMs: 30_000 });
@@ -686,14 +694,10 @@ export default function WarehouseBulkPage() {
                 <StockxOrderTools
                   orderId={selectedOrderId}
                   onAfterAction={async () => {
-                    await loadOrders({ force: true });
-                    await loadDetail(selectedOrderId, { force: true });
+                    await loadOrders({ force: true, silent: true });
+                    await loadDetail(selectedOrderId, { force: true, silent: true });
                   }}
                 />
-
-                {busy === "detail" ? (
-                  <div className="text-xs text-gray-500">Loading order…</div>
-                ) : null}
 
                 <div className="border rounded p-2">
                   <div className="font-medium mb-2 text-xs">Products</div>
