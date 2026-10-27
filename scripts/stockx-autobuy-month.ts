@@ -91,23 +91,44 @@ type DerivedVerdict = {
   cand: Candidate;
 };
 
+const PREBUY_TIMEOUT_MS = Number(process.env.AUTOBUY_PREBUY_TIMEOUT_MS ?? "90000");
+
 async function prebuyWithRetry(
   cand: Candidate
 ): Promise<PrebuyDedupeResult> {
   let last: PrebuyDedupeResult | null = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const res = await runPrebuyDedupeCheck(
-      {
-        shopifyOrderName: cand.orderName,
-        shopifyOrderId: cand.shopifyOrderId,
-        shopifyLineItemId: cand.lineItemId ?? "",
-        shopifyCreatedAt: cand.createdAt,
-        title: cand.title,
-        sku: cand.sku,
-        sizeEU: cand.sizeEU,
-      },
-      { linkIfClear: true }
-    );
+    let res: PrebuyDedupeResult;
+    try {
+      res = await Promise.race([
+        runPrebuyDedupeCheck(
+          {
+            shopifyOrderName: cand.orderName,
+            shopifyOrderId: cand.shopifyOrderId,
+            shopifyLineItemId: cand.lineItemId ?? "",
+            shopifyCreatedAt: cand.createdAt,
+            title: cand.title,
+            sku: cand.sku,
+            sizeEU: cand.sizeEU,
+          },
+          { linkIfClear: true }
+        ),
+        new Promise<never>((_, rej) =>
+          setTimeout(() => rej(new Error("prebuy_timeout")), PREBUY_TIMEOUT_MS)
+        ),
+      ]);
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      console.warn(`[prebuy] ${cand.orderName} error (try ${attempt}): ${msg}`);
+      last = {
+        verdict: "SKIP_REASON",
+        detail: `prebuy_timeout_fail_closed: ${msg}`,
+        gmailHits: [],
+        stxCandidates: [],
+      };
+      await sleep(attempt * 4000);
+      continue;
+    }
     last = res;
     // Only retry when the check itself failed on a transient network error.
     if (res.verdict === "SKIP_REASON" && TRANSIENT.test(res.detail)) {
@@ -231,9 +252,11 @@ async function derive(): Promise<DerivedVerdict[]> {
     // Prebuy dedupe gate.
     const prebuy = await prebuyWithRetry(cand);
     if (prebuy.verdict !== "BUY_OK") {
+      // Fail-closed prebuy timeout is NOT a dedupe hit — surface as NOT BOUGHT.
+      const timedOut = /prebuy_timeout_fail_closed/.test(prebuy.detail);
       verdicts.push({
         orderName: o.orderName,
-        decision: "SKIPPED_ALREADY",
+        decision: timedOut ? "NOT_BUYABLE" : "SKIPPED_ALREADY",
         reason: `${prebuy.verdict}: ${prebuy.detail}`,
         prebuyVerdict: prebuy.verdict,
         linkedStockxOrderNumber: prebuy.linkedStockxOrderNumber ?? null,
@@ -321,7 +344,13 @@ async function main() {
   //    block the pipeline; dedupe still works on whichever account token is present.
   const tokenHealth: Record<string, string> = {};
   const TOKEN_TIMEOUT_MS = Number(process.env.AUTOBUY_TOKEN_TIMEOUT_MS ?? "70000");
-  for (const account of ["default", "galaxus"] as const) {
+  // galaxus remint cannot clear Cloudflare on the VPS and leaves a runaway browser
+  // loop that starves the IMAP/StockX API network. Dedupe works on the default
+  // account token alone; skip galaxus unless explicitly forced.
+  const accounts: Array<"default" | "galaxus"> =
+    process.env.AUTOBUY_INCLUDE_GALAXUS === "1" ? ["default", "galaxus"] : ["default"];
+  if (accounts.length === 1) tokenHealth.galaxus = "skipped (remint CF / no token)";
+  for (const account of accounts) {
     try {
       const r = await Promise.race([
         refreshStockxToken({ account, maxWaitMs: TOKEN_TIMEOUT_MS }),
