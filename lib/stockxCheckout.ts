@@ -198,6 +198,13 @@ async function selectSizeEuOrUs(
         ? size.toUpperCase()
         : null;
   if (letter) {
+    // Deep-link ?size=S / buy page already sized → Buy Now without picker.
+    const url = page.url();
+    const urlSized = new RegExp(`[?&]size=${letter}\\b`, "i").test(url);
+    const buyReady = page.getByRole("button", { name: /Acheter maintenant|Buy Now|Buy$/i }).first();
+    if (urlSized && (await buyReady.isVisible({ timeout: 2500 }).catch(() => false))) {
+      return { ok: true, used: "US" };
+    }
     await page.getByRole("button", { name: /Taille|Size/i }).first().click({ timeout: 8000 }).catch(() => undefined);
     await page.waitForTimeout(700);
     const usTab = page.getByRole("button", { name: /^US$/ }).first();
@@ -212,6 +219,10 @@ async function selectSizeEuOrUs(
     const letterBtn = page.locator("button").filter({ hasText: letterRe }).first();
     if (await letterBtn.count()) {
       await letterBtn.click();
+      return { ok: true, used: "US" };
+    }
+    // Picker already closed / size locked — Buy Now counts as selected.
+    if (await buyReady.isVisible({ timeout: 1500 }).catch(() => false)) {
       return { ok: true, used: "US" };
     }
     // Fall through — may still be numeric EU on rare listings.
@@ -633,20 +644,32 @@ export async function selectAndVerifyStockxLane(
         // when it's the only option; STANDARD orders get a free speed upgrade) and
         // proceed through the normal verify + margin + cap + Place Order path.
         if (refined === "express_only") {
+          // Prefer item price; fall back to visible Sous-total when item is missing/
+          // under-parsed (e.g. "de 43 CHF" + low ask). Live subtotal still re-gates.
           const itemPriceChf = parseSingleXpressItemPriceChf(body);
-          if (itemPriceChf != null && itemPriceChf <= maxAllInChf) {
+          const bodySubtotalChf = extractCheckoutSubtotalChf(body);
+          const seedChf =
+            itemPriceChf != null && itemPriceChf <= maxAllInChf
+              ? itemPriceChf
+              : bodySubtotalChf != null && bodySubtotalChf <= maxAllInChf
+                ? bodySubtotalChf
+                : null;
+          if (seedChf != null) {
             const synth: StockxLaneCard = {
               label: "EXPRESS",
               rawLabel: "Xpress",
-              totalChf: itemPriceChf,
+              totalChf: seedChf,
               eta: null,
             };
             lanes = [synth];
             picked = synth;
             singleXpressSynth = true;
-            pickReason = `single-xpress:item=${itemPriceChf}`;
+            pickReason =
+              itemPriceChf != null && itemPriceChf === seedChf
+                ? `single-xpress:item=${seedChf}`
+                : `single-xpress:subtotal=${seedChf}`;
             console.warn(
-              `[STOCKX-CHECKOUT] single-price Xpress — synthesized EXPRESS lane ${itemPriceChf} CHF (live subtotal still gates)`
+              `[STOCKX-CHECKOUT] single-price Xpress — synthesized EXPRESS lane ${seedChf} CHF (live subtotal still gates)`
             );
           }
         }

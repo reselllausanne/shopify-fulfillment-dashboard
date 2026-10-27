@@ -212,6 +212,18 @@ describe("parseSingleXpressItemPriceChf", () => {
     expect(parseSingleXpressItemPriceChf("Item price CHF 119.00")).toBe(119);
   });
 
+  it("parses low FR item ask with 'de' (under all-in floor)", () => {
+    expect(
+      parseSingleXpressItemPriceChf(
+        "Prix de l'article\n\nde\n\n43 CHF\nRecevez votre commande d'ici le"
+      )
+    ).toBe(43);
+  });
+
+  it("parses sub-80 item price (live subtotal still gates)", () => {
+    expect(parseSingleXpressItemPriceChf("Prix de l'article\n67 CHF")).toBe(67);
+  });
+
   it("returns null when no item price present", () => {
     expect(parseSingleXpressItemPriceChf("aucune demande")).toBeNull();
   });
