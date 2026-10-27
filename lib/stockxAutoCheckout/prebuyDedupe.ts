@@ -17,7 +17,6 @@ import { prisma } from "@/app/lib/prisma";
 import { buildStockxOrderClaimIndex } from "@/app/lib/stockxCrossChannelClaims";
 import { getCachedStockxBuyingOrders } from "@/galaxus/stx/buyingOrdersCache";
 import type { StockxBuyingNode } from "@/galaxus/stx/stockxClient";
-import { extractEUSize } from "@/lib/shopifyAdmin";
 import { listStockxAccountTokens } from "@/lib/stockxToken";
 
 export type PrebuyVerdict =
@@ -134,28 +133,48 @@ export function styleIdFromSku(sku: string | null | undefined): string | null {
   return stripped || s;
 }
 
+/**
+ * Canonicalize an EU shoe size to a single comparable token so Shopify and
+ * SupplierVariant strings compare equal regardless of formatting.
+ *
+ * Handles: `EU ` prefix (one or many) + whitespace, unicode fractions `⅓`/`⅔`,
+ * ascii fractions `1/3`/`2/3` (any spacing), decimal thirds `.333`/`.667`,
+ * half sizes `.5`, comma decimals, and `OS`. Fraction/decimal detection is done
+ * directly here — we no longer defer to `extractEUSize`, whose `EU NN` regex
+ * silently drops the fractional suffix (`EU 41 1/3` → `41`), which was the root
+ * cause of fractional sizes failing to map to an in-stock variant.
+ *
+ * Canonical output: whole → "41", third → "41⅓"/"41⅔", half → "40.5", OS → "OS".
+ */
 export function normSizeEU(s: string | null | undefined): string | null {
   if (!s) return null;
-  const raw = String(s).trim();
-  if (/^os$/i.test(raw)) return "OS";
-  let extracted =
-    extractEUSize(raw)?.replace(/^EU\s*/i, "") ??
-    raw.replace(/^EU\s*/i, "").replace(/^EUEU\s*/i, "").trim();
-  extracted = extracted.replace(/\s*1\s*\/\s*3/, "⅓").replace(/\s*2\s*\/\s*3/, "⅔");
-  if (/⅓|⅔/.test(extracted)) {
-    const m = extracted.match(/(\d+)\s*([⅓⅔])/);
-    return m ? `${m[1]}${m[2]}` : extracted;
-  }
-  const n = Number(String(extracted).replace(",", "."));
-  if (!Number.isFinite(n)) return String(extracted).replace(",", ".");
-  const thirds = Math.round(n * 3) / 3;
-  if (Math.abs(thirds - Math.round(thirds)) < 1e-6) return String(Math.round(thirds));
-  if (Math.abs(thirds - (Math.floor(thirds) + 1 / 3)) < 0.05) return `${Math.floor(thirds)}⅓`;
-  if (Math.abs(thirds - (Math.floor(thirds) + 2 / 3)) < 0.05) return `${Math.floor(thirds)}⅔`;
-  if (Math.abs(n - Math.round(n * 2) / 2) < 0.05) {
-    const half = Math.round(n * 2) / 2;
-    return Number.isInteger(half) ? String(half) : half.toFixed(1);
-  }
+  if (/^os$/i.test(String(s).trim())) return "OS";
+
+  // Strip EU prefix(es) + whitespace, normalize unicode fractions to ascii.
+  const raw = String(s)
+    .trim()
+    .replace(/^(?:EU\s*)+/i, "")
+    .replace(/⅓/g, " 1/3")
+    .replace(/⅔/g, " 2/3")
+    .trim();
+
+  // Explicit "NN 1/3" / "NN 2/3" (any spacing) → canonical unicode third.
+  const frac = raw.match(/^(\d{1,2})\s*([12])\s*\/\s*3\b/);
+  if (frac) return `${frac[1]}${frac[2] === "1" ? "⅓" : "⅔"}`;
+
+  // Numeric core (first number, optional decimals); ignore trailing width letters.
+  const num = raw.replace(",", ".").match(/^(\d{1,2}(?:\.\d+)?)/);
+  if (!num) return raw;
+  const n = Number(num[1]);
+  if (!Number.isFinite(n)) return raw;
+
+  const whole = Math.floor(n);
+  const f = n - whole;
+  if (f < 0.08) return String(whole);
+  if (Math.abs(f - 1 / 3) < 0.04) return `${whole}⅓`;
+  if (Math.abs(f - 0.5) < 0.08) return `${whole}.5`;
+  if (Math.abs(f - 2 / 3) < 0.04) return `${whole}⅔`;
+  if (f > 0.92) return String(whole + 1);
   return String(n);
 }
 
