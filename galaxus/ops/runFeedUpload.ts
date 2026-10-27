@@ -601,34 +601,27 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       };
     }
     // Stock and offer exports each apply their own skip rules (offer drops rows
-    // with invalid price, stock drops rows with no eta/qty resolution), so the
-    // two CSVs can naturally diverge even though they are built from the same
-    // catalog. Galaxus requires strict row parity between the two feeds, so we
-    // reconcile by intersecting the ProviderKey sets and dropping the divergent
-    // rows on both sides instead of aborting the upload.
+    // with invalid price, stock keeps QuantityOnStock=0 delist rows), so offer is
+    // naturally a subset of stock. Never shrink stock to match offer — that made
+    // stock-only uploads (~1.2M) and stock-price uploads (~0.5M) look like the
+    // assortment was oscillating (Tali 2026-10-27). Trim orphan offer rows only.
     const parityDrops = { fromStock: [] as string[], fromOffer: [] as string[] };
-    if (needsStock && needsOffer && stockCsv && offerCsv && stockCount !== offerCount) {
+    if (needsStock && needsOffer && stockCsv && offerCsv) {
       const stockKeys = collectProviderKeysFromCsv(stockCsv);
       const offerKeys = collectProviderKeysFromCsv(offerCsv);
-      const shared = new Set<string>();
-      for (const key of stockKeys) if (offerKeys.has(key)) shared.add(key);
-      for (const key of stockKeys) if (!shared.has(key)) parityDrops.fromStock.push(key);
-      for (const key of offerKeys) if (!shared.has(key)) parityDrops.fromOffer.push(key);
+      for (const key of offerKeys) if (!stockKeys.has(key)) parityDrops.fromOffer.push(key);
 
-      const stockReconciled = keepCsvRowsByProviderKey(stockCsv, shared);
-      const offerReconciled = keepCsvRowsByProviderKey(offerCsv, shared);
-      stockCsv = stockReconciled.csv;
-      offerCsv = offerReconciled.csv;
-      stockCount = stockReconciled.kept;
-      offerCount = offerReconciled.kept;
-
-      console.warn("[GALAXUS][FEEDS][UPLOAD] Reconciled stock<->offer row parity", {
-        sharedProviderKeys: shared.size,
-        droppedFromStock: parityDrops.fromStock.length,
-        droppedFromOffer: parityDrops.fromOffer.length,
-        sampleDroppedFromStock: parityDrops.fromStock.slice(0, 10),
-        sampleDroppedFromOffer: parityDrops.fromOffer.slice(0, 10),
-      });
+      if (parityDrops.fromOffer.length > 0) {
+        const offerReconciled = keepCsvRowsByProviderKey(offerCsv, stockKeys);
+        offerCsv = offerReconciled.csv;
+        offerCount = offerReconciled.kept;
+        console.warn("[GALAXUS][FEEDS][UPLOAD] Trimmed offer rows missing from stock", {
+          stockProviderKeys: stockKeys.size,
+          droppedFromOffer: parityDrops.fromOffer.length,
+          sampleDroppedFromOffer: parityDrops.fromOffer.slice(0, 10),
+        });
+      }
+      stockCount = stockKeys.size;
     }
     // Master/specs are catalog-oriented and can have more rows than stock/offer.
 
@@ -676,9 +669,9 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
 
     // Skip-unchanged (#1): Galaxus silently drops a byte-identical re-upload, so don't
     // waste the SFTP transfer on a feed we already pushed. Compare each file's sha256 to
-    // the last manifest for the same path. Stock<->offer must keep row parity, so push
-    // both when either changed. Fail-safe: a null last-checksum (first run / lookup error)
-    // forces an upload.
+    // the last manifest for the same path. Stock and offer upload independently so a
+    // price-only change does not rewrite the stock file (stable position count).
+    // Fail-safe: a null last-checksum (first run / lookup error) forces an upload.
     const feedsBase = GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "");
     const masterSha = needsMaster ? (masterStreamFile?.sha256 ?? hashContent(masterCsv)) : null;
     const stockSha = needsStock ? hashContent(stockCsv) : null;
@@ -690,11 +683,9 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       needsOffer ? lastPushedChecksum("offer", `${feedsBase}/${offerName}`) : Promise.resolve(null),
       needsSpecs ? lastPushedChecksum("specs", `${feedsBase}/${specsName}`) : Promise.resolve(null),
     ]);
-    const stockOrOfferChanged =
-      (needsStock && stockSha !== lastStockSha) || (needsOffer && offerSha !== lastOfferSha);
     const pushMaster = needsMaster && masterSha !== lastMasterSha;
-    const pushStock = needsStock && stockOrOfferChanged;
-    const pushOffer = needsOffer && stockOrOfferChanged;
+    const pushStock = needsStock && stockSha !== lastStockSha;
+    const pushOffer = needsOffer && offerSha !== lastOfferSha;
     const pushSpecs = needsSpecs && specsSha !== lastSpecsSha;
     const anyUpload = pushMaster || pushStock || pushOffer || pushSpecs;
     const skippedUnchanged = [
