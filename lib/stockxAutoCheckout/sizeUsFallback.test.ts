@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  apparelLetterSize,
   buildStockxBuyUrl,
   convertEuToUs,
   inferBrandFromTitle,
@@ -45,8 +46,37 @@ describe("convertEuToUs", () => {
   });
 });
 
+describe("apparelLetterSize", () => {
+  it("passes through all letter sizes, case + whitespace normalized", () => {
+    expect(apparelLetterSize("S")).toBe("S");
+    expect(apparelLetterSize("m")).toBe("M");
+    expect(apparelLetterSize(" L ")).toBe("L");
+    expect(apparelLetterSize("xl")).toBe("XL");
+    expect(apparelLetterSize("XS")).toBe("XS");
+    expect(apparelLetterSize("xxl")).toBe("XXL");
+    expect(apparelLetterSize("US S")).toBe("S");
+    expect(apparelLetterSize("EU M")).toBe("M");
+    expect(apparelLetterSize("2XL")).toBe("2XL");
+  });
+
+  it("returns null for footwear numeric / OS / junk (no false apparel match)", () => {
+    expect(apparelLetterSize("42")).toBeNull();
+    expect(apparelLetterSize("8.5")).toBeNull();
+    expect(apparelLetterSize("36 2/3")).toBeNull();
+    expect(apparelLetterSize("OS")).toBeNull();
+    expect(apparelLetterSize("")).toBeNull();
+    expect(apparelLetterSize(null)).toBeNull();
+    expect(apparelLetterSize("Small")).toBeNull();
+  });
+});
+
 describe("buildStockxBuyUrl", () => {
   it("appends size query", () => {
     expect(buildStockxBuyUrl("nike-dunk-low", "8.5")).toContain("?size=8.5");
+  });
+
+  it("appends apparel letter size query", () => {
+    expect(buildStockxBuyUrl("nike-tech-fleece-hoodie", "S")).toContain("?size=S");
+    expect(buildStockxBuyUrl("nocta-jacket", "M")).toContain("?size=M");
   });
 });
