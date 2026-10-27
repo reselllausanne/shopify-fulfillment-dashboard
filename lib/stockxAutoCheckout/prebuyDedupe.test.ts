@@ -44,6 +44,37 @@ describe("sizesCompatible", () => {
   });
 });
 
+describe("normSizeEU fractional/EU formats (regression: no_variant_match)", () => {
+  // Fractions must survive the `EU ` prefix (extractEUSize used to drop them).
+  it("thirds with EU prefix compare equal to plain thirds", () => {
+    expect(normSizeEU("EU 41 1/3")).toBe("41⅓");
+    expect(normSizeEU("41 1/3")).toBe("41⅓");
+    expect(normSizeEU("EU 39 1/3")).toBe("39⅓");
+    expect(normSizeEU("EU 42 2/3")).toBe("42⅔");
+    expect(normSizeEU("42 2/3")).toBe("42⅔");
+  });
+
+  it("canonicalizes unicode and decimal thirds", () => {
+    expect(normSizeEU("41⅓")).toBe("41⅓");
+    expect(normSizeEU("EU 41⅓")).toBe("41⅓");
+    expect(normSizeEU("EU 41.333")).toBe("41⅓");
+    expect(normSizeEU("EU 42.667")).toBe("42⅔");
+  });
+
+  it("keeps half sizes (no false third)", () => {
+    expect(normSizeEU("EU 40.5")).toBe("40.5");
+    expect(normSizeEU("40,5")).toBe("40.5");
+    expect(normSizeEU("EU 35.5")).toBe("35.5");
+  });
+
+  it("the two real orders map to the stored sizeRaw", () => {
+    // #7582 adidas Forum Wings 1.0 — Shopify "41 1/3" vs DB "EU 41 1/3"
+    expect(normSizeEU("41 1/3")).toBe(normSizeEU("EU 41 1/3"));
+    // #7590 Hoka Skyflow (W) — Shopify "39 1/3" vs DB "EU 39 1/3"
+    expect(normSizeEU("39 1/3")).toBe(normSizeEU("EU 39 1/3"));
+  });
+});
+
 describe("prebuyBlocksNewPurchase", () => {
   const base = {
     detail: "",
