@@ -5,6 +5,9 @@ const GALAXUS_MANUAL_BLOCKLIST = new Set<string>([
   // Takashi Murakami Flower Plush 30 cm Rainbow/Yellow/White (Galaxus 75458067, 2026-10-14)
   "STX_4560157584359",
   "STX_4580796822667",
+  // Jellycat soft toys — Galaxus complaint (Tali, 2026-10-27); also covered by assortment plush rule
+  "STX_670983164428", // Bashful Bunny 'Snow Suit' Plush
+  "STX_670983109511", // Amuseables Cloud Plush
 ]);
 
 /**

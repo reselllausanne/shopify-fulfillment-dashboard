@@ -91,6 +91,68 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBe("manual_block");
   });
 
+  it("blocks soft toys / Jellycat plush (Tali 2026-10-27)", () => {
+    // fashion-only off — plush must still delist (was the sneakers-default hole).
+    process.env.GALAXUS_FASHION_ONLY = "0";
+    // Complained SKUs are also on the manual blocklist.
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_670983164428",
+        title: "Jellycat Bashful Bunny 'Snow Suit' Plush",
+        brand: "Jellycat",
+        suggestedRetailInclVatChf: 229,
+        supplierKey: "stx",
+      })
+    ).toBe("manual_block");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_670983109511",
+        title: "Jellycat Amuseables Cloud Plush",
+        brand: "Jellycat",
+        suggestedRetailInclVatChf: 209,
+        supplierKey: "stx",
+      })
+    ).toBe("manual_block");
+    // Durable rule: new catalog rows (title / Jellycat brand), no manual key needed.
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_NEW_PLUSH",
+        title: "Some Brand Bunny Plush 30cm",
+        brand: "Other",
+        suggestedRetailInclVatChf: 80,
+        supplierKey: "stx",
+      })
+    ).toBe("plush");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_NEW_JELLY",
+        title: "Amuseables Something Soft",
+        brand: "Jellycat",
+        suggestedRetailInclVatChf: 120,
+        supplierKey: "stx",
+      })
+    ).toBe("plush");
+    // Hard art toys / sneakers stay.
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_BEAR",
+        title: "Medicom Toy BE@RBRICK 1000%",
+        brand: "Bearbrick",
+        suggestedRetailInclVatChf: 800,
+        supplierKey: "stx",
+      })
+    ).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_1",
+        title: "Nike Dunk Low Panda",
+        brand: "Nike",
+        sizeRaw: "42",
+        suggestedRetailInclVatChf: 150,
+      })
+    ).toBeNull();
+  });
+
   it("delists every Baby-Walz row by default", () => {
     delete process.env.GALAXUS_DISABLED_SUPPLIERS;
     expect(

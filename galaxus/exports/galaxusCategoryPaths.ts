@@ -23,6 +23,7 @@ export type GalaxusProductKind =
   | "tumbler"
   | "watch"
   | "lego"
+  | "plush"
   | "tradingcard"
   | "boardgame"
   | "cardgame"
@@ -270,6 +271,8 @@ export const GALAXUS_CATEGORY_PATHS: Record<GalaxusProductKind, string> = {
   tumbler: "Sport + Toys > Wasserflaschen + Thermosflaschen",
   watch: "Mode > Alles in Mode > Uhren",
   lego: "Sport + Toys > LEGO",
+  // Soft toys blocked by assortmentPolicy (reason plush); path only for logs / edge cases.
+  plush: "Spielzeug > Kuscheltiere",
   tradingcard: "Sport + Toys > Sammelkarten",
   boardgame: "Sport + Toys > Brettspiele",
   cardgame: "Sport + Toys > Kartenspiele",
