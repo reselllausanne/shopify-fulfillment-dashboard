@@ -34,6 +34,15 @@ describe("convertEuToUs", () => {
     expect(convertEuToUs("XL", { brand: "Nike" })).toBe("XL");
     expect(convertEuToUs("2XL", { brand: "Nike" })).toBe("2XL");
   });
+
+  it("appends W for women's footwear StockX deep-link (?size=8W)", () => {
+    expect(
+      convertEuToUs("EU 40", {
+        brand: "adidas",
+        title: "adidas Stan Smith Cloud White Off White Wonder White (Women's)",
+      })
+    ).toBe("8W");
+  });
 });
 
 describe("buildStockxBuyUrl", () => {
