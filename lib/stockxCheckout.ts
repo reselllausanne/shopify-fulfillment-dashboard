@@ -19,6 +19,7 @@ import {
   classifyLaneLabel,
   countDistinctShippingTierInText,
   extractCheckoutSubtotalChf,
+  isExpressFamily,
   LANE_MIN_ALL_IN_CHF,
   laneMatchesSubtotal,
   marginOk,
@@ -535,7 +536,63 @@ async function clickLaneCard(page: Page, lane: StockxLaneCard): Promise<boolean>
         { price: targetPrice, wantStd: wantStandard }
       )
       .catch(() => false);
-    if (radioClicked) return true;
+    if (radioClicked) {
+      // Verify sticky selection via subtotal before claiming success.
+      await page.waitForTimeout(800);
+      const after = await page.locator("body").innerText().catch(() => "");
+      const sub = extractCheckoutSubtotalChf(after);
+      if (sub != null && Math.abs(sub - targetPrice) <= 0.51) return true;
+      // Radio said clicked but Standard stuck — fall through to price-text click.
+    }
+  }
+
+  // FR date-only cards: click the CHF amount text / card containing the target price.
+  {
+    const fr = targetPrice.toFixed(2).replace(".", ",");
+    const en = targetPrice.toFixed(2);
+    for (const amount of [fr, en]) {
+      const priceLoc = page.locator(`text=/\\b${amount.replace(".", "\\.")}\\s*CHF|CHF\\s*${amount.replace(".", "\\.")}\\b/`).first();
+      if (await priceLoc.isVisible({ timeout: 800 }).catch(() => false)) {
+        // Climb to clickable card (radio/label) then click.
+        const clicked = await priceLoc
+          .evaluate(
+            `(el) => {
+              let n = el;
+              for (let i = 0; i < 8 && n; i++, n = n.parentElement) {
+                const tag = (n.tagName || "").toLowerCase();
+                const role = (n.getAttribute && n.getAttribute("role")) || "";
+                if (
+                  tag === "label" ||
+                  tag === "button" ||
+                  role === "radio" ||
+                  role === "button" ||
+                  (n.querySelector && n.querySelector("input[type=radio]"))
+                ) {
+                  const input = n.querySelector && n.querySelector("input[type=radio]");
+                  if (input) {
+                    input.click();
+                    input.checked = true;
+                    input.dispatchEvent(new Event("input", { bubbles: true }));
+                    input.dispatchEvent(new Event("change", { bubbles: true }));
+                    return true;
+                  }
+                  n.click();
+                  return true;
+                }
+              }
+              el.click();
+              return true;
+            }`
+          )
+          .catch(() => false);
+        if (clicked) {
+          await page.waitForTimeout(900);
+          const after = await page.locator("body").innerText().catch(() => "");
+          const sub = extractCheckoutSubtotalChf(after);
+          if (sub != null && Math.abs(sub - targetPrice) <= 0.51) return true;
+        }
+      }
+    }
   }
 
   // String evaluate — tsx/esbuild injects `__name` into function() evaluate bodies (breaks in browser).
@@ -899,6 +956,31 @@ export async function selectAndVerifyStockxLane(
   }
 
   if (!laneMatchesSubtotal(picked, verifiedSubtotal)) {
+    // Xpress upgrade click often fails to stick on date-only FR radios (subtotal stays
+    // Standard). If customer desired STANDARD and live subtotal matches the Standard
+    // lane, accept Standard — still a correct buy (never slower than paid lane).
+    if (
+      options.policy === "desired" &&
+      options.desired === "STANDARD" &&
+      verifiedSubtotal != null &&
+      isExpressFamily(picked.label)
+    ) {
+      const stdLane = lanes.find(
+        (l) => l.label === "STANDARD" && laneMatchesSubtotal(l, verifiedSubtotal)
+      );
+      if (stdLane) {
+        console.warn(
+          `[STOCKX-CHECKOUT] Xpress upgrade click failed (pick=${picked.totalChf} sub=${verifiedSubtotal}) — fallback Standard ${stdLane.totalChf}`
+        );
+        return {
+          ok: true,
+          lane: stdLane,
+          lanes,
+          pickReason: `${pickReason}+fallback_std`,
+          subtotalChf: verifiedSubtotal,
+        };
+      }
+    }
     return {
       ok: false,
       reason: clicked ? "price_moved" : "express_unparsed",
