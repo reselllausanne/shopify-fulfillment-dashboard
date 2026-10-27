@@ -169,14 +169,19 @@ export async function POST(req: NextRequest) {
     // Match new STX buys first so AWB pass can fill them same hour.
     const galaxusAutoLink = await runGalaxusAutoLink();
     const shopifyAutoLink = await runShopifyAutoLink();
+    // Orders with a plausible buy candidate (buyable-in-progress / medium email) — the
+    // hard-unlinked Shopify UNLINKED alert must skip these to avoid double-alerting.
+    const excludeShopifyOrderNames = Array.isArray((shopifyAutoLink as any)?.candidateOrderNames)
+      ? ((shopifyAutoLink as any).candidateOrderNames as string[])
+      : [];
 
     if (autoLinkOnly) {
-      // Operator alerts (cancel/refund/delay/not-purchased) fire here — this lightweight
-      // path always completes, so the operator is notified reliably every run (to me first;
-      // customer milestone flow already skips cancelled/delayed).
+      // Operator alerts (cancel/refund/delay/not-purchased/unlinked) fire here — this
+      // lightweight path always completes, so the operator is notified reliably every run
+      // (to me first; customer milestone flow already skips cancelled/delayed).
       const opsAlerts = dryRun
         ? null
-        : await runStockxOrderOpsAlerts({ days }).catch((err: any) => ({
+        : await runStockxOrderOpsAlerts({ days, excludeShopifyOrderNames }).catch((err: any) => ({
             ok: false,
             error: String(err?.message ?? err),
           }));
@@ -214,7 +219,7 @@ export async function POST(req: NextRequest) {
 
     const opsAlerts = dryRun
       ? null
-      : await runStockxOrderOpsAlerts({ days }).catch((err: any) => ({
+      : await runStockxOrderOpsAlerts({ days, excludeShopifyOrderNames }).catch((err: any) => ({
           ok: false,
           error: String(err?.message ?? err),
         }));

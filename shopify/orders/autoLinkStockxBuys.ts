@@ -130,6 +130,12 @@ export type ShopifyStockxAutoLinkResult = {
   mediumEmailed: number;
   mediumEmailDeduped: number;
   mediumEmailSent: boolean;
+  /**
+   * Order names that still have a plausible StockX buy candidate (HIGH pending / medium /
+   * low). These are "buyable-in-progress" or handled by the medium ops email — the UNLINKED
+   * hard-unlinked alert must EXCLUDE them so we never double-alert.
+   */
+  candidateOrderNames: string[];
   items: Array<{
     shopifyOrderName: string;
     shopifyLineItemId: string;
@@ -583,6 +589,7 @@ export async function runShopifyStockxAutoLinkSweep(
     mediumEmailed: 0,
     mediumEmailDeduped: 0,
     mediumEmailSent: false,
+    candidateOrderNames: [],
     items: [],
   };
 
@@ -653,6 +660,16 @@ export async function runShopifyStockxAutoLinkSweep(
   result.noneSkipped = noneSkipped;
   result.skippedNoCost = skippedNoCost;
   result.highCandidates = picks.length;
+
+  // Any order with a plausible buy candidate (pending high / medium / low) is either
+  // buyable-in-progress or handled by the medium ops email → exclude from UNLINKED alert.
+  {
+    const candidateNames = new Set<string>();
+    for (const p of picks) candidateNames.add(p.line.orderName);
+    for (const c of mediumCandidates) candidateNames.add(c.line.orderName);
+    for (const c of lowCandidates) candidateNames.add(c.line.orderName);
+    result.candidateOrderNames = Array.from(candidateNames);
+  }
 
   for (const pick of picks) {
     if (Date.now() - startedAt > budgetMs) {
