@@ -492,27 +492,47 @@ async function clickLaneCard(page: Page, lane: StockxLaneCard): Promise<boolean>
   const targetLabel = String(lane.rawLabel || lane.label || "").trim();
   const wantStandard = classifyLaneLabel(targetLabel) === "STANDARD" || lane.label === "STANDARD";
 
-  // Date-only FR cards have no "Standard" word — first shipping radio = cheapest/STANDARD.
-  if (wantStandard) {
+  // Date-only FR cards have no Standard/Xpress words — match shipping radios by CHF price.
+  // Previously only STANDARD clicked radio[0]; Xpress upgrade (+1–2 CHF) left Standard
+  // selected → price_moved (pick=69.75 subtotal=68.75) on IE4634.
+  {
     const radioClicked = await page
       .evaluate(
-        `() => {
-          const radios = Array.from(document.querySelectorAll('input[type=radio]'));
-          const ship = radios.filter((r) => {
+        `({ price, wantStd }) => {
+          const parsePrice = (t) => {
+            const m =
+              t.match(/CHF\\s*(\\d{1,3}(?:[’'\\s]\\d{3})*(?:[.,]\\d{2})?)/i) ||
+              t.match(/(\\d{1,3}(?:[’'\\s]\\d{3})*(?:[.,]\\d{2})?)\\s*CHF/i);
+            if (!m) return null;
+            const n = Number(m[1].replace(/[^\\d,.-]/g, "").replace(/\\s/g, "").replace(",", "."));
+            return Number.isFinite(n) ? n : null;
+          };
+          const radios = Array.from(document.querySelectorAll("input[type=radio]"));
+          const ship = [];
+          for (const r of radios) {
             const root = r.closest("label,li,div") || r.parentElement;
             const t = ((root && root.textContent) || "").replace(/\\s+/g, " ");
-            return /CHF/i.test(t) && /\\d{1,2}\\s/i.test(t);
-          });
-          const target = ship[0] || radios[0];
+            if (!/CHF/i.test(t)) continue;
+            const p = parsePrice(t);
+            if (p == null) continue;
+            ship.push({ r, p, t });
+          }
+          ship.sort((a, b) => a.p - b.p);
+          let target = ship.find((s) => Math.abs(s.p - price) <= 0.51);
+          if (!target && wantStd) target = ship[0];
+          if (!target && !wantStd && ship.length >= 2) {
+            target = ship.length >= 3 ? ship[1] : ship[ship.length - 1];
+          }
           if (!target) return false;
-          target.click();
-          if (!target.checked) {
-            target.checked = true;
-            target.dispatchEvent(new Event("input", { bubbles: true }));
-            target.dispatchEvent(new Event("change", { bubbles: true }));
+          target.r.click();
+          if (!target.r.checked) {
+            target.r.checked = true;
+            target.r.dispatchEvent(new Event("input", { bubbles: true }));
+            target.r.dispatchEvent(new Event("change", { bubbles: true }));
           }
           return true;
-        }`
+        }`,
+        { price: targetPrice, wantStd: wantStandard }
       )
       .catch(() => false);
     if (radioClicked) return true;
