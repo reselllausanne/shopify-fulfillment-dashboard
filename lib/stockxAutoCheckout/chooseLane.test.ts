@@ -302,6 +302,72 @@ Sous-total
     expect(parsed.find((l) => l.label === "STANDARD")?.totalChf).toBe(127.5);
     expect(parsed.find((l) => l.label === "EXPRESS")?.totalChf).toBe(318.85);
   });
+
+  it("parses cheap Stan Smith FR checkout (~68 CHF) — not express_unparsed", () => {
+    // Live fail: floor 80 discarded all three lanes → empty → express_unparsed
+    // while "Vérifier la commande" was on screen (IE4634 EU40).
+    const text = `
+adidas Stan Smith Cloud Blanc OFF-WHITE Wonder Blanc (femme)
+Taille : EU 40
+Prix de l'article 43 CHF
+Choisissez votre mode de livraison
+5 novembre - 14 novembre
+68,73 CHF
+29 octobre - 3 novembre
+69,73 CHF
+jeudi 29 octobre
+70,73 CHF
+Sous-total
+68,73 CHF
+Vérifier la commande
+`;
+    const parsed = parseLaneCardsFromText(text);
+    expect(parsed.find((l) => l.label === "STANDARD")?.totalChf).toBe(68.73);
+    expect(parsed.find((l) => l.label === "EXPRESS")?.totalChf).toBe(69.73);
+    expect(parsed.find((l) => l.label === "EXPEDITED")?.totalChf).toBe(70.73);
+    expect(extractCheckoutSubtotalChf(text)).toBe(68.73);
+
+    const pick = chooseLane("STANDARD", parsed);
+    expect(pick.ok).toBe(true);
+    if (pick.ok) {
+      // +1 CHF Xpress vs Standard → MUST upgrade (≤2 / ≤10 CHF rule)
+      expect(pick.lane.label).toBe("EXPRESS");
+      expect(pick.lane.totalChf).toBe(69.73);
+    }
+  });
+});
+
+describe("STANDARD → Xpress upgrade (≤2 CHF hard rule)", () => {
+  it("upgrades STANDARD to Xpress when delta is 1–2 CHF", () => {
+    const result = chooseLane(
+      "STANDARD",
+      lanes([
+        ["Standard", 68.73],
+        ["Xpress", 69.73],
+        ["Fastest", 70.73],
+      ])
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.lane.label).toBe("EXPRESS");
+      expect(result.lane.totalChf).toBe(69.73);
+    }
+  });
+
+  it("keeps STANDARD when Xpress is far more expensive", () => {
+    const result = chooseLane(
+      "STANDARD",
+      lanes([
+        ["Standard", 139.33],
+        ["Xpress", 295.2],
+      ])
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.lane.label).toBe("STANDARD");
+      expect(result.lane.totalChf).toBe(139.33);
+    }
+  });
 });
 
 describe("chooseLaneByCsAtMargin", () => {

@@ -9,8 +9,14 @@ import {
 /** Galaxus DD CSAT: Express if live margin vs sell > 5%. */
 export const GALAXUS_CSAT_MIN_MARGIN = 0.05;
 
-/** Ignore bare ask scraps; checkout all-in lanes are typically ≥ this. */
-export const LANE_MIN_ALL_IN_CHF = 80;
+/**
+ * Ignore bare ask scraps / 0,00 placeholders. Must stay BELOW real cheap all-in
+ * sneakers (Stan Smith ~68 CHF) or date-tier parse returns [] → express_unparsed
+ * / express_only fail-closed on an otherwise buyable checkout.
+ * Item-only "Prix de l'article" (~40–50) stays under this; use XPRESS_ITEM_MIN_CHF
+ * for the single-price Xpress synth path.
+ */
+export const LANE_MIN_ALL_IN_CHF = 50;
 /**
  * Single-price Xpress "Prix de l'article" can be well under all-in (fees/ship added
  * to Sous-total). Live subtotal still gates Place Order — only seed the synth path.
@@ -33,6 +39,7 @@ export const EXPEDITED_UPGRADE_MAX_DELTA_CHF_DEFAULT = 10;
  * Upgrade-by-preference is bounded by pct/delta; "standard missing" always takes faster.
  */
 export const STANDARD_UPGRADE_MAX_PCT_DEFAULT = 0.05;
+/** Hard rule: Xpress expedited within +2 CHF of Standard MUST be taken (and up to +10). */
 export const STANDARD_UPGRADE_MAX_DELTA_CHF_DEFAULT = 10;
 
 function envNum(name: string, def: number): number {
