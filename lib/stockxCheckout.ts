@@ -32,6 +32,7 @@ import {
   desiredStockxLaneFromShopify,
 } from "@/lib/stockxAutoCheckout/detectShopifyExpress";
 import {
+  apparelLetterSize,
   buildStockxBuyUrl,
   convertEuToUs,
   inferBrandFromTitle,
@@ -1553,6 +1554,19 @@ export async function runStockxAutoCheckoutForOrder(options: {
       await page.waitForTimeout(3500);
     } else {
       await page.waitForTimeout(800);
+      // Batch nav (softNavToPdp) lands on the PDP WITHOUT a ?size deep-link. For apparel
+      // letter sizes (S/M/L…) the on-page grid is flaky, so apply the ?size=S deep-link
+      // here — selectSizeEuOrUs then hits its urlSized fast-path instead of clicking tiles.
+      const letter = apparelLetterSize(sizeUS) ?? apparelLetterSize(shopify.sizeEU);
+      if (letter && !new RegExp(`[?&]size=${letter}\\b`, "i").test(page.url())) {
+        await page
+          .goto(buildStockxBuyUrl(slug, letter), {
+            waitUntil: "domcontentloaded",
+            timeout: 45_000,
+          })
+          .catch(() => undefined);
+        await page.waitForTimeout(2500);
+      }
     }
     await dismissNoise(page);
 
