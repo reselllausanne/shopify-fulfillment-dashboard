@@ -3562,7 +3562,7 @@ model FunnelEvent {
 model StockxOrderAlert {
   id                String   @id @default(cuid())
   scope             String // "shopify" | "galaxus"
-  alertType         String // "CANCELLED" | "REFUNDED" | "DELAYED" | "NOT_PURCHASED"
+  alertType         String // "CANCELLED" | "REFUNDED" | "DELAYED" | "NOT_PURCHASED" | "UNLINKED"
   refKey            String // orderMatch.id (shopify) or galaxusOrder.id (galaxus)
   orderRef          String? // human ref: Shopify order name / Galaxus order ref
   stockxOrderNumber String?
