@@ -70,6 +70,33 @@ export function isDeadFeedBlocked(input: {
 }
 
 /**
+ * Warehouse exception: BAE rows with manualLock + priced shelf + positive
+ * manual/warehouse stock may still publish on Galaxus offer/stock.
+ * Does not revive the scraper or open the full BAE catalog.
+ */
+export function isBaeManualWarehouseFeedAllowed(input: {
+  supplierKey?: string | null;
+  supplierVariantId?: string | null;
+  providerKey?: string | null;
+  manualLock?: boolean | null;
+  manualPrice?: number | null;
+  manualStock?: number | null;
+  stock?: number | null;
+}): boolean {
+  if (resolveDeadSupplierKey(input) !== "bae") return false;
+  if (!input.manualLock) return false;
+  const price = Number(input.manualPrice);
+  if (!Number.isFinite(price) || price <= 0) return false;
+  const manualStock =
+    input.manualStock === null || input.manualStock === undefined
+      ? null
+      : Number(input.manualStock);
+  if (manualStock !== null && Number.isFinite(manualStock) && manualStock > 0) return true;
+  const stock = Number(input.stock);
+  return Number.isFinite(stock) && stock > 0;
+}
+
+/**
  * Auto force QuantityOnStock=0 — HHV/SNL/NSO only.
  * BAE uses shouldForceBaeStockZero after confirmed apply.
  */

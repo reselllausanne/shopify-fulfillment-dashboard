@@ -24,6 +24,17 @@ describe("baeKill", () => {
     expect(shouldForceBaeStockZero({ providerKey: "BAE_1" }, { BAE_GALAXUS_STOCK_ZERO: "1" })).toBe(
       true
     );
+    expect(
+      shouldForceBaeStockZero(
+        {
+          providerKey: "BAE_1",
+          manualLock: true,
+          manualPrice: 82.33,
+          manualStock: 1,
+        },
+        { BAE_GALAXUS_STOCK_ZERO: "1" }
+      )
+    ).toBe(false);
     expect(isBaeStockZeroArmed({ BAE_GALAXUS_STOCK_ZERO: "1" })).toBe(true);
     // Auto dead-zero must NOT include BAE (dry-run/apply gate).
     expect(shouldForceDeadStockZero({ providerKey: "BAE_1" })).toBe(false);
