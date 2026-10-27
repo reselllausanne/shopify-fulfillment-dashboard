@@ -43,6 +43,10 @@ import {
 import { shouldForceDeadStockZero } from "@/galaxus/exports/deadSupplierKill";
 import { shouldForceBaeStockZero } from "@/galaxus/exports/baeKill";
 import {
+  loadGalaxusWasLiveProviderKeys,
+  shouldEmitGalaxusDelistZero,
+} from "@/galaxus/exports/galaxusWasLiveKeys";
+import {
   buildStxSizePriceMedianIndex,
   createGalaxusAssortmentStats,
   galaxusAssortmentBlockReasonForCandidate,
@@ -269,9 +273,33 @@ export async function GET(request: Request) {
     listingIdentities
   );
   const pushZeroRowsEarly = isGalaxusStockZeroPushEnabled();
+  // Only delist keys Galaxus already had in stock — never-pushed shells bloat the CSV.
+  let wasLiveProviderKeys: Set<string> | null = null;
+  let zeroSkippedNeverPushed = 0;
+  try {
+    wasLiveProviderKeys = await loadGalaxusWasLiveProviderKeys();
+  } catch (err: any) {
+    console.warn(
+      "[GALAXUS][EXPORT][STOCK] was-live key load failed — fail-open (emit all zeros)",
+      err?.message ?? err
+    );
+    wasLiveProviderKeys = null;
+  }
+  const tryPushDelistZero = (
+    providerKey: string,
+    supplierKey: string | null,
+    supplierVariantId: string | null,
+    manualNote: string | null
+  ) => {
+    if (!shouldEmitGalaxusDelistZero(providerKey, wasLiveProviderKeys)) {
+      zeroSkippedNeverPushed += 1;
+      return;
+    }
+    rows.push(buildForceZeroStockRow(providerKey, supplierKey, supplierVariantId, manualNote));
+  };
   for (const supersededKey of supersededProviderKeys) {
     if (!pushZeroRowsEarly || !supersededKey) continue;
-    rows.push(buildForceZeroStockRow(supersededKey, null, null, "listing-alias-superseded"));
+    tryPushDelistZero(supersededKey, null, null, "listing-alias-superseded");
   }
 
   mark("listingAlias", tAlias);
@@ -411,8 +439,11 @@ export async function GET(request: Request) {
       })
     ) {
       if (pushZeroRows) {
-        rows.push(
-          buildForceZeroStockRow(providerKey, mappingSupplierKey, supplierVariantIdEarly, variant?.manualNote ?? null)
+        tryPushDelistZero(
+          providerKey,
+          mappingSupplierKey,
+          supplierVariantIdEarly,
+          variant?.manualNote ?? null
         );
       }
       return;
@@ -422,8 +453,11 @@ export async function GET(request: Request) {
     if (assortmentBlock) {
       assortmentStats[assortmentBlock] += 1;
       if (pushZeroRows) {
-        rows.push(
-          buildForceZeroStockRow(providerKey, mappingSupplierKey, supplierVariantIdEarly, variant?.manualNote ?? null)
+        tryPushDelistZero(
+          providerKey,
+          mappingSupplierKey,
+          supplierVariantIdEarly,
+          variant?.manualNote ?? null
         );
       }
       return;
@@ -589,7 +623,13 @@ export async function GET(request: Request) {
       for (const item of excluded) {
         if (item.reason !== "ASSORTMENT_POLICY") continue;
         assortmentStats.alternative += 1;
-        if (pushZeroRows) altRows.push(buildForceZeroStockRow(item.product.providerKey, null, null));
+        if (!pushZeroRows) continue;
+        const altKey = String(item.product.providerKey ?? "").trim();
+        if (!shouldEmitGalaxusDelistZero(altKey, wasLiveProviderKeys)) {
+          zeroSkippedNeverPushed += 1;
+          continue;
+        }
+        altRows.push(buildForceZeroStockRow(altKey, null, null));
       }
       finalRows = [...rows, ...altRows];
       if (finalRows.length < rows.length) {
@@ -614,6 +654,12 @@ export async function GET(request: Request) {
       console.info("[GALAXUS][EXPORT][STOCK][TRM] Excluded rows", trmExclusionStats);
     }
     console.info("[GALAXUS][EXPORT][STOCK][ASSORTMENT] Delisted rows", assortmentStats);
+    if (zeroSkippedNeverPushed > 0) {
+      console.info("[GALAXUS][EXPORT][STOCK] Skipped delist zeros (never pushed / not live)", {
+        count: zeroSkippedNeverPushed,
+        wasLiveKeys: wasLiveProviderKeys?.size ?? null,
+      });
+    }
     if (evidenceStockRows > 0) {
       console.info("[GALAXUS][EXPORT][STOCK][EVIDENCE] Stock from scraper evidence", {
         rows: evidenceStockRows,

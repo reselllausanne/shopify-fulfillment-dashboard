@@ -70,6 +70,8 @@ function resolveSupplierKeyPrefix(input: {
  * prior offer — silent omit leaves yesterday's underpriced listing live forever
  * (STX DualSense 2026-10 incident). Default ON. Set `GALAXUS_STOCK_ZERO_PUSH=0` to omit
  * instead (legacy). `=1` forces on.
+ * Zero rows are further gated to ProviderKeys that were live on Galaxus
+ * (`ChannelListingState.lastPushedStock > 0`) — see galaxusWasLiveKeys.ts.
  *
  * @deprecated Kept for logs / one-shot scripts that referenced the old cutoff.
  */
