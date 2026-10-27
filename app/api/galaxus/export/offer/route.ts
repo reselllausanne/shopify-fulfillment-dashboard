@@ -33,7 +33,10 @@ import {
   isGalaxusSellableStock,
   isXntFeedBlockedBrand,
 } from "@/galaxus/exports/feedEligibility";
-import { isDeadFeedBlocked } from "@/galaxus/exports/deadSupplierKill";
+import {
+  isBaeManualWarehouseFeedAllowed,
+  isDeadFeedBlocked,
+} from "@/galaxus/exports/deadSupplierKill";
 import {
   buildStxSizePriceMedianIndex,
   createGalaxusAssortmentStats,
@@ -246,13 +249,26 @@ export async function GET(request: Request) {
     // XNT Pollin / Berrybase: no offer/price updates (block cascades from
     // master feed skip). Stock feed emits 0 to actively delist prior pushes.
     if (isXntFeedBlockedBrand(variant)) continue;
-    if (
-      isDeadFeedBlocked({
-        supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
-        supplierVariantId: variant?.supplierVariantId,
-        providerKey,
-      })
-    ) {
+    const manualLock = Boolean(variant?.manualLock);
+    const manualPrice = parseNumber(variant?.manualPrice);
+    const manualStockRaw = variant?.manualStock;
+    const manualStock =
+      manualStockRaw === null || manualStockRaw === undefined ? null : Number.parseInt(String(manualStockRaw), 10);
+    const deadBlocked = isDeadFeedBlocked({
+      supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
+      supplierVariantId: variant?.supplierVariantId,
+      providerKey,
+    });
+    const baeWarehouseOk = isBaeManualWarehouseFeedAllowed({
+      supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
+      supplierVariantId: variant?.supplierVariantId,
+      providerKey,
+      manualLock,
+      manualPrice,
+      manualStock,
+      stock: variant?.stock,
+    });
+    if (deadBlocked && !baeWarehouseOk) {
       continue;
     }
     const assortmentBlock = galaxusAssortmentBlockReasonForCandidate(candidate, stxSizeMedianIndex);
@@ -262,11 +278,6 @@ export async function GET(request: Request) {
     }
     const sellPrice = Number(candidate.sellPriceExVat);
     const vatRate = vatRateDefault;
-    const manualLock = Boolean(variant?.manualLock);
-    const manualPrice = parseNumber(variant?.manualPrice);
-    const manualStockRaw = variant?.manualStock;
-    const manualStock =
-      manualStockRaw === null || manualStockRaw === undefined ? null : Number.parseInt(String(manualStockRaw), 10);
     // manualPrice is the final Galaxus PurchasePriceExclVat — never strip VAT / never re-margin.
     const lockedFinalExVat =
       manualLock && manualPrice && manualPrice > 0 ? manualPrice : null;

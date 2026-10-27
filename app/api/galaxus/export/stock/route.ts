@@ -399,6 +399,10 @@ export async function GET(request: Request) {
         supplierKey: mappingSupplierKey,
         supplierVariantId: supplierVariantIdEarly,
         providerKey,
+        manualLock: variant?.manualLock,
+        manualPrice: variant?.manualPrice != null ? Number(variant.manualPrice) : null,
+        manualStock: variant?.manualStock != null ? Number(variant.manualStock) : null,
+        stock: variant?.stock != null ? Number(variant.stock) : null,
       }) ||
       shouldForceGalaxusStockZero({
         supplierKey: mappingSupplierKey,

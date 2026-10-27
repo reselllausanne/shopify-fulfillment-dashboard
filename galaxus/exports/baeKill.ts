@@ -9,6 +9,7 @@
  * feed emits QuantityOnStock=0 for BAE ProviderKeys, then upload stock feed.
  */
 import {
+  isBaeManualWarehouseFeedAllowed,
   isDeadFeedBlocked,
   isDeadSupplier,
   resolveDeadSupplierKey,
@@ -54,14 +55,25 @@ export function shouldForceBaeStockZero(
     supplierKey?: string | null;
     supplierVariantId?: string | null;
     providerKey?: string | null;
+    manualLock?: boolean | null;
+    manualPrice?: number | null;
+    manualStock?: number | null;
+    stock?: number | null;
   },
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
 ): boolean {
   if (!isBaeSupplierKey(input)) return false;
+  // Keep warehouse-locked BAE rows live even when delist arm is on.
+  if (isBaeManualWarehouseFeedAllowed(input)) return false;
   return isBaeStockZeroArmed(env);
 }
 
-export { isDeadFeedBlocked, isDeadSupplier, shouldForceDeadStockZero };
+export {
+  isBaeManualWarehouseFeedAllowed,
+  isDeadFeedBlocked,
+  isDeadSupplier,
+  shouldForceDeadStockZero,
+};
 
 export type BaeActiveListingRow = {
   providerKey: string;
