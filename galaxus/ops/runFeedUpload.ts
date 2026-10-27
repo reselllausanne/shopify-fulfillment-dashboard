@@ -38,6 +38,7 @@ import {
   rebuildFeedSnapshotFromExports,
   tryExportCsvFromSnapshot,
 } from "@/galaxus/exports/feedSnapshot";
+import { syncGalaxusListingStockFromCsv } from "@/galaxus/exports/galaxusWasLiveKeys";
 import type { FeedTriggerSource } from "@/galaxus/ops/types";
 
 export type FeedUploadInput = {
@@ -824,6 +825,19 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       },
       { timeoutMs: GALAXUS_SFTP_FEED_UPLOAD_TIMEOUT_MS }
     );
+
+    // After SFTP closes: mirror stock qty into CLS so sticky lastPushedStock>0 clears.
+    if (pushStock && stockCsv) {
+      try {
+        const synced = await syncGalaxusListingStockFromCsv(stockCsv);
+        console.info("[GALAXUS][FEEDS][UPLOAD] synced ChannelListingState stock", synced);
+      } catch (err: any) {
+        console.warn(
+          "[GALAXUS][FEEDS][UPLOAD] ChannelListingState stock sync failed (non-fatal)",
+          err?.message ?? err
+        );
+      }
+    }
 
     const destination = `sftp://${GALAXUS_SFTP_HOST}:${GALAXUS_SFTP_PORT}${GALAXUS_SFTP_FEEDS_DIR}`;
     for (const entry of manifestEntries) {

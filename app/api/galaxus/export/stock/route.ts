@@ -43,7 +43,7 @@ import {
 import { shouldForceDeadStockZero } from "@/galaxus/exports/deadSupplierKill";
 import { shouldForceBaeStockZero } from "@/galaxus/exports/baeKill";
 import {
-  loadGalaxusWasLiveProviderKeys,
+  loadGalaxusDelistZeroEligibleKeys,
   shouldEmitGalaxusDelistZero,
 } from "@/galaxus/exports/galaxusWasLiveKeys";
 import {
@@ -273,17 +273,18 @@ export async function GET(request: Request) {
     listingIdentities
   );
   const pushZeroRowsEarly = isGalaxusStockZeroPushEnabled();
-  // Only delist keys Galaxus already had in stock — never-pushed shells bloat the CSV.
-  let wasLiveProviderKeys: Set<string> | null = null;
-  let zeroSkippedNeverPushed = 0;
+  // Delist zeros only when CLS still shows live stock AND last snapshot is not already 0.
+  // Sticky re-zeros after a successful 0 push bloated stock to ~872k vs ~490k offer.
+  let delistZeroEligibleKeys: Set<string> | null = null;
+  let zeroSkippedNotEligible = 0;
   try {
-    wasLiveProviderKeys = await loadGalaxusWasLiveProviderKeys();
+    delistZeroEligibleKeys = await loadGalaxusDelistZeroEligibleKeys();
   } catch (err: any) {
     console.warn(
-      "[GALAXUS][EXPORT][STOCK] was-live key load failed — fail-open (emit all zeros)",
+      "[GALAXUS][EXPORT][STOCK] delist-eligible key load failed — fail-open (emit all zeros)",
       err?.message ?? err
     );
-    wasLiveProviderKeys = null;
+    delistZeroEligibleKeys = null;
   }
   const tryPushDelistZero = (
     providerKey: string,
@@ -291,8 +292,8 @@ export async function GET(request: Request) {
     supplierVariantId: string | null,
     manualNote: string | null
   ) => {
-    if (!shouldEmitGalaxusDelistZero(providerKey, wasLiveProviderKeys)) {
-      zeroSkippedNeverPushed += 1;
+    if (!shouldEmitGalaxusDelistZero(providerKey, delistZeroEligibleKeys)) {
+      zeroSkippedNotEligible += 1;
       return;
     }
     rows.push(buildForceZeroStockRow(providerKey, supplierKey, supplierVariantId, manualNote));
@@ -625,8 +626,8 @@ export async function GET(request: Request) {
         assortmentStats.alternative += 1;
         if (!pushZeroRows) continue;
         const altKey = String(item.product.providerKey ?? "").trim();
-        if (!shouldEmitGalaxusDelistZero(altKey, wasLiveProviderKeys)) {
-          zeroSkippedNeverPushed += 1;
+        if (!shouldEmitGalaxusDelistZero(altKey, delistZeroEligibleKeys)) {
+          zeroSkippedNotEligible += 1;
           continue;
         }
         altRows.push(buildForceZeroStockRow(altKey, null, null));
@@ -654,10 +655,10 @@ export async function GET(request: Request) {
       console.info("[GALAXUS][EXPORT][STOCK][TRM] Excluded rows", trmExclusionStats);
     }
     console.info("[GALAXUS][EXPORT][STOCK][ASSORTMENT] Delisted rows", assortmentStats);
-    if (zeroSkippedNeverPushed > 0) {
-      console.info("[GALAXUS][EXPORT][STOCK] Skipped delist zeros (never pushed / not live)", {
-        count: zeroSkippedNeverPushed,
-        wasLiveKeys: wasLiveProviderKeys?.size ?? null,
+    if (zeroSkippedNotEligible > 0) {
+      console.info("[GALAXUS][EXPORT][STOCK] Skipped delist zeros (already zeroed / never live)", {
+        count: zeroSkippedNotEligible,
+        eligibleKeys: delistZeroEligibleKeys?.size ?? null,
       });
     }
     if (evidenceStockRows > 0) {
