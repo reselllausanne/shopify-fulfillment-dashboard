@@ -625,7 +625,10 @@ export async function runPartnerCsvImport(
       }
     }
 
-    for (const batch of chunkArray(safeMappingUpserts, 200)) {
+    // Smaller batches: one bad remap id used to kill the whole 200-row INSERT.
+    // bulkUpsertVariantMappings now JOIN-filters missing SVs, so 23503 should not fire;
+    // keep batches modest for NER (~1.3M mapping targets).
+    for (const batch of chunkArray(safeMappingUpserts, 100)) {
       if (batch.length === 0) continue;
       await bulkUpsertVariantMappings(batch, now, { doNotDowngradeFromMatched: false });
     }
