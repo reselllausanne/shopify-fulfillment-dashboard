@@ -26,6 +26,7 @@ import {
   skuEquals,
 } from "@/app/lib/shopifyAwbFallback";
 import { shopifyMatchMinCreatedAt } from "@/app/lib/shopifyMatchEligibility";
+import { searchLiveOpenShopifyLinesBySkus } from "@/lib/shopifyOpenOrdersBySku";
 
 export type ShopifyOrderHint = {
   shopifyOrderId: string;
@@ -38,9 +39,10 @@ export type ShopifyOrderHint = {
 };
 
 /**
- * Load OrderMatch rows keyed on the package SKU as *hints* for which Shopify
- * orders to inspect. These rows are NOT treated as authoritative open lines;
- * caller must verify each hint against live Shopify state.
+ * Load discovery *hints* for which Shopify orders to inspect for an inbound
+ * package SKU. Combines OrderMatch (linked) + live Admin open lines (unlinked
+ * Website-stock). Hints are NOT authoritative — caller verifies against live
+ * fulfillment state.
  */
 export async function loadShopifyOrderHintsForSku(params: {
   sku: string;
@@ -53,35 +55,68 @@ export async function loadShopifyOrderHintsForSku(params: {
   // Discovery only — size filtered later (StockX US vs Shopify EU / SKU suffix).
   void params.sizeEU;
 
-  const rows = await prisma.orderMatch.findMany({
-    where: {
-      shopifyCreatedAt: { gte: minCreatedAt },
-      AND: [
-        {
-          OR: [{ stockxAwb: null }, { stockxAwb: "" }],
-        },
-        {
-          // Shopify SKUs often embed size: BASE-42 / BASE-XL
-          OR: [
-            { shopifySku: { equals: sku, mode: "insensitive" } },
-            { shopifySku: { startsWith: `${sku}-`, mode: "insensitive" } },
-          ],
-        },
-      ],
-    },
-    orderBy: { shopifyCreatedAt: "asc" },
-    take: 60,
-    select: {
-      shopifyOrderId: true,
-      shopifyOrderName: true,
-      shopifyLineItemId: true,
-      shopifySku: true,
-      shopifySizeEU: true,
-      shopifyProductTitle: true,
-      shopifyCreatedAt: true,
-    },
-  });
-  return rows as ShopifyOrderHint[];
+  const [rows, liveLines] = await Promise.all([
+    prisma.orderMatch.findMany({
+      where: {
+        shopifyCreatedAt: { gte: minCreatedAt },
+        AND: [
+          {
+            OR: [{ stockxAwb: null }, { stockxAwb: "" }],
+          },
+          {
+            // Shopify SKUs often embed size: BASE-42 / BASE-XL
+            OR: [
+              { shopifySku: { equals: sku, mode: "insensitive" } },
+              { shopifySku: { startsWith: `${sku}-`, mode: "insensitive" } },
+            ],
+          },
+        ],
+      },
+      orderBy: { shopifyCreatedAt: "asc" },
+      take: 60,
+      select: {
+        shopifyOrderId: true,
+        shopifyOrderName: true,
+        shopifyLineItemId: true,
+        shopifySku: true,
+        shopifySizeEU: true,
+        shopifyProductTitle: true,
+        shopifyCreatedAt: true,
+      },
+    }),
+    searchLiveOpenShopifyLinesBySkus({
+      skus: [sku],
+      minCreatedAt,
+      take: 40,
+    }).catch((err) => {
+      console.warn(
+        "[shopifyOpenLineCandidates] live SKU hint search failed:",
+        err instanceof Error ? err.message : err
+      );
+      return [] as Awaited<ReturnType<typeof searchLiveOpenShopifyLinesBySkus>>;
+    }),
+  ]);
+
+  const byLineId = new Map<string, ShopifyOrderHint>();
+  for (const live of liveLines) {
+    const lineId = live.shopifyLineItemId;
+    if (!lineId || byLineId.has(lineId)) continue;
+    byLineId.set(lineId, {
+      shopifyOrderId: live.shopifyOrderId,
+      shopifyOrderName: live.shopifyOrderName,
+      shopifyLineItemId: lineId,
+      shopifySku: live.shopifySku,
+      shopifySizeEU: live.sizeTitle,
+      shopifyProductTitle: live.productTitle,
+      shopifyCreatedAt: live.createdAt,
+    });
+  }
+  for (const row of rows) {
+    const lineId = String(row.shopifyLineItemId ?? "").trim();
+    if (!lineId || byLineId.has(lineId)) continue;
+    byLineId.set(lineId, row as ShopifyOrderHint);
+  }
+  return Array.from(byLineId.values());
 }
 
 /**

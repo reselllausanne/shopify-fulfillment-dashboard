@@ -2464,6 +2464,7 @@ export default function ScanPage() {
         body: JSON.stringify({
           awb: scan.awb,
           trackingUrl: scan.match?.trackingUrl || null,
+          shopifyOrderId: scan.match?.shopifyOrderId || null,
           shopifyLineItemId:
             options?.selectedUnits?.[0]?.lineItemId ||
             scan.match?.shopifyLineItemId ||

@@ -432,6 +432,7 @@ export async function POST(req: NextRequest) {
     const selectedFrankingLicense = resolveSwissPostFrankingLicenseForRole(staffRole);
     const awb = normalizeAwb(body?.awb ?? body?.code);
     const requestedShopifyLineItemId = String(body?.shopifyLineItemId ?? "").trim() || null;
+    const requestedShopifyOrderId = String(body?.shopifyOrderId ?? "").trim() || null;
     // GTIN-only fulfill: operator scanned product barcode, not inbound StockX AWB.
     // Resolve by shopifyLineItemId and do NOT write the GTIN into stockxAwb.
     const gtinFulfill = Boolean(body?.gtinFulfill);
@@ -603,6 +604,22 @@ export async function POST(req: NextRequest) {
         where: { shopifyLineItemId: requestedShopifyLineItemId },
         select: matchSelect,
       })) as OrderMatchSelection[];
+      // Website-stock / unlinked dropship: scan found the open line live in Shopify
+      // with no OrderMatch row. Fulfill from the order + line ids the client verified.
+      if (matches.length === 0 && requestedShopifyOrderId) {
+        matches = [
+          {
+            id: requestedShopifyLineItemId,
+            shopifyOrderId: requestedShopifyOrderId,
+            shopifyOrderName: null,
+            shopifyLineItemId: requestedShopifyLineItemId,
+            shopifySku: null,
+            shopifyProductTitle: null,
+            shopifySizeEU: null,
+            stockxTrackingUrl: null,
+          },
+        ];
+      }
     } else {
       matches = (await prisma.orderMatch.findMany({
         where: { stockxAwb: awb },
@@ -627,6 +644,19 @@ export async function POST(req: NextRequest) {
             .catch((err: any) => {
               console.error("[FULFILL-FROM-AWB] AWB persist failed:", err?.message || err);
             });
+        } else if (requestedShopifyOrderId) {
+          matches = [
+            {
+              id: requestedShopifyLineItemId,
+              shopifyOrderId: requestedShopifyOrderId,
+              shopifyOrderName: null,
+              shopifyLineItemId: requestedShopifyLineItemId,
+              shopifySku: null,
+              shopifyProductTitle: null,
+              shopifySizeEU: null,
+              stockxTrackingUrl: null,
+            },
+          ];
         }
       }
     }
@@ -892,13 +922,26 @@ export async function POST(req: NextRequest) {
         });
       }
     } else {
-      dbItems = selectedMatches.map((m: OrderMatchSelection) => ({
-        sku: m.shopifySku ?? null,
-        title: m.shopifyProductTitle ?? null,
-        sizeEU: m.shopifySizeEU ?? null,
-        quantity: 1,
-        sourceId: m.id,
-      }));
+      // Prefer live order line SKU/title when OrderMatch is missing / stubbed
+      // (unlinked Website-stock GTIN fulfill).
+      const byLineId = new Map(
+        orderLineItems.map((li: any) => [String(li.id), li] as const)
+      );
+      dbItems = selectedMatches.map((m: OrderMatchSelection) => {
+        const live = m.shopifyLineItemId ? byLineId.get(String(m.shopifyLineItemId)) : null;
+        return {
+          sku:
+            m.shopifySku ??
+            live?.sku ??
+            live?.variantSku ??
+            live?.variant?.sku ??
+            null,
+          title: m.shopifyProductTitle ?? live?.title ?? null,
+          sizeEU: m.shopifySizeEU ?? null,
+          quantity: 1,
+          sourceId: m.shopifyLineItemId || m.id,
+        };
+      });
     }
 
     const buildResult = buildLineItemsByFulfillmentOrder(
