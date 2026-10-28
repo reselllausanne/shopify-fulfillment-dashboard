@@ -130,6 +130,7 @@ export default function GalaxusDirectDeliveryPage() {
   const ordersListCacheRef = useRef<{ at: number; items: OrderListItem[] } | null>(null);
   const orderDetailCacheRef = useRef<Map<string, { at: number; order: any }>>(new Map());
   const selectedOrderIdRef = useRef<string | null>(null);
+  const ordersLoadInFlightRef = useRef(false);
   const detailLoadSeq = useRef(0);
   const ordersLoadSeq = useRef(0);
   const searchSeq = useRef(0);
@@ -165,9 +166,18 @@ export default function GalaxusDirectDeliveryPage() {
     return () => clearTimeout(t);
   }, [orderSearch]);
 
-  const loadOrders = useCallback(async (opts?: { selectFirstIfEmpty?: boolean; force?: boolean }) => {
-    const seq = ++ordersLoadSeq.current;
-    const force = Boolean(opts?.force);
+  const loadOrders = useCallback(async (opts?: {
+    selectFirstIfEmpty?: boolean;
+    force?: boolean;
+    /** Background poll — never abort an in-flight multi-page load. */
+    soft?: boolean;
+  }) => {
+    // Soft refresh used force:true every 30s and bumped ordersLoadSeq, which
+    // killed pages 2+ mid-flight. UI then stuck on newest 500 (~Oct 5 cutoff)
+    // while older open orders (Aug+) never appeared in À traiter.
+    if (opts?.soft && ordersLoadInFlightRef.current) return;
+
+    const force = Boolean(opts?.force) && !opts?.soft;
 
     const cached = ordersListCacheRef.current;
     if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
@@ -182,12 +192,15 @@ export default function GalaxusDirectDeliveryPage() {
       return;
     }
 
+    // Bump seq only when starting a real network load (not soft cache / soft skip).
+    const seq = ++ordersLoadSeq.current;
+    ordersLoadInFlightRef.current = true;
     setLoadingOrders(true);
     setLoadingMoreOrders(false);
     setError(null);
     try {
-      // Active direct-delivery set is >500 (1170 on 2026-09-21). A single page
-      // hid everything older than ~8 Sep, including unlinked/unbought orders.
+      // Active direct-delivery set is >500 (2042 on 2026-10-27). A single page
+      // hid everything older than ~5 Oct, including unlinked/unbought orders.
       // Server sort is orderDate desc + id desc, so OFFSET pages stay unique.
       // dedupeById still guards a row that shifts while pages are in flight.
       const PAGE_SIZE = 500;
@@ -243,6 +256,7 @@ export default function GalaxusDirectDeliveryPage() {
         offset = nextOffset;
       }
 
+      if (seq !== ordersLoadSeq.current) return;
       const items = dedupeById(collected);
       setOrders(items);
       const nextKnown = new Set([...prevKnown, ...items.map((item) => item.id)]);
@@ -254,6 +268,7 @@ export default function GalaxusDirectDeliveryPage() {
       setError(err.message);
     } finally {
       if (seq === ordersLoadSeq.current) {
+        ordersLoadInFlightRef.current = false;
         setLoadingOrders(false);
         setLoadingMoreOrders(false);
       }
@@ -399,12 +414,14 @@ export default function GalaxusDirectDeliveryPage() {
   }, [loadOrders]);
 
   const softRefreshLinked = useCallback(async () => {
-    await loadOrders({ force: true });
+    // soft: respects cache + never aborts multi-page backlog load.
+    await loadOrders({ soft: true });
+    if (ordersLoadInFlightRef.current) return;
     const id = selectedOrderIdRef.current;
     if (id) await loadOrderDetail(id, { force: true });
   }, [loadOrders, loadOrderDetail]);
 
-  useSoftPageRefresh(softRefreshLinked, { intervalMs: 30_000 });
+  useSoftPageRefresh(softRefreshLinked, { intervalMs: 60_000 });
 
   useEffect(() => {
     setSelectedPairs({});
@@ -1181,7 +1198,9 @@ export default function GalaxusDirectDeliveryPage() {
               </div>
             ) : null}
             {loadingMoreOrders ? (
-              <div className="text-xs text-gray-400 pt-1">Loading more orders…</div>
+              <div className="text-xs text-amber-700 pt-1">
+                Loading older… {orders.length} loaded (scroll after this finishes)
+              </div>
             ) : null}
           </div>
         </div>
