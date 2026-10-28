@@ -25,8 +25,8 @@ const nextConfig = {
      * → "Failed to parse body as FormData" / HTTP 500 (after nginx 413 was raised).
      * Keep in sync with deploy/nginx/solution.resell-lausanne.ch.conf (512m).
      */
+    // Next 16: do NOT also set middlewareClientMaxBodySize — build rejects both at once.
     proxyClientMaxBodySize: "512mb",
-    middlewareClientMaxBodySize: "512mb",
     serverActions: {
       /** Multipart POSTs may be inspected as possible Server Actions; align cap with uploads. */
       bodySizeLimit: "512mb",
