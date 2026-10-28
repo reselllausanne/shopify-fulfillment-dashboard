@@ -504,6 +504,40 @@ export async function runPartnerCsvImport(
     }
     const variantBulk = [...variantBulkDedup.values()];
 
+    // Remap can point CSV rows at a canonical supplierVariantId that was NOT in the
+    // original CSV id list (existingById was loaded only for those). Load those too
+    // so the write-diff doesn't treat a live DB row as "missing".
+    const remappedIdsMissingExisting = variantBulk
+      .map((r) => r.supplierVariantId)
+      .filter((id) => id && !existingById.has(id));
+    for (const batch of chunkArray([...new Set(remappedIdsMissingExisting)], 500)) {
+      if (batch.length === 0) continue;
+      const found = await prismaAny.supplierVariant.findMany({
+        where: { supplierVariantId: { in: batch } },
+        select: {
+          supplierVariantId: true,
+          gtin: true,
+          providerKey: true,
+          price: true,
+          stock: true,
+          sizeRaw: true,
+          sizeNormalized: true,
+          supplierSku: true,
+        },
+      });
+      for (const r of found) {
+        existingById.set(r.supplierVariantId, {
+          gtin: r.gtin ?? null,
+          providerKey: r.providerKey ?? null,
+          price: r.price ?? null,
+          stock: r.stock ?? null,
+          sizeRaw: r.sizeRaw ?? null,
+          sizeNormalized: r.sizeNormalized ?? null,
+          supplierSku: r.supplierSku ?? null,
+        });
+      }
+    }
+
     // Diff vs DB: only rows whose import values differ need the heavy upsert. Existing rows
     // that are byte-identical just get lastSyncAt/updatedAt bumped (same effect the upsert's
     // ON CONFLICT path has on an unchanged row), turning most of NER's ~1M re-import rows
@@ -533,10 +567,21 @@ export async function runPartnerCsvImport(
       return true;
     };
 
+    // VariantMapping FK → SupplierVariant.supplierVariantId. Never touch-only a row that still
+    // needs a mapping upsert if we can't prove the SV exists (NER 1.6M import failed 23503).
+    const mappingTargetIds = new Set(
+      mappingUpserts.map((m) => m.supplierVariantId).filter(Boolean)
+    );
+
     const changedRows: VariantBulkRow[] = [];
     const unchangedIds: string[] = [];
     for (const row of variantBulk) {
-      if (rowIsUnchanged(existingById.get(row.supplierVariantId), row)) {
+      const mustUpsertForMapping =
+        mappingTargetIds.has(row.supplierVariantId) && !existingById.has(row.supplierVariantId);
+      if (
+        !mustUpsertForMapping &&
+        rowIsUnchanged(existingById.get(row.supplierVariantId), row)
+      ) {
         unchangedIds.push(row.supplierVariantId);
       } else {
         changedRows.push(row);
@@ -551,8 +596,36 @@ export async function runPartnerCsvImport(
       total: variantBulk.length,
       changed: changedRows.length,
       unchangedTouched: unchangedIds.length,
+      mappingTargets: mappingTargetIds.size,
     });
-    for (const batch of chunkArray(mappingUpserts, 200)) {
+
+    // Belt-and-suspenders: only map IDs that actually exist after the SV write (avoids
+    // VariantMapping_supplierVariantId_fkey killing the whole NER import).
+    let safeMappingUpserts = mappingUpserts;
+    if (mappingUpserts.length > 0) {
+      const mappingIds = [...mappingTargetIds];
+      const present = new Set<string>();
+      for (const batch of chunkArray(mappingIds, 500)) {
+        const found = await prismaAny.supplierVariant.findMany({
+          where: { supplierVariantId: { in: batch } },
+          select: { supplierVariantId: true },
+        });
+        for (const r of found) present.add(r.supplierVariantId);
+      }
+      safeMappingUpserts = mappingUpserts.filter((m) => present.has(m.supplierVariantId));
+      const dropped = mappingUpserts.length - safeMappingUpserts.length;
+      if (dropped > 0) {
+        console.warn("[PARTNER-IMPORT] skipped VariantMapping upserts missing SupplierVariant", {
+          dropped,
+          sample: mappingUpserts
+            .filter((m) => !present.has(m.supplierVariantId))
+            .slice(0, 5)
+            .map((m) => m.supplierVariantId),
+        });
+      }
+    }
+
+    for (const batch of chunkArray(safeMappingUpserts, 200)) {
       if (batch.length === 0) continue;
       await bulkUpsertVariantMappings(batch, now, { doNotDowngradeFromMatched: false });
     }
