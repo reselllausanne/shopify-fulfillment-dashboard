@@ -627,11 +627,12 @@ export async function bulkUpsertVariantMappings(
   const doNotDowngrade = options?.doNotDowngradeFromMatched !== false;
   const onlySetPendingIfMissing = options?.onlySetPendingIfMissing === true;
 
-  // Insert missing mappings.
+  // Insert missing mappings. JOIN SupplierVariant so a stale/missing id can never
+  // trip VariantMapping_supplierVariantId_fkey (NER 1.3M re-import was dying on 23503
+  // even after a pre-insert presence filter — INSERT…VALUES is not FK-safe under remap).
   const insertValues = rowsDeduped.map(
     (r) =>
       Prisma.sql`(
-        ${Prisma.sql`gen_random_uuid()`},
         ${r.supplierVariantId},
         ${r.gtin},
         ${r.providerKey},
@@ -642,7 +643,18 @@ export async function bulkUpsertVariantMappings(
       )`
   );
   const insertQuery = Prisma.sql`
-    WITH ins AS (
+    WITH vals (
+      "supplierVariantId",
+      "gtin",
+      "providerKey",
+      "status",
+      "kickdbVariantId",
+      "createdAt",
+      "updatedAt"
+    ) AS (
+      VALUES ${Prisma.join(insertValues)}
+    ),
+    ins AS (
       INSERT INTO "public"."VariantMapping" (
         "id",
         "supplierVariantId",
@@ -653,7 +665,18 @@ export async function bulkUpsertVariantMappings(
         "createdAt",
         "updatedAt"
       )
-      VALUES ${Prisma.join(insertValues)}
+      SELECT
+        gen_random_uuid()::text,
+        v."supplierVariantId",
+        v."gtin",
+        v."providerKey",
+        v."status",
+        v."kickdbVariantId",
+        v."createdAt",
+        v."updatedAt"
+      FROM vals v
+      INNER JOIN "public"."SupplierVariant" sv
+        ON sv."supplierVariantId" = v."supplierVariantId"
       ON CONFLICT ("supplierVariantId") DO NOTHING
       RETURNING 1
     )
