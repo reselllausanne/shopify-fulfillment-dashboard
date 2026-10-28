@@ -20,13 +20,16 @@ const nextConfig = {
      */
     proxyTimeout: 600_000,
     /**
-     * Router clones request bodies for handling; default is 10MB. Partner CSV
-     * uploads (multipart) exceed that and fail or appear as "request too large".
+     * Router clones request bodies for handling; default is 10MB. NER multi_sync
+     * partner CSVs are ~200–400MB (~1.7M lines). At 50mb Next truncated the body
+     * → "Failed to parse body as FormData" / HTTP 500 (after nginx 413 was raised).
+     * Keep in sync with deploy/nginx/solution.resell-lausanne.ch.conf (512m).
      */
-    proxyClientMaxBodySize: "50mb",
+    proxyClientMaxBodySize: "512mb",
+    middlewareClientMaxBodySize: "512mb",
     serverActions: {
       /** Multipart POSTs may be inspected as possible Server Actions; align cap with uploads. */
-      bodySizeLimit: "50mb",
+      bodySizeLimit: "512mb",
     },
   },
 }
