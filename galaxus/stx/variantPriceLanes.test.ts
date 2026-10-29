@@ -4,6 +4,7 @@ import {
   buildStxDualPriceFields,
   isOutlierStxOffer,
   isStxMarketplacePublishableDeliveryType,
+  shouldPreferStandardForRetailCap,
   shouldPreferStandardOverExpress,
   stxProductAskMedian,
 } from "@/galaxus/stx/variantPriceLanes";
@@ -81,6 +82,25 @@ describe("shouldPreferStandardOverExpress", () => {
 
   it("matches Hoka Clifton complaint (~5× express)", () => {
     expect(shouldPreferStandardOverExpress(1051.26, 212.53, 2)).toBe(true);
+  });
+});
+
+describe("shouldPreferStandardForRetailCap", () => {
+  it("falls back when express SRP is over the Galaxus max and standard clears it", () => {
+    expect(shouldPreferStandardForRetailCap(349, 269, 300)).toBe(true);
+  });
+
+  it("keeps express when both lanes clear the cap", () => {
+    expect(shouldPreferStandardForRetailCap(279, 259, 300)).toBe(false);
+  });
+
+  it("does not fall back when standard also sits over the cap", () => {
+    expect(shouldPreferStandardForRetailCap(349, 319, 300)).toBe(false);
+  });
+
+  it("ignores missing lanes", () => {
+    expect(shouldPreferStandardForRetailCap(349, null, 300)).toBe(false);
+    expect(shouldPreferStandardForRetailCap(null, 269, 300)).toBe(false);
   });
 });
 
@@ -175,6 +195,36 @@ describe("buildStxDualPriceFields", () => {
     expect(lanes).not.toBeNull();
     expect(lanes!.deliveryType).toBe("express_standard");
     expect(lanes!.price).toBe(lanes!.expressBuyPrice);
+  });
+
+  it("falls back to standard when express SRP would hit Galaxus max retail (AMP 40)", () => {
+    const prev = process.env.GALAXUS_MAX_RETAIL_CHF;
+    process.env.GALAXUS_MAX_RETAIL_CHF = "300";
+    try {
+      // Express ask fat enough for SRP > 300; standard ask lands under the cap.
+      const lanes = buildStxDualPriceFields(
+        {
+          prices: [
+            { type: "express_standard", price: 220, asks: 2 },
+            { type: "standard", price: 160, asks: 8 },
+          ],
+        },
+        { slug: "nike-air-max-plus-triple-black", title: "Nike Air Max Plus Triple Black" },
+        "Nike Air Max Plus Triple Black"
+      );
+      expect(lanes).not.toBeNull();
+      expect(lanes!.expressBuyPrice).toBeGreaterThan(0);
+      expect(lanes!.standardBuyPrice).toBeGreaterThan(0);
+      expect(lanes!.expressBuyPrice!).toBeLessThan(lanes!.standardBuyPrice! * 2);
+      expect(lanes!.deliveryType).toBe("standard");
+      expect(lanes!.price).toBe(lanes!.standardBuyPrice);
+      expect(lanes!.suggestedRetailPriceInclVat).toBe(lanes!.standardSuggestedRetailPriceInclVat);
+      expect(lanes!.suggestedRetailPriceInclVat!).toBeLessThanOrEqual(300);
+      expect(lanes!.stock).toBe(8);
+    } finally {
+      if (prev === undefined) delete process.env.GALAXUS_MAX_RETAIL_CHF;
+      else process.env.GALAXUS_MAX_RETAIL_CHF = prev;
+    }
   });
 });
 
