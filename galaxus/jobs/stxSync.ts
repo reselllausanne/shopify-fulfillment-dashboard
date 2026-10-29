@@ -583,6 +583,14 @@ export async function ingestStxFromRawPayload(
     }
   }
 
+  // Galaxus offer/stock used to update only from cron stx-refresh waves. SSE already
+  // wrote SupplierVariant + Shopify here, so Digitec kept yesterday's sell for hours
+  // (2026-10-29: 8h33m stx-refresh gap → Ugg/Ja/ASICS sold below live buy). Debounced
+  // patch+push shares the same path as sync:stx-price-stock.
+  if (created > 0 || updated > 0 || stockZeroed > 0) {
+    scheduleStxRefreshMarketplaceFeedPush(supplierVariantIds);
+  }
+
   const durationMs = Date.now() - startedAt;
   if (created > 0 || updated > 0 || stockZeroed > 0 || mappingRes.inserted > 0) {
     console.info("[galaxus][ingest:stx-raw-payload] done", {
@@ -594,6 +602,7 @@ export async function ingestStxFromRawPayload(
       mappingsInserted: mappingRes.inserted,
       mappingsUpdated: mappingRes.updated,
       remappedToCanonical: remappedResult.remapped,
+      galaxusFeedScheduled: created > 0 || updated > 0 || stockZeroed > 0,
       durationMs,
     });
   }
