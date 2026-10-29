@@ -1083,10 +1083,11 @@ export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSync
 
 export async function refreshStxProductsByKickdbProductIds(
   productIds: string[],
-  options: { concurrency?: number } = {}
+  options: { concurrency?: number; skipMarketplaceFeedPush?: boolean } = {}
 ): Promise<StxSyncResult> {
   const startedAt = Date.now();
   const concurrency = Math.max(1, options.concurrency ?? 2);
+  const skipMarketplaceFeedPush = Boolean(options.skipMarketplaceFeedPush);
   const now = new Date();
 
   const cleanIds = Array.from(
@@ -1190,7 +1191,7 @@ export async function refreshStxProductsByKickdbProductIds(
     );
   }
 
-  if (rows.length > 0) {
+  if (rows.length > 0 && !skipMarketplaceFeedPush) {
     scheduleStxRefreshMarketplaceFeedPush(rows.map((r) => r.supplierVariantId));
   }
 
@@ -1205,6 +1206,7 @@ export async function refreshStxProductsByKickdbProductIds(
     shopifySoldoutZeroed,
     shopifyStockRestored,
     remappedToCanonical,
+    skipMarketplaceFeedPush,
     durationMs,
   });
 

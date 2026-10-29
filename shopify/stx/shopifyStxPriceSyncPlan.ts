@@ -33,25 +33,27 @@ function priceNeedsPush(computed: number | null, lastPushed: number | null): boo
   return Math.abs(lastPushed - computed) >= 0.005;
 }
 
-async function readLastPushedForRow(input: {
-  providerKey: string | null;
-  gtin: string | null;
-  supplierVariantId: string;
-}): Promise<number | null> {
-  const key = resolveShopifyStxListingProviderKey(input);
-  if (!key) return null;
+async function readLastPushedByProviderKeys(
+  providerKeys: string[]
+): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>();
+  const keys = Array.from(new Set(providerKeys.map((k) => String(k ?? "").trim()).filter(Boolean)));
+  if (keys.length === 0) return out;
   const cls = (prisma as any).channelListingState;
-  if (!cls?.findUnique) return null;
+  if (!cls?.findMany) return out;
   try {
-    const row = await cls.findUnique({
-      where: { channel_providerKey: { channel: "SHOPIFY", providerKey: key } },
-      select: { lastPushedPrice: true },
+    const rows = await cls.findMany({
+      where: { channel: "SHOPIFY", providerKey: { in: keys } },
+      select: { providerKey: true, lastPushedPrice: true },
     });
-    const v = row?.lastPushedPrice == null ? null : Number(row.lastPushedPrice);
-    return Number.isFinite(v as number) ? (v as number) : null;
+    for (const row of rows as Array<{ providerKey: string; lastPushedPrice: unknown }>) {
+      const v = row.lastPushedPrice == null ? null : Number(row.lastPushedPrice);
+      out.set(String(row.providerKey), Number.isFinite(v as number) ? (v as number) : null);
+    }
   } catch {
-    return null;
+    /* ignore */
   }
+  return out;
 }
 
 /**
@@ -73,31 +75,39 @@ export async function filterSupplierVariantsNeedingShopifyPricePush(
   const gtins: string[] = [];
   const pendingNoGtin: string[] = [];
   let unchanged = 0;
+  if (ids.length === 0) return { gtins, pendingNoGtin, unchanged };
 
-  for (const supplierVariantId of ids) {
-    const row = await prisma.supplierVariant.findFirst({
-      where: { supplierVariantId },
-      select: {
-        supplierVariantId: true,
-        providerKey: true,
-        gtin: true,
-        manualLock: true,
-        stock: true,
-        deliveryType: true,
-        price: true,
-        standardBuyPrice: true,
-        expressBuyPrice: true,
-        supplierProductName: true,
-        supplierBrand: true,
-        mappings: {
-          orderBy: { updatedAt: "desc" },
-          take: 1,
-          select: { kickdbVariant: { select: { product: { select: { urlKey: true } } } } },
-        },
+  // One findMany (+ one CLS batch) instead of N× findFirst — keep-current batches were hanging here.
+  const rows = await prisma.supplierVariant.findMany({
+    where: {
+      supplierVariantId: { in: ids },
+      manualLock: false,
+      stock: { gt: 0 },
+    },
+    select: {
+      supplierVariantId: true,
+      providerKey: true,
+      gtin: true,
+      deliveryType: true,
+      price: true,
+      standardBuyPrice: true,
+      expressBuyPrice: true,
+      supplierProductName: true,
+      supplierBrand: true,
+      mappings: {
+        orderBy: { updatedAt: "desc" },
+        take: 1,
+        select: { kickdbVariant: { select: { product: { select: { urlKey: true } } } } },
       },
-    });
-    if (!row || row.manualLock || !(Number(row.stock) > 0)) continue;
+    },
+  });
 
+  const providerKeys: string[] = [];
+  const computedById = new Map<
+    string,
+    { normalSell: number | null; providerKey: string | null; gtin: string | null }
+  >();
+  for (const row of rows) {
     const handle = row.mappings?.[0]?.kickdbVariant?.product?.urlKey ?? null;
     const { normalSell } = computeStxSellPrices({
       stxRow: {
@@ -110,19 +120,30 @@ export async function filterSupplierVariantsNeedingShopifyPricePush(
       },
       productHandle: handle,
     });
-
-    const lastPushed = await readLastPushedForRow({
+    const providerKey = resolveShopifyStxListingProviderKey({
       providerKey: row.providerKey,
       gtin: row.gtin,
       supplierVariantId: row.supplierVariantId,
     });
+    if (providerKey) providerKeys.push(providerKey);
+    computedById.set(row.supplierVariantId, {
+      normalSell,
+      providerKey,
+      gtin: row.gtin ? String(row.gtin) : null,
+    });
+  }
 
-    if (!priceNeedsPush(normalSell, lastPushed)) {
+  const lastByKey = await readLastPushedByProviderKeys(providerKeys);
+  for (const row of rows) {
+    const computed = computedById.get(row.supplierVariantId);
+    if (!computed) continue;
+    const lastPushed =
+      computed.providerKey != null ? (lastByKey.get(computed.providerKey) ?? null) : null;
+    if (!priceNeedsPush(computed.normalSell, lastPushed)) {
       unchanged += 1;
       continue;
     }
-
-    if (row.gtin) gtins.push(String(row.gtin));
+    if (computed.gtin) gtins.push(computed.gtin);
     else pendingNoGtin.push(row.supplierVariantId);
   }
 
