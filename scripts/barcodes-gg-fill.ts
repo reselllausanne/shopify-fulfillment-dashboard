@@ -14,6 +14,7 @@
  *
  * Env: BARCODES_GG_API_KEY, DATABASE_URL, Shopify admin env for --shopify
  */
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
 import { fetchTokenUsage, lookupStyleDetails } from "@/lib/barcodesGg/client";
@@ -182,46 +183,54 @@ async function crossFill(): Promise<void> {
 async function loadPrioritySkus(limit: number): Promise<string[]> {
   if (PRIORITY === "listed_stock" || PRIORITY === "listed") {
     const stockOnly = PRIORITY === "listed_stock";
-    // Pull a larger candidate pool of synced styleIds, then keep those with missing GTIN.
-    const candidates = await prisma.$queryRaw<Array<{ styleId: string; score: number }>>`
-      SELECT UPPER(TRIM(kp."styleId")) AS "styleId",
-             COALESCE(ss."priorityScore", 0)::int AS score
+    const pool = Math.min(Math.max(limit * 8, 800), 15000);
+    const candidates = await prisma.$queryRaw<Array<{ styleId: string }>>`
+      SELECT UPPER(TRIM(kp."styleId")) AS "styleId"
       FROM "ShopifySyncState" ss
       JOIN "KickDBProduct" kp ON kp."kickdbProductId" = ss."kickdbProductId"
+      LEFT JOIN "BarcodesGgStyleCache" c
+        ON c."styleCode" = UPPER(TRIM(kp."styleId"))
       WHERE ss."shopifyProductId" IS NOT NULL
         AND ss."syncStatus" IN ('synced', 'pending')
         AND kp."styleId" IS NOT NULL
         AND btrim(kp."styleId") <> ''
-      ORDER BY ss."priorityScore" DESC NULLS LAST, ss."shopifySyncedAt" DESC NULLS LAST
-      LIMIT ${Math.max(limit * 20, 500)}
+      ORDER BY
+        CASE WHEN c."styleCode" IS NULL THEN 0 ELSE 1 END,
+        ss."priorityScore" DESC NULLS LAST,
+        ss."shopifySyncedAt" DESC NULLS LAST
+      LIMIT ${pool}
     `;
 
     const out: string[] = [];
     const seen = new Set<string>();
-    for (const c of candidates) {
-      const sku = normalizeStyleCode(c.styleId);
-      if (!sku || seen.has(sku)) continue;
-      seen.add(sku);
-
-      const miss = stockOnly
-        ? await prisma.$queryRaw<Array<{ n: bigint }>>`
-            SELECT COUNT(*)::bigint AS n
-            FROM "SupplierVariant"
-            WHERE "supplierSku" = ${sku}
-              AND gtin IS NULL
-              AND stock > 0
+    const skus = [
+      ...new Set(
+        candidates
+          .map((c) => normalizeStyleCode(c.styleId))
+          .filter((s): s is string => Boolean(s))
+      ),
+    ];
+    for (let i = 0; i < skus.length && out.length < limit; i += 250) {
+      const chunk = skus.slice(i, i + 250);
+      const misses = stockOnly
+        ? await prisma.$queryRaw<Array<{ supplierSku: string }>>`
+            SELECT DISTINCT "supplierSku" FROM "SupplierVariant"
+            WHERE "supplierSku" IN (${Prisma.join(chunk)})
+              AND gtin IS NULL AND stock > 0
               AND "supplierVariantId" LIKE 'stx_%'
-            LIMIT 1
           `
-        : await prisma.$queryRaw<Array<{ n: bigint }>>`
-            SELECT COUNT(*)::bigint AS n
-            FROM "SupplierVariant"
-            WHERE "supplierSku" = ${sku}
+        : await prisma.$queryRaw<Array<{ supplierSku: string }>>`
+            SELECT DISTINCT "supplierSku" FROM "SupplierVariant"
+            WHERE "supplierSku" IN (${Prisma.join(chunk)})
               AND gtin IS NULL
               AND "supplierVariantId" LIKE 'stx_%'
-            LIMIT 1
           `;
-      if (Number(miss[0]?.n ?? 0) > 0) {
+      const missSet = new Set(
+        misses.map((m) => normalizeStyleCode(m.supplierSku)).filter(Boolean) as string[]
+      );
+      for (const sku of chunk) {
+        if (!missSet.has(sku) || seen.has(sku)) continue;
+        seen.add(sku);
         out.push(sku);
         if (out.length >= limit) break;
       }
@@ -346,20 +355,15 @@ async function fillFromApi(): Promise<void> {
       }
       stats.variantsMatched += 1;
 
-      if (await gtinAlreadyOwned(pick.gtin, v.supplierVariantId)) {
-        stats.skippedOwned += 1;
-        continue;
-      }
-
       if (APPLY) {
         try {
           await prisma.supplierVariant.update({
             where: { supplierVariantId: v.supplierVariantId },
             data: {
               gtin: pick.gtin,
-              providerKey: v.providerKey?.startsWith("STX_")
-                ? v.providerKey
-                : `STX_${pick.gtin}`,
+              ...(v.providerKey?.startsWith("STX_")
+                ? {}
+                : { providerKey: `STX_${pick.gtin}` }),
             },
           });
           if (v.externalVariantId) {
@@ -373,11 +377,13 @@ async function fillFromApi(): Promise<void> {
           }
           stats.variantsWritten += 1;
         } catch (e: any) {
-          console.warn(`[fill] write fail ${v.supplierVariantId}:`, e?.message ?? e);
+          const msg = String(e?.message ?? e);
+          if (/Unique constraint/i.test(msg)) stats.skippedOwned += 1;
+          else console.warn(`[fill] write fail ${v.supplierVariantId}:`, msg.slice(0, 180));
           continue;
         }
       } else {
-        stats.variantsWritten += 1; // would-write
+        stats.variantsWritten += 1;
       }
 
       if (DO_SHOPIFY && v.externalVariantId && v.externalProductId) {
@@ -390,9 +396,12 @@ async function fillFromApi(): Promise<void> {
       }
     }
 
-    if (SLEEP_MS) await sleep(SLEEP_MS);
-    if (stats.skus % 25 === 0) {
-      console.log(`[fill] progress skus=${stats.skus} api=${stats.apiCalls} written=${stats.variantsWritten}`);
+    // Only sleep after debited API calls (stay under ~120/min)
+    if (SLEEP_MS && !lookup.fromCache && lookup.requestDebited) await sleep(SLEEP_MS);
+    if (stats.skus % 50 === 0) {
+      console.log(
+        `[fill] progress skus=${stats.skus} api=${stats.apiCalls} cache=${stats.cacheHits} written=${stats.variantsWritten}`
+      );
     }
   }
 
