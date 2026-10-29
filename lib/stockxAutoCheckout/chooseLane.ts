@@ -1,3 +1,4 @@
+import { chooseGalaxusDesiredLane } from "@/lib/stockxAutoCheckout/galaxusLanePolicy";
 import {
   MAX_ALL_IN_CHF,
   type StockxDesiredLane,
@@ -431,6 +432,82 @@ export type ChooseGalaxusLaneResult =
     };
 
 /**
+ * Galaxus HARD RULE lane pick from LIVE checkout cards:
+ * EXPRESS default; STANDARD only when standard ≤ express * ratio (~50%).
+ * Does NOT use Shopify customer-express detection.
+ */
+export function chooseLaneByGalaxusExpressFirst(
+  lanes: StockxLaneCard[],
+  options?: {
+    maxAllInChf?: number;
+    standardMaxRatioOfExpress?: number;
+    /** Distinct CHF tiers in raw text — fail closed if Express unparsed. */
+    shippingTierInText?: number;
+  }
+): ChooseGalaxusLaneResult {
+  const maxAllInChf = options?.maxAllInChf ?? MAX_ALL_IN_CHF;
+  const under = lanes
+    .filter(
+      (l) =>
+        l.totalChf >= LANE_MIN_ALL_IN_CHF &&
+        l.totalChf <= maxAllInChf &&
+        (isExpressFamily(l.label) || l.label === "STANDARD")
+    )
+    .sort((a, b) => a.totalChf - b.totalChf);
+
+  if (!under.length) {
+    return { ok: false, reason: "no_lane_under_cap", detail: "no lanes under cap" };
+  }
+
+  const exp = under.filter((l) => isExpressFamily(l.label))[0] ?? null;
+  const std = under.filter((l) => l.label === "STANDARD")[0] ?? null;
+  const tiers =
+    options?.shippingTierInText ??
+    new Set(under.map((l) => l.totalChf.toFixed(2))).size;
+
+  if (!exp && tiers >= 2) {
+    return {
+      ok: false,
+      reason: "express_unparsed",
+      detail: `tiers=${tiers} std=${std?.totalChf ?? "n/a"}`,
+    };
+  }
+
+  const desired = chooseGalaxusDesiredLane(
+    exp?.totalChf ?? null,
+    std?.totalChf ?? null,
+    options?.standardMaxRatioOfExpress
+  );
+  if (!desired) {
+    return { ok: false, reason: "no_lane_under_cap", detail: "no desired lane" };
+  }
+
+  const pick = chooseLane(desired, lanes, maxAllInChf);
+  if (!pick.ok || !pick.lane) {
+    return {
+      ok: false,
+      reason: "no_lane_under_cap",
+      detail: `desired=${desired} pick=${pick.ok ? "ok" : pick.reason}`,
+    };
+  }
+
+  const ratioNote =
+    exp && std
+      ? ` std/exp=${((std.totalChf / exp.totalChf) * 100).toFixed(0)}%`
+      : exp
+        ? " express-only"
+        : " standard-only";
+  return {
+    ok: true,
+    lane: pick.lane,
+    reason: `galaxus_${desired}${ratioNote}`,
+  };
+}
+
+/**
+ * @deprecated Prefer chooseLaneByGalaxusExpressFirst (HARD RULE: EXPRESS default,
+ * STANDARD only when ~50% cheaper). Kept for legacy CSAT margin-vs-sell callers.
+ *
  * Galaxus DD / CSAT lane pick (LIVE prices only):
  * - Express if margin > 5% vs sell
  * - Standard only if Express missing or Express margin dead

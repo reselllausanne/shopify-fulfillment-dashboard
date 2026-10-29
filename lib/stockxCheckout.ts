@@ -15,13 +15,16 @@ import {
 import {
   chooseLane,
   chooseLaneByCsAtMargin,
+  chooseLaneByGalaxusExpressFirst,
   classifyEmptyLaneReason,
   classifyLaneLabel,
   countDistinctShippingTierInText,
   extractCheckoutSubtotalChf,
+  GALAXUS_CSAT_MIN_MARGIN,
   isExpressFamily,
   LANE_MIN_ALL_IN_CHF,
   laneMatchesSubtotal,
+  laneMarginPct,
   marginOk,
   moneyToNumber,
   parseLaneCardsFromText,
@@ -38,6 +41,8 @@ import {
   inferBrandFromTitle,
 } from "@/lib/stockxAutoCheckout/sizeUsFallback";
 import { linkStockxBuyToShopify } from "@/lib/stockxAutoCheckout/linkAfterBuy";
+import { linkStockxBuyToGalaxus } from "@/lib/stockxAutoCheckout/linkAfterBuyGalaxus";
+import type { GalaxusBuyCandidate } from "@/lib/stockxAutoCheckout/galaxusBuyCandidates";
 import {
   findUnlinkedStockxMatches,
   prebuyBlocksNewPurchase,
@@ -623,7 +628,9 @@ export async function selectAndVerifyStockxLane(
   page: Page,
   options:
     | { policy: "desired"; desired: StockxDesiredLane; maxAllInChf?: number }
+    /** @deprecated Prefer galaxus_express_first (HARD RULE). */
     | { policy: "galaxus_csat"; sellChf: number; maxAllInChf?: number }
+    | { policy: "galaxus_express_first"; maxAllInChf?: number }
 ): Promise<
   | { ok: true; lane: StockxLaneCard; lanes: StockxLaneCard[]; pickReason: string; subtotalChf: number }
   | { ok: false; reason: string; lanes: StockxLaneCard[]; detail?: string }
@@ -705,7 +712,17 @@ export async function selectAndVerifyStockxLane(
   // authoritative all-in (the synthesized lane holds only the item price).
   let singleXpressSynth = false;
 
-  if (options.policy === "galaxus_csat") {
+  if (options.policy === "galaxus_express_first") {
+    const pick = chooseLaneByGalaxusExpressFirst(lanes, {
+      maxAllInChf,
+      shippingTierInText: tiersInText,
+    });
+    if (!pick.ok) {
+      return { ok: false, reason: pick.reason, lanes, detail: pick.detail };
+    }
+    picked = pick.lane;
+    pickReason = pick.reason;
+  } else if (options.policy === "galaxus_csat") {
     const pick = chooseLaneByCsAtMargin(options.sellChf, lanes, {
       maxAllInChf,
       shippingTierInText: tiersInText,
@@ -1820,6 +1837,262 @@ export async function runStockxAutoCheckoutForOrder(options: {
       detail: e?.message || String(e),
     });
     return { kind: "needs_human", reason: "bot_fail", detail: e?.message, needsHuman: nh };
+  } finally {
+    if (ownsContext) await ctx?.close().catch(() => undefined);
+  }
+}
+
+export type GalaxusAutoCheckoutResult = {
+  kind: "easy_buy" | "needs_human" | "skipped";
+  reason?: string;
+  detail?: string | null;
+  stockxOrderNumber?: string | null;
+  totalChf?: number | null;
+  lane?: StockxLaneLabel | StockxDesiredLane;
+  pickReason?: string | null;
+  link?: { matchId: string | null; unitLinkStatus: string | null } | null;
+};
+
+/**
+ * Galaxus → StockX Place Order. Lane = galaxus_express_first HARD RULE
+ * (EXPRESS default; STANDARD only when ~50% cheaper). NOT Shopify Express detection.
+ */
+export async function runStockxAutoCheckoutForGalaxusLine(options: {
+  candidate: GalaxusBuyCandidate;
+  maxAllInChf?: number;
+  dryRun?: boolean;
+  reuse?: { ctx: BrowserContext; page: Page };
+  skipGoto?: boolean;
+  minMargin?: number;
+}): Promise<GalaxusAutoCheckoutResult> {
+  const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
+  const dryRun = Boolean(options.dryRun);
+  const minMargin = options.minMargin ?? GALAXUS_CSAT_MIN_MARGIN;
+  const c = options.candidate;
+
+  // Prebuy: already linked on this Galaxus line → never double-buy.
+  const existing = await (prisma as any).galaxusStockxMatch.findFirst({
+    where: {
+      galaxusOrderLineId: c.lineId,
+      NOT: { stockxOrderNumber: null },
+      stockxOrderNumber: { not: "" },
+    },
+    select: { stockxOrderNumber: true },
+  });
+  if (existing?.stockxOrderNumber) {
+    return {
+      kind: "skipped",
+      reason: "already_matched",
+      detail: `already linked ${existing.stockxOrderNumber}`,
+      stockxOrderNumber: existing.stockxOrderNumber,
+    };
+  }
+
+  const sizeUS = convertEuToUs(c.sizeEU, {
+    title: c.productName,
+    brand: inferBrandFromTitle(c.productName),
+  });
+  const productUrl = buildStockxBuyUrl(c.slug, sizeUS);
+
+  let ctx: BrowserContext | null = null;
+  let ownsContext = false;
+  try {
+    let page: Page;
+    if (options.reuse?.page) {
+      ctx = options.reuse.ctx;
+      page = options.reuse.page;
+    } else {
+      const launched = await launchStockxContext({
+        useStickyProxy: stockxBrowserProxyMode() === "always",
+      });
+      ctx = launched.ctx;
+      page = launched.page;
+      ownsContext = true;
+    }
+
+    if (!options.skipGoto) {
+      await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForTimeout(3500);
+    } else {
+      await page.waitForTimeout(800);
+    }
+    await dismissNoise(page);
+
+    const sized = await selectSizeEuOrUs(page, c.sizeEU, sizeUS);
+    if (!sized.ok) {
+      return {
+        kind: "needs_human",
+        reason: "size_us_map",
+        detail: sizeUS ? `EU+US select failed (US ${sizeUS})` : "EU select failed + no US map",
+      };
+    }
+
+    await page.waitForTimeout(1000);
+    if (!(await clickBuyNow(page))) {
+      return { kind: "needs_human", reason: "bot_fail", detail: "Buy Now not found" };
+    }
+    await page.waitForTimeout(4500);
+    await dismissNoise(page);
+
+    // Strip xpress-ship default so STANDARD remains selectable when HARD RULE picks it.
+    try {
+      const u = page.url();
+      if (/xpress-ship=true/i.test(u)) {
+        const cleaned = u
+          .replace(/([?&])xpress-ship=true&?/i, "$1")
+          .replace(/[?&]$/, "")
+          .replace(/\?&/, "?");
+        if (cleaned !== u) {
+          await page.goto(cleaned, { waitUntil: "domcontentloaded", timeout: 45000 });
+          await page.waitForTimeout(2500);
+          await dismissNoise(page);
+        }
+      }
+    } catch {
+      /* keep going */
+    }
+
+    const selected = await selectAndVerifyStockxLane(page, {
+      policy: "galaxus_express_first",
+      maxAllInChf,
+    });
+    if (!selected.ok) {
+      return {
+        kind: "needs_human",
+        reason: selected.reason,
+        detail: selected.detail ?? selected.reason,
+        lane: selected.lanes[0]?.label,
+      };
+    }
+
+    if (!(await clickReviewOrder(page))) {
+      return {
+        kind: "needs_human",
+        reason: "bot_fail",
+        detail: "Review/confirm button missing",
+        lane: selected.lane.label,
+        pickReason: selected.pickReason,
+      };
+    }
+    await page.waitForTimeout(4500);
+
+    const text = await page.locator("body").innerText().catch(() => "");
+    const totals = parseCheckoutTotals(text);
+    const totalChf = totals.totalChf ?? selected.subtotalChf;
+
+    if (totalChf == null || totalChf > maxAllInChf) {
+      return {
+        kind: "needs_human",
+        reason: "cap",
+        detail: `total ${totalChf}`,
+        lane: selected.lane.label,
+        pickReason: selected.pickReason,
+      };
+    }
+    if (Math.abs(totalChf - selected.lane.totalChf) > 0.5) {
+      return {
+        kind: "needs_human",
+        reason: "price_moved",
+        detail: `lane ${selected.lane.totalChf} → total ${totalChf}`,
+        lane: selected.lane.label,
+        pickReason: selected.pickReason,
+      };
+    }
+
+    const m = laneMarginPct(c.sellChf, totalChf);
+    if (!(m > minMargin)) {
+      return {
+        kind: "needs_human",
+        reason: "margin",
+        detail: `sell ${c.sellChf} vs total ${totalChf} margin ${(m * 100).toFixed(1)}% (floor ${(minMargin * 100).toFixed(0)}%)`,
+        lane: selected.lane.label,
+        pickReason: selected.pickReason,
+        totalChf,
+      };
+    }
+
+    const pay = page.getByRole("button", { name: /Passer commande|Place Order/i }).first();
+    if (!(await pay.isVisible({ timeout: 8000 }).catch(() => false))) {
+      return {
+        kind: "needs_human",
+        reason: "bot_fail",
+        detail: "Place Order missing",
+        lane: selected.lane.label,
+        pickReason: selected.pickReason,
+      };
+    }
+
+    if (dryRun) {
+      const shot = await captureAutoScreenshot(page, `galaxus-${c.galaxusOrderId}-dryrun`);
+      return {
+        kind: "easy_buy",
+        totalChf,
+        lane: selected.lane.label,
+        pickReason: selected.pickReason,
+        detail: shot ? `dry_run — would pay (shot .data/${shot})` : "dry_run — would pay",
+      };
+    }
+
+    await pay.click();
+    await page.waitForTimeout(8000);
+    const after = `${page.url()}\n${await page.locator("body").innerText().catch(() => "")}`;
+    const orderMatch =
+      after.match(/\b(0[1-3]-[A-Z0-9]{8,})\b/) ||
+      after.match(/numéro de commande[^\n]*([0-9A-Z-]{8,})/i);
+    const stockxOrderNumber = orderMatch?.[1] ?? null;
+    if (!stockxOrderNumber) {
+      return {
+        kind: "needs_human",
+        reason: "bot_fail",
+        detail: "Paid but no StockX order number parsed — check VNC / account",
+        lane: selected.lane.label,
+        pickReason: selected.pickReason,
+        totalChf,
+      };
+    }
+
+    const checkoutType: StockxDesiredLane = stockxOrderNumber.startsWith("01-")
+      ? "EXPRESS"
+      : stockxOrderNumber.startsWith("03-")
+        ? "STANDARD"
+        : selected.lane.label === "STANDARD"
+          ? "STANDARD"
+          : "EXPRESS";
+
+    const linked = await linkStockxBuyToGalaxus({
+      galaxusOrderDbId: c.galaxusOrderDbId,
+      galaxusOrderId: c.galaxusOrderId,
+      lineId: c.lineId,
+      productName: c.productName,
+      gtin: c.gtin,
+      sizeEU: c.sizeEU,
+      styleId: c.styleId,
+      sellChf: c.sellChf,
+      stockxOrderNumber,
+      supplierCost: totalChf,
+      desiredLane: checkoutType,
+      stockxCheckoutType: checkoutType,
+      estimatedDelivery: totals.eta,
+    });
+
+    return {
+      kind: "easy_buy",
+      stockxOrderNumber,
+      totalChf,
+      lane: selected.lane.label,
+      pickReason: selected.pickReason,
+      link: {
+        matchId: linked.matchId,
+        unitLinkStatus: linked.unitLinkStatus,
+      },
+      detail: linked.ok ? null : linked.error,
+    };
+  } catch (e: any) {
+    return {
+      kind: "needs_human",
+      reason: "bot_fail",
+      detail: e?.message || String(e),
+    };
   } finally {
     if (ownsContext) await ctx?.close().catch(() => undefined);
   }
