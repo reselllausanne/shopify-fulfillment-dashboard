@@ -5,16 +5,16 @@
 # Hits the web process over localhost so Playwright can reuse the entrypoint Xvfb
 # display (true headless is blocked by Cloudflare).
 #
-# Order matters: remint first (own curl budget), then AWB/backfill. Previously a hung
-# AWB HTTP call (--max-time 780) could leave overnight force-refresh with an empty body
-# even when Chromium had already spent minutes on login.
+# Order matters: remint → autoLink → awbOnly. Previously step 3 hit the FULL route
+# (remint+autoLink+backfill+stxResync×500) and hung past curl --max-time 780, leaving
+# a stale body that made remint look DEAD.
 #
 # Usage:
 #   bash scripts/stockx-awb-cron.sh
 #   bash scripts/stockx-awb-cron.sh --force-refresh
 #
 # Env overrides:
-#   STOCKX_AWB_DAYS     default 45 (recent matches needing AWB/chainId)
+#   STOCKX_AWB_DAYS     default 30 (recent matches needing AWB/chainId)
 #   STOCKX_AWB_LIMIT    default 60
 #   STOCKX_AWB_BASE_URL default http://127.0.0.1:3000
 #   STOCKX_AWB_LOG_DIR  default /var/log/resell
@@ -58,18 +58,20 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] START stockx-awb-sync days=$DAYS limit=$L
 #    Two accounts × cookie-first Turnstile wait can exceed 10 minutes; do not starve remint.
 REFRESH_BODY=$(printf '{"forceRefresh":%s,"refreshOnly":true}' "$FORCE_REFRESH")
 set +e
+REFRESH_T0=$(date +%s)
 REFRESH_HTTP=$(curl -sS -o "$REFRESH_BODY_FILE" -w "%{http_code}" \
   -X POST "$BASE_URL/api/admin/stockx-awb-sync" \
   -H "content-type: application/json" \
   -d "$REFRESH_BODY" \
   --max-time 900)
 REFRESH_CURL=$?
+REFRESH_SECS=$(( $(date +%s) - REFRESH_T0 ))
 set -e
 REFRESH_RESP="$(cat "$REFRESH_BODY_FILE" 2>/dev/null || true)"
 if [[ "$REFRESH_CURL" -ne 0 || -z "$REFRESH_RESP" ]]; then
   REFRESH_RESP="(empty — curl=$REFRESH_CURL http=$REFRESH_HTTP; no stale body)"
 fi
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] refresh http=$REFRESH_HTTP curl=$REFRESH_CURL resp=${REFRESH_RESP:0:800}" | tee -a "$LOG_FILE"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] refresh http=$REFRESH_HTTP curl=$REFRESH_CURL secs=$REFRESH_SECS resp=${REFRESH_RESP:0:800}" | tee -a "$LOG_FILE"
 
 # refreshOnly must be HTTP 200 AND JSON ok=true (both accounts). Partial JSON with
 # galaxus dead used to return 200 under OR-ok — catch that in the body too.
@@ -101,35 +103,40 @@ fi
 #      valid from step 1; no browser/remint here.
 LINK_BODY='{"autoLinkOnly":true,"forceRefresh":false}'
 set +e
+LINK_T0=$(date +%s)
 LINK_HTTP=$(curl -sS -o "$LINK_BODY_FILE" -w "%{http_code}" \
   -X POST "$BASE_URL/api/admin/stockx-awb-sync" \
   -H "content-type: application/json" \
   -d "$LINK_BODY" \
   --max-time 700)
 LINK_CURL=$?
+LINK_SECS=$(( $(date +%s) - LINK_T0 ))
 set -e
 LINK_RESP="$(cat "$LINK_BODY_FILE" 2>/dev/null || true)"
 if [[ "$LINK_CURL" -ne 0 || -z "$LINK_RESP" ]]; then
   LINK_RESP="(empty — curl=$LINK_CURL http=$LINK_HTTP; no stale body)"
 fi
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] autolink http=$LINK_HTTP curl=$LINK_CURL resp=${LINK_RESP:0:600}" | tee -a "$LOG_FILE"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] autolink http=$LINK_HTTP curl=$LINK_CURL secs=$LINK_SECS resp=${LINK_RESP:0:600}" | tee -a "$LOG_FILE"
 
-# 2) AWB / status — never force remint again (tokens just written above).
-BODY=$(printf '{"days":%s,"limit":%s,"forceRefresh":false}' "$DAYS" "$LIMIT")
+# 2) AWB / status only — no remint, no autoLink redo (those already ran above).
+#    Server hard-caps ~600s so curl --max-time 780 always gets a fresh body.
+BODY=$(printf '{"days":%s,"limit":%s,"forceRefresh":false,"awbOnly":true}' "$DAYS" "$LIMIT")
 set +e
+AWB_T0=$(date +%s)
 HTTP=$(curl -sS -o "$AWB_BODY_FILE" -w "%{http_code}" \
   -X POST "$BASE_URL/api/admin/stockx-awb-sync" \
   -H "content-type: application/json" \
   -d "$BODY" \
   --max-time 780)
 CURL_STATUS=$?
+AWB_SECS=$(( $(date +%s) - AWB_T0 ))
 set -e
 
 RESP="$(cat "$AWB_BODY_FILE" 2>/dev/null || true)"
 if [[ "$CURL_STATUS" -ne 0 || -z "$RESP" ]]; then
   RESP="(empty — curl=$CURL_STATUS http=$HTTP; no stale body)"
 fi
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] awb http=$HTTP curl=$CURL_STATUS resp=${RESP:0:800}" | tee -a "$LOG_FILE"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] awb http=$HTTP curl=$CURL_STATUS secs=$AWB_SECS resp=${RESP:0:800}" | tee -a "$LOG_FILE"
 
 if [[ "$REFRESH_CURL" -ne 0 || "$REFRESH_HTTP" != "200" || "$REFRESH_JSON_OK" -ne 1 ]]; then
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=1 (refresh failed)" | tee -a "$LOG_FILE"
@@ -137,14 +144,37 @@ if [[ "$REFRESH_CURL" -ne 0 || "$REFRESH_HTTP" != "200" || "$REFRESH_JSON_OK" -n
 fi
 
 if [[ "$CURL_STATUS" -ne 0 ]]; then
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=1 (awb curl failed; refresh ok)" | tee -a "$LOG_FILE"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=1 (awb curl failed; refresh ok; autolink curl=$LINK_CURL http=$LINK_HTTP)" | tee -a "$LOG_FILE"
   exit 1
 fi
 
 if [[ "$HTTP" != "200" ]]; then
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=1 (awb http $HTTP; refresh ok)" | tee -a "$LOG_FILE"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=1 (awb http $HTTP; refresh ok; autolink curl=$LINK_CURL http=$LINK_HTTP)" | tee -a "$LOG_FILE"
   exit 1
 fi
 
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=0" | tee -a "$LOG_FILE"
+# Partial OK (budget_exhausted) still HTTP 200 — surface for operators, exit 0.
+AWB_NOTE=""
+if [[ -n "$(cat "$AWB_BODY_FILE" 2>/dev/null || true)" ]]; then
+  AWB_NOTE=$(python3 - "$AWB_BODY_FILE" <<'PY' 2>/dev/null || true
+import json,sys
+d=json.load(open(sys.argv[1]))
+bits=[]
+if d.get("budgetExhausted") or d.get("abortedReason")=="budget_exhausted":
+  bits.append("partial_budget")
+if d.get("abortedReason") and d.get("abortedReason")!="budget_exhausted":
+  bits.append("abort="+str(d.get("abortedReason"))[:80])
+bits.append("updated="+str(d.get("updated")))
+bits.append("elapsedMs="+str(d.get("elapsedMs")))
+print(" ".join(bits))
+PY
+)
+fi
+
+if [[ "$LINK_CURL" -ne 0 || "$LINK_HTTP" != "200" ]]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=0 (refresh+awb ok; autolink warn curl=$LINK_CURL http=$LINK_HTTP) ${AWB_NOTE}" | tee -a "$LOG_FILE"
+  exit 0
+fi
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] DONE stockx-awb-sync exit=0 ${AWB_NOTE}" | tee -a "$LOG_FILE"
 exit 0
