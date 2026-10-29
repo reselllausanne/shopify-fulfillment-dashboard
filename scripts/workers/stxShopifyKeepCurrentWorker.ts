@@ -9,14 +9,15 @@
  *   - Checkpoint on disk (`.data/…`) → survives VPS deploy / container recreate.
  *
  * SSE remains the hot path. This worker is the completeness net: no permanent
- * product cap — only per-tick batch size for KickDB/Shopify rate limits.
+ * product cap — burns the stale queue then weekly walk until empty, loops forever.
  *
  * Env:
  *   STX_KEEP_CURRENT_MAX_AGE_HOURS     default 120 (5d)
- *   STX_KEEP_CURRENT_BATCH_PRODUCTS    default 20
- *   STX_KEEP_CURRENT_CONCURRENCY       default 2
- *   STX_KEEP_CURRENT_TICK_MS           default 5000 (pause when queue empty / between batches)
- *   STX_KEEP_CURRENT_INITIAL_DELAY_MS  default 90000
+ *   STX_KEEP_CURRENT_BATCH_PRODUCTS    default 100
+ *   STX_KEEP_CURRENT_CONCURRENCY       default 6
+ *   STX_KEEP_CURRENT_TICK_MS           default 500 (pause only between busy batches)
+ *   STX_KEEP_CURRENT_IDLE_MS           default 30000 (pause when queue empty)
+ *   STX_KEEP_CURRENT_INITIAL_DELAY_MS  default 15000
  *   STX_KEEP_CURRENT_CHECKPOINT_PATH   default .data/stx-shopify-keep-current.json
  *   STX_KEEP_CURRENT_WEEKLY_FULL       default 1 (ISO-week full website walk)
  */
@@ -32,19 +33,23 @@ const MAX_AGE_HOURS = Math.max(
 );
 const BATCH_PRODUCTS = Math.max(
   1,
-  Number(process.env.STX_KEEP_CURRENT_BATCH_PRODUCTS ?? 20)
+  Number(process.env.STX_KEEP_CURRENT_BATCH_PRODUCTS ?? 100)
 );
 const CONCURRENCY = Math.max(
   1,
-  Number(process.env.STX_KEEP_CURRENT_CONCURRENCY ?? 2)
+  Number(process.env.STX_KEEP_CURRENT_CONCURRENCY ?? 6)
 );
 const TICK_MS = Math.max(
-  500,
-  Number(process.env.STX_KEEP_CURRENT_TICK_MS ?? 5_000)
+  0,
+  Number(process.env.STX_KEEP_CURRENT_TICK_MS ?? 500)
+);
+const IDLE_MS = Math.max(
+  1_000,
+  Number(process.env.STX_KEEP_CURRENT_IDLE_MS ?? 30_000)
 );
 const INITIAL_DELAY_MS = Math.max(
   0,
-  Number(process.env.STX_KEEP_CURRENT_INITIAL_DELAY_MS ?? 90_000)
+  Number(process.env.STX_KEEP_CURRENT_INITIAL_DELAY_MS ?? 15_000)
 );
 const WEEKLY_FULL = !["0", "false", "no"].includes(
   String(process.env.STX_KEEP_CURRENT_WEEKLY_FULL ?? "1").toLowerCase()
@@ -278,14 +283,14 @@ async function pickNextBatch(cp: Checkpoint): Promise<{
   return { cp: next, batch: [], mode: "stale" };
 }
 
-async function runTick(cp: Checkpoint): Promise<Checkpoint> {
+async function runTick(cp: Checkpoint): Promise<{ cp: Checkpoint; didWork: boolean }> {
   const picked = await pickNextBatch(cp);
   let next = picked.cp;
   const batch = picked.batch;
 
   if (batch.length === 0) {
     saveCheckpoint(next);
-    return next;
+    return { cp: next, didWork: false };
   }
 
   const at = new Date();
@@ -319,7 +324,7 @@ async function runTick(cp: Checkpoint): Promise<Checkpoint> {
   try {
     const svIds = await loadSupplierVariantIdsForKickdbProducts(batch);
     console.info("[WORKER][STX_KEEP_CURRENT] shopify plan start", { variants: svIds.length });
-    const CHUNK = 40;
+    const CHUNK = 80;
     for (let i = 0; i < svIds.length; i += CHUNK) {
       const slice = svIds.slice(i, i + CHUNK);
       const plan = await runPlannedShopifyStxPriceSyncForSupplierVariantIds(slice);
@@ -358,7 +363,7 @@ async function runTick(cp: Checkpoint): Promise<Checkpoint> {
     shopifyFailed,
     week: next.weekKey,
   });
-  return next;
+  return { cp: next, didWork: true };
 }
 
 async function main(): Promise<void> {
@@ -367,6 +372,7 @@ async function main(): Promise<void> {
     batchProducts: BATCH_PRODUCTS,
     concurrency: CONCURRENCY,
     tickMs: TICK_MS,
+    idleMs: IDLE_MS,
     weeklyFull: WEEKLY_FULL,
     checkpointPath: CHECKPOINT_PATH,
   });
@@ -382,8 +388,11 @@ async function main(): Promise<void> {
   });
 
   while (true) {
+    let didWork = false;
     try {
-      cp = await runTick(cp);
+      const tick = await runTick(cp);
+      cp = tick.cp;
+      didWork = tick.didWork;
     } catch (err: unknown) {
       console.error(
         "[WORKER][STX_KEEP_CURRENT] tick failed",
@@ -396,7 +405,8 @@ async function main(): Promise<void> {
         /* ignore */
       }
     }
-    await sleep(TICK_MS);
+    // Busy → almost no pause (burn queue). Idle → longer sleep until new stale rows age in.
+    await sleep(didWork ? TICK_MS : IDLE_MS);
   }
 }
 
