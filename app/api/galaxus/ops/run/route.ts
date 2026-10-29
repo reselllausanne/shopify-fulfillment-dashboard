@@ -9,6 +9,7 @@ import {
   startFeedPushAsync,
 } from "@/galaxus/ops/feedPipeline";
 import { startFeedSnapshotRebuildAsync } from "@/galaxus/exports/feedSnapshot";
+import { startMasterSpecsSnapshotRebuildAsync } from "@/galaxus/exports/masterSpecsSnapshotAsync";
 import { startImageSyncFullAsync } from "@/galaxus/ops/imageSyncPush";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 import { gatePartnerSyncForTheSupplier } from "@/galaxus/supplier/theSupplierPolicy";
@@ -49,6 +50,17 @@ export async function POST(request: Request) {
       if (!started.ok) {
         return NextResponse.json(
           { ok: false, error: started.error ?? "Feed snapshot rebuild rejected" },
+          { status: started.status ?? 409 }
+        );
+      }
+      return NextResponse.json({ ok: true, accepted: true }, { status: 202 });
+    }
+
+    if (action === "rebuild-master-specs-snapshot") {
+      const started = await startMasterSpecsSnapshotRebuildAsync();
+      if (!started.ok) {
+        return NextResponse.json(
+          { ok: false, error: started.error ?? "Master/specs snapshot rebuild rejected" },
           { status: started.status ?? 409 }
         );
       }

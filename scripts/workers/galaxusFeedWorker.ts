@@ -91,6 +91,12 @@ async function main() {
     const recovered = await recoverFeedRunsAfterExecutorRestart();
     if (recovered.closedRuns > 0) {
       console.warn("[WORKER][GALAXUS_FEED] recovered runs from previous process", recovered);
+      if (recovered.hardStoppedScopes.length > 0) {
+        console.error(
+          "[WORKER][GALAXUS_FEED] crash-loop hard-stop — scopes NOT requeued",
+          recovered.hardStoppedScopes
+        );
+      }
     }
   } catch (err: unknown) {
     console.error(

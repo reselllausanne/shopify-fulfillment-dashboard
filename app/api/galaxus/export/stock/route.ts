@@ -538,6 +538,14 @@ export async function GET(request: Request) {
     // Never stock-publish incomplete catalog rows (no image/name/brand).
     // Stock-only ProviderKeys → Galaxus "Add" + "GTIN is missing" (NER shell products).
     if (!isGalaxusCatalogReady(variant)) {
+      if (pushZeroRows) {
+        tryPushDelistZero(
+          providerKey,
+          mappingSupplierKey,
+          supplierVariantIdEarly,
+          variant?.manualNote ?? null
+        );
+      }
       return;
     }
 

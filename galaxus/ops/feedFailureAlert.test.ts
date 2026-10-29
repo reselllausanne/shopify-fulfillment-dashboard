@@ -1,7 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
+  notifyGalaxusFeedCrashLoop,
   notifyGalaxusFeedFailure,
   notifyGalaxusFeedStale,
+  notifyGalaxusMasterSpecsFeedStale,
 } from "@/galaxus/ops/feedFailureAlert";
 
 describe("notifyGalaxusFeedFailure", () => {
@@ -63,5 +65,30 @@ describe("notifyGalaxusFeedFailure", () => {
     const body = JSON.parse(String((global.fetch as any).mock.calls[0][1].body));
     expect(body.text).toContain("STALE");
     expect(body.text).toContain("8.5h");
+  });
+
+  it("posts stale master-specs feed alert", async () => {
+    global.fetch = vi.fn(async () => new Response("ok", { status: 200 })) as typeof fetch;
+    const res = await notifyGalaxusMasterSpecsFeedStale({
+      hoursSinceSuccess: 31,
+      lastSuccessAt: "2026-09-05T01:00:00.000Z",
+    });
+    expect(res.sent).toBe(true);
+    const body = JSON.parse(String((global.fetch as any).mock.calls[0][1].body));
+    expect(body.text).toContain("master/specs");
+    expect(body.text).toContain("31h");
+  });
+
+  it("posts crash-loop hard-stop alert", async () => {
+    global.fetch = vi.fn(async () => new Response("ok", { status: 200 })) as typeof fetch;
+    const res = await notifyGalaxusFeedCrashLoop({
+      scope: "master-specs",
+      crashCount: 4,
+      windowHours: 2,
+    });
+    expect(res.sent).toBe(true);
+    const body = JSON.parse(String((global.fetch as any).mock.calls[0][1].body));
+    expect(body.text).toContain("CRASH LOOP");
+    expect(body.text).toContain("master-specs");
   });
 });

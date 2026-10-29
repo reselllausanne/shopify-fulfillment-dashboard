@@ -8,10 +8,23 @@ import { withAdvisoryXactLock } from "@/galaxus/jobs/advisoryLock";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 import { runFeedUpload } from "@/galaxus/ops/runFeedUpload";
 import {
+  notifyGalaxusFeedCrashLoop,
   notifyGalaxusFeedFailure,
   notifyGalaxusFeedStale,
+  notifyGalaxusMasterSpecsFeedStale,
 } from "@/galaxus/ops/feedFailureAlert";
 import type { FeedScope, FeedTriggerSource } from "./types";
+
+/** How many crash-recovery requeues per scope inside the window before hard-stop + Slack. */
+function crashRequeueMax(): number {
+  const n = Number(process.env.GALAXUS_FEED_CRASH_REQUEUE_MAX ?? 3);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 3;
+}
+
+function crashRequeueWindowMs(): number {
+  const hours = Number(process.env.GALAXUS_FEED_CRASH_REQUEUE_WINDOW_HOURS ?? 2);
+  return Math.max(0.25, Number.isFinite(hours) ? hours : 2) * 3600 * 1000;
+}
 
 /** Hard-fail if someone reintroduces Next route dynamic-import (the Aug 2026 outage). */
 function classifyFeedUploadError(err: unknown): string {
@@ -194,13 +207,16 @@ export async function reconcileStaleFeedTriggers() {
 export async function recoverFeedRunsAfterExecutorRestart(): Promise<{
   closedRuns: number;
   requeuedScopes: FeedScope[];
+  hardStoppedScopes: FeedScope[];
 }> {
   const prismaAny = prisma as any;
   const inFlight: Array<{ id: string; scope: string }> = await prismaAny.galaxusFeedRun.findMany({
     where: { finishedAt: null },
     select: { id: true, scope: true },
   });
-  if (inFlight.length === 0) return { closedRuns: 0, requeuedScopes: [] };
+  if (inFlight.length === 0) {
+    return { closedRuns: 0, requeuedScopes: [], hardStoppedScopes: [] };
+  }
 
   await prismaAny.galaxusFeedRun.updateMany({
     where: { id: { in: inFlight.map((row) => row.id) } },
@@ -215,12 +231,41 @@ export async function recoverFeedRunsAfterExecutorRestart(): Promise<{
     data: { status: "FAILED", consumedAt: new Date() },
   });
 
+  const maxRequeues = crashRequeueMax();
+  const windowMs = crashRequeueWindowMs();
+  const windowHours = Math.round((windowMs / 3600000) * 10) / 10;
+  const since = new Date(Date.now() - windowMs);
   const requeuedScopes: FeedScope[] = [];
+  const hardStoppedScopes: FeedScope[] = [];
+
   for (const scope of new Set(inFlight.map((row) => row.scope as FeedScope))) {
+    const recentCrashes = await prismaAny.galaxusFeedRun.count({
+      where: {
+        scope,
+        success: false,
+        finishedAt: { gte: since },
+        errorMessage: { contains: "crash recovery" },
+      },
+    });
+    if (maxRequeues === 0 || recentCrashes > maxRequeues) {
+      hardStoppedScopes.push(scope);
+      console.error("[GALAXUS][FEED] crash-loop hard-stop", {
+        scope,
+        recentCrashes,
+        maxRequeues,
+        windowHours,
+      });
+      await notifyGalaxusFeedCrashLoop({
+        scope,
+        crashCount: recentCrashes,
+        windowHours,
+      }).catch(() => undefined);
+      continue;
+    }
     await enqueueFeedPushTrigger({ scope, triggerSource: "manual" });
     requeuedScopes.push(scope);
   }
-  return { closedRuns: inFlight.length, requeuedScopes };
+  return { closedRuns: inFlight.length, requeuedScopes, hardStoppedScopes };
 }
 
 function feedPushLockKey(scope: FeedScope) {
@@ -785,13 +830,30 @@ export async function drainFeedPushQueue(
     return 0;
   });
 
+  const HEAVY_SCOPES = new Set(["master-specs", "full"]);
+  const activeHeavy = await prismaAny.galaxusFeedRun.findFirst({
+    where: { finishedAt: null, scope: { in: Array.from(HEAVY_SCOPES) } },
+    select: { id: true, scope: true },
+  });
+
   const seenScopes = new Set<string>();
   let lastStarted: FeedPushStartResult | null = null;
+  let heavyRunning = Boolean(activeHeavy);
   for (const pending of pendingRows) {
     if (seenScopes.has(pending.scope)) continue;
     seenScopes.add(pending.scope);
+    if (HEAVY_SCOPES.has(pending.scope) && heavyRunning) {
+      console.info("[GALAXUS][FEED][QUEUE] deferring heavy scope until active finishes", {
+        pendingScope: pending.scope,
+        activeScope: activeHeavy?.scope ?? null,
+      });
+      continue;
+    }
     const started = await tryStartPendingFeedPush(origin, pending);
-    if (started) lastStarted = started;
+    if (started) {
+      lastStarted = started;
+      if (HEAVY_SCOPES.has(pending.scope)) heavyRunning = true;
+    }
   }
 
   if (!lastStarted) return { ok: true, drained: false };
@@ -844,6 +906,8 @@ export async function runPendingFeedTriggers(params: { origin: string; scope: Fe
 }
 
 const STALE_PRICE_FEED_MS = 6 * 60 * 60 * 1000;
+/** ProductData + SpecificationData — full-day SLA. */
+const STALE_MASTER_SPECS_FEED_MS = 30 * 60 * 60 * 1000;
 /** A whole PriceData file is ~620k rows; sales in a burst share one delayed upload. */
 const POST_SALE_PRICE_FEED_COOLDOWN_MS = 10 * 60 * 1000;
 
@@ -892,6 +956,37 @@ export async function checkGalaxusPriceFeedHealth(): Promise<{
   const hoursSinceSuccess = Math.round((ageMs / 3600000) * 10) / 10;
   if (ageMs > STALE_PRICE_FEED_MS) {
     await notifyGalaxusFeedStale({
+      hoursSinceSuccess,
+      lastSuccessAt: new Date(at).toISOString(),
+    });
+    return { ok: false, lastSuccessAt: new Date(at).toISOString(), hoursSinceSuccess };
+  }
+  return { ok: true, lastSuccessAt: new Date(at).toISOString(), hoursSinceSuccess };
+}
+
+export async function checkGalaxusMasterSpecsFeedHealth(): Promise<{
+  ok: boolean;
+  lastSuccessAt: string | null;
+  hoursSinceSuccess: number | null;
+}> {
+  const prismaAny = prisma as any;
+  const lastOk = await prismaAny.galaxusFeedRun.findFirst({
+    where: { success: true, scope: "master-specs" },
+    orderBy: { finishedAt: "desc" },
+    select: { finishedAt: true, startedAt: true },
+  });
+  const at: Date | null = lastOk?.finishedAt ?? lastOk?.startedAt ?? null;
+  if (!at) {
+    await notifyGalaxusMasterSpecsFeedStale({
+      hoursSinceSuccess: null,
+      lastSuccessAt: null,
+    });
+    return { ok: false, lastSuccessAt: null, hoursSinceSuccess: null };
+  }
+  const ageMs = Date.now() - new Date(at).getTime();
+  const hoursSinceSuccess = Math.round((ageMs / 3600000) * 10) / 10;
+  if (ageMs > STALE_MASTER_SPECS_FEED_MS) {
+    await notifyGalaxusMasterSpecsFeedStale({
       hoursSinceSuccess,
       lastSuccessAt: new Date(at).toISOString(),
     });

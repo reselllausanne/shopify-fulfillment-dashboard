@@ -17,7 +17,8 @@
 #   GALAXUS_OPS_IMAGE_SYNC_WAIT_SEC default 5400 (max wait for image-sync before feeds; ~90m)
 #   GALAXUS_OPS_IMAGE_SYNC_BLOCK_FEEDS default 0 — when 1, abort full-flow if image-sync still busy
 #   GALAXUS_OPS_SNAPSHOT_WAIT_SEC     default 4500 (max wait for async snapshot rebuild; ~75m — rebuild often 35–45m)
-#   GALAXUS_OPS_MASTER_NONBLOCKING    default 1 — full-flow WARN+continue if master-specs fails
+#   GALAXUS_OPS_MASTER_NONBLOCKING    default 1 — full-flow continue if master-specs fails
+#                                     (still Slack via ops tick / crash breaker; set 0 to exit non-zero)
 #
 set -euo pipefail
 
@@ -33,6 +34,7 @@ MASTER_NONBLOCKING="${GALAXUS_OPS_MASTER_NONBLOCKING:-1}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/galaxus-ops-cron.log"
 LOCK_FILE="/tmp/galaxus-ops-cron.lock"
+MASTER_FAILED=0
 
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
@@ -282,6 +284,26 @@ run_snapshot_rebuild() {
   log "DONE rebuild-feed-snapshots"
 }
 
+run_master_specs_snapshot_rebuild() {
+  log "START rebuild-master-specs-snapshot (tsx, ops-background heap)"
+  if ! docker compose run --rm --no-deps worker-ops-background npx tsx scripts/run-master-specs-snapshot-rebuild.ts; then
+    log "ERROR: rebuild-master-specs-snapshot failed — master push will fall back to live build (OOM risk)"
+    return 1
+  fi
+  log "DONE rebuild-master-specs-snapshot"
+}
+
+handle_master_failure() {
+  local msg="$1"
+  MASTER_FAILED=1
+  if [[ "$MASTER_NONBLOCKING" == "1" ]]; then
+    log "WARN: $msg (MASTER_NONBLOCKING=1 — continuing; ops tick Slack will page if still stale)"
+    return 0
+  fi
+  log "ERROR: $msg (MASTER_NONBLOCKING=0 — failing cron)"
+  return 1
+}
+
 if [[ -z "$ACTION" ]]; then
   log "ERROR: missing action (stock-price-flow | full-flow | full-push | stx-full | push-master-specs)"
   exit 2
@@ -304,8 +326,13 @@ case "$ACTION" in
     ;;
   full-flow)
     run_image_sync_full || true
-    log "START full-flow (rebuild snapshots -> stock + price + master-specs; stock/price failure must not skip master)"
+    log "START full-flow (stock/offer snapshots -> master/specs snapshot -> stock + price + master-specs)"
     run_snapshot_rebuild || true
+    # Rebuild master/specs snapshot on ops-background BEFORE enqueueing push so the
+    # feed worker streams from DB instead of live-building (OOM path).
+    if ! run_master_specs_snapshot_rebuild; then
+      handle_master_failure "master/specs snapshot rebuild failed" || exit 1
+    fi
     # Enqueue all three up front so the per-scope worker can run them in parallel.
     # Then wait sequentially for verification. Never abort before master — new ProviderKeys
     # only land via master, and a stuck stock wait used to skip it for a whole night.
@@ -317,11 +344,17 @@ case "$ACTION" in
       || log "WARN: stock failed/timed out — continuing (master already queued)"
     wait_scope_success "price" "$step_started" "$WAIT_SEC" \
       || log "WARN: price failed/timed out — continuing (master already queued)"
-    wait_scope_success "master-specs" "$step_started" "$MASTER_WAIT_SEC" \
-      || log "WARN: push-master-specs failed/timed out"
-    log "DONE full-flow"
+    if ! wait_scope_success "master-specs" "$step_started" "$MASTER_WAIT_SEC"; then
+      handle_master_failure "push-master-specs failed/timed out" || exit 1
+    fi
+    if [[ "$MASTER_FAILED" == "1" ]]; then
+      log "DONE full-flow (master WARN — see above; MASTER_NONBLOCKING=1)"
+    else
+      log "DONE full-flow"
+    fi
     ;;
   push-master-specs)
+    run_master_specs_snapshot_rebuild || log "WARN: master snapshot rebuild failed — live fallback"
     run_push "push-master-specs"
     log "DONE push-master-specs"
     ;;
