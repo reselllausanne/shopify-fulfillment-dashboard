@@ -3608,3 +3608,33 @@ model StockxOrderAlert {
   @@index([sentAt])
   @@schema("public")
 }
+
+/// Cache for barcodes.gg style lookups. One row per style code — hits AND misses.
+/// Prevents re-debiting the same style; misses stay until refreshAfter.
+model BarcodesGgStyleCache {
+  id                  String    @id @default(uuid())
+  /// Normalized style / supplierSku key (uppercased, trimmed).
+  styleCode           String    @unique
+  /// found | not_found | error
+  status              String
+  productUniqueId     String?
+  productName         String?
+  productBrand        String?
+  /// Full API payload (sizes with ean/upc) or error body.
+  responseJson        Json?
+  sizesTotal          Int       @default(0)
+  sizesWithValidGtin  Int       @default(0)
+  requestDebited      Boolean   @default(false)
+  httpStatus          Int?
+  errorMessage        String?
+  lookedUpAt          DateTime  @default(now())
+  /// Optional: re-query after this time (null = never auto-refresh).
+  refreshAfter        DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([status])
+  @@index([lookedUpAt])
+  @@schema("public")
+}
+
