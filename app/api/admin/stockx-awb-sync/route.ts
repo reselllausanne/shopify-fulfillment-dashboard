@@ -120,7 +120,13 @@ export async function POST(req: NextRequest) {
     const token = refresh.token ?? (await readServerStockxToken())?.token ?? null;
 
     if (refreshOnly) {
-      const ok = Boolean(refresh.ok || galaxusRefresh?.ok);
+      // BOTH accounts must be healthy. OR-ok previously returned HTTP 200 when default
+      // reused a live JWT while galaxus remint was dead (CF/Turnstile) — cron treated
+      // refresh as success and the operator saw no failure signal.
+      const ok = Boolean(refresh.ok && (galaxusRefresh == null || galaxusRefresh.ok));
+      const error = ok
+        ? null
+        : refresh.error || galaxusRefresh?.error || "StockX refresh failed";
       return NextResponse.json(
         {
           ok,
@@ -143,7 +149,7 @@ export async function POST(req: NextRequest) {
               }
             : null,
           needsManualLogin: Boolean(refresh.needsManualLogin || (!galaxusRefresh?.ok && galaxusExpiringSoon)),
-          error: ok ? null : refresh.error || galaxusRefresh?.error || "StockX refresh failed",
+          error,
         },
         { status: ok ? 200 : 401 }
       );
