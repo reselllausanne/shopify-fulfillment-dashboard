@@ -3,6 +3,7 @@ import { enqueueJob } from "@/galaxus/jobs/queue";
 import {
   OPS_GLD_REFRESH_JOB,
   OPS_IMAGE_SYNC_JOB,
+  OPS_MASTER_SPECS_SNAPSHOT_REBUILD_JOB,
   OPS_SNAPSHOT_REBUILD_JOB,
   OPS_STX_REFRESH_JOB,
 } from "@/galaxus/ops/opsBackgroundJobs";
@@ -10,6 +11,7 @@ import {
 export type OpsBackgroundJobType =
   | typeof OPS_IMAGE_SYNC_JOB
   | typeof OPS_SNAPSHOT_REBUILD_JOB
+  | typeof OPS_MASTER_SPECS_SNAPSHOT_REBUILD_JOB
   | typeof OPS_GLD_REFRESH_JOB
   | typeof OPS_STX_REFRESH_JOB;
 

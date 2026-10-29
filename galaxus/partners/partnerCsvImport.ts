@@ -784,11 +784,29 @@ export async function runPartnerCsvImport(
     const missing = existing
       .map((row: { supplierVariantId: string }) => row.supplierVariantId)
       .filter((id: string) => !seenSupplierVariantIds.has(id));
-    for (const batch of chunkArray(missing, 500)) {
-      const res = await prismaAny.supplierVariant.deleteMany({
-        where: { supplierVariantId: { in: batch } },
+    const maxRatio = Math.max(
+      0.05,
+      Math.min(0.95, Number(process.env.GALAXUS_PARTNER_CSV_MAX_DELETE_RATIO ?? 0.35))
+    );
+    const deleteRatio =
+      existing.length > 0 ? missing.length / existing.length : 0;
+    if (existing.length >= 100 && deleteRatio > maxRatio) {
+      removeSkipped = true;
+      console.error("[PARTNER][CSV] refuse delist-after-absence — coverage collapse", {
+        partnerKey: cleanPartnerKey,
+        existing: existing.length,
+        seenInCsv: seenSupplierVariantIds.size,
+        missing: missing.length,
+        deleteRatio: Number(deleteRatio.toFixed(3)),
+        maxRatio,
       });
-      removedMissing += res.count ?? 0;
+    } else {
+      for (const batch of chunkArray(missing, 500)) {
+        const res = await prismaAny.supplierVariant.deleteMany({
+          where: { supplierVariantId: { in: batch } },
+        });
+        removedMissing += res.count ?? 0;
+      }
     }
   } else {
     removeSkipped = true;

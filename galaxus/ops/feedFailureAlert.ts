@@ -93,3 +93,50 @@ export async function notifyGalaxusFeedStale(params: {
   ].join("\n");
   return postSlack(text);
 }
+
+/**
+ * No successful master/specs feed for too long — silent outage detector.
+ */
+export async function notifyGalaxusMasterSpecsFeedStale(params: {
+  hoursSinceSuccess: number | null;
+  lastSuccessAt: string | null;
+}): Promise<{ sent: boolean; reason?: string }> {
+  if (!shouldSendAlert("stale:master-specs-feed")) {
+    return { sent: false, reason: "deduped" };
+  }
+  const age =
+    params.hoursSinceSuccess == null
+      ? "never / unknown"
+      : `${params.hoursSinceSuccess}h ago`;
+  const text = [
+    ":warning: *Galaxus master/specs feed STALE*",
+    `• last successful master-specs: ${params.lastSuccessAt ?? "none"} (${age})`,
+    `• at: ${new Date().toISOString()}`,
+    "",
+    "Product identity, images, and categories on Galaxus may be outdated.",
+    "Check Galaxus ops → Rebuild master/specs snapshot, then Push master/specs.",
+  ].join("\n");
+  return postSlack(text);
+}
+
+/** Crash-recovery circuit breaker tripped — stop blind OOM requeue loops. */
+export async function notifyGalaxusFeedCrashLoop(params: {
+  scope: FeedScope;
+  crashCount: number;
+  windowHours: number;
+}): Promise<{ sent: boolean; reason?: string }> {
+  const dedupeKey = `crash-loop:${params.scope}`;
+  if (!shouldSendAlert(dedupeKey)) {
+    return { sent: false, reason: "deduped" };
+  }
+  const text = [
+    ":rotating_light: *Galaxus feed CRASH LOOP — hard stop*",
+    `• scope: \`${params.scope}\``,
+    `• crash recoveries in last ${params.windowHours}h: ${params.crashCount}`,
+    `• at: ${new Date().toISOString()}`,
+    "",
+    "Not auto-requeued. Fix heap/snapshot then push from Galaxus ops UI.",
+    "Likely: master live-build OOM — rebuild master/specs snapshot on ops-background first.",
+  ].join("\n");
+  return postSlack(text);
+}

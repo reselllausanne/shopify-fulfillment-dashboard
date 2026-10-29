@@ -1,6 +1,8 @@
 import os from "os";
 import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 import { rebuildFeedSnapshotFromExports } from "@/galaxus/exports/feedSnapshot";
+import { rebuildMasterSpecsSnapshot } from "@/galaxus/exports/masterSpecsSnapshot";
+import { MASTER_SPECS_REBUILD_JOB_NAME } from "@/galaxus/exports/masterSpecsSnapshotAsync";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
 import { runStockPriceSync } from "@/galaxus/jobs/stockSync";
 import { runStxPriceStockRefresh, runStxSync } from "@/galaxus/jobs/stxSync";
@@ -9,6 +11,7 @@ import { runOpsJob } from "@/galaxus/ops/jobRunner";
 import {
   OPS_GLD_REFRESH_JOB,
   OPS_IMAGE_SYNC_JOB,
+  OPS_MASTER_SPECS_SNAPSHOT_REBUILD_JOB,
   OPS_SNAPSHOT_REBUILD_JOB,
   OPS_STX_REFRESH_JOB,
 } from "@/galaxus/ops/opsBackgroundJobs";
@@ -22,6 +25,7 @@ async function run() {
     OPS_STX_REFRESH_JOB,
     OPS_IMAGE_SYNC_JOB,
     OPS_SNAPSHOT_REBUILD_JOB,
+    OPS_MASTER_SPECS_SNAPSHOT_REBUILD_JOB,
     OPS_GLD_REFRESH_JOB,
   ];
   const defaultOrigin =
@@ -59,6 +63,8 @@ async function run() {
           );
         } else if (jobType === OPS_GLD_REFRESH_JOB) {
           await runOpsJob("gld-refresh", () => runStockPriceSync());
+        } else if (jobType === OPS_MASTER_SPECS_SNAPSHOT_REBUILD_JOB) {
+          await runOpsJob(MASTER_SPECS_REBUILD_JOB_NAME, () => rebuildMasterSpecsSnapshot());
         } else {
           await runOpsJob("feed-snapshot-rebuild", () => rebuildFeedSnapshotFromExports(origin));
         }

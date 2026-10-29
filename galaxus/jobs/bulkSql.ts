@@ -121,6 +121,34 @@ export async function bulkInsertSupplierVariants(
       ${r.supplierBrand},
       ${r.supplierProductName},
       ${jsonb(r.images)},
+      ${(() => {
+        const images = r.images;
+        let source: string | null = null;
+        if (Array.isArray(images) && images.length > 0) {
+          const first = images[0];
+          if (typeof first === "string" && (first.startsWith("http://") || first.startsWith("https://"))) source = first.trim();
+          else if (first && typeof first === "object") {
+            const o = first as Record<string, unknown>;
+            for (const k of ["url", "src", "href", "imageUrl", "image"]) {
+              const u = o[k];
+              if (typeof u === "string" && (u.startsWith("http://") || u.startsWith("https://"))) {
+                source = u.trim();
+                break;
+              }
+            }
+          }
+        }
+        return source;
+      })()},
+      ${(() => {
+        // PENDING when we have a source URL so image-sync picks STX up like scrapers.
+        const images = r.images;
+        if (!Array.isArray(images) || images.length === 0) return null;
+        const first = images[0];
+        if (typeof first === "string" && first.startsWith("http")) return "PENDING";
+        if (first && typeof first === "object") return "PENDING";
+        return null;
+      })()},
       ${r.leadTimeDays},
       ${r.deliveryType ?? null},
       ${numericOrNull(r.suggestedRetailPriceInclVat, "numeric")},
@@ -148,6 +176,8 @@ export async function bulkInsertSupplierVariants(
         "supplierBrand",
         "supplierProductName",
         "images",
+        "sourceImageUrl",
+        "imageSyncStatus",
         "leadTimeDays",
         "deliveryType",
         "suggestedRetailPriceInclVat",

@@ -2513,15 +2513,21 @@ model GalaxusExportManifest {
   @@schema("public")
 }
 
-/// Pre-built stock/offer CSV rows — full catalog read for fast post-sale SFTP (still full file).
+/// Pre-built stock/offer/master/specs CSV rows — full catalog read for fast SFTP (still full file).
 model GalaxusFeedSnapshotMeta {
-  id               String    @id @default("default")
-  stockRowCount    Int       @default(0)
-  offerRowCount    Int       @default(0)
-  stockHeadersJson Json?
-  offerHeadersJson Json?
-  rebuiltAt        DateTime?
-  updatedAt        DateTime  @updatedAt
+  id                String    @id @default("default")
+  stockRowCount     Int       @default(0)
+  offerRowCount     Int       @default(0)
+  masterRowCount    Int?
+  specsRowCount     Int?
+  stockHeadersJson  Json?
+  offerHeadersJson  Json?
+  masterHeadersJson Json?
+  specsHeadersJson  Json?
+  rebuiltAt         DateTime?
+  masterRebuiltAt   DateTime?
+  specsRebuiltAt    DateTime?
+  updatedAt         DateTime  @updatedAt
 
   @@schema("public")
 }
@@ -2540,6 +2546,32 @@ model GalaxusFeedOfferSnapshot {
   rowJson     Json
   updatedAt   DateTime @updatedAt
 
+  @@index([updatedAt])
+  @@schema("public")
+}
+
+/// One row per ProviderKey — identity + media for master ProductData CSV.
+model GalaxusFeedMasterSnapshot {
+  providerKey String   @id
+  gtin        String?
+  supplierKey String?
+  rowJson     Json
+  updatedAt   DateTime @updatedAt
+
+  @@index([updatedAt])
+  @@index([supplierKey])
+  @@schema("public")
+}
+
+/// Specs: many rows per SKU (providerKey + specificationKey).
+model GalaxusFeedSpecsSnapshot {
+  providerKey      String
+  specificationKey String
+  rowJson          Json
+  updatedAt        DateTime @updatedAt
+
+  @@id([providerKey, specificationKey])
+  @@index([providerKey])
   @@index([updatedAt])
   @@schema("public")
 }

@@ -39,6 +39,7 @@ import {
   tryExportCsvFromSnapshot,
 } from "@/galaxus/exports/feedSnapshot";
 import { syncGalaxusListingStockFromCsv } from "@/galaxus/exports/galaxusWasLiveKeys";
+import { tryUploadMasterSpecsFromSnapshot } from "@/galaxus/ops/masterSpecsSnapshotUpload";
 import type { FeedTriggerSource } from "@/galaxus/ops/types";
 
 export type FeedUploadInput = {
@@ -282,6 +283,41 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         success: false,
       },
     }))?.id ?? null;
+
+    if (
+      useSinglePassMasterSpecs &&
+      !supplier &&
+      !providerKeysRaw &&
+      String(process.env.GALAXUS_MASTER_SPECS_SNAPSHOT_UPLOAD ?? "1").trim() !== "0"
+    ) {
+      const masterName = buildFeedFilename("product", providerName, assortmentFile);
+      const specsName = buildFeedFilename("specifications", providerName, assortmentFile);
+      const snapshotResult = await tryUploadMasterSpecsFromSnapshot({
+        runId,
+        auditId,
+        masterFilename: masterName,
+        specsFilename: specsName,
+        triggerSource: input.triggerSource ?? null,
+      });
+      if (snapshotResult) {
+        return {
+          ok: snapshotResult.ok,
+          status: snapshotResult.status,
+          runId: snapshotResult.runId,
+          uploaded: snapshotResult.uploaded,
+          counts: {
+            master: snapshotResult.counts.master,
+            stock: null,
+            offer: null,
+            specs: snapshotResult.counts.specs,
+          },
+          omittedByFeed: snapshotResult.omittedByFeed,
+          error: snapshotResult.error,
+          source: "snapshot",
+        };
+      }
+      console.info("[GALAXUS][FEEDS][UPLOAD] master-specs snapshot not ready, using legacy build");
+    }
 
     let masterCsv: string | Buffer = "";
     let stockCsv = "";
