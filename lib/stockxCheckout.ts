@@ -43,6 +43,7 @@ import {
 import { linkStockxBuyToShopify } from "@/lib/stockxAutoCheckout/linkAfterBuy";
 import { linkStockxBuyToGalaxus } from "@/lib/stockxAutoCheckout/linkAfterBuyGalaxus";
 import type { GalaxusBuyCandidate } from "@/lib/stockxAutoCheckout/galaxusBuyCandidates";
+import { recoverStockxOrderNumberFromBuyingListText } from "@/lib/stockxAutoCheckout/recoverOrderNumberFromBuyingList";
 import {
   findUnlinkedStockxMatches,
   prebuyBlocksNewPurchase,
@@ -2038,7 +2039,37 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
     const orderMatch =
       after.match(/\b(0[1-3]-[A-Z0-9]{8,})\b/) ||
       after.match(/numéro de commande[^\n]*([0-9A-Z-]{8,})/i);
-    const stockxOrderNumber = orderMatch?.[1] ?? null;
+    let stockxOrderNumber = orderMatch?.[1] ?? null;
+
+    // Confirmation spinner often hangs with no order # — scrape /buying/orders
+    // in the same session (newest-first) and match size + title (+ optional CHF).
+    if (!stockxOrderNumber) {
+      try {
+        await page.goto("https://stockx.com/buying/orders", {
+          waitUntil: "domcontentloaded",
+          timeout: 45_000,
+        });
+        await page.waitForTimeout(5000);
+        const buyBody = (await page.locator("body").innerText().catch(() => "")) || "";
+        const hit = recoverStockxOrderNumberFromBuyingListText(buyBody, {
+          sizeEU: c.sizeEU,
+          productName: c.productName,
+          totalChf,
+          totalToleranceChf: 3,
+        });
+        if (hit?.orderNumber) {
+          stockxOrderNumber = hit.orderNumber;
+          console.warn(
+            `[STOCKX-CHECKOUT][GALAXUS] recovered order # via buying list → ${stockxOrderNumber} (score=${hit.score})`
+          );
+        }
+      } catch (e: any) {
+        console.warn(
+          `[STOCKX-CHECKOUT][GALAXUS] buying-list recover failed: ${e?.message || e}`
+        );
+      }
+    }
+
     if (!stockxOrderNumber) {
       return {
         kind: "needs_human",
