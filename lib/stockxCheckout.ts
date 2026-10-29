@@ -1874,7 +1874,6 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
   const existing = await (prisma as any).galaxusStockxMatch.findFirst({
     where: {
       galaxusOrderLineId: c.lineId,
-      NOT: { stockxOrderNumber: null },
       stockxOrderNumber: { not: "" },
     },
     select: { stockxOrderNumber: true },
