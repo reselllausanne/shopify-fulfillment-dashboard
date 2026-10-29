@@ -1,3 +1,4 @@
+import { galaxusMaxRetailChf } from "@/galaxus/exports/assortmentPolicy";
 import { calcSuggestedRetailFromStxOffer } from "@/galaxus/pricing/suggestedSellPrice";
 import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
 import { isStxForceImportSlug } from "@/galaxus/stx/forceImportSlugs";
@@ -82,6 +83,23 @@ export function shouldPreferStandardOverExpress(
   if (!(expressBuy > 0) || !(standardBuy > 0)) return false;
   if (!(maxRatio >= 1)) return false;
   return expressBuy >= standardBuy * maxRatio;
+}
+
+/**
+ * Prefer standard when express SRP would die on Galaxus assortment
+ * `price_outlier` (GALAXUS_MAX_RETAIL_CHF, default 300) but standard SRP
+ * still clears the same cap — e.g. Air Max Plus EU 40/40.5 fat express ask.
+ * Keep both lane fields for Shopify; only the active Galaxus lane flips.
+ */
+export function shouldPreferStandardForRetailCap(
+  expressSrpInclVat: number | null | undefined,
+  standardSrpInclVat: number | null | undefined,
+  maxRetailInclVatChf: number = galaxusMaxRetailChf()
+): boolean {
+  if (expressSrpInclVat == null || standardSrpInclVat == null) return false;
+  if (!(expressSrpInclVat > 0) || !(standardSrpInclVat > 0)) return false;
+  if (!(maxRetailInclVatChf > 0)) return false;
+  return expressSrpInclVat > maxRetailInclVatChf && standardSrpInclVat <= maxRetailInclVatChf;
 }
 
 /**
@@ -185,7 +203,8 @@ export function isStxMarketplacePublishableDeliveryType(
 /**
  * DB mirror + Shopify STX pricing: store every size with a usable StockX ask.
  * Express preferred when present *and* not absurdly above standard (≥100% by
- * default). Otherwise standard. Marketplace export filters separately.
+ * default) *and* express SRP still ≤ Galaxus max retail (else standard if it
+ * fits under the cap). Marketplace export filters separately.
  */
 export function buildStxDualPriceFields(
   variant: { prices?: unknown },
@@ -207,9 +226,13 @@ export function buildStxDualPriceFields(
 
   const expressBuy = express ? buyFromOffer(express, payload) : null;
   const standardBuy = standard ? buyFromOffer(standard, payload) : null;
+  const expressSrp = express ? suggestedFromOffer(express, payload, productName) : null;
+  const standardSrp = standard ? suggestedFromOffer(standard, payload, productName) : null;
 
   const preferStandard =
-    Boolean(standard) && shouldPreferStandardOverExpress(expressBuy, standardBuy);
+    Boolean(standard) &&
+    (shouldPreferStandardOverExpress(expressBuy, standardBuy) ||
+      shouldPreferStandardForRetailCap(expressSrp, standardSrp));
   const active = preferStandard ? standard! : (express ?? standard!);
 
   const activeBuy =
@@ -221,11 +244,13 @@ export function buildStxDualPriceFields(
     price: activeBuy,
     stock: active.asks,
     deliveryType: active.deliveryType,
-    suggestedRetailPriceInclVat: suggestedFromOffer(active, payload, productName),
+    suggestedRetailPriceInclVat: preferStandard
+      ? standardSrp
+      : express
+        ? expressSrp
+        : standardSrp,
     standardBuyPrice: standardBuy,
     expressBuyPrice: expressBuy,
-    standardSuggestedRetailPriceInclVat: standard
-      ? suggestedFromOffer(standard, payload, productName)
-      : null,
+    standardSuggestedRetailPriceInclVat: standardSrp,
   };
 }
