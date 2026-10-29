@@ -202,82 +202,151 @@ async function loadNextProductBatch(input: {
     .filter(Boolean);
 }
 
-function maybeEnterWeekly(cp: Checkpoint): Checkpoint {
-  if (!WEEKLY_FULL) return cp;
-  const week = isoWeekKey();
-  if (cp.weeklyCompletedWeekKey === week) {
-    return { ...cp, weekKey: week, mode: "stale" };
-  }
-  if (cp.mode === "weekly" && cp.weekKey === week) return cp;
-  // New week → full website walk from the start.
-  console.info("[WORKER][STX_KEEP_CURRENT] starting weekly full website walk", { week });
-  return {
-    ...cp,
-    mode: "weekly",
-    weekKey: week,
-    cursor: "",
-  };
-}
-
-async function processBatch(productIds: string[]): Promise<{
-  shopifySynced: number;
-  shopifyFailed: number;
+/**
+ * Prefer stale (>MAX_AGE) so ≤5d lag holds. Weekly full walk only when stale queue empty
+ * for this ISO week (still runs once/week — never permanently skipped).
+ */
+async function pickNextBatch(cp: Checkpoint): Promise<{
+  cp: Checkpoint;
+  batch: string[];
+  mode: Mode;
 }> {
-  const at = new Date();
-  await refreshStxProductsByKickdbProductIds(productIds, { concurrency: CONCURRENCY });
-  // Always rotate lastFetchedAt so a KickDB blip cannot pin the same head forever.
-  await bumpKickdbLastFetchedAt(productIds, at);
+  const week = isoWeekKey();
+  let next = { ...cp, weekKey: week };
 
-  const svIds = await loadSupplierVariantIdsForKickdbProducts(productIds);
-  if (svIds.length === 0) return { shopifySynced: 0, shopifyFailed: 0 };
+  // 1) Stale first (cursor walk within stale set).
+  const staleBatch = await loadNextProductBatch({
+    mode: "stale",
+    cursor: next.mode === "stale" ? next.cursor : "",
+    limit: BATCH_PRODUCTS,
+  });
+  if (staleBatch.length > 0) {
+    if (next.mode !== "stale") {
+      next = { ...next, mode: "stale", cursor: "" };
+    }
+    return { cp: next, batch: staleBatch, mode: "stale" };
+  }
 
-  const plan = await runPlannedShopifyStxPriceSyncForSupplierVariantIds(svIds);
-  return {
-    shopifySynced: plan.shopify.synced,
-    shopifyFailed: plan.shopify.failed,
-  };
+  // Stale empty at this cursor — wrap once; if still empty → weekly or idle.
+  if (next.mode === "stale" && next.cursor) {
+    const wrap = await loadNextProductBatch({
+      mode: "stale",
+      cursor: "",
+      limit: BATCH_PRODUCTS,
+    });
+    if (wrap.length > 0) {
+      next = { ...next, mode: "stale", cursor: "" };
+      return { cp: next, batch: wrap, mode: "stale" };
+    }
+  }
+
+  // 2) Weekly full website when enabled and not completed this ISO week.
+  if (WEEKLY_FULL && next.weeklyCompletedWeekKey !== week) {
+    const weeklyCursor =
+      next.mode === "weekly" && next.weekKey === week ? next.cursor : "";
+    if (next.mode !== "weekly" || next.weekKey !== week || next.cursor !== weeklyCursor) {
+      if (weeklyCursor === "") {
+        console.info("[WORKER][STX_KEEP_CURRENT] starting weekly full website walk", {
+          week,
+        });
+      }
+      next = { ...next, mode: "weekly", weekKey: week, cursor: weeklyCursor };
+    }
+    const weeklyBatch = await loadNextProductBatch({
+      mode: "weekly",
+      cursor: next.cursor,
+      limit: BATCH_PRODUCTS,
+    });
+    if (weeklyBatch.length > 0) {
+      return { cp: next, batch: weeklyBatch, mode: "weekly" };
+    }
+    console.info("[WORKER][STX_KEEP_CURRENT] weekly walk complete", {
+      week,
+      stats: next.stats,
+    });
+    next = {
+      ...next,
+      mode: "stale",
+      cursor: "",
+      weeklyCompletedWeekKey: week,
+    };
+    saveCheckpoint(next);
+    return { cp: next, batch: [], mode: "stale" };
+  }
+
+  next = { ...next, mode: "stale", cursor: "" };
+  return { cp: next, batch: [], mode: "stale" };
 }
 
 async function runTick(cp: Checkpoint): Promise<Checkpoint> {
-  let next = maybeEnterWeekly(cp);
-  const batch = await loadNextProductBatch({
-    mode: next.mode,
-    cursor: next.cursor,
-    limit: BATCH_PRODUCTS,
-  });
+  const picked = await pickNextBatch(cp);
+  let next = picked.cp;
+  const batch = picked.batch;
 
   if (batch.length === 0) {
-    if (next.mode === "weekly") {
-      console.info("[WORKER][STX_KEEP_CURRENT] weekly walk complete", {
-        week: next.weekKey,
-        stats: next.stats,
-      });
-      next = {
-        ...next,
-        mode: "stale",
-        cursor: "",
-        weeklyCompletedWeekKey: next.weekKey,
-      };
-      saveCheckpoint(next);
-      return next;
-    }
-    // Stale queue empty — reset cursor so newly aged rows are picked next cycle.
-    if (next.cursor) {
-      next = { ...next, cursor: "" };
-      saveCheckpoint(next);
-    }
+    saveCheckpoint(next);
     return next;
   }
 
-  const result = await processBatch(batch);
+  const at = new Date();
+  console.info("[WORKER][STX_KEEP_CURRENT] kickdb refresh start", {
+    mode: picked.mode,
+    n: batch.length,
+  });
+  await refreshStxProductsByKickdbProductIds(batch, {
+    concurrency: CONCURRENCY,
+    // Galaxus feed stays on stx-refresh / SSE debounce — keep-current must not SFTP every batch.
+    skipMarketplaceFeedPush: true,
+  });
+  await bumpKickdbLastFetchedAt(batch, at);
+  console.info("[WORKER][STX_KEEP_CURRENT] kickdb refresh done", { n: batch.length });
+
+  // Cursor + age bump committed before Shopify — deploy/hang mid-push still ≤5d progress.
   next = {
     ...next,
+    mode: picked.mode,
     cursor: batch[batch.length - 1]!,
     stats: {
+      ...next.stats,
       productsTouched: next.stats.productsTouched + batch.length,
-      shopifySynced: next.stats.shopifySynced + result.shopifySynced,
-      shopifyFailed: next.stats.shopifyFailed + result.shopifyFailed,
       cycles: next.stats.cycles + 1,
+    },
+  };
+  saveCheckpoint(next);
+
+  let shopifySynced = 0;
+  let shopifyFailed = 0;
+  try {
+    const svIds = await loadSupplierVariantIdsForKickdbProducts(batch);
+    console.info("[WORKER][STX_KEEP_CURRENT] shopify plan start", { variants: svIds.length });
+    const CHUNK = 40;
+    for (let i = 0; i < svIds.length; i += CHUNK) {
+      const slice = svIds.slice(i, i + CHUNK);
+      const plan = await runPlannedShopifyStxPriceSyncForSupplierVariantIds(slice);
+      shopifySynced += plan.shopify.synced;
+      shopifyFailed += plan.shopify.failed;
+      console.info("[WORKER][STX_KEEP_CURRENT] shopify plan chunk", {
+        i: Math.floor(i / CHUNK) + 1,
+        of: Math.ceil(svIds.length / CHUNK) || 1,
+        needsPush: plan.needsPush,
+        synced: plan.shopify.synced,
+        failed: plan.shopify.failed,
+        unchanged: plan.unchanged,
+      });
+    }
+  } catch (err: unknown) {
+    console.error(
+      "[WORKER][STX_KEEP_CURRENT] shopify plan failed (KickDB already advanced)",
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  next = {
+    ...next,
+    stats: {
+      ...next.stats,
+      shopifySynced: next.stats.shopifySynced + shopifySynced,
+      shopifyFailed: next.stats.shopifyFailed + shopifyFailed,
     },
   };
   saveCheckpoint(next);
@@ -285,8 +354,8 @@ async function runTick(cp: Checkpoint): Promise<Checkpoint> {
     mode: next.mode,
     n: batch.length,
     cursor: next.cursor,
-    shopifySynced: result.shopifySynced,
-    shopifyFailed: result.shopifyFailed,
+    shopifySynced,
+    shopifyFailed,
     week: next.weekKey,
   });
   return next;
