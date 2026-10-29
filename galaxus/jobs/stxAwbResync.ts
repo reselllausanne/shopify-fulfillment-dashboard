@@ -10,12 +10,16 @@ type StxAwbResyncResult = {
   updatedUnits: number;
   updatedOrders: number;
   skippedReason?: "missing_token";
+  /** True when wall-clock budget ran out mid-pass (partial OK). */
+  budgetExhausted?: boolean;
 };
 
 type StxAwbResyncOptions = {
   minAgeHours?: number;
   limitUnits?: number;
   concurrency?: number;
+  /** Soft wall-clock budget; stops scheduling new order lookups when hit. */
+  budgetMs?: number;
   /** Optional caller-provided bearer (hourly cron passes the freshly minted one). */
   token?: string;
   /**
@@ -34,6 +38,10 @@ export async function runStxAwbResync(options: StxAwbResyncOptions = {}): Promis
   const minAgeHours = Math.max(1, options.minAgeHours ?? 48);
   const limitUnits = Math.max(1, options.limitUnits ?? 500);
   const concurrency = Math.max(1, options.concurrency ?? 2);
+  const deadlineAt =
+    options.budgetMs != null && Number.isFinite(options.budgetMs) && options.budgetMs > 0
+      ? Date.now() + Math.max(5_000, Math.floor(options.budgetMs))
+      : null;
   const cutoff = new Date(Date.now() - minAgeHours * 60 * 60 * 1000);
 
   // Prefer the caller-provided bearer (hourly cron already minted one), then
@@ -117,16 +125,25 @@ export async function runStxAwbResync(options: StxAwbResyncOptions = {}): Promis
   const limiter = createLimiter(concurrency);
   let updatedUnits = 0;
   let updatedOrders = 0;
+  let budgetExhausted = false;
 
   await Promise.all(
     orderIds.map((stockxOrderId) =>
       limiter(async () => {
+        if (deadlineAt != null && Date.now() >= deadlineAt) {
+          budgetExhausted = true;
+          return;
+        }
         let chainId = chainByOrderId.get(stockxOrderId) ?? "";
         let details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetails>> | null = null;
 
         // Iterate all account tokens until one returns a snapshot. StockX
         // returns 404 for buys that don't belong to the calling account.
         for (const attemptToken of tokenPool) {
+          if (deadlineAt != null && Date.now() >= deadlineAt) {
+            budgetExhausted = true;
+            return;
+          }
           if (chainId) {
             try {
               details = await fetchStockxBuyOrderDetails(attemptToken, {
@@ -187,5 +204,6 @@ export async function runStxAwbResync(options: StxAwbResyncOptions = {}): Promis
     uniqueOrders: orderIds.length,
     updatedUnits,
     updatedOrders,
+    ...(budgetExhausted ? { budgetExhausted: true } : {}),
   };
 }
