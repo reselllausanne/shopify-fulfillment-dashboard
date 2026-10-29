@@ -8,6 +8,7 @@ import {
 } from "@/app/api/scan-awb/catalogSkuLookup";
 import { expandGtinCandidates } from "@/lib/gtinCandidates";
 import { resolveShopifySkusForGtinCandidates } from "@/lib/shopifyGtinSkuResolve";
+import { searchLiveOpenShopifyLinesBySkus } from "@/lib/shopifyOpenOrdersBySku";
 import {
   computeShipmentCoverageForOrders,
   loadDelrShipmentIdsForOrders,
@@ -241,10 +242,32 @@ async function searchGalaxus(
 async function searchShopify(q: string, limit: number): Promise<SuggestItem[]> {
   const digits = digitsOnly(q);
   const contains: Prisma.StringFilter = { contains: q, mode: "insensitive" };
-  const skus =
+  const skusFromGtin =
     digits.length >= 8
       ? await resolveShopifySkusForGtinCandidates(expandGtinCandidates([digits]))
       : [];
+  // Typed style SKU (JR3733) + GTIN-resolved SKUs → live Admin open lines.
+  const liveSkuNeedles = Array.from(
+    new Set(
+      [q.trim(), ...skusFromGtin]
+        .map((s) => String(s ?? "").trim())
+        .filter((s) => s.length >= 2)
+    )
+  );
+
+  const livePromise =
+    liveSkuNeedles.length > 0
+      ? searchLiveOpenShopifyLinesBySkus({
+          skus: liveSkuNeedles,
+          take: limit * FETCH_MULTIPLIER,
+        }).catch((err) => {
+          console.warn(
+            "[scan-awb/suggest] live Shopify SKU search failed:",
+            err instanceof Error ? err.message : err
+          );
+          return [] as Awaited<ReturnType<typeof searchLiveOpenShopifyLinesBySkus>>;
+        })
+      : Promise.resolve([] as Awaited<ReturnType<typeof searchLiveOpenShopifyLinesBySkus>>);
 
   const or: Prisma.OrderMatchWhereInput[] = [
     { shopifyOrderName: contains },
@@ -252,30 +275,33 @@ async function searchShopify(q: string, limit: number): Promise<SuggestItem[]> {
     { shopifyProductTitle: contains },
     { stockxSkuKey: contains },
   ];
-  if (skus.length > 0) {
-    or.push({ shopifySku: { in: skus } });
+  if (skusFromGtin.length > 0) {
+    or.push({ shopifySku: { in: skusFromGtin } });
   }
 
-  const rows = await prisma.orderMatch.findMany({
-    where: {
-      OR: or,
-      returnAppliedAt: null,
-      // Drop fulfilled / ancient Shopify orders from typeahead.
-      shopifyCreatedAt: { gte: shopifyMatchMinCreatedAt() },
-    },
-    select: {
-      id: true,
-      shopifyOrderId: true,
-      shopifyOrderName: true,
-      shopifyLineItemId: true,
-      shopifySku: true,
-      shopifyProductTitle: true,
-      shopifySizeEU: true,
-      shopifyCreatedAt: true,
-    },
-    orderBy: { shopifyCreatedAt: "desc" },
-    take: limit * FETCH_MULTIPLIER,
-  });
+  const [liveLines, rows] = await Promise.all([
+    livePromise,
+    prisma.orderMatch.findMany({
+      where: {
+        OR: or,
+        returnAppliedAt: null,
+        // Drop fulfilled / ancient Shopify orders from typeahead.
+        shopifyCreatedAt: { gte: shopifyMatchMinCreatedAt() },
+      },
+      select: {
+        id: true,
+        shopifyOrderId: true,
+        shopifyOrderName: true,
+        shopifyLineItemId: true,
+        shopifySku: true,
+        shopifyProductTitle: true,
+        shopifySizeEU: true,
+        shopifyCreatedAt: true,
+      },
+      orderBy: { shopifyCreatedAt: "desc" },
+      take: limit * FETCH_MULTIPLIER,
+    }),
+  ]);
 
   const orderIds = Array.from(new Set(rows.map((r) => r.shopifyOrderId)));
   const [fulfilled, cancelled] = await Promise.all([
@@ -295,18 +321,42 @@ async function searchShopify(q: string, limit: number): Promise<SuggestItem[]> {
   const fulfilledSet = new Set(fulfilled.map((f) => f.shopifyOrderId));
   const cancelledSet = new Set(cancelled.map((c) => c.shopifyOrderId));
 
-  const items: SuggestItem[] = [];
+  const itemsByLineId = new Map<string, SuggestItem>();
+
+  for (const live of liveLines) {
+    const lineId = live.shopifyLineItemId;
+    if (!lineId || itemsByLineId.has(lineId)) continue;
+    itemsByLineId.set(lineId, {
+      id: `shopify:live:${lineId}`,
+      kind: "shopify",
+      orderId: live.shopifyOrderId,
+      orderDbId: live.shopifyOrderId,
+      orderNumber: live.shopifyOrderName ?? null,
+      orderDate: live.createdAt,
+      lineId,
+      supplierPid: String(live.shopifySku ?? "").trim(),
+      buyerPid: null,
+      gtin: digits.length >= 8 ? digits : null,
+      productName: live.productTitle || live.shopifySku || "—",
+      sizeEU: live.sizeTitle ?? null,
+      deliveryType: null,
+      customerCity: null,
+    });
+  }
+
   for (const row of rows) {
     if (fulfilledSet.has(row.shopifyOrderId)) continue;
     if (cancelledSet.has(row.shopifyOrderId)) continue;
-    items.push({
+    const lineId = String(row.shopifyLineItemId ?? "").trim();
+    if (!lineId || itemsByLineId.has(lineId)) continue;
+    itemsByLineId.set(lineId, {
       id: `shopify:${row.id}`,
       kind: "shopify",
       orderId: row.shopifyOrderId,
       orderDbId: row.id,
       orderNumber: row.shopifyOrderName ?? null,
       orderDate: (row.shopifyCreatedAt ?? new Date(0)).toISOString(),
-      lineId: row.shopifyLineItemId,
+      lineId,
       supplierPid: String(row.shopifySku ?? "").trim(),
       buyerPid: null,
       gtin: digits.length >= 8 ? digits : null,
@@ -316,7 +366,7 @@ async function searchShopify(q: string, limit: number): Promise<SuggestItem[]> {
       customerCity: null,
     });
   }
-  return items;
+  return Array.from(itemsByLineId.values());
 }
 
 async function searchDecathlon(

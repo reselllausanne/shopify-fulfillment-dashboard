@@ -24,6 +24,7 @@ import {
 import { galaxusScanDisplayRecipient } from "@/lib/swissPostRecipient";
 import { expandGtinCandidates } from "@/lib/gtinCandidates";
 import { resolveShopifySkusForGtinCandidates } from "@/lib/shopifyGtinSkuResolve";
+import { searchLiveOpenShopifyLinesBySkus } from "@/lib/shopifyOpenOrdersBySku";
 
 const DECATHLON_TERMINAL_STATES = new Set([
   "CANCELED",
@@ -316,6 +317,54 @@ async function loadShopifyGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
   const skus = await resolveShopifySkusForGtinCandidates(gtinCandidates);
   if (skus.length === 0 && expandedGtins.length === 0) return [];
 
+  // Primary: live Admin open lines (includes Website-stock dropship with no OrderMatch).
+  const liveLines =
+    skus.length > 0
+      ? await searchLiveOpenShopifyLinesBySkus({ skus, take: 40 }).catch((err) => {
+          console.warn(
+            "[gtinFallback] live Shopify SKU search failed:",
+            err instanceof Error ? err.message : err
+          );
+          return [] as Awaited<ReturnType<typeof searchLiveOpenShopifyLinesBySkus>>;
+        })
+      : [];
+
+  const rowsByLineId = new Map<string, GtinOrderRow>();
+  for (const live of liveLines) {
+    const lineId = live.shopifyLineItemId;
+    if (!lineId || rowsByLineId.has(lineId)) continue;
+    rowsByLineId.set(lineId, {
+      channel: "shopify",
+      // Prefer line-item id so fulfill works without an OrderMatch row.
+      lineId,
+      lineNumber: null,
+      productName: live.productTitle ?? null,
+      quantity: live.remainingQuantity,
+      ordered: live.remainingQuantity,
+      shipped: 0,
+      reserved: 0,
+      remaining: live.remainingQuantity,
+      warehouseMarkedShippedAt: null,
+      orderDate: live.createdAt,
+      orderNumber: live.shopifyOrderName,
+      cancelledAt: null,
+      recipient: {
+        name: live.customerName,
+        city: null,
+        postalCode: null,
+        countryCode: null,
+      },
+      shopifyOrderId: live.shopifyOrderId,
+      shopifyOrderName: live.shopifyOrderName,
+      shopifyLineItemId: live.shopifyLineItemId,
+      shopifySku: live.shopifySku,
+      hasAnyShipment: false,
+      hasStockxLink: false,
+    });
+  }
+
+  // Secondary: OrderMatch hints (local lot GTIN join + linked dropship) for anything
+  // live search missed — still verified against fulfillment records / freshness.
   const matchOr: Array<Record<string, unknown>> = [];
   if (skus.length > 0) {
     matchOr.push({ shopifySku: { in: skus } });
@@ -323,93 +372,90 @@ async function loadShopifyGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
   if (expandedGtins.length > 0) {
     matchOr.push({ localStockLot: { gtin: { in: expandedGtins } } });
   }
-  if (matchOr.length === 0) return [];
-
-  const matches = await prisma.orderMatch.findMany({
-    where: {
-      OR: matchOr as any,
-      returnAppliedAt: null,
-      shopifyCreatedAt: { gte: shopifyMatchMinCreatedAt() },
-    },
-    orderBy: [{ shopifyCreatedAt: "asc" }],
-    take: 40,
-    select: {
-      id: true,
-      shopifyOrderId: true,
-      shopifyOrderName: true,
-      shopifyLineItemId: true,
-      shopifySku: true,
-      shopifyProductTitle: true,
-      shopifyCreatedAt: true,
-      shopifyCustomerFirstName: true,
-      shopifyCustomerLastName: true,
-    },
-  });
-  if (matches.length === 0) return [];
-
-  const orderIds = Array.from(new Set(matches.map((m) => m.shopifyOrderId)));
-  const [fulfillmentRows, shopifyOrders] = await Promise.all([
-    prisma.shopifyFulfillmentRecord.findMany({
-      where: { shopifyOrderId: { in: orderIds } },
-      select: { shopifyOrderId: true },
-    }),
-    prisma.shopifyOrder.findMany({
-      where: { shopifyOrderId: { in: orderIds } },
-      select: { shopifyOrderId: true, cancelledAt: true, orderName: true },
-    }),
-  ]);
-  const fulfilledOrderIds = new Set(fulfillmentRows.map((r) => r.shopifyOrderId));
-  const cancelledOrderIds = new Set(
-    shopifyOrders.filter((o) => o.cancelledAt).map((o) => o.shopifyOrderId)
-  );
-  const orderNameById = new Map(shopifyOrders.map((o) => [o.shopifyOrderId, o.orderName]));
-
-  // Deduplicate by OrderMatch.id (location-stock join can duplicate).
-  const seen = new Set<string>();
-  const rows: GtinOrderRow[] = [];
-  for (const m of matches) {
-    if (seen.has(m.id)) continue;
-    seen.add(m.id);
-    // Belt: drop ancient rows even if DB filter missed null createdAt.
-    if (!isShopifyOrderMatchFresh(m.shopifyCreatedAt)) continue;
-    const cancelled = cancelledOrderIds.has(m.shopifyOrderId);
-    const alreadyFulfilled = fulfilledOrderIds.has(m.shopifyOrderId);
-    // Never surface fulfilled Shopify orders in GTIN match list / auto-fulfill.
-    if (alreadyFulfilled) continue;
-    const remaining = cancelled ? 0 : 1;
-    const name = [m.shopifyCustomerFirstName, m.shopifyCustomerLastName]
-      .map((x) => String(x ?? "").trim())
-      .filter(Boolean)
-      .join(" ");
-    rows.push({
-      channel: "shopify",
-      lineId: m.id,
-      lineNumber: null,
-      productName: m.shopifyProductTitle ?? null,
-      quantity: 1,
-      ordered: 1,
-      shipped: 0,
-      reserved: 0,
-      remaining,
-      warehouseMarkedShippedAt: null,
-      orderDate: (m.shopifyCreatedAt ?? new Date(0)).toISOString(),
-      orderNumber: m.shopifyOrderName ?? orderNameById.get(m.shopifyOrderId) ?? null,
-      cancelledAt: cancelled ? new Date().toISOString() : null,
-      recipient: {
-        name: name || null,
-        city: null,
-        postalCode: null,
-        countryCode: null,
+  if (matchOr.length > 0) {
+    const matches = await prisma.orderMatch.findMany({
+      where: {
+        OR: matchOr as any,
+        returnAppliedAt: null,
+        shopifyCreatedAt: { gte: shopifyMatchMinCreatedAt() },
       },
-      shopifyOrderId: m.shopifyOrderId,
-      shopifyOrderName: m.shopifyOrderName ?? orderNameById.get(m.shopifyOrderId) ?? null,
-      shopifyLineItemId: m.shopifyLineItemId,
-      shopifySku: m.shopifySku,
-      hasAnyShipment: false,
-      hasStockxLink: false,
+      orderBy: [{ shopifyCreatedAt: "asc" }],
+      take: 40,
+      select: {
+        id: true,
+        shopifyOrderId: true,
+        shopifyOrderName: true,
+        shopifyLineItemId: true,
+        shopifySku: true,
+        shopifyProductTitle: true,
+        shopifyCreatedAt: true,
+        shopifyCustomerFirstName: true,
+        shopifyCustomerLastName: true,
+      },
     });
+
+    if (matches.length > 0) {
+      const orderIds = Array.from(new Set(matches.map((m) => m.shopifyOrderId)));
+      const [fulfillmentRows, shopifyOrders] = await Promise.all([
+        prisma.shopifyFulfillmentRecord.findMany({
+          where: { shopifyOrderId: { in: orderIds } },
+          select: { shopifyOrderId: true },
+        }),
+        prisma.shopifyOrder.findMany({
+          where: { shopifyOrderId: { in: orderIds } },
+          select: { shopifyOrderId: true, cancelledAt: true, orderName: true },
+        }),
+      ]);
+      const fulfilledOrderIds = new Set(fulfillmentRows.map((r) => r.shopifyOrderId));
+      const cancelledOrderIds = new Set(
+        shopifyOrders.filter((o) => o.cancelledAt).map((o) => o.shopifyOrderId)
+      );
+      const orderNameById = new Map(shopifyOrders.map((o) => [o.shopifyOrderId, o.orderName]));
+
+      for (const m of matches) {
+        const lineItemId = String(m.shopifyLineItemId ?? "").trim();
+        if (!lineItemId || rowsByLineId.has(lineItemId)) continue;
+        if (!isShopifyOrderMatchFresh(m.shopifyCreatedAt)) continue;
+        if (fulfilledOrderIds.has(m.shopifyOrderId)) continue;
+        if (cancelledOrderIds.has(m.shopifyOrderId)) continue;
+        const name = [m.shopifyCustomerFirstName, m.shopifyCustomerLastName]
+          .map((x) => String(x ?? "").trim())
+          .filter(Boolean)
+          .join(" ");
+        rowsByLineId.set(lineItemId, {
+          channel: "shopify",
+          lineId: lineItemId,
+          lineNumber: null,
+          productName: m.shopifyProductTitle ?? null,
+          quantity: 1,
+          ordered: 1,
+          shipped: 0,
+          reserved: 0,
+          remaining: 1,
+          warehouseMarkedShippedAt: null,
+          orderDate: (m.shopifyCreatedAt ?? new Date(0)).toISOString(),
+          orderNumber: m.shopifyOrderName ?? orderNameById.get(m.shopifyOrderId) ?? null,
+          cancelledAt: null,
+          recipient: {
+            name: name || null,
+            city: null,
+            postalCode: null,
+            countryCode: null,
+          },
+          shopifyOrderId: m.shopifyOrderId,
+          shopifyOrderName: m.shopifyOrderName ?? orderNameById.get(m.shopifyOrderId) ?? null,
+          shopifyLineItemId: lineItemId,
+          shopifySku: m.shopifySku,
+          hasAnyShipment: false,
+          hasStockxLink: false,
+        });
+      }
+    }
   }
-  return rows;
+
+  return Array.from(rowsByLineId.values()).sort((a, b) =>
+    a.orderDate.localeCompare(b.orderDate)
+  );
 }
 
 async function loadDecathlonGtinOrders(gtinCandidates: string[]): Promise<GtinOrderRow[]> {
