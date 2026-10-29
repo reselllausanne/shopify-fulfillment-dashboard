@@ -2,6 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
 import { resolveStockxBuyByOrderNumberWithToken } from "@/decathlon/stx/manualStockxEnrich";
 import {
+  AWB_BUDGET_EXHAUSTED,
   carrierFromTrackingUrl,
   fetchBuyOrder,
   isRealStockxBuyRef,
@@ -32,6 +33,8 @@ export type DecathlonAwbBackfillOptions = {
   limit?: number;
   dryRun?: boolean;
   includeFulfilled?: boolean;
+  /** Soft wall-clock budget; partial OK with abortedReason=budget_exhausted. */
+  budgetMs?: number;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -202,6 +205,10 @@ export async function runDecathlonAwbBackfill(
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const candidates = await selectDecathlonAwbCandidates({ since, limit, includeFulfilled });
   const prismaAny = prisma as any;
+  const deadlineAt =
+    options.budgetMs != null && Number.isFinite(options.budgetMs) && options.budgetMs > 0
+      ? Date.now() + Math.max(5_000, Math.floor(options.budgetMs))
+      : null;
 
   const items: DecathlonAwbBackfillItem[] = [];
   let updated = 0;
@@ -210,6 +217,10 @@ export async function runDecathlonAwbBackfill(
   let abortedReason: string | null = null;
 
   for (const [index, candidate] of candidates.entries()) {
+    if (deadlineAt != null && Date.now() >= deadlineAt) {
+      abortedReason = AWB_BUDGET_EXHAUSTED;
+      break;
+    }
     const label = {
       channel: "decathlon" as const,
       decathlonOrderId: candidate.decathlonOrderId ?? null,

@@ -7,6 +7,7 @@ import {
   loadShipmentItemsForOrders,
 } from "@/galaxus/warehouse/shipmentLineCoverage";
 import {
+  AWB_BUDGET_EXHAUSTED,
   carrierFromTrackingUrl,
   fetchBuyOrder,
   isRealStockxBuyRef,
@@ -46,6 +47,8 @@ export type GalaxusAwbBackfillOptions = {
   limit?: number;
   dryRun?: boolean;
   includeFulfilled?: boolean;
+  /** Soft wall-clock budget; partial OK with abortedReason=budget_exhausted. */
+  budgetMs?: number;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -264,6 +267,10 @@ export async function runGalaxusAwbBackfill(
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const candidates = await selectGalaxusAwbCandidates({ since, limit, includeFulfilled });
   const prismaAny = prisma as any;
+  const deadlineAt =
+    options.budgetMs != null && Number.isFinite(options.budgetMs) && options.budgetMs > 0
+      ? Date.now() + Math.max(5_000, Math.floor(options.budgetMs))
+      : null;
 
   const items: GalaxusAwbBackfillItem[] = [];
   let updated = 0;
@@ -272,6 +279,10 @@ export async function runGalaxusAwbBackfill(
   let abortedReason: string | null = null;
 
   for (const [index, candidate] of candidates.entries()) {
+    if (deadlineAt != null && Date.now() >= deadlineAt) {
+      abortedReason = AWB_BUDGET_EXHAUSTED;
+      break;
+    }
     const label = {
       channel: "galaxus" as const,
       galaxusOrderRef: candidate.galaxusOrderRef ?? null,

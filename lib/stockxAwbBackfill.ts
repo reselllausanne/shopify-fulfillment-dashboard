@@ -61,7 +61,15 @@ export type AwbBackfillOptions = {
   includeFulfilled?: boolean;
   /** Cap for missing-chainId enrich pass (default 40). */
   enrichLimit?: number;
+  /**
+   * Soft wall-clock budget for this pass. When exhausted, returns partial results
+   * with abortedReason="budget_exhausted" so cron can finish before curl --max-time.
+   */
+  budgetMs?: number;
 };
+
+/** Shared abort reason when a timed cron pass stops early (partial OK). */
+export const AWB_BUDGET_EXHAUSTED = "budget_exhausted";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -159,11 +167,13 @@ export async function enrichMissingChainIdCandidates(args: {
   since: Date;
   limit?: number;
   dryRun?: boolean;
+  deadlineAt?: number;
 }): Promise<{
   attempted: number;
   enriched: number;
   failed: number;
   items: AwbEnrichHealItem[];
+  budgetExhausted: boolean;
 }> {
   const limit = Math.min(
     Math.max(Number(args.limit ?? ENRICH_MISSING_CHAIN_LIMIT) || ENRICH_MISSING_CHAIN_LIMIT, 1),
@@ -173,8 +183,13 @@ export async function enrichMissingChainIdCandidates(args: {
   const items: AwbEnrichHealItem[] = [];
   let enriched = 0;
   let failed = 0;
+  let budgetExhausted = false;
 
   for (const [index, row] of candidates.entries()) {
+    if (args.deadlineAt != null && Date.now() >= args.deadlineAt) {
+      budgetExhausted = true;
+      break;
+    }
     const stockxOrderNumber = String(row.stockxOrderNumber || "").trim();
     const label = {
       shopifyOrderName: row.shopifyOrderName,
@@ -208,7 +223,7 @@ export async function enrichMissingChainIdCandidates(args: {
     }
   }
 
-  return { attempted: candidates.length, enriched, failed, items };
+  return { attempted: items.length, enriched, failed, items, budgetExhausted };
 }
 
 /**
@@ -293,14 +308,22 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
 
   // Heal backlog: orderNumber present but chainId/orderId missing (skipped by selectAwbCandidates).
   // Cap per run so hourly cron drains without blowing StockX rate limits. No customer email.
+  const deadlineAt =
+    options.budgetMs != null && Number.isFinite(options.budgetMs) && options.budgetMs > 0
+      ? Date.now() + Math.max(5_000, Math.floor(options.budgetMs))
+      : null;
+
   const enrichHeal = await enrichMissingChainIdCandidates({
     since,
     limit: enrichLimit,
     dryRun,
+    deadlineAt: deadlineAt ?? undefined,
   });
   if (enrichHeal.attempted > 0) {
     console.log(
-      `[STOCKX-AWB] enrich missing chainId: attempted=${enrichHeal.attempted} ok=${enrichHeal.enriched} fail=${enrichHeal.failed}`
+      `[STOCKX-AWB] enrich missing chainId: attempted=${enrichHeal.attempted} ok=${enrichHeal.enriched} fail=${enrichHeal.failed}${
+        enrichHeal.budgetExhausted ? " budget_exhausted" : ""
+      }`
     );
   }
 
@@ -311,9 +334,13 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
   let emailsSent = 0;
   let authFailures = 0;
   let consecutiveAuthFailures = 0;
-  let abortedReason: string | null = null;
+  let abortedReason: string | null = enrichHeal.budgetExhausted ? AWB_BUDGET_EXHAUSTED : null;
 
   for (const [index, candidate] of candidates.entries()) {
+    if (deadlineAt != null && Date.now() >= deadlineAt) {
+      abortedReason = AWB_BUDGET_EXHAUSTED;
+      break;
+    }
     const label = {
       shopifyOrderName: candidate.shopifyOrderName,
       stockxOrderNumber: candidate.stockxOrderNumber,
