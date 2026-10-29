@@ -227,7 +227,6 @@ export async function listUnboughtGalaxusStxCandidates(opts?: {
       const linked = await (prisma as any).galaxusStockxMatch.count({
         where: {
           galaxusOrderLineId: line.id,
-          NOT: { stockxOrderNumber: null },
           stockxOrderNumber: { not: "" },
         },
       });
