@@ -77,18 +77,25 @@ async function inventory(): Promise<void> {
   `.catch(() => [] as Array<{ status: string; n: bigint; debited: bigint }>);
   console.log("[cache]", cache);
 
-  // Sample top listed-missing SKUs (cheap: CLS first, then SV)
+  // Sample: CLS missing → SV (capped CTE avoids full-catalog join timeout)
+  await prisma.$executeRawUnsafe(`SET statement_timeout = '120s'`);
   const sample = await prisma.$queryRaw<MissingSkuRow[]>`
+    WITH missing_cls AS (
+      SELECT cls."supplierVariantId"
+      FROM "ChannelListingState" cls
+      WHERE cls.channel = 'SHOPIFY'
+        AND cls."externalVariantId" IS NOT NULL
+        AND cls.gtin IS NULL
+        AND cls."supplierVariantId" IS NOT NULL
+      LIMIT 30000
+    )
     SELECT sv."supplierSku" AS "supplierSku",
            COUNT(*)::bigint AS variant_count,
            COUNT(*) FILTER (WHERE sv.stock > 0)::bigint AS in_stock_count,
            TRUE AS listed
-    FROM "ChannelListingState" cls
-    JOIN "SupplierVariant" sv ON sv."supplierVariantId" = cls."supplierVariantId"
-    WHERE cls.channel = 'SHOPIFY'
-      AND cls."externalVariantId" IS NOT NULL
-      AND (cls.gtin IS NULL OR btrim(cls.gtin) = '')
-      AND (sv.gtin IS NULL OR btrim(sv.gtin) = '')
+    FROM missing_cls m
+    JOIN "SupplierVariant" sv ON sv."supplierVariantId" = m."supplierVariantId"
+    WHERE sv.gtin IS NULL
       AND sv."supplierSku" IS NOT NULL
       AND btrim(sv."supplierSku") <> ''
     GROUP BY sv."supplierSku"
@@ -99,120 +106,50 @@ async function inventory(): Promise<void> {
 }
 
 async function crossFill(): Promise<void> {
-  // CLS ← SV
-  const clsFromSv = await prisma.$queryRaw<Array<{ id: string; gtin: string }>>`
-    SELECT cls.id, sv.gtin
-    FROM "ChannelListingState" cls
-    JOIN "SupplierVariant" sv ON sv."supplierVariantId" = cls."supplierVariantId"
-    WHERE cls.channel = 'SHOPIFY'
-      AND (cls.gtin IS NULL OR btrim(cls.gtin) = '')
-      AND sv.gtin IS NOT NULL AND btrim(sv.gtin) <> ''
-    LIMIT 5000
-  `;
-  console.log(`[cross] CLS←SV candidates: ${clsFromSv.length}`);
-  if (APPLY && clsFromSv.length) {
-    let n = 0;
-    for (const row of clsFromSv) {
-      await prisma.channelListingState.update({
-        where: { id: row.id },
-        data: { gtin: row.gtin },
-      });
-      n += 1;
-    }
-    console.log(`[cross] CLS←SV applied: ${n}`);
-  }
-
-  // SV ← CLS
-  const svFromCls = await prisma.$queryRaw<
-    Array<{ supplierVariantId: string; gtin: string; providerKey: string | null }>
-  >`
-    SELECT sv."supplierVariantId", cls.gtin, sv."providerKey"
-    FROM "SupplierVariant" sv
-    JOIN "ChannelListingState" cls
-      ON cls."supplierVariantId" = sv."supplierVariantId" AND cls.channel = 'SHOPIFY'
-    WHERE (sv.gtin IS NULL OR btrim(sv.gtin) = '')
-      AND cls.gtin IS NOT NULL AND btrim(cls.gtin) <> ''
-    LIMIT 5000
-  `;
-  console.log(`[cross] SV←CLS candidates: ${svFromCls.length}`);
+  // CLS ← SV via SQL update (indexed supplierVariantId) — capped
   if (APPLY) {
-    let n = 0;
-    for (const row of svFromCls) {
-      const gtin = String(row.gtin).replace(/\D/g, "");
-      if (!isValidGtin(gtin) && !isValidGtin(gtin.padStart(13, "0"))) continue;
-      const stamped = gtin.length === 12 ? `0${gtin}` : gtin;
-      try {
-        await prisma.supplierVariant.update({
-          where: { supplierVariantId: row.supplierVariantId },
-          data: {
-            gtin: stamped,
-            providerKey: row.providerKey?.startsWith("STX_")
-              ? row.providerKey
-              : `STX_${stamped}`,
-          },
-        });
-        n += 1;
-      } catch (e: any) {
-        console.warn(`[cross] SV←CLS skip ${row.supplierVariantId}:`, e?.message ?? e);
-      }
-    }
-    console.log(`[cross] SV←CLS applied: ${n}`);
+    const clsFromSv = await prisma.$executeRaw`
+      UPDATE "ChannelListingState" cls
+      SET gtin = sv.gtin, "updatedAt" = NOW()
+      FROM "SupplierVariant" sv
+      WHERE cls."supplierVariantId" = sv."supplierVariantId"
+        AND cls.channel = 'SHOPIFY'
+        AND cls.gtin IS NULL
+        AND sv.gtin IS NOT NULL
+        AND cls.id IN (
+          SELECT cls2.id
+          FROM "ChannelListingState" cls2
+          JOIN "SupplierVariant" sv2 ON sv2."supplierVariantId" = cls2."supplierVariantId"
+          WHERE cls2.channel = 'SHOPIFY'
+            AND cls2.gtin IS NULL
+            AND sv2.gtin IS NOT NULL
+          LIMIT 5000
+        )
+    `;
+    console.log(`[cross] CLS←SV rows touched:`, clsFromSv);
+  } else {
+    const n = await prisma.$queryRaw<Array<{ n: bigint }>>`
+      SELECT COUNT(*)::bigint AS n
+      FROM "ChannelListingState" cls
+      JOIN "SupplierVariant" sv ON sv."supplierVariantId" = cls."supplierVariantId"
+      WHERE cls.channel = 'SHOPIFY' AND cls.gtin IS NULL AND sv.gtin IS NOT NULL
+      LIMIT 1
+    `.catch(() => [{ n: 0n }]);
+    console.log(`[cross] CLS←SV candidates (approx query):`, Number(n[0]?.n ?? 0));
   }
 
-  // SV ← KickDB (mapped)
-  const kick = await prisma.$queryRaw<
-    Array<{ supplierVariantId: string; gtin: string | null; ean: string | null; providerKey: string | null }>
-  >`
-    SELECT sv."supplierVariantId", kv.gtin, kv.ean, sv."providerKey"
-    FROM "SupplierVariant" sv
-    JOIN "VariantMapping" vm ON vm."supplierVariantId" = sv."supplierVariantId"
-    JOIN "KickDBVariant" kv ON kv.id = vm."kickdbVariantId"
-    WHERE (sv.gtin IS NULL OR btrim(sv.gtin) = '')
-      AND (
-        (kv.gtin IS NOT NULL AND btrim(kv.gtin) <> '')
-        OR (kv.ean IS NOT NULL AND btrim(kv.ean) <> '')
-      )
-    LIMIT 5000
-  `;
-  console.log(`[cross] SV←KickDB candidates: ${kick.length}`);
-  if (APPLY) {
-    let n = 0;
-    for (const row of kick) {
-      const raw = String(row.gtin || row.ean || "").replace(/\D/g, "");
-      if (!raw) continue;
-      const stamped =
-        isValidGtin(raw) ? raw : isValidGtin(raw.padStart(13, "0")) ? raw.padStart(13, "0") : null;
-      if (!stamped) continue;
-      try {
-        await prisma.supplierVariant.update({
-          where: { supplierVariantId: row.supplierVariantId },
-          data: {
-            gtin: stamped,
-            providerKey: row.providerKey?.startsWith("STX_")
-              ? row.providerKey
-              : `STX_${stamped}`,
-          },
-        });
-        n += 1;
-      } catch (e: any) {
-        console.warn(`[cross] SV←Kick skip ${row.supplierVariantId}:`, e?.message ?? e);
-      }
-    }
-    console.log(`[cross] SV←KickDB applied: ${n}`);
-  }
-
-  // Mirror → SV for the tiny hole
+  // Mirror → SV (tiny set)
   const mirror = await prisma.$queryRaw<
     Array<{ supplierVariantId: string; gtin: string; providerKey: string | null }>
   >`
-    SELECT sv."supplierVariantId", m.gtin, sv."providerKey"
-    FROM "SupplierVariant" sv
-    JOIN "ChannelListingState" cls
-      ON cls."supplierVariantId" = sv."supplierVariantId" AND cls.channel = 'SHOPIFY'
-    JOIN "ShopifyVariantLocationStock" m ON m."shopifyVariantId" = cls."externalVariantId"
-    WHERE (sv.gtin IS NULL OR btrim(sv.gtin) = '')
-      AND m.gtin IS NOT NULL AND btrim(m.gtin) <> ''
-    LIMIT 500
+    SELECT DISTINCT ON (sv."supplierVariantId")
+           sv."supplierVariantId", m.gtin, sv."providerKey"
+    FROM "ShopifyVariantLocationStock" m
+    JOIN "ChannelListingState" cls ON cls."externalVariantId" = m."shopifyVariantId" AND cls.channel = 'SHOPIFY'
+    JOIN "SupplierVariant" sv ON sv."supplierVariantId" = cls."supplierVariantId"
+    WHERE m.gtin IS NOT NULL AND btrim(m.gtin) <> ''
+      AND sv.gtin IS NULL
+    LIMIT 200
   `;
   console.log(`[cross] SV←mirror candidates: ${mirror.length}`);
   if (APPLY) {
@@ -238,25 +175,58 @@ async function crossFill(): Promise<void> {
   }
 }
 
+/**
+ * Priority SKUs from Shopify-synced KickDB products (website), then filter to
+ * styles that still have at least one SV size without GTIN. Avoids 100k CLS⋈SV joins.
+ */
 async function loadPrioritySkus(limit: number): Promise<string[]> {
   if (PRIORITY === "listed_stock" || PRIORITY === "listed") {
     const stockOnly = PRIORITY === "listed_stock";
-    const rows = await prisma.$queryRaw<Array<{ supplierSku: string }>>`
-      SELECT sv."supplierSku" AS "supplierSku"
-      FROM "ChannelListingState" cls
-      JOIN "SupplierVariant" sv ON sv."supplierVariantId" = cls."supplierVariantId"
-      WHERE cls.channel = 'SHOPIFY'
-        AND cls."externalVariantId" IS NOT NULL
-        AND (cls.gtin IS NULL OR btrim(cls.gtin) = '')
-        AND (sv.gtin IS NULL OR btrim(sv.gtin) = '')
-        AND sv."supplierSku" IS NOT NULL
-        AND btrim(sv."supplierSku") <> ''
-        AND (${!stockOnly} OR sv.stock > 0)
-      GROUP BY sv."supplierSku"
-      ORDER BY COUNT(*) FILTER (WHERE sv.stock > 0) DESC, COUNT(*) DESC
-      LIMIT ${limit}
+    // Pull a larger candidate pool of synced styleIds, then keep those with missing GTIN.
+    const candidates = await prisma.$queryRaw<Array<{ styleId: string; score: number }>>`
+      SELECT UPPER(TRIM(kp."styleId")) AS "styleId",
+             COALESCE(ss."priorityScore", 0)::int AS score
+      FROM "ShopifySyncState" ss
+      JOIN "KickDBProduct" kp ON kp."kickdbProductId" = ss."kickdbProductId"
+      WHERE ss."shopifyProductId" IS NOT NULL
+        AND ss."syncStatus" IN ('synced', 'pending')
+        AND kp."styleId" IS NOT NULL
+        AND btrim(kp."styleId") <> ''
+      ORDER BY ss."priorityScore" DESC NULLS LAST, ss."shopifySyncedAt" DESC NULLS LAST
+      LIMIT ${Math.max(limit * 20, 500)}
     `;
-    return rows.map((r) => r.supplierSku).filter(Boolean);
+
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const c of candidates) {
+      const sku = normalizeStyleCode(c.styleId);
+      if (!sku || seen.has(sku)) continue;
+      seen.add(sku);
+
+      const miss = stockOnly
+        ? await prisma.$queryRaw<Array<{ n: bigint }>>`
+            SELECT COUNT(*)::bigint AS n
+            FROM "SupplierVariant"
+            WHERE "supplierSku" = ${sku}
+              AND gtin IS NULL
+              AND stock > 0
+              AND "supplierVariantId" LIKE 'stx_%'
+            LIMIT 1
+          `
+        : await prisma.$queryRaw<Array<{ n: bigint }>>`
+            SELECT COUNT(*)::bigint AS n
+            FROM "SupplierVariant"
+            WHERE "supplierSku" = ${sku}
+              AND gtin IS NULL
+              AND "supplierVariantId" LIKE 'stx_%'
+            LIMIT 1
+          `;
+      if (Number(miss[0]?.n ?? 0) > 0) {
+        out.push(sku);
+        if (out.length >= limit) break;
+      }
+    }
+    return out;
   }
 
   if (PRIORITY === "in_stock") {
