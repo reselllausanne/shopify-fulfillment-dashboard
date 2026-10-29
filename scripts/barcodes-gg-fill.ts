@@ -40,6 +40,27 @@ const SLEEP_MS = Math.max(0, Number(argVal("sleep-ms", "50")) || 50);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+async function withDbRetry<T>(fn: () => Promise<T>, label: string, attempts = 5): Promise<T> {
+  let last: unknown;
+  for (let i = 1; i <= attempts; i += 1) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      last = e;
+      const msg = String(e?.message ?? e);
+      const transient =
+        /Can't reach database server|P1001|P1017|Connection reset|ECONNRESET|ETIMEDOUT|timeout/i.test(
+          msg
+        );
+      if (!transient || i === attempts) throw e;
+      const wait = Math.min(30_000, 1000 * 2 ** (i - 1));
+      console.warn(`[db-retry] ${label} attempt ${i}/${attempts} wait ${wait}ms: ${msg.slice(0, 120)}`);
+      await sleep(wait);
+    }
+  }
+  throw last;
+}
+
 type MissingSkuRow = {
   supplierSku: string;
   variant_count: bigint;
@@ -332,7 +353,7 @@ async function fillFromApi(): Promise<void> {
     const style = normalizeStyleCode(sku);
     if (!style) continue;
 
-    const lookup = await lookupStyleDetails(style);
+    const lookup = await withDbRetry(() => lookupStyleDetails(style), `lookup:${style}`);
     if (lookup.fromCache) stats.cacheHits += 1;
     else {
       stats.apiCalls += 1;
@@ -346,7 +367,7 @@ async function fillFromApi(): Promise<void> {
     if (lookup.status !== "found" || lookup.picks.length === 0) continue;
     stats.found += 1;
 
-    const variants = await loadVariantsForSku(sku);
+    const variants = await withDbRetry(() => loadVariantsForSku(sku), `variants:${sku}`);
     for (const v of variants) {
       const pick = matchSizeToPicked(v.sizeRaw, v.sizeNormalized, lookup.picks);
       if (!pick) {
@@ -357,24 +378,26 @@ async function fillFromApi(): Promise<void> {
 
       if (APPLY) {
         try {
-          await prisma.supplierVariant.update({
-            where: { supplierVariantId: v.supplierVariantId },
-            data: {
-              gtin: pick.gtin,
-              ...(v.providerKey?.startsWith("STX_")
-                ? {}
-                : { providerKey: `STX_${pick.gtin}` }),
-            },
-          });
-          if (v.externalVariantId) {
-            await prisma.channelListingState.updateMany({
-              where: {
-                supplierVariantId: v.supplierVariantId,
-                channel: "SHOPIFY",
+          await withDbRetry(async () => {
+            await prisma.supplierVariant.update({
+              where: { supplierVariantId: v.supplierVariantId },
+              data: {
+                gtin: pick.gtin,
+                ...(v.providerKey?.startsWith("STX_")
+                  ? {}
+                  : { providerKey: `STX_${pick.gtin}` }),
               },
-              data: { gtin: pick.gtin },
             });
-          }
+            if (v.externalVariantId) {
+              await prisma.channelListingState.updateMany({
+                where: {
+                  supplierVariantId: v.supplierVariantId,
+                  channel: "SHOPIFY",
+                },
+                data: { gtin: pick.gtin },
+              });
+            }
+          }, `write:${v.supplierVariantId}`);
           stats.variantsWritten += 1;
         } catch (e: any) {
           const msg = String(e?.message ?? e);
