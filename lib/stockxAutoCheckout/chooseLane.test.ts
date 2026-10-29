@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   chooseLane,
   chooseLaneByCsAtMargin,
+  chooseLaneByGalaxusExpressFirst,
   classifyLaneLabel,
   countDistinctShippingTierInText,
   extractCheckoutSubtotalChf,
@@ -430,6 +431,55 @@ describe("chooseLaneByCsAtMargin", () => {
       expect(result.lane.label).toBe("EXPEDITED");
       expect(result.lane.totalChf).toBe(128.44);
     }
+  });
+});
+
+describe("chooseLaneByGalaxusExpressFirst", () => {
+  it("picks EXPRESS when gap modest", () => {
+    const result = chooseLaneByGalaxusExpressFirst(
+      lanes([
+        ["Standard", 125.12],
+        ["Express", 128.44],
+      ])
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("EXPRESS");
+  });
+
+  it("picks STANDARD when standard ≤50% of express", () => {
+    const result = chooseLaneByGalaxusExpressFirst(
+      lanes([
+        ["Standard", 112.95],
+        ["Express", 252.36],
+      ])
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.lane.label).toBe("STANDARD");
+      expect(result.lane.totalChf).toBe(112.95);
+    }
+  });
+
+  it("only express → EXPRESS", () => {
+    const result = chooseLaneByGalaxusExpressFirst(lanes([["Express", 140]]));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("EXPRESS");
+  });
+
+  it("only standard (single tier) → STANDARD", () => {
+    const result = chooseLaneByGalaxusExpressFirst(lanes([["Standard", 106]]), {
+      shippingTierInText: 1,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.lane.label).toBe("STANDARD");
+  });
+
+  it("fail closed multi-tier without express parse", () => {
+    const result = chooseLaneByGalaxusExpressFirst(lanes([["Standard", 106]]), {
+      shippingTierInText: 2,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("express_unparsed");
   });
 });
 
