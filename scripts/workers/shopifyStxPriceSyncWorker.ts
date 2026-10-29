@@ -21,7 +21,7 @@
  *   SHOPIFY_STX_SYNC_BATCH_SIZE    default 50 gtins per call
  *   SHOPIFY_STX_SYNC_BATCH_SLEEP_MS  default 1500 (throttle Shopify writes)
  *   SHOPIFY_STX_SYNC_ONLY_ON_SHOPIFY  default "1" (set "0" to scan every GTIN)
- *   SHOPIFY_STX_SYNC_MIN_AGE_HOURS   default 168 (7d safety net; SSE handles hot path)
+ *   SHOPIFY_STX_SYNC_MIN_AGE_HOURS   default 48 (safety net; SSE handles hot path)
  *   SHOPIFY_STX_SYNC_MAX_GTINS_PER_CYCLE  default 3000
  *   SHOPIFY_STX_SYNC_PENDING_LIMIT   default 500 (TCG / high stock first)
  *   SHOPIFY_STX_SYNC_LOAD_TIMEOUT    default 300s (pooled statement_timeout is ~2min)
@@ -57,7 +57,7 @@ const BATCH_SLEEP_MS = Math.max(
 // write quota. 0 disables the guard (full rescan every cycle).
 const MIN_AGE_HOURS = Math.max(
   0,
-  Number(process.env.SHOPIFY_STX_SYNC_MIN_AGE_HOURS ?? 168)
+  Number(process.env.SHOPIFY_STX_SYNC_MIN_AGE_HOURS ?? 48)
 );
 const MAX_GTINS_PER_CYCLE = Math.max(
   0,
