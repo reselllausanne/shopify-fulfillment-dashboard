@@ -40,7 +40,7 @@ const SLEEP_MS = Math.max(0, Number(argVal("sleep-ms", "50")) || 50);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function withDbRetry<T>(fn: () => Promise<T>, label: string, attempts = 5): Promise<T> {
+async function withDbRetry<T>(fn: () => Promise<T>, label: string, attempts = 6): Promise<T> {
   let last: unknown;
   for (let i = 1; i <= attempts; i += 1) {
     try {
@@ -48,14 +48,25 @@ async function withDbRetry<T>(fn: () => Promise<T>, label: string, attempts = 5)
     } catch (e: any) {
       last = e;
       const msg = String(e?.message ?? e);
+      const code = String(e?.code ?? "");
       const transient =
-        /Can't reach database server|P1001|P1017|Connection reset|ECONNRESET|ETIMEDOUT|timeout/i.test(
+        /Can't reach database server|Server has closed the connection|Closed|P1001|P1017|Connection reset|ECONNRESET|ETIMEDOUT|timed out|timeout/i.test(
           msg
-        );
+        ) || code === "P1001" || code === "P1017";
       if (!transient || i === attempts) throw e;
-      const wait = Math.min(30_000, 1000 * 2 ** (i - 1));
-      console.warn(`[db-retry] ${label} attempt ${i}/${attempts} wait ${wait}ms: ${msg.slice(0, 120)}`);
+      const wait = Math.min(45_000, 1500 * 2 ** (i - 1));
+      console.warn(`[db-retry] ${label} attempt ${i}/${attempts} wait ${wait}ms: ${msg.slice(0, 140)}`);
+      try {
+        await prisma.$disconnect();
+      } catch {
+        /* ignore */
+      }
       await sleep(wait);
+      try {
+        await prisma.$connect();
+      } catch {
+        /* next attempt will retry */
+      }
     }
   }
   throw last;
