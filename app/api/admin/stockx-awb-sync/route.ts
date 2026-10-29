@@ -198,6 +198,19 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (autoLinkOnly) {
+      return NextResponse.json({
+        ok: true,
+        autoLinkOnly: true,
+        refresh: { ok: refresh.ok, reused: refresh.reused, error: refresh.error },
+        galaxusRefresh: galaxusRefresh
+          ? { ok: galaxusRefresh.ok, reused: galaxusRefresh.reused, error: galaxusRefresh.error }
+          : null,
+        galaxusAutoLink,
+        shopifyAutoLink,
+      });
+    }
+
     const shared = { token, days, limit, dryRun, includeFulfilled: false as const };
     // Shopify: newly linked OrderMatches (above) + enrich missing chainId + AWB/status.
     const shopify = await runAwbBackfill(shared);
