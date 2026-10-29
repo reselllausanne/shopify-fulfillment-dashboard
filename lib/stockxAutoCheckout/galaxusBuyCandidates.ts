@@ -203,41 +203,86 @@ export async function resolveGalaxusStxBuyCandidate(input: {
 export async function listUnboughtGalaxusStxCandidates(opts?: {
   limit?: number;
   galaxusOrderId?: string;
+  /** Inclusive orderDate upper bound (default: none). */
+  orderDateLte?: Date;
 }): Promise<GalaxusBuyCandidate[]> {
   const limit = Math.max(1, Math.min(200, opts?.limit ?? 50));
-  const orders = await prisma.galaxusOrder.findMany({
-    where: {
-      archivedAt: null,
-      cancelledAt: null,
-      ...(opts?.galaxusOrderId
-        ? { galaxusOrderId: String(opts.galaxusOrderId) }
-        : {}),
-    },
-    orderBy: { orderDate: "asc" },
-    take: opts?.galaxusOrderId ? 5 : 400,
-    include: { lines: true },
-  });
+  /**
+   * Pull unbought STX lines via SQL (not "first N orders") so Oct backlog is not
+   * skipped when hundreds of older fully-linked orders exist.
+   */
+  const orderIdFilter = opts?.galaxusOrderId
+    ? String(opts.galaxusOrderId).trim()
+    : null;
+  const dateLte = opts?.orderDateLte ?? null;
+  const rows = await prisma.$queryRawUnsafe<
+    Array<{
+      orderDbId: string;
+      galaxusOrderId: string;
+      orderDate: Date | null;
+      lineId: string;
+    }>
+  >(
+    `
+    SELECT o.id as "orderDbId",
+           o."galaxusOrderId" as "galaxusOrderId",
+           o."orderDate" as "orderDate",
+           l.id as "lineId"
+    FROM "GalaxusOrder" o
+    JOIN "GalaxusOrderLine" l ON l."orderId" = o.id
+    WHERE o."archivedAt" IS NULL
+      AND o."cancelledAt" IS NULL
+      AND (
+        l."providerKey" ILIKE 'STX_%'
+        OR l."supplierPid" ILIKE 'STX_%'
+        OR l."supplierSku" ILIKE 'STX_%'
+      )
+      AND COALESCE(l."providerKey",'') NOT ILIKE 'THE_%'
+      AND COALESCE(l."providerKey",'') NOT ILIKE 'NER_%'
+      AND COALESCE(l."providerKey",'') NOT ILIKE 'GLD_%'
+      AND NOT EXISTS (
+        SELECT 1 FROM "GalaxusStockxMatch" m
+        WHERE m."galaxusOrderLineId" = l.id
+          AND COALESCE(m."stockxOrderNumber", '') <> ''
+      )
+      ${orderIdFilter ? `AND o."galaxusOrderId" = $1` : ""}
+      ${dateLte ? `AND o."orderDate" <= ${orderIdFilter ? "$2" : "$1"}` : ""}
+    ORDER BY o."orderDate" ASC NULLS LAST, l."lineNumber" ASC NULLS LAST
+    LIMIT ${Math.max(limit * 8, 80)}
+    `,
+    ...(orderIdFilter && dateLte
+      ? [orderIdFilter, dateLte]
+      : orderIdFilter
+        ? [orderIdFilter]
+        : dateLte
+          ? [dateLte]
+          : [])
+  );
 
   const out: GalaxusBuyCandidate[] = [];
-  for (const order of orders) {
-    for (const line of order.lines ?? []) {
-      if (!isGalaxusStxSupplierLine(line)) continue;
-      if (galaxusLineWarehouseStockHint(line)) continue;
+  for (const row of rows) {
+    const order = await prisma.galaxusOrder.findUnique({
+      where: { id: row.orderDbId },
+      include: { lines: { where: { id: row.lineId } } },
+    });
+    const line = order?.lines?.[0];
+    if (!order || !line) continue;
+    if (!isGalaxusStxSupplierLine(line)) continue;
+    if (galaxusLineWarehouseStockHint(line)) continue;
 
-      const linked = await (prisma as any).galaxusStockxMatch.count({
-        where: {
-          galaxusOrderLineId: line.id,
-          stockxOrderNumber: { not: "" },
-        },
-      });
-      const qty = Math.max(1, Math.round(Number(line.quantity ?? 1)));
-      if (linked >= qty) continue;
+    const linked = await prisma.galaxusStockxMatch.count({
+      where: {
+        galaxusOrderLineId: line.id,
+        stockxOrderNumber: { not: "" },
+      },
+    });
+    const qty = Math.max(1, Math.round(Number(line.quantity ?? 1)));
+    if (linked >= qty) continue;
 
-      const resolved = await resolveGalaxusStxBuyCandidate({ order, line });
-      if (!resolved.ok) continue;
-      out.push(resolved.candidate);
-      if (out.length >= limit) return out;
-    }
+    const resolved = await resolveGalaxusStxBuyCandidate({ order, line });
+    if (!resolved.ok) continue;
+    out.push(resolved.candidate);
+    if (out.length >= limit) return out;
   }
   return out;
 }
