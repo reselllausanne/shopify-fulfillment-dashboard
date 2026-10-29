@@ -246,26 +246,34 @@ async function fetchExportCsv(origin: string, path: string): Promise<string> {
   return res.text();
 }
 
+function maybeExposeGc(): void {
+  try {
+    if (typeof global.gc === "function") global.gc();
+  } catch {
+    // expose-gc not enabled — ignore
+  }
+}
+
+/**
+ * Stock + offer exports each peak near the old-space limit when run in-process.
+ * Never build both at once (Promise.all doubled the heap and OOMed ~8GB during
+ * stock paginate). Build → parse → persist → free → GC, one scope at a time.
+ */
 export async function rebuildFeedSnapshotFromExports(origin: string): Promise<{
   stockRows: number;
   offerRows: number;
   ms: number;
 }> {
   const startedAt = Date.now();
-  const [stockCsv, offerCsv] = await Promise.all([
-    fetchExportCsv(origin, "/api/galaxus/export/stock?all=1"),
-    fetchExportCsv(origin, "/api/galaxus/export/offer?all=1"),
-  ]);
 
+  console.info("[GALAXUS][FEED][SNAPSHOT] rebuild phase", { phase: "export-stock" });
+  let stockCsv = await fetchExportCsv(origin, "/api/galaxus/export/stock?all=1");
   const stockParsed = parseCsvToRows(stockCsv);
-  const offerParsed = parseCsvToRows(offerCsv);
-  const offerHeaders =
-    offerParsed.headers.length > 0 ? offerParsed.headers : defaultOfferCsvHeaders();
-
-  if (stockParsed.rows.length === 0 || offerParsed.rows.length === 0) {
-    throw new Error(
-      `Refusing to rebuild snapshot from empty export (stock=${stockParsed.rows.length}, offer=${offerParsed.rows.length})`
-    );
+  stockCsv = "";
+  maybeExposeGc();
+  const stockRowCount = stockParsed.rows.length;
+  if (stockRowCount === 0) {
+    throw new Error(`Refusing to rebuild snapshot from empty export (stock=0)`);
   }
 
   // Invalidate before wiping. The rebuild is delete-then-insert across two tables and
@@ -279,15 +287,37 @@ export async function rebuildFeedSnapshotFromExports(origin: string): Promise<{
     headers: [...GALAXUS_STOCK_CSV_HEADERS],
     rows: stockParsed.rows,
   });
+  stockParsed.rows.length = 0;
+  maybeExposeGc();
+
+  console.info("[GALAXUS][FEED][SNAPSHOT] rebuild phase", {
+    phase: "export-offer",
+    stockRowsPersisted: stockRowCount,
+  });
+  let offerCsv = await fetchExportCsv(origin, "/api/galaxus/export/offer?all=1");
+  const offerParsed = parseCsvToRows(offerCsv);
+  offerCsv = "";
+  maybeExposeGc();
+  const offerHeaders =
+    offerParsed.headers.length > 0 ? offerParsed.headers : defaultOfferCsvHeaders();
+  const offerRowCount = offerParsed.rows.length;
+  if (offerRowCount === 0) {
+    throw new Error(
+      `Refusing to rebuild snapshot from empty export (stock=${stockRowCount}, offer=0)`
+    );
+  }
+
   await bulkReplaceSnapshotRows({
     table: "offer",
     headers: offerHeaders,
     rows: offerParsed.rows,
   });
+  offerParsed.rows.length = 0;
+  maybeExposeGc();
 
   await assertSnapshotRowCounts({
-    stockExpected: stockParsed.rows.length,
-    offerExpected: offerParsed.rows.length,
+    stockExpected: stockRowCount,
+    offerExpected: offerRowCount,
   });
 
   const now = new Date();
@@ -295,16 +325,16 @@ export async function rebuildFeedSnapshotFromExports(origin: string): Promise<{
     where: { id: SNAPSHOT_META_ID },
     create: {
       id: SNAPSHOT_META_ID,
-      stockRowCount: stockParsed.rows.length,
-      offerRowCount: offerParsed.rows.length,
+      stockRowCount,
+      offerRowCount,
       stockHeadersJson: [...GALAXUS_STOCK_CSV_HEADERS],
       offerHeadersJson: offerHeaders,
       rebuiltAt: now,
       updatedAt: now,
     },
     update: {
-      stockRowCount: stockParsed.rows.length,
-      offerRowCount: offerParsed.rows.length,
+      stockRowCount,
+      offerRowCount,
       stockHeadersJson: [...GALAXUS_STOCK_CSV_HEADERS],
       offerHeadersJson: offerHeaders,
       rebuiltAt: now,
@@ -313,14 +343,14 @@ export async function rebuildFeedSnapshotFromExports(origin: string): Promise<{
   });
 
   console.info("[GALAXUS][FEED][SNAPSHOT] rebuilt", {
-    stockRows: stockParsed.rows.length,
-    offerRows: offerParsed.rows.length,
+    stockRows: stockRowCount,
+    offerRows: offerRowCount,
     ms: Date.now() - startedAt,
   });
 
   return {
-    stockRows: stockParsed.rows.length,
-    offerRows: offerParsed.rows.length,
+    stockRows: stockRowCount,
+    offerRows: offerRowCount,
     ms: Date.now() - startedAt,
   };
 }
