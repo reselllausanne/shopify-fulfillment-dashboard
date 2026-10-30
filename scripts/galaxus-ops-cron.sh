@@ -295,6 +295,27 @@ run_master_specs_snapshot_rebuild() {
   log "DONE rebuild-master-specs-snapshot"
 }
 
+# Postgres COPY → CSV → SFTP. Feed-worker Prisma stream hangs/OOM on ~7M specs rows.
+run_master_specs_copy_push() {
+  local dump_dir="${GALAXUS_MASTER_SPECS_DUMP_DIR:-/var/tmp/galaxus-master-specs-snap}"
+  log "START master-specs COPY dump + SFTP (dir=$dump_dir)"
+  rm -rf "$dump_dir"
+  mkdir -p "$dump_dir"
+  if ! bash scripts/dump-galaxus-master-specs-snapshot-csv.sh "$dump_dir"; then
+    log "ERROR: master-specs COPY dump failed"
+    return 1
+  fi
+  if ! docker compose run --rm --no-deps \
+    -e GALAXUS_MASTER_SPECS_PREBUILT_DIR="$dump_dir" \
+    -v "$dump_dir:$dump_dir" \
+    worker-ops-background \
+    npx tsx scripts/sftp-galaxus-master-specs-csv.ts; then
+    log "ERROR: master-specs SFTP of COPY CSVs failed"
+    return 1
+  fi
+  log "DONE master-specs COPY dump + SFTP"
+}
+
 handle_master_failure() {
   local msg="$1"
   MASTER_FAILED=1
@@ -330,24 +351,20 @@ case "$ACTION" in
     run_image_sync_full || true
     log "START full-flow (stock/offer snapshots -> master/specs snapshot -> stock + price + master-specs)"
     run_snapshot_rebuild || true
-    # Rebuild master/specs snapshot on ops-background BEFORE enqueueing push so the
-    # feed worker streams from DB instead of live-building (OOM path).
+    # Rebuild master/specs snapshot on ops-background BEFORE stock/price wait so catalog
+    # identity is fresh; push master via COPY+SFTP (not feed-worker Prisma stream).
     if ! run_master_specs_snapshot_rebuild; then
       handle_master_failure "master/specs snapshot rebuild failed" || exit 1
     fi
-    # Enqueue all three up front so the per-scope worker can run them in parallel.
-    # Then wait sequentially for verification. Never abort before master — new ProviderKeys
-    # only land via master, and a stuck stock wait used to skip it for a whole night.
     step_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     post_json '{"action":"push-stock"}' >/dev/null || log "WARN: enqueue push-stock failed"
     post_json '{"action":"push-price"}' >/dev/null || log "WARN: enqueue push-price failed"
-    post_json '{"action":"push-master-specs"}' >/dev/null || log "WARN: enqueue push-master-specs failed"
     wait_scope_success "stock" "$step_started" "$WAIT_SEC" \
-      || log "WARN: stock failed/timed out — continuing (master already queued)"
+      || log "WARN: stock failed/timed out — continuing to master COPY push"
     wait_scope_success "price" "$step_started" "$WAIT_SEC" \
-      || log "WARN: price failed/timed out — continuing (master already queued)"
-    if ! wait_scope_success "master-specs" "$step_started" "$MASTER_WAIT_SEC"; then
-      handle_master_failure "push-master-specs failed/timed out" || exit 1
+      || log "WARN: price failed/timed out — continuing to master COPY push"
+    if ! run_master_specs_copy_push; then
+      handle_master_failure "master-specs COPY/SFTP failed" || exit 1
     fi
     if [[ "$MASTER_FAILED" == "1" ]]; then
       log "DONE full-flow (master WARN — see above; MASTER_NONBLOCKING=1)"
@@ -356,13 +373,16 @@ case "$ACTION" in
     fi
     ;;
   push-master-specs)
-    # Nightly durable path: rebuild snap on ops-background, then feed worker streams [SNAPSHOT].
-    # Never enqueue push after a failed rebuild — live build OOMs the feed worker.
+    # Nightly durable: rebuild snap → Postgres COPY CSVs → SFTP (ops-background).
+    # Never use feed-worker Prisma stream for 7M specs (hangs / heap blowup).
     if ! run_master_specs_snapshot_rebuild; then
       log "ERROR: push-master-specs aborted — snapshot rebuild failed (no live fallback)"
       exit 1
     fi
-    run_push "push-master-specs"
+    if ! run_master_specs_copy_push; then
+      log "ERROR: push-master-specs aborted — COPY/SFTP failed"
+      exit 1
+    fi
     log "DONE push-master-specs"
     ;;
   full-push)
