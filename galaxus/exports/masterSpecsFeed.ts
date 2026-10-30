@@ -148,7 +148,7 @@ function parseReicheltNoteDescription(manualNote: unknown): string | null {
   }
 }
 
-function buildMasterRowsFromCandidates(
+export function buildMasterRowsFromCandidates(
   exportCandidates: FeedExportCandidate[],
   stockBySupplierVariantId: Map<string, number>,
   includeWeight: boolean,
@@ -318,7 +318,7 @@ function buildMasterRowsFromCandidates(
   return rows;
 }
 
-function buildSpecsRowsFromCandidates(exportCandidates: FeedExportCandidate[]): ExportRow[] {
+export function buildSpecsRowsFromCandidates(exportCandidates: FeedExportCandidate[]): ExportRow[] {
   const rows: ExportRow[] = [];
   for (const candidate of exportCandidates) {
     const variant = candidate.variant as any;

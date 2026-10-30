@@ -75,6 +75,195 @@ function extractSupplierKey(supplierVariantId?: string | null): string | null {
   return rawKey ? rawKey.toLowerCase() : null;
 }
 
+/** Score fields only — Phase-2 master snap keeps ~2.3M of these, not full Prisma graphs. */
+export type SlimGtinWinner = {
+  mappingId: string;
+  providerKey: string;
+  gtin: string;
+  sellPriceExVat: number;
+  stock: number;
+  updatedAtMs: number;
+};
+
+type RankableCandidate = {
+  sellPriceExVat: number;
+  stock: number;
+  updatedAtMs: number;
+};
+
+function isBetterRankable(
+  candidate: RankableCandidate,
+  existing: RankableCandidate,
+  preferInStock: boolean
+): boolean {
+  if (preferInStock) {
+    const existingInStock = existing.stock > 0;
+    const candidateInStock = candidate.stock > 0;
+    if (candidateInStock && !existingInStock) return true;
+    if (!candidateInStock && existingInStock) return false;
+  }
+  const priceDelta = candidate.sellPriceExVat - existing.sellPriceExVat;
+  if (priceDelta < 0) return true;
+  if (priceDelta > 0) return false;
+  if (candidate.stock > existing.stock) return true;
+  if (candidate.stock < existing.stock) return false;
+  return candidate.updatedAtMs > existing.updatedAtMs;
+}
+
+function tryBuildVariantCandidate(
+  mapping: any,
+  options: AccumulateOptions | undefined,
+  isMerchant: boolean,
+  partnerKeysLower: Set<string>,
+  requireProductName: boolean,
+  requireImage: boolean
+): VariantCandidate | null {
+  const variant = mapping.supplierVariant ?? null;
+  if (!variant) return null;
+  const supplierKey =
+    extractSupplierKey(variant?.supplierVariantId ?? mapping?.supplierVariantId ?? null) ??
+    (mapping?.supplierKey ? String(mapping.supplierKey).trim().toLowerCase() : null) ??
+    extractSupplierKey(variant?.providerKey ?? mapping?.providerKey ?? null);
+
+  // TRM permanently blocked. GLD (Golden) is allowed — MOQ 3, DD=0, 15% landed pricing.
+  if (supplierKey === "trm") {
+    options?.onExclude?.({ reason: "SUPPLIER_BLOCKED", supplierKey, mapping, variant });
+    return null;
+  }
+
+  // BAE stays in candidates so stock feed can emit QuantityOnStock=0 (delist).
+  // Master/offer routes call isBaeFeedBlocked separately.
+  if (
+    shouldOmitWelPokemonFromGalaxusFeed({
+      supplierKey,
+      providerKey: variant?.providerKey ?? mapping?.providerKey,
+      supplierVariantId: variant?.supplierVariantId ?? mapping?.supplierVariantId,
+      title: variant?.supplierProductName,
+      brand: variant?.supplierBrand,
+      extraText: [
+        mapping?.kickdbVariant?.product?.name,
+        mapping?.kickdbVariant?.product?.brand,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    })
+  ) {
+    options?.onExclude?.({
+      reason: "SUPPLIER_BLOCKED",
+      supplierKey: supplierKey ?? "wel",
+      mapping,
+      variant,
+    });
+    return null;
+  }
+
+  // STX feed gate — Tali policy (2026-09-09): hard cap CHF 10k, mainstream
+  // brands > CHF 500 dropped, hand-curated aberrant overrides always dropped.
+  // Focus + luxury/haute-couture (incl. Bearbrick / KAWS / Travis Scott) stay.
+  {
+    const stxGate = shouldOmitStxFromGalaxusFeed({
+      supplierKey,
+      providerKey: variant?.providerKey ?? mapping?.providerKey,
+      supplierVariantId: variant?.supplierVariantId ?? mapping?.supplierVariantId,
+      supplierBrand: variant?.supplierBrand,
+      price: variant?.price ?? null,
+    });
+    if (stxGate.omit) {
+      options?.onExclude?.({
+        reason: "SUPPLIER_BLOCKED",
+        supplierKey: supplierKey ?? "stx",
+        mapping,
+        variant,
+      });
+      return null;
+    }
+  }
+
+  const gtin = String(mapping.gtin ?? variant?.gtin ?? "").trim();
+  if (!gtin) {
+    return null;
+  }
+  if (!validateGtin(gtin)) {
+    options?.onExclude?.({
+      reason: "INVALID_GTIN",
+      supplierKey,
+      mapping,
+      variant,
+    });
+    return null;
+  }
+
+  const productName = variant?.supplierProductName ?? null;
+  if (requireProductName && !productName) {
+    options?.onExclude?.({
+      reason: "MISSING_PRODUCT_NAME",
+      supplierKey,
+      mapping,
+      variant,
+    });
+    return null;
+  }
+
+  const product = mapping.kickdbVariant?.product ?? null;
+  if (requireImage && !hasPrimaryImage(variant)) {
+    options?.onExclude?.({
+      reason: "MISSING_IMAGE",
+      supplierKey,
+      mapping,
+      variant,
+    });
+    return null;
+  }
+
+  const buyPrice = parseNumber(variant?.price);
+  if (!buyPrice || buyPrice <= 0) {
+    options?.onExclude?.({
+      reason: "INVALID_PRICE",
+      supplierKey,
+      mapping,
+      variant,
+    });
+    return null;
+  }
+
+  let sellPriceExVat = buyPrice;
+  if (!isMerchant) {
+    const bwzShip =
+      String(supplierKey ?? "").toLowerCase() === "bwz"
+        ? bwzShipChfFromManualNote(variant?.manualNote)
+        : null;
+    sellPriceExVat = resolveGalaxusSellExVatForChannel(buyPrice, supplierKey, partnerKeysLower, {
+      deliveryType: variant?.deliveryType ?? null,
+      shippingPerPairChf: bwzShip,
+    });
+  }
+
+  const stock = Number.parseInt(String(variant?.stock ?? 0), 10);
+  const updatedAt = new Date(variant?.updatedAt ?? mapping.updatedAt ?? Date.now());
+
+  const providerKey = buildProviderKey(gtin, variant?.supplierVariantId);
+  if (!providerKey || !isValidProviderKeyWithGtin(providerKey)) {
+    options?.onExclude?.({
+      reason: "INVALID_PROVIDER_KEY",
+      supplierKey,
+      mapping,
+      variant,
+    });
+    return null;
+  }
+
+  return {
+    mapping,
+    variant,
+    product,
+    gtin,
+    providerKey,
+    sellPriceExVat,
+    stock: Number.isFinite(stock) ? stock : 0,
+    updatedAt,
+  };
+}
+
 export function accumulateBestCandidates(
   mappings: any[],
   bestByGtin: Map<string, VariantCandidate>,
@@ -88,184 +277,38 @@ export function accumulateBestCandidates(
   const partnerKeysLower = options?.galaxusPartnerKeysLower ?? new Set<string>();
 
   for (const mapping of mappings) {
-    const variant = mapping.supplierVariant ?? null;
-    if (!variant) continue;
-    const supplierKey =
-      extractSupplierKey(variant?.supplierVariantId ?? mapping?.supplierVariantId ?? null) ??
-      (mapping?.supplierKey ? String(mapping.supplierKey).trim().toLowerCase() : null) ??
-      extractSupplierKey(variant?.providerKey ?? mapping?.providerKey ?? null);
-
-    // TRM permanently blocked. GLD (Golden) is allowed — MOQ 3, DD=0, 15% landed pricing.
-    if (supplierKey === "trm") {
-      options?.onExclude?.({ reason: "SUPPLIER_BLOCKED", supplierKey, mapping, variant });
-      continue;
-    }
-
-    // BAE stays in candidates so stock feed can emit QuantityOnStock=0 (delist).
-    // Master/offer routes call isBaeFeedBlocked separately.
-    if (
-      shouldOmitWelPokemonFromGalaxusFeed({
-        supplierKey,
-        providerKey: variant?.providerKey ?? mapping?.providerKey,
-        supplierVariantId: variant?.supplierVariantId ?? mapping?.supplierVariantId,
-        title: variant?.supplierProductName,
-        brand: variant?.supplierBrand,
-        extraText: [
-          mapping?.kickdbVariant?.product?.name,
-          mapping?.kickdbVariant?.product?.brand,
-        ]
-          .filter(Boolean)
-          .join(" "),
-      })
-    ) {
-      options?.onExclude?.({
-        reason: "SUPPLIER_BLOCKED",
-        supplierKey: supplierKey ?? "wel",
-        mapping,
-        variant,
-      });
-      continue;
-    }
-
-    // STX feed gate — Tali policy (2026-09-09): hard cap CHF 10k, mainstream
-    // brands > CHF 500 dropped, hand-curated aberrant overrides always dropped.
-    // Focus + luxury/haute-couture (incl. Bearbrick / KAWS / Travis Scott) stay.
-    {
-      const stxGate = shouldOmitStxFromGalaxusFeed({
-        supplierKey,
-        providerKey: variant?.providerKey ?? mapping?.providerKey,
-        supplierVariantId: variant?.supplierVariantId ?? mapping?.supplierVariantId,
-        supplierBrand: variant?.supplierBrand,
-        price: variant?.price ?? null,
-      });
-      if (stxGate.omit) {
-        options?.onExclude?.({
-          reason: "SUPPLIER_BLOCKED",
-          supplierKey: supplierKey ?? "stx",
-          mapping,
-          variant,
-        });
-        continue;
-      }
-    }
-
-    const gtin = String(mapping.gtin ?? variant?.gtin ?? "").trim();
-    if (!gtin) {
-      continue;
-    }
-    if (!validateGtin(gtin)) {
-      options?.onExclude?.({
-        reason: "INVALID_GTIN",
-        supplierKey,
-        mapping,
-        variant,
-      });
-      continue;
-    }
-
-    const productName = variant?.supplierProductName ?? null;
-    if (requireProductName && !productName) {
-      options?.onExclude?.({
-        reason: "MISSING_PRODUCT_NAME",
-        supplierKey,
-        mapping,
-        variant,
-      });
-      continue;
-    }
-
-    const product = mapping.kickdbVariant?.product ?? null;
-    if (requireImage && !hasPrimaryImage(variant)) {
-      options?.onExclude?.({
-        reason: "MISSING_IMAGE",
-        supplierKey,
-        mapping,
-        variant,
-      });
-      continue;
-    }
-
-    const buyPrice = parseNumber(variant?.price);
-    if (!buyPrice || buyPrice <= 0) {
-      options?.onExclude?.({
-        reason: "INVALID_PRICE",
-        supplierKey,
-        mapping,
-        variant,
-      });
-      continue;
-    }
-
-    let sellPriceExVat = buyPrice;
-    if (!isMerchant) {
-      const bwzShip =
-        String(supplierKey ?? "").toLowerCase() === "bwz"
-          ? bwzShipChfFromManualNote(variant?.manualNote)
-          : null;
-      sellPriceExVat = resolveGalaxusSellExVatForChannel(buyPrice, supplierKey, partnerKeysLower, {
-        deliveryType: variant?.deliveryType ?? null,
-        shippingPerPairChf: bwzShip,
-      });
-    }
-
-    const stock = Number.parseInt(String(variant?.stock ?? 0), 10);
-    const updatedAt = new Date(variant?.updatedAt ?? mapping.updatedAt ?? Date.now());
-
-    const providerKey = buildProviderKey(gtin, variant?.supplierVariantId);
-    if (!providerKey || !isValidProviderKeyWithGtin(providerKey)) {
-      options?.onExclude?.({
-        reason: "INVALID_PROVIDER_KEY",
-        supplierKey,
-        mapping,
-        variant,
-      });
-      continue;
-    }
-
-    const candidate: VariantCandidate = {
+    const candidate = tryBuildVariantCandidate(
       mapping,
-      variant,
-      product,
-      gtin,
-      providerKey,
-      sellPriceExVat,
-      stock: Number.isFinite(stock) ? stock : 0,
-      updatedAt,
-    };
+      options,
+      isMerchant,
+      partnerKeysLower,
+      requireProductName,
+      requireImage
+    );
+    if (!candidate) continue;
 
-    const mapKey = keyBy === "providerKey" ? providerKey : gtin;
+    const mapKey = keyBy === "providerKey" ? candidate.providerKey : candidate.gtin;
     const existing = bestByGtin.get(mapKey);
     if (!existing) {
       bestByGtin.set(mapKey, candidate);
       continue;
     }
 
-    if (preferInStock) {
-      const existingInStock = existing.stock > 0;
-      const candidateInStock = candidate.stock > 0;
-      if (candidateInStock && !existingInStock) {
-        bestByGtin.set(mapKey, candidate);
-        continue;
-      }
-      if (!candidateInStock && existingInStock) {
-        continue;
-      }
-    }
-
-    const priceDelta = candidate.sellPriceExVat - existing.sellPriceExVat;
-    if (priceDelta < 0) {
-      bestByGtin.set(mapKey, candidate);
-      continue;
-    }
-    if (priceDelta > 0) continue;
-
-    if (candidate.stock > existing.stock) {
-      bestByGtin.set(mapKey, candidate);
-      continue;
-    }
-    if (candidate.stock < existing.stock) continue;
-
-    if (candidate.updatedAt > existing.updatedAt) {
+    if (
+      isBetterRankable(
+        {
+          sellPriceExVat: candidate.sellPriceExVat,
+          stock: candidate.stock,
+          updatedAtMs: candidate.updatedAt.getTime(),
+        },
+        {
+          sellPriceExVat: existing.sellPriceExVat,
+          stock: existing.stock,
+          updatedAtMs: existing.updatedAt.getTime(),
+        },
+        preferInStock
+      )
+    ) {
       bestByGtin.set(mapKey, candidate);
     }
   }
@@ -273,8 +316,57 @@ export function accumulateBestCandidates(
   return bestByGtin;
 }
 
+/**
+ * Same GTIN winner rules as accumulateBestCandidates, but only keeps mappingId +
+ * score fields. Peak for ~2.3M GTINs stays hundreds of MB, not multi-GB Prisma graphs.
+ */
+export function accumulateSlimGtinWinners(
+  mappings: any[],
+  bestByGtin: Map<string, SlimGtinWinner>,
+  options?: AccumulateOptions
+) {
+  const isMerchant = GALAXUS_PRICE_MODEL === "merchant";
+  const requireProductName = options?.requireProductName !== false;
+  const requireImage = options?.requireImage !== false;
+  const preferInStock = options?.preferInStock === true;
+  const partnerKeysLower = options?.galaxusPartnerKeysLower ?? new Set<string>();
+
+  for (const mapping of mappings) {
+    const mappingId = String(mapping?.id ?? "").trim();
+    if (!mappingId) continue;
+    const candidate = tryBuildVariantCandidate(
+      mapping,
+      options,
+      isMerchant,
+      partnerKeysLower,
+      requireProductName,
+      requireImage
+    );
+    if (!candidate) continue;
+
+    const slim: SlimGtinWinner = {
+      mappingId,
+      providerKey: candidate.providerKey,
+      gtin: candidate.gtin,
+      sellPriceExVat: candidate.sellPriceExVat,
+      stock: candidate.stock,
+      updatedAtMs: candidate.updatedAt.getTime(),
+    };
+    const existing = bestByGtin.get(candidate.gtin);
+    if (!existing) {
+      bestByGtin.set(candidate.gtin, slim);
+      continue;
+    }
+    if (isBetterRankable(slim, existing, preferInStock)) {
+      bestByGtin.set(candidate.gtin, slim);
+    }
+  }
+
+  return bestByGtin;
+}
+
 export function filterExportCandidates<
-  T extends { gtin?: string; providerKey?: string; variant?: any; mapping?: any }
+  T extends { gtin?: string | null; providerKey?: string; variant?: any; mapping?: any }
 >(candidates: T[]) {
   const valid: T[] = [];
   const invalidSupplierVariantIds: string[] = [];
