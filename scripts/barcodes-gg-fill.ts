@@ -17,12 +17,15 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
+import { classifySuggestedSellCategory } from "@/galaxus/pricing/suggestedSellPrice";
+import { isLegoStxSlug } from "@/galaxus/stx/legoProduct";
 import { fetchTokenUsage, lookupStyleDetails } from "@/lib/barcodesGg/client";
 import { matchSizeToPicked, normalizeStyleCode } from "@/lib/barcodesGg/gtinPick";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { setVariantBarcode } from "@/shopify/restock/shopifyRestockInventory";
 
-type Priority = "listed_stock" | "listed" | "in_stock" | "all";
+/** Catalogue STX: lego → clothing, then sneaker/listed pools. */
+type Priority = "lego" | "clothing" | "listed_stock" | "listed" | "in_stock" | "all";
 
 function argFlag(name: string): boolean {
   return process.argv.includes(`--${name}`);
@@ -209,10 +212,86 @@ async function crossFill(): Promise<void> {
 }
 
 /**
- * Priority SKUs from Shopify-synced KickDB products (website), then filter to
- * styles that still have at least one SV size without GTIN. Avoids 100k CLS⋈SV joins.
+ * Catalogue buckets first (lego → clothing), then Shopify-listed / in_stock.
+ * Skip styles already in BarcodesGgStyleCache (hits+misses) to avoid recycle.
  */
 async function loadPrioritySkus(limit: number): Promise<string[]> {
+  if (PRIORITY === "lego") {
+    const rows = await prisma.$queryRaw<Array<{ supplierSku: string }>>`
+      SELECT sv."supplierSku"
+      FROM "SupplierVariant" sv
+      LEFT JOIN "BarcodesGgStyleCache" c
+        ON c."styleCode" = UPPER(TRIM(sv."supplierSku"))
+      WHERE sv."supplierVariantId" LIKE 'stx_%'
+        AND (sv.gtin IS NULL OR btrim(sv.gtin) = '')
+        AND sv."supplierSku" IS NOT NULL
+        AND btrim(sv."supplierSku") <> ''
+        AND c."styleCode" IS NULL
+        AND (
+          lower(coalesce(sv."supplierBrand", '')) LIKE '%lego%'
+          OR lower(coalesce(sv."supplierProductName", '')) LIKE '%lego%'
+          OR lower(coalesce(sv."supplierSku", '')) LIKE '%lego%'
+        )
+      GROUP BY sv."supplierSku"
+      ORDER BY SUM(GREATEST(sv.stock, 0)) DESC, COUNT(*) DESC
+      LIMIT ${limit}
+    `;
+    return rows
+      .map((r) => normalizeStyleCode(r.supplierSku))
+      .filter((s): s is string => Boolean(s));
+  }
+
+  if (PRIORITY === "clothing") {
+    const pool = Math.min(Math.max(limit * 20, 3000), 40000);
+    const candidates = await prisma.$queryRaw<
+      Array<{
+        supplierSku: string;
+        name: string | null;
+        urlKey: string | null;
+        brand: string | null;
+        supplierProductName: string | null;
+      }>
+    >`
+      SELECT sv."supplierSku" AS "supplierSku",
+             MAX(kp.name) AS name,
+             MAX(kp."urlKey") AS "urlKey",
+             MAX(COALESCE(kp.brand, sv."supplierBrand")) AS brand,
+             MAX(sv."supplierProductName") AS "supplierProductName"
+      FROM "SupplierVariant" sv
+      LEFT JOIN "KickDBProduct" kp ON kp."styleId" = sv."supplierSku"
+      LEFT JOIN "BarcodesGgStyleCache" c
+        ON c."styleCode" = UPPER(TRIM(sv."supplierSku"))
+      WHERE sv."supplierVariantId" LIKE 'stx_%'
+        AND (sv.gtin IS NULL OR btrim(sv.gtin) = '')
+        AND sv."supplierSku" IS NOT NULL
+        AND btrim(sv."supplierSku") <> ''
+        AND sv.stock > 0
+        AND c."styleCode" IS NULL
+      GROUP BY sv."supplierSku"
+      ORDER BY SUM(sv.stock) DESC
+      LIMIT ${pool}
+    `;
+
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const c of candidates) {
+      const sku = normalizeStyleCode(c.supplierSku);
+      if (!sku || seen.has(sku)) continue;
+      const handle = String(c.urlKey ?? c.supplierSku ?? "");
+      const name = String(c.supplierProductName ?? c.name ?? c.brand ?? "");
+      if (isLegoStxSlug(handle) || /lego/i.test(name) || /lego/i.test(handle)) continue;
+      const cat = classifySuggestedSellCategory({
+        productHandle: handle,
+        productName: name,
+      });
+      if (cat !== "clothing") continue;
+      seen.add(sku);
+      out.push(sku);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
   if (PRIORITY === "listed_stock" || PRIORITY === "listed") {
     const stockOnly = PRIORITY === "listed_stock";
     const pool = Math.min(Math.max(limit * 8, 800), 15000);
@@ -539,7 +618,9 @@ async function main() {
   console.log(`Usage:
   --inventory
   --cross-fill [--apply]
-  --fill --priority=listed_stock|listed|in_stock|all --limit=N [--apply] [--shopify] [--sleep-ms=50]`);
+  --fill --priority=lego|clothing|listed_stock|listed|in_stock|all --limit=N [--apply] [--shopify] [--sleep-ms=50]
+
+Catalogue order: lego → clothing → then sneaker/listed pools.`);
 }
 
 main()
