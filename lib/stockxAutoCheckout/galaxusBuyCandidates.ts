@@ -240,6 +240,8 @@ export async function listUnboughtGalaxusStxCandidates(opts?: {
       AND COALESCE(l."providerKey",'') NOT ILIKE 'THE_%'
       AND COALESCE(l."providerKey",'') NOT ILIKE 'NER_%'
       AND COALESCE(l."providerKey",'') NOT ILIKE 'GLD_%'
+      AND o."galaxusOrderId" NOT ILIKE 'GX-TEST%'
+      AND o."galaxusOrderId" NOT ILIKE 'PO-GX-TEST%'
       AND NOT EXISTS (
         SELECT 1 FROM "GalaxusStockxMatch" m
         WHERE m."galaxusOrderLineId" = l.id

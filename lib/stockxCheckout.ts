@@ -37,6 +37,7 @@ import {
 import {
   apparelLetterSize,
   buildStockxBuyUrl,
+  buildStockxCheckoutBuyUrl,
   convertEuToUs,
   inferBrandFromTitle,
 } from "@/lib/stockxAutoCheckout/sizeUsFallback";
@@ -1892,7 +1893,8 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
     title: c.productName,
     brand: inferBrandFromTitle(c.productName),
   });
-  const productUrl = buildStockxBuyUrl(c.slug, sizeUS);
+  // Hard checkout deep-link — same path every time (lane pick + Place Order).
+  const checkoutUrl = buildStockxCheckoutBuyUrl(c.slug, sizeUS || c.sizeEU);
 
   let ctx: BrowserContext | null = null;
   let ownsContext = false;
@@ -1911,28 +1913,37 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
     }
 
     if (!options.skipGoto) {
-      await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.goto(checkoutUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
       await page.waitForTimeout(3500);
     } else {
       await page.waitForTimeout(800);
     }
     await dismissNoise(page);
 
-    const sized = await selectSizeEuOrUs(page, c.sizeEU, sizeUS);
-    if (!sized.ok) {
-      return {
-        kind: "needs_human",
-        reason: "size_us_map",
-        detail: sizeUS ? `EU+US select failed (US ${sizeUS})` : "EU select failed + no US map",
-      };
+    // Already on /buy/?size= (batch softNav or goto above) → skip PDP size + Buy Now.
+    const onCheckout =
+      /\/buy\//i.test(page.url()) ||
+      (await page
+        .getByRole("button", { name: /Passer commande|Place Order|Review|Confirmer/i })
+        .first()
+        .isVisible({ timeout: 2500 })
+        .catch(() => false));
+    if (!onCheckout) {
+      const sized = await selectSizeEuOrUs(page, c.sizeEU, sizeUS);
+      if (!sized.ok) {
+        return {
+          kind: "needs_human",
+          reason: "size_us_map",
+          detail: sizeUS ? `EU+US select failed (US ${sizeUS})` : "EU select failed + no US map",
+        };
+      }
+      await page.waitForTimeout(1000);
+      if (!(await clickBuyNow(page))) {
+        return { kind: "needs_human", reason: "bot_fail", detail: "Buy Now not found" };
+      }
+      await page.waitForTimeout(4500);
+      await dismissNoise(page);
     }
-
-    await page.waitForTimeout(1000);
-    if (!(await clickBuyNow(page))) {
-      return { kind: "needs_human", reason: "bot_fail", detail: "Buy Now not found" };
-    }
-    await page.waitForTimeout(4500);
-    await dismissNoise(page);
 
     // Strip xpress-ship default so STANDARD remains selectable when HARD RULE picks it.
     try {
