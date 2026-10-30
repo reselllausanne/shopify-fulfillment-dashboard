@@ -714,16 +714,53 @@ export async function selectAndVerifyStockxLane(
   // authoritative all-in (the synthesized lane holds only the item price).
   let singleXpressSynth = false;
 
+  /** Single-ask Xpress checkout (Forte demande / no Standard-Express radios). */
+  const trySynthSingleXpress = (): boolean => {
+    if (lanes.length > 0) return false;
+    if (classifyEmptyLaneReason(body) !== "express_only") return false;
+    const itemPriceChf = parseSingleXpressItemPriceChf(body);
+    const bodySubtotalChf = extractCheckoutSubtotalChf(body);
+    const seedChf =
+      itemPriceChf != null && itemPriceChf <= maxAllInChf
+        ? itemPriceChf
+        : bodySubtotalChf != null && bodySubtotalChf <= maxAllInChf
+          ? bodySubtotalChf
+          : null;
+    if (seedChf == null) return false;
+    const synth: StockxLaneCard = {
+      label: "EXPRESS",
+      rawLabel: "Xpress",
+      totalChf: seedChf,
+      eta: null,
+    };
+    lanes = [synth];
+    picked = synth;
+    singleXpressSynth = true;
+    pickReason =
+      itemPriceChf != null && itemPriceChf === seedChf
+        ? `single-xpress:item=${seedChf}`
+        : `single-xpress:subtotal=${seedChf}`;
+    console.warn(
+      `[STOCKX-CHECKOUT] single-price Xpress — synthesized EXPRESS lane ${seedChf} CHF (live subtotal still gates)`
+    );
+    return true;
+  };
+
   if (options.policy === "galaxus_express_first") {
     const pick = chooseLaneByGalaxusExpressFirst(lanes, {
       maxAllInChf,
       shippingTierInText: tiersInText,
     });
     if (!pick.ok) {
-      return { ok: false, reason: pick.reason, lanes, detail: pick.detail };
+      // Same UI as Shopify single-Xpress: no radio cards, only item+Sous-total.
+      // Galaxus HARD RULE is EXPRESS-default → take it.
+      if (!trySynthSingleXpress()) {
+        return { ok: false, reason: pick.reason, lanes, detail: pick.detail };
+      }
+    } else {
+      picked = pick.lane;
+      pickReason = pick.reason;
     }
-    picked = pick.lane;
-    pickReason = pick.reason;
   } else if (options.policy === "galaxus_csat") {
     const pick = chooseLaneByCsAtMargin(options.sellChf, lanes, {
       maxAllInChf,
