@@ -102,3 +102,14 @@ export function buildStockxBuyUrl(slug: string, sizeUS?: string | null): string 
   const sizeParam = encodeURIComponent(String(sizeUS).trim());
   return `${base}?size=${sizeParam}`;
 }
+
+/**
+ * Direct StockX checkout deep-link (`/buy/{slug}?size=`). Prefer this for Galaxus
+ * auto-buy — same action every time: land on checkout → pick lane → Place Order.
+ * Avoids PDP scrape / Buy Now when size is already known.
+ */
+export function buildStockxCheckoutBuyUrl(slug: string, sizeUS?: string | null): string {
+  const base = `https://stockx.com/fr-fr/buy/${slug.replace(/^\/+|\/+$/g, "")}`;
+  if (!sizeUS) return base;
+  return `${base}?size=${encodeURIComponent(String(sizeUS).trim())}`;
+}

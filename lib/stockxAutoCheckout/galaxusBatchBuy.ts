@@ -15,7 +15,11 @@ import {
   runStockxAutoCheckoutForGalaxusLine,
   type GalaxusAutoCheckoutResult,
 } from "@/lib/stockxCheckout";
-import { buildStockxBuyUrl } from "@/lib/stockxAutoCheckout/sizeUsFallback";
+import {
+  buildStockxCheckoutBuyUrl,
+  convertEuToUs,
+  inferBrandFromTitle,
+} from "@/lib/stockxAutoCheckout/sizeUsFallback";
 import type { GalaxusBuyCandidate } from "@/lib/stockxAutoCheckout/galaxusBuyCandidates";
 import { MAX_ALL_IN_CHF } from "@/lib/stockxAutoCheckout/types";
 import type { BrowserContext, Page } from "playwright";
@@ -105,22 +109,31 @@ async function warmBuyingOrders(
   return { ok: true, cf: false };
 }
 
-async function softNavToPdp(
+/**
+ * Hard-goto StockX /buy/{slug}?size= — same action every buy.
+ * Do NOT land on PDP without size (that forced page scrape + Buy Now).
+ */
+async function softNavToCheckout(
   page: Page,
-  slug: string
-): Promise<{ ok: boolean; method: string }> {
-  const productUrl = buildStockxBuyUrl(slug, null);
+  candidate: GalaxusBuyCandidate
+): Promise<{ ok: boolean; method: string; checkoutUrl: string }> {
+  const sizeUS =
+    convertEuToUs(candidate.sizeEU, {
+      title: candidate.productName,
+      brand: inferBrandFromTitle(candidate.productName),
+    }) || candidate.sizeEU;
+  const checkoutUrl = buildStockxCheckoutBuyUrl(candidate.slug, sizeUS);
   try {
-    await page.goto(productUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
+    await page.goto(checkoutUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
   } catch (e: any) {
     if (looksProxy402(String(e?.message || e))) throw new Proxy402Error(String(e?.message || e));
   }
   await page.waitForTimeout(2500);
   if (await isCf(page)) {
     const cleared = await sitCfOrAbort(page, CF_ABORT_MS);
-    if (!cleared) return { ok: false, method: "cf" };
+    if (!cleared) return { ok: false, method: "cf", checkoutUrl };
   }
-  return { ok: true, method: "hard_goto" };
+  return { ok: true, method: "hard_buy_url", checkoutUrl };
 }
 
 async function openSession(opts: {
@@ -194,7 +207,7 @@ export async function runGalaxusBatchBuy(options: {
 
       let nav: { ok: boolean; method: string };
       try {
-        nav = await softNavToPdp(session.page, candidate.slug);
+        nav = await softNavToCheckout(session.page, candidate);
       } catch (e: any) {
         if (e instanceof Proxy402Error || looksProxy402(String(e?.message || e))) {
           stoppedOn402 = true;
@@ -246,7 +259,7 @@ export async function runGalaxusBatchBuy(options: {
           });
           break;
         }
-        nav = await softNavToPdp(session.page, candidate.slug);
+        nav = await softNavToCheckout(session.page, candidate);
       }
 
       if (!nav.ok) {

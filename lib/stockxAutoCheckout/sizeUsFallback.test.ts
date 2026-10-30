@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   apparelLetterSize,
   buildStockxBuyUrl,
+  buildStockxCheckoutBuyUrl,
   convertEuToUs,
   inferBrandFromTitle,
 } from "@/lib/stockxAutoCheckout/sizeUsFallback";
@@ -78,5 +79,13 @@ describe("buildStockxBuyUrl", () => {
   it("appends apparel letter size query", () => {
     expect(buildStockxBuyUrl("nike-tech-fleece-hoodie", "S")).toContain("?size=S");
     expect(buildStockxBuyUrl("nocta-jacket", "M")).toContain("?size=M");
+  });
+});
+
+describe("buildStockxCheckoutBuyUrl", () => {
+  it("uses /buy/ path with size", () => {
+    expect(buildStockxCheckoutBuyUrl("nike-dunk-low", "8.5")).toBe(
+      "https://stockx.com/fr-fr/buy/nike-dunk-low?size=8.5"
+    );
   });
 });
