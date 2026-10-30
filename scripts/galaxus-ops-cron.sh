@@ -296,8 +296,11 @@ run_master_specs_snapshot_rebuild() {
 }
 
 # Postgres COPY → CSV → SFTP. Feed-worker Prisma stream hangs/OOM on ~7M specs rows.
+# Dump dir under .data so oneshot SFTP sees it via the standard /app/.data mount
+# (plain `compose run` is SIGKILL'd by deploys — same bug as snap rebuild).
 run_master_specs_copy_push() {
-  local dump_dir="${GALAXUS_MASTER_SPECS_DUMP_DIR:-/var/tmp/galaxus-master-specs-snap}"
+  local dump_dir="${GALAXUS_MASTER_SPECS_DUMP_DIR:-/opt/resell/.data/galaxus-master-specs-snap}"
+  local container_dir="/app/.data/galaxus-master-specs-snap"
   log "START master-specs COPY dump + SFTP (dir=$dump_dir)"
   rm -rf "$dump_dir"
   mkdir -p "$dump_dir"
@@ -305,15 +308,30 @@ run_master_specs_copy_push() {
     log "ERROR: master-specs COPY dump failed"
     return 1
   fi
-  if ! docker compose run --rm --no-deps \
-    -e GALAXUS_MASTER_SPECS_PREBUILT_DIR="$dump_dir" \
-    -v "$dump_dir:$dump_dir" \
-    worker-ops-background \
+  if ! bash scripts/vps-ops-oneshot-run.sh master-specs-copy-sftp \
+    env GALAXUS_MASTER_SPECS_PREBUILT_DIR="$container_dir" \
     npx tsx scripts/sftp-galaxus-master-specs-csv.ts; then
     log "ERROR: master-specs SFTP of COPY CSVs failed"
     return 1
   fi
   log "DONE master-specs COPY dump + SFTP"
+}
+
+# Skip snap rebuild when meta is fresh (default 36h). Nightly still rebuilds when stale.
+master_specs_snapshot_is_fresh() {
+  local max_hours="${GALAXUS_MASTER_SPECS_SKIP_REBUILD_IF_FRESH_HOURS:-36}"
+  docker compose exec -T web node -e "
+const {PrismaClient}=require('@prisma/client');
+const p=new PrismaClient();
+const maxH=Number(process.env.MAX_H||${max_hours});
+(async()=>{
+  const m=await p.galaxusFeedSnapshotMeta.findUnique({where:{id:'default'},select:{masterRebuiltAt:true,specsRebuiltAt:true,masterRowCount:true,specsRowCount:true}});
+  await p.\$disconnect();
+  if(!m?.masterRebuiltAt||!m?.specsRebuiltAt||!(m.masterRowCount>0)||!(m.specsRowCount>0)){process.exit(1)}
+  const age=Math.max(Date.now()-new Date(m.masterRebuiltAt).getTime(), Date.now()-new Date(m.specsRebuiltAt).getTime());
+  process.exit(age <= maxH*3600*1000 ? 0 : 1);
+})().catch(()=>process.exit(1));
+" 2>/dev/null
 }
 
 handle_master_failure() {
@@ -373,9 +391,11 @@ case "$ACTION" in
     fi
     ;;
   push-master-specs)
-    # Nightly durable: rebuild snap → Postgres COPY CSVs → SFTP (ops-background).
+    # Nightly durable: rebuild snap (if stale) → Postgres COPY CSVs → SFTP oneshot.
     # Never use feed-worker Prisma stream for 7M specs (hangs / heap blowup).
-    if ! run_master_specs_snapshot_rebuild; then
+    if master_specs_snapshot_is_fresh; then
+      log "SKIP master/specs snapshot rebuild — meta fresh (<${GALAXUS_MASTER_SPECS_SKIP_REBUILD_IF_FRESH_HOURS:-36}h)"
+    elif ! run_master_specs_snapshot_rebuild; then
       log "ERROR: push-master-specs aborted — snapshot rebuild failed (no live fallback)"
       exit 1
     fi
