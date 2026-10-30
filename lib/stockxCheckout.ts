@@ -1069,13 +1069,19 @@ export async function launchStockxContext(options?: {
   proxy?: PlaywrightProxyConfig | null;
   /** When true (default if STOCKX_BROWSER_PROXY_MODE=always), pick next sticky. */
   useStickyProxy?: boolean;
+  /**
+   * Chromium profile + token set. Shopify paths omit → `"default"` (`stockx-profile`).
+   * Galaxus buy MUST pass `"galaxus"` (`stockx-profile-galaxus`).
+   */
+  account?: "default" | "galaxus";
 }): Promise<{
   ctx: BrowserContext;
   page: Page;
   proxy: PlaywrightProxyConfig | null;
   bandwidth: BandwidthTracker;
 }> {
-  const files = stockxAccountFiles("default");
+  const account = options?.account === "galaxus" ? "galaxus" : "default";
+  const files = stockxAccountFiles(account);
   // VPS Xvfb / VNC: without DISPLAY Chromium dies. Default :99 like stockx login.
   if (!process.env.DISPLAY) process.env.DISPLAY = ":99";
   for (const lockName of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
@@ -1092,9 +1098,10 @@ export async function launchStockxContext(options?: {
       : wantSticky
         ? nextStockxPlaywrightProxy()
         : null;
-  if (proxy) {
-    console.log(`[STOCKX-CHECKOUT] launch sticky proxy=${proxy.label}`);
-  }
+  console.log(
+    `[STOCKX-CHECKOUT] account=${account} profile=${files.profileDir}` +
+      (proxy ? ` sticky proxy=${proxy.label}` : "")
+  );
 
   try {
     const ctx = await chromium.launchPersistentContext(files.profileDir, {
@@ -1947,6 +1954,7 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
       page = options.reuse.page;
     } else {
       const launched = await launchStockxContext({
+        account: "galaxus",
         useStickyProxy: stockxBrowserProxyMode() === "always",
       });
       ctx = launched.ctx;

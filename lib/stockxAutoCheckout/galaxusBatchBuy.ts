@@ -145,7 +145,10 @@ async function openSession(opts: {
       ? `[GALAXUS-BATCH-BUY] launch sticky proxy=${opts.proxy.label}`
       : `[GALAXUS-BATCH-BUY] launch DIRECT (mode=${stockxBrowserProxyMode()})`
   );
+  // Shared warm + softNav session MUST be galaxus profile end-to-end
+  // (reuse in runStockxAutoCheckoutForGalaxusLine never re-launches).
   const launched = await launchStockxContext({
+    account: "galaxus",
     proxy: opts.proxy,
     useStickyProxy: Boolean(opts.proxy),
   });
