@@ -33,7 +33,7 @@ import type { SlimGtinWinner } from "@/galaxus/exports/gtinSelection";
 const SNAPSHOT_META_ID = "default";
 const UPSERT_CHUNK_SIZE = 3000;
 /** Pass-2 materialize batch — full include + rawJson for this many winners only. */
-const MATERIALIZE_CHUNK_SIZE = 1500;
+const MATERIALIZE_CHUNK_SIZE = 8000;
 
 /**
  * Fixed header order — Galaxus rejects rows with extra/missing columns. Legacy
@@ -313,7 +313,7 @@ export async function rebuildMasterSpecsSnapshot(params?: {
     masterRowCount += await insertMasterSnapshotRows(masterRows, now);
     specsRowCount += await insertSpecsSnapshotRows(specsRows, now);
 
-    if (materializeChunks % 20 === 0 || offset + MATERIALIZE_CHUNK_SIZE >= unionIds.length) {
+    if (materializeChunks % 10 === 0 || offset + MATERIALIZE_CHUNK_SIZE >= unionIds.length) {
       logHeap("materialize-progress", {
         chunk: materializeChunks,
         done: Math.min(offset + idChunk.length, unionIds.length),
