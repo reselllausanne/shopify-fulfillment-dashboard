@@ -85,6 +85,7 @@ query OrderByName($first: Int!, $query: String!) {
               quantity
               fulfillableQuantity
               variantTitle
+              image { url }
               customAttributes {
                 key
                 value
@@ -242,6 +243,7 @@ export async function POST(req: Request) {
         customerFirstName,
         customerLastName,
         lineItemId: li.id,
+        lineItemImageUrl: li.image?.url ?? null,
         title,
         sku: li.sku ?? null,
         variantTitle,

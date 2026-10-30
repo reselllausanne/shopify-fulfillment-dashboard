@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { prisma } from "@/app/lib/prisma";
 import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
 import type { StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
@@ -20,6 +21,7 @@ export type LinkAfterBuyInput = {
   shopifyCustomerEmail?: string | null;
   shopifyCustomerFirstName?: string | null;
   shopifyCustomerLastName?: string | null;
+  shopifyLineItemImageUrl?: string | null;
   stockxOrderNumber: string;
   stockxProductName?: string | null;
   stockxSizeEU?: string | null;
@@ -104,6 +106,9 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
       shopifyCustomerEmail: input.shopifyCustomerEmail ?? null,
       shopifyCustomerFirstName: input.shopifyCustomerFirstName ?? null,
       shopifyCustomerLastName: input.shopifyCustomerLastName ?? null,
+      shopifyLineItemImageUrl: input.shopifyLineItemImageUrl ?? null,
+      // Same as manual save-match — needed for customer tracking links in emails.
+      customerTrackingToken: randomUUID(),
       supplierSource: "STOCKX",
       stockxOrderNumber,
       stockxProductName: input.stockxProductName || input.shopifyProductTitle,
@@ -138,6 +143,9 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
       ...(input.shopifyCustomerLastName
         ? { shopifyCustomerLastName: input.shopifyCustomerLastName }
         : {}),
+      ...(input.shopifyLineItemImageUrl
+        ? { shopifyLineItemImageUrl: input.shopifyLineItemImageUrl }
+        : {}),
       stockxOrderNumber,
       stockxProductName: input.stockxProductName || input.shopifyProductTitle,
       stockxSizeEU: input.stockxSizeEU || input.shopifySizeEU,
@@ -154,8 +162,16 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
       marginPercent,
       supplierSource: "STOCKX",
     },
-    select: { id: true },
+    select: { id: true, customerTrackingToken: true },
   });
+
+  // Rematch / older rows may lack a token — mint once (never rotate).
+  if (!match.customerTrackingToken) {
+    await prisma.orderMatch.update({
+      where: { id: match.id },
+      data: { customerTrackingToken: randomUUID() },
+    });
+  }
 
   let metafieldsOk = false;
   try {

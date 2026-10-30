@@ -10,6 +10,7 @@
  *   npx tsx scripts/backfill-ordermatch-customer-email.ts --apply --limit=50
  */
 import "dotenv/config";
+import { randomUUID } from "crypto";
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 
@@ -174,6 +175,33 @@ async function main() {
     }
   }
 
+  // Mint tracking tokens (manual save-match always had these; auto-buy/cron often not).
+  const missingToken = await prisma.orderMatch.findMany({
+    where: {
+      customerTrackingToken: null,
+      OR: [
+        { stockxOrderNumber: { startsWith: "01-" } },
+        { stockxOrderNumber: { startsWith: "02-" } },
+        { stockxOrderNumber: { startsWith: "03-" } },
+      ],
+    },
+    select: { id: true, shopifyOrderName: true },
+    take: LIMIT,
+  });
+  let tokensMinted = 0;
+  if (!APPLY) {
+    console.log(`[dry-run] would mint customerTrackingToken for ${missingToken.length} rows`);
+  } else {
+    for (const row of missingToken) {
+      await prisma.orderMatch.update({
+        where: { id: row.id },
+        data: { customerTrackingToken: randomUUID() },
+      });
+      tokensMinted += 1;
+    }
+    console.log(`[apply] minted customerTrackingToken for ${tokensMinted} rows`);
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -183,6 +211,8 @@ async function main() {
         missingEmail,
         notFound,
         errors,
+        tokensMissing: missingToken.length,
+        tokensMinted: APPLY ? tokensMinted : 0,
       },
       null,
       2
