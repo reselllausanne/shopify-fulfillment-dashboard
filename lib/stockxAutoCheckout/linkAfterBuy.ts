@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { prisma } from "@/app/lib/prisma";
 import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
+import { sendPurchaseConfirmedEmailForMatch } from "@/app/lib/notifications/stockxEmail";
 import type { StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
 import { enrichOrderMatchFromStockxOrderNumber } from "@/lib/stockxAutoCheckout/enrichAfterLink";
 import {
@@ -197,7 +198,7 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
   }
 
   // Best-effort: resolve chainId/orderId/states from StockX buying list by 03-…
-  // so AWB cron can track. No customer email here (emailedAt gate on milestones).
+  // so AWB cron can track later milestones.
   let enrichOk = false;
   let enrichReason: string | null = null;
   try {
@@ -216,6 +217,27 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
   } catch (e: any) {
     enrichReason = e?.message || "enrich_threw";
     console.error("[STOCKX-AUTO] enrich after link threw", e);
+  }
+
+  // One confirmation mail now (synthetic OK). Cron still sends later milestones;
+  // emailedAt on PURCHASE_CONFIRMED / EXPRESS_CONFIRMED prevents double confirm.
+  try {
+    const emailRes = await sendPurchaseConfirmedEmailForMatch(match.id);
+    if (emailRes.sent) {
+      console.log(
+        `[STOCKX-AUTO] confirm email sent for ${input.shopifyOrderName} → ${emailRes.to} (${emailRes.milestoneKey})`
+      );
+    } else if (emailRes.skipped) {
+      console.warn(
+        `[STOCKX-AUTO] confirm email skipped for ${input.shopifyOrderName}: ${emailRes.reason}`
+      );
+    } else {
+      console.warn(
+        `[STOCKX-AUTO] confirm email failed for ${input.shopifyOrderName}: ${emailRes.error}`
+      );
+    }
+  } catch (e) {
+    console.error("[STOCKX-AUTO] confirm email threw (link still ok)", e);
   }
 
   return {

@@ -1,5 +1,9 @@
 import { prisma } from "@/app/lib/prisma";
-import { detectMilestone, isStockxInboundDeliveryMilestone } from "@/app/lib/stockxStatus";
+import {
+  detectMilestone,
+  isStockxInboundDeliveryMilestone,
+  resolvePurchaseConfirmedMilestone,
+} from "@/app/lib/stockxStatus";
 import { StockXState } from "@/app/lib/stockxTracking";
 import { getMailer } from "@/app/lib/mailer";
 
@@ -8,6 +12,11 @@ type SendOptions = {
   force?: boolean;
   skipIfFulfilled?: boolean;
   skipIfEtaPassed?: boolean;
+  /**
+   * When true: always target PURCHASE_CONFIRMED / EXPRESS_CONFIRMED, even if
+   * stockxStates empty (synthetic) or detectMilestone would pick a later step.
+   */
+  forceSyntheticConfirmed?: boolean;
 };
 
 type SendResult = {
@@ -62,6 +71,7 @@ export async function sendMilestoneEmailForMatch({
   force = false,
   skipIfFulfilled = true,
   skipIfEtaPassed = true,
+  forceSyntheticConfirmed = false,
 }: SendOptions): Promise<SendResult> {
   const match = await prisma.orderMatch.findUnique({
     where: { id: matchId },
@@ -134,7 +144,25 @@ export async function sendMilestoneEmailForMatch({
   }
 
   const states = (match.stockxStates as StockXState[]) || null;
-  const milestone = detectMilestone(match.stockxCheckoutType || null, states);
+  const hasStates = Array.isArray(states) && states.length > 0;
+
+  let milestone: { key: string; title: string; description: string } | null = null;
+  if (forceSyntheticConfirmed) {
+    // Link-time: always first-step confirm (even with empty states / later live status).
+    const resolved = resolvePurchaseConfirmedMilestone({
+      checkoutType: match.stockxCheckoutType || null,
+      orderNumber: match.stockxOrderNumber || null,
+      hasStockxStates: hasStates,
+      forceSyntheticStates: true,
+    });
+    milestone = resolved;
+  } else {
+    milestone = detectMilestone(
+      match.stockxCheckoutType || null,
+      states,
+      match.stockxOrderNumber || null
+    );
+  }
   const milestoneKey = milestone?.key || null;
 
   if (!milestoneKey) {
@@ -145,7 +173,7 @@ export async function sendMilestoneEmailForMatch({
     };
   }
 
-  if (isStockxInboundDeliveryMilestone(milestoneKey)) {
+  if (!forceSyntheticConfirmed && isStockxInboundDeliveryMilestone(milestoneKey)) {
     return {
       ok: true,
       skipped: true,
@@ -271,4 +299,19 @@ export async function sendMilestoneEmailForMatch({
     error: sendRes.error,
     matchId,
   };
+}
+
+/**
+ * Auto-buy link: one PURCHASE_CONFIRMED / EXPRESS_CONFIRMED mail immediately.
+ * Marks emailedAt + lastMilestoneKey so AWB cron won't reblast the same step.
+ */
+export async function sendPurchaseConfirmedEmailForMatch(
+  matchId: string
+): Promise<SendResult> {
+  return sendMilestoneEmailForMatch({
+    matchId,
+    forceSyntheticConfirmed: true,
+    skipIfEtaPassed: false,
+    skipIfFulfilled: true,
+  });
 }
