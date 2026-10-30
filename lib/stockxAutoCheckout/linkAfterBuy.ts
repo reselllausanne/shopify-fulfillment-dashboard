@@ -18,6 +18,8 @@ export type LinkAfterBuyInput = {
   shopifyTotalPrice: number;
   shopifyCurrencyCode?: string;
   shopifyCustomerEmail?: string | null;
+  shopifyCustomerFirstName?: string | null;
+  shopifyCustomerLastName?: string | null;
   stockxOrderNumber: string;
   stockxProductName?: string | null;
   stockxSizeEU?: string | null;
@@ -100,6 +102,8 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
       shopifyCurrencyCode: input.shopifyCurrencyCode || "CHF",
       shopifyCreatedAt,
       shopifyCustomerEmail: input.shopifyCustomerEmail ?? null,
+      shopifyCustomerFirstName: input.shopifyCustomerFirstName ?? null,
+      shopifyCustomerLastName: input.shopifyCustomerLastName ?? null,
       supplierSource: "STOCKX",
       stockxOrderNumber,
       stockxProductName: input.stockxProductName || input.shopifyProductTitle,
@@ -124,6 +128,16 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
       shopifySku: input.shopifySku,
       shopifySizeEU: input.shopifySizeEU,
       shopifyTotalPrice: sale,
+      // Only set when provided — never wipe an existing email with null.
+      ...(input.shopifyCustomerEmail
+        ? { shopifyCustomerEmail: input.shopifyCustomerEmail }
+        : {}),
+      ...(input.shopifyCustomerFirstName
+        ? { shopifyCustomerFirstName: input.shopifyCustomerFirstName }
+        : {}),
+      ...(input.shopifyCustomerLastName
+        ? { shopifyCustomerLastName: input.shopifyCustomerLastName }
+        : {}),
       stockxOrderNumber,
       stockxProductName: input.stockxProductName || input.shopifyProductTitle,
       stockxSizeEU: input.stockxSizeEU || input.shopifySizeEU,

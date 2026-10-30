@@ -35,7 +35,13 @@ query OrderByName($first: Int!, $query: String!) {
         cancelledAt
         displayFinancialStatus
         displayFulfillmentStatus
-        customer { displayName }
+        email
+        customer {
+          displayName
+          firstName
+          lastName
+          defaultEmailAddress { emailAddress }
+        }
         shippingLines(first: 5) {
           edges {
             node {
@@ -147,6 +153,12 @@ export async function POST(req: Request) {
 
     const riskNorm = normalizeOrderRisk(node.risk);
 
+    const customerName = node.customer?.displayName ?? null;
+    const customerFirstName = node.customer?.firstName ?? null;
+    const customerLastName = node.customer?.lastName ?? null;
+    const customerEmail =
+      node.customer?.defaultEmailAddress?.emailAddress ?? node.email ?? null;
+
     const orderShippingLines = (node.shippingLines?.edges ?? [])
       .map((edge: any) => edge?.node)
       .filter(Boolean)
@@ -197,9 +209,9 @@ export async function POST(req: Request) {
           shopifyTotalPrice: Number.parseFloat(String(totalAmount)) || 0,
           shopifyCurrencyCode: currencyCode,
           shopifyCreatedAt: node.createdAt,
-          shopifyCustomerEmail: null,
-          shopifyCustomerFirstName: null,
-          shopifyCustomerLastName: null,
+          shopifyCustomerEmail: customerEmail,
+          shopifyCustomerFirstName: customerFirstName,
+          shopifyCustomerLastName: customerLastName,
         });
         continue;
       }
@@ -225,7 +237,10 @@ export async function POST(req: Request) {
         createdAt: node.createdAt,
         displayFinancialStatus: node.displayFinancialStatus ?? null,
         displayFulfillmentStatus: node.displayFulfillmentStatus ?? null,
-        customerName: node.customer?.displayName ?? null,
+        customerName,
+        customerEmail,
+        customerFirstName,
+        customerLastName,
         lineItemId: li.id,
         title,
         sku: li.sku ?? null,

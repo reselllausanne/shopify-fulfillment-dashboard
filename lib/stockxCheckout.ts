@@ -1008,6 +1008,8 @@ export type ShopifyLineCtx = {
   saleChf: number | null;
   createdAt: string | null;
   customerEmail: string | null;
+  customerFirstName: string | null;
+  customerLastName: string | null;
   deliveryMode: string | null;
   deliveryModeLabel: string | null;
   shippingLineTitles: string[];
@@ -1053,6 +1055,8 @@ export async function loadShopifyLine(
     saleChf: moneyToNumber(String(line.totalPrice ?? line.price ?? "")),
     createdAt: line.createdAt ? String(line.createdAt) : null,
     customerEmail: line.customerEmail ? String(line.customerEmail) : null,
+    customerFirstName: line.customerFirstName ? String(line.customerFirstName) : null,
+    customerLastName: line.customerLastName ? String(line.customerLastName) : null,
     deliveryMode: line.deliveryMode ?? null,
     deliveryModeLabel: line.deliveryModeLabel ?? null,
     shippingLineTitles,
@@ -1533,6 +1537,9 @@ export async function runStockxAutoCheckoutForOrder(options: {
         sku: shopify.sku || null,
         sizeEU: shopify.sizeEU || sizeFromSku(shopify.sku),
         urlKeyHint: slugHint || null,
+        customerEmail: shopify.customerEmail,
+        customerFirstName: shopify.customerFirstName,
+        customerLastName: shopify.customerLastName,
       },
       { linkIfClear: true }
     );
@@ -1855,6 +1862,8 @@ export async function runStockxAutoCheckoutForOrder(options: {
         shopifySizeEU: shopify.sizeEU,
         shopifyTotalPrice: shopify.saleChf ?? 0,
         shopifyCustomerEmail: shopify.customerEmail,
+        shopifyCustomerFirstName: shopify.customerFirstName,
+        shopifyCustomerLastName: shopify.customerLastName,
         stockxOrderNumber,
         stockxProductName: shopify.title,
         stockxSizeEU: shopify.sizeEU,

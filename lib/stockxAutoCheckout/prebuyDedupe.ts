@@ -37,6 +37,9 @@ export type PrebuyDedupeInput = {
   /** Shopify product handle / StockX urlKey hint */
   urlKeyHint?: string | null;
   gtin?: string | null;
+  customerEmail?: string | null;
+  customerFirstName?: string | null;
+  customerLastName?: string | null;
 };
 
 export type PrebuyGmailHit = {
@@ -489,6 +492,9 @@ async function linkUnlinkedMatch(
           shopifySizeEU: normSizeEU(line.sizeEU ?? sizeFromSku(line.sku)),
           shopifyTotalPrice: 0,
           shopifyCurrencyCode: "CHF",
+          shopifyCustomerEmail: line.customerEmail ?? null,
+          shopifyCustomerFirstName: line.customerFirstName ?? null,
+          shopifyCustomerLastName: line.customerLastName ?? null,
           stockxOrderNumber: hit.orderNumber,
           stockxChainId: hit.chainId,
           stockxOrderId: hit.orderId,
