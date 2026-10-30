@@ -144,10 +144,24 @@ export async function tryUploadMasterSpecsFromSnapshot(
       .filter(Boolean);
     const skipSet = runtimeBlockList.length ? new Set(runtimeBlockList) : undefined;
 
-    const [masterOut, specsOut] = await Promise.all([
-      streamMasterCsvFromSnapshot(masterPath, { skipProviderKeys: skipSet }),
-      streamSpecsCsvFromSnapshot(specsPath, { skipProviderKeys: skipSet }),
-    ]);
+    // Sequential — parallel master+specs doubled DB load and left specs starved/stuck.
+    console.info("[GALAXUS][FEEDS][UPLOAD][SNAPSHOT] streaming master CSV");
+    const masterOut = await streamMasterCsvFromSnapshot(masterPath, {
+      skipProviderKeys: skipSet,
+    });
+    console.info("[GALAXUS][FEEDS][UPLOAD][SNAPSHOT] streaming specs CSV", {
+      masterRows: masterOut.rowCount,
+      masterMs: masterOut.ms,
+    });
+    const specsOut = await streamSpecsCsvFromSnapshot(specsPath, {
+      skipProviderKeys: skipSet,
+    });
+    console.info("[GALAXUS][FEEDS][UPLOAD][SNAPSHOT] CSVs ready", {
+      masterRows: masterOut.rowCount,
+      specsRows: specsOut.rowCount,
+      masterMs: masterOut.ms,
+      specsMs: specsOut.ms,
+    });
 
     if (masterOut.rowCount <= 0 || specsOut.rowCount <= 0) {
       return {

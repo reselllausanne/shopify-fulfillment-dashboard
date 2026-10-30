@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { createReadStream } from "fs";
 import { prisma } from "@/app/lib/prisma";
 import { openCsvWriter, type CsvRow } from "@/galaxus/exports/csvStream";
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
@@ -494,11 +495,24 @@ export function shouldUseMasterSpecsSnapshotForTrigger(
   return true;
 }
 
-const STREAM_PAGE_SIZE = 5000;
+/** DB page for snapshot→CSV. Larger = fewer round-trips; keep << heap budget. */
+const STREAM_PAGE_SIZE = 10_000;
+
+async function sha256FilePrefix(path: string, hexChars = 16): Promise<string> {
+  const hash = createHash("sha256");
+  const stream = createReadStream(path);
+  await new Promise<void>((resolve, reject) => {
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve());
+    stream.on("error", reject);
+  });
+  return hash.digest("hex").slice(0, hexChars);
+}
 
 async function* iterateMasterRowsFromSnapshot(): AsyncGenerator<CsvRow, void, void> {
   const prismaAny = prisma as any;
   let cursor: string | undefined;
+  let pages = 0;
   for (;;) {
     const batch: Array<{ providerKey: string; rowJson: unknown }> =
       await prismaAny.galaxusFeedMasterSnapshot.findMany({
@@ -511,6 +525,13 @@ async function* iterateMasterRowsFromSnapshot(): AsyncGenerator<CsvRow, void, vo
     for (const item of batch) {
       yield (item.rowJson ?? {}) as CsvRow;
     }
+    pages += 1;
+    if (pages % 20 === 0) {
+      console.info("[GALAXUS][FEED][SNAPSHOT] stream master progress", {
+        pages,
+        rowsApprox: pages * STREAM_PAGE_SIZE,
+      });
+    }
     cursor = batch[batch.length - 1]?.providerKey;
     if (batch.length < STREAM_PAGE_SIZE) return;
   }
@@ -519,6 +540,7 @@ async function* iterateMasterRowsFromSnapshot(): AsyncGenerator<CsvRow, void, vo
 async function* iterateSpecsRowsFromSnapshot(): AsyncGenerator<CsvRow, void, void> {
   const prismaAny = prisma as any;
   let cursor: { providerKey: string; specificationKey: string } | undefined;
+  let pages = 0;
   for (;;) {
     const batch: Array<{
       providerKey: string;
@@ -543,6 +565,13 @@ async function* iterateSpecsRowsFromSnapshot(): AsyncGenerator<CsvRow, void, voi
     if (batch.length === 0) return;
     for (const item of batch) {
       yield (item.rowJson ?? {}) as CsvRow;
+    }
+    pages += 1;
+    if (pages % 20 === 0) {
+      console.info("[GALAXUS][FEED][SNAPSHOT] stream specs progress", {
+        pages,
+        rowsApprox: pages * STREAM_PAGE_SIZE,
+      });
     }
     const last = batch[batch.length - 1];
     if (!last) return;
@@ -578,9 +607,9 @@ export async function streamMasterCsvFromSnapshot(
   const meta = await getMasterSpecsSnapshotMeta();
   const headers = meta?.masterHeaders ?? [...MASTER_CSV_HEADERS];
   const writer = await openCsvWriter(path, headers);
-  const hash = createHash("sha256");
   const skipSet = options.skipProviderKeys;
   let skipped = 0;
+  const pending: CsvRow[] = [];
   try {
     for await (const row of iterateMasterRowsFromSnapshot()) {
       const providerKey = String(row.ProviderKey ?? "").trim();
@@ -588,17 +617,21 @@ export async function streamMasterCsvFromSnapshot(
         skipped += 1;
         continue;
       }
-      // Hash the JSON form for a stable checksum (order-independent per row).
-      hash.update(JSON.stringify(row));
-      await writer.write(row);
+      pending.push(row);
+      if (pending.length >= STREAM_PAGE_SIZE) {
+        await writer.writeMany(pending);
+        pending.length = 0;
+      }
     }
+    if (pending.length) await writer.writeMany(pending);
     const info = await writer.close();
     return {
       path: info.path,
       rowCount: info.rowCount,
       skipped,
       byteSize: info.byteSize,
-      checksum: hash.digest("hex").slice(0, 16),
+      // File hash — avoids per-row JSON.stringify which spun CPU for hours on 7M specs.
+      checksum: await sha256FilePrefix(info.path),
       ms: Date.now() - startedAt,
     };
   } catch (err) {
@@ -622,9 +655,9 @@ export async function streamSpecsCsvFromSnapshot(
   const meta = await getMasterSpecsSnapshotMeta();
   const headers = meta?.specsHeaders ?? [...SPECS_CSV_HEADERS];
   const writer = await openCsvWriter(path, headers);
-  const hash = createHash("sha256");
   const skipSet = options.skipProviderKeys;
   let skipped = 0;
+  const pending: CsvRow[] = [];
   try {
     for await (const row of iterateSpecsRowsFromSnapshot()) {
       const providerKey = String(row.ProviderKey ?? "").trim();
@@ -632,16 +665,20 @@ export async function streamSpecsCsvFromSnapshot(
         skipped += 1;
         continue;
       }
-      hash.update(JSON.stringify(row));
-      await writer.write(row);
+      pending.push(row);
+      if (pending.length >= STREAM_PAGE_SIZE) {
+        await writer.writeMany(pending);
+        pending.length = 0;
+      }
     }
+    if (pending.length) await writer.writeMany(pending);
     const info = await writer.close();
     return {
       path: info.path,
       rowCount: info.rowCount,
       skipped,
       byteSize: info.byteSize,
-      checksum: hash.digest("hex").slice(0, 16),
+      checksum: await sha256FilePrefix(info.path),
       ms: Date.now() - startedAt,
     };
   } catch (err) {
