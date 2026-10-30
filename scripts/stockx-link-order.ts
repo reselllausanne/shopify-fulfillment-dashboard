@@ -95,6 +95,8 @@ async function main() {
     shopifyTotalPrice: Number(saleChf) || 0,
     shopifyCurrencyCode: "CHF",
     shopifyCustomerEmail: line.customerEmail ?? null,
+    shopifyCustomerFirstName: line.customerFirstName ?? null,
+    shopifyCustomerLastName: line.customerLastName ?? null,
     stockxOrderNumber,
     stockxProductName: title,
     stockxSizeEU: sizeEU || null,
