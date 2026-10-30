@@ -3,13 +3,13 @@
  * Dual-source STX keep-current (KickDB → SupplierVariant DB + Shopify prices).
  *
  * Guarantees (Shopify-synced catalog only):
- *   - Every product refreshed within MAX_AGE_HOURS (default 120 = 5 days),
+ *   - Drain products older than MAX_AGE_HOURS (default 120 = 5 days),
  *     including PENDING_GTIN / One Size / TCG (no GTIN path).
- *   - Weekly full website walk (ISO week flip) so nothing is permanently skipped.
+ *   - Oldest-first queue — no alphabet cursor wrap, no re-walk of fresh rows.
  *   - Checkpoint on disk (`.data/…`) → survives VPS deploy / container recreate.
  *
- * SSE remains the hot path. This worker is the completeness net: no permanent
- * product cap — burns the stale queue then weekly walk until empty, loops forever.
+ * SSE = hot path. This worker = completeness net. Runs until stale empty, then
+ * idles (poll). Does NOT loop around the whole catalog after catch-up.
  *
  * Env:
  *   STX_KEEP_CURRENT_MAX_AGE_HOURS     default 120 (5d)
@@ -19,7 +19,6 @@
  *   STX_KEEP_CURRENT_IDLE_MS           default 30000 (pause when queue empty)
  *   STX_KEEP_CURRENT_INITIAL_DELAY_MS  default 15000
  *   STX_KEEP_CURRENT_CHECKPOINT_PATH   default .data/stx-shopify-keep-current.json
- *   STX_KEEP_CURRENT_WEEKLY_FULL       default 1 (ISO-week full website walk)
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -51,24 +50,15 @@ const INITIAL_DELAY_MS = Math.max(
   0,
   Number(process.env.STX_KEEP_CURRENT_INITIAL_DELAY_MS ?? 15_000)
 );
-const WEEKLY_FULL = !["0", "false", "no"].includes(
-  String(process.env.STX_KEEP_CURRENT_WEEKLY_FULL ?? "1").toLowerCase()
-);
 const CHECKPOINT_PATH = resolve(
   process.cwd(),
   process.env.STX_KEEP_CURRENT_CHECKPOINT_PATH ??
     ".data/stx-shopify-keep-current.json"
 );
 
-type Mode = "stale" | "weekly";
-
 type Checkpoint = {
-  mode: Mode;
-  /** Lexicographic resume key (kickdbProductId). Empty = start of list. */
-  cursor: string;
-  /** ISO week key when weekly mode started / last completed, e.g. 2026-W44. */
-  weekKey: string;
-  weeklyCompletedWeekKey: string | null;
+  /** Last product id touched (debug only — queue is age-ordered, not cursor-walk). */
+  lastProductId: string;
   updatedAt: string;
   stats: {
     productsTouched: number;
@@ -82,22 +72,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function isoWeekKey(d = new Date()): string {
-  // UTC ISO week — stable across VPS restarts / TZ flips.
-  const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const day = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  const week = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-  return `${date.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
-}
-
 function defaultCheckpoint(): Checkpoint {
   return {
-    mode: "stale",
-    cursor: "",
-    weekKey: isoWeekKey(),
-    weeklyCompletedWeekKey: null,
+    lastProductId: "",
     updatedAt: new Date().toISOString(),
     stats: { productsTouched: 0, shopifySynced: 0, shopifyFailed: 0, cycles: 0 },
   };
@@ -106,19 +83,16 @@ function defaultCheckpoint(): Checkpoint {
 function loadCheckpoint(): Checkpoint {
   try {
     const raw = readFileSync(CHECKPOINT_PATH, "utf8");
-    const parsed = JSON.parse(raw) as Partial<Checkpoint>;
+    const parsed = JSON.parse(raw) as Partial<Checkpoint> & {
+      /** legacy fields from cursor/weekly versions */
+      cursor?: string;
+      stats?: Partial<Checkpoint["stats"]>;
+    };
     const base = defaultCheckpoint();
     return {
       ...base,
-      ...parsed,
+      lastProductId: String(parsed.lastProductId ?? parsed.cursor ?? ""),
       stats: { ...base.stats, ...(parsed.stats ?? {}) },
-      mode: parsed.mode === "weekly" ? "weekly" : "stale",
-      cursor: String(parsed.cursor ?? ""),
-      weekKey: String(parsed.weekKey ?? base.weekKey),
-      weeklyCompletedWeekKey:
-        parsed.weeklyCompletedWeekKey == null
-          ? null
-          : String(parsed.weeklyCompletedWeekKey),
     };
   } catch {
     return defaultCheckpoint();
@@ -166,24 +140,12 @@ async function loadSupplierVariantIdsForKickdbProducts(
 }
 
 /**
- * Next page of Shopify-synced KickDB products after `cursor`.
- * stale mode: only products with lastFetchedAt null/older than MAX_AGE.
- * weekly mode: all synced products (age ignored) until cursor walks off the end.
+ * Next N Shopify-synced products past MAX_AGE — oldest first.
+ * No cursor wrap: after bump they leave the set; when empty → idle.
  */
-async function loadNextProductBatch(input: {
-  mode: Mode;
-  cursor: string;
-  limit: number;
-}): Promise<string[]> {
-  const limit = Math.max(1, Math.floor(input.limit));
-  const cursor = String(input.cursor ?? "").trim();
+async function loadOldestStaleBatch(limit: number): Promise<string[]> {
+  const n = Math.max(1, Math.floor(limit));
   const ageHours = Math.round(MAX_AGE_HOURS);
-
-  const ageClause =
-    input.mode === "weekly"
-      ? ""
-      : `AND (p."lastFetchedAt" IS NULL
-            OR p."lastFetchedAt" < NOW() - (${ageHours} * INTERVAL '1 hour'))`;
 
   const rows = await prismaDirect.$queryRawUnsafe<Array<{ kickdbProductId: string }>>(
     `
@@ -194,12 +156,11 @@ async function loadNextProductBatch(input: {
     WHERE sss."syncStatus" = 'synced'
       AND sss."shopifyProductId" IS NOT NULL
       AND COALESCE(p."notFound", false) = false
-      ${ageClause}
-      AND ($1::text = '' OR p."kickdbProductId" > $1)
-    ORDER BY p."kickdbProductId" ASC
-    LIMIT ${limit}
-    `,
-    cursor
+      AND (p."lastFetchedAt" IS NULL
+           OR p."lastFetchedAt" < NOW() - (${ageHours} * INTERVAL '1 hour'))
+    ORDER BY p."lastFetchedAt" ASC NULLS FIRST, p."kickdbProductId" ASC
+    LIMIT ${n}
+    `
   );
 
   return rows
@@ -207,95 +168,16 @@ async function loadNextProductBatch(input: {
     .filter(Boolean);
 }
 
-/**
- * Prefer stale (>MAX_AGE) so ≤5d lag holds. Weekly full walk only when stale queue empty
- * for this ISO week (still runs once/week — never permanently skipped).
- */
-async function pickNextBatch(cp: Checkpoint): Promise<{
-  cp: Checkpoint;
-  batch: string[];
-  mode: Mode;
-}> {
-  const week = isoWeekKey();
-  let next = { ...cp, weekKey: week };
-
-  // 1) Stale first (cursor walk within stale set).
-  const staleBatch = await loadNextProductBatch({
-    mode: "stale",
-    cursor: next.mode === "stale" ? next.cursor : "",
-    limit: BATCH_PRODUCTS,
-  });
-  if (staleBatch.length > 0) {
-    if (next.mode !== "stale") {
-      next = { ...next, mode: "stale", cursor: "" };
-    }
-    return { cp: next, batch: staleBatch, mode: "stale" };
-  }
-
-  // Stale empty at this cursor — wrap once; if still empty → weekly or idle.
-  if (next.mode === "stale" && next.cursor) {
-    const wrap = await loadNextProductBatch({
-      mode: "stale",
-      cursor: "",
-      limit: BATCH_PRODUCTS,
-    });
-    if (wrap.length > 0) {
-      next = { ...next, mode: "stale", cursor: "" };
-      return { cp: next, batch: wrap, mode: "stale" };
-    }
-  }
-
-  // 2) Weekly full website when enabled and not completed this ISO week.
-  if (WEEKLY_FULL && next.weeklyCompletedWeekKey !== week) {
-    const weeklyCursor =
-      next.mode === "weekly" && next.weekKey === week ? next.cursor : "";
-    if (next.mode !== "weekly" || next.weekKey !== week || next.cursor !== weeklyCursor) {
-      if (weeklyCursor === "") {
-        console.info("[WORKER][STX_KEEP_CURRENT] starting weekly full website walk", {
-          week,
-        });
-      }
-      next = { ...next, mode: "weekly", weekKey: week, cursor: weeklyCursor };
-    }
-    const weeklyBatch = await loadNextProductBatch({
-      mode: "weekly",
-      cursor: next.cursor,
-      limit: BATCH_PRODUCTS,
-    });
-    if (weeklyBatch.length > 0) {
-      return { cp: next, batch: weeklyBatch, mode: "weekly" };
-    }
-    console.info("[WORKER][STX_KEEP_CURRENT] weekly walk complete", {
-      week,
-      stats: next.stats,
-    });
-    next = {
-      ...next,
-      mode: "stale",
-      cursor: "",
-      weeklyCompletedWeekKey: week,
-    };
-    saveCheckpoint(next);
-    return { cp: next, batch: [], mode: "stale" };
-  }
-
-  next = { ...next, mode: "stale", cursor: "" };
-  return { cp: next, batch: [], mode: "stale" };
-}
-
 async function runTick(cp: Checkpoint): Promise<{ cp: Checkpoint; didWork: boolean }> {
-  const picked = await pickNextBatch(cp);
-  let next = picked.cp;
-  const batch = picked.batch;
+  const batch = await loadOldestStaleBatch(BATCH_PRODUCTS);
 
   if (batch.length === 0) {
-    saveCheckpoint(next);
-    return { cp: next, didWork: false };
+    saveCheckpoint(cp);
+    return { cp, didWork: false };
   }
 
   const at = new Date();
   console.info("[WORKER][STX_KEEP_CURRENT] kickdb refresh start", {
-    mode: picked.mode,
     n: batch.length,
   });
   await refreshStxProductsByKickdbProductIds(batch, {
@@ -306,15 +188,13 @@ async function runTick(cp: Checkpoint): Promise<{ cp: Checkpoint; didWork: boole
   await bumpKickdbLastFetchedAt(batch, at);
   console.info("[WORKER][STX_KEEP_CURRENT] kickdb refresh done", { n: batch.length });
 
-  // Cursor + age bump committed before Shopify — deploy/hang mid-push still ≤5d progress.
-  next = {
-    ...next,
-    mode: picked.mode,
-    cursor: batch[batch.length - 1]!,
+  let next: Checkpoint = {
+    ...cp,
+    lastProductId: batch[batch.length - 1]!,
     stats: {
-      ...next.stats,
-      productsTouched: next.stats.productsTouched + batch.length,
-      cycles: next.stats.cycles + 1,
+      ...cp.stats,
+      productsTouched: cp.stats.productsTouched + batch.length,
+      cycles: cp.stats.cycles + 1,
     },
   };
   saveCheckpoint(next);
@@ -356,12 +236,10 @@ async function runTick(cp: Checkpoint): Promise<{ cp: Checkpoint; didWork: boole
   };
   saveCheckpoint(next);
   console.info("[WORKER][STX_KEEP_CURRENT] batch", {
-    mode: next.mode,
     n: batch.length,
-    cursor: next.cursor,
+    lastProductId: next.lastProductId,
     shopifySynced,
     shopifyFailed,
-    week: next.weekKey,
   });
   return { cp: next, didWork: true };
 }
@@ -373,17 +251,13 @@ async function main(): Promise<void> {
     concurrency: CONCURRENCY,
     tickMs: TICK_MS,
     idleMs: IDLE_MS,
-    weeklyFull: WEEKLY_FULL,
     checkpointPath: CHECKPOINT_PATH,
   });
   await sleep(INITIAL_DELAY_MS);
 
   let cp = loadCheckpoint();
   console.info("[WORKER][STX_KEEP_CURRENT] checkpoint loaded", {
-    mode: cp.mode,
-    cursor: cp.cursor || "(start)",
-    weekKey: cp.weekKey,
-    weeklyCompletedWeekKey: cp.weeklyCompletedWeekKey,
+    lastProductId: cp.lastProductId || "(none)",
     stats: cp.stats,
   });
 
@@ -393,19 +267,20 @@ async function main(): Promise<void> {
       const tick = await runTick(cp);
       cp = tick.cp;
       didWork = tick.didWork;
+      if (!didWork) {
+        console.info("[WORKER][STX_KEEP_CURRENT] queue empty — idle (no catalog loop)");
+      }
     } catch (err: unknown) {
       console.error(
         "[WORKER][STX_KEEP_CURRENT] tick failed",
         err instanceof Error ? err.message : err
       );
-      // Persist whatever we had so a crash mid-batch still resumes near the failure.
       try {
         saveCheckpoint(cp);
       } catch {
         /* ignore */
       }
     }
-    // Busy → almost no pause (burn queue). Idle → longer sleep until new stale rows age in.
     await sleep(didWork ? TICK_MS : IDLE_MS);
   }
 }

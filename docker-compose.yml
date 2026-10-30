@@ -187,9 +187,9 @@ services:
     depends_on:
       - web
 
-  # Dual keep-current: KickDB → STX DB + Shopify prices for every website product.
-  # SSE = hot path. This = completeness net (incl. no-GTIN/TCG), ≤5d stale, weekly
-  # full website walk. Checkpoint in .data survives deploy/restart — no permanent cap.
+  # Dual keep-current: KickDB → STX DB + Shopify prices. Oldest stale first until
+  # ≤5d; idle when empty (no alphabet wrap / no weekly re-walk of fresh catalog).
+  # Checkpoint in .data survives deploy/restart.
   worker-shopify-stx-price-sync:
     build: .
     env_file:
@@ -202,7 +202,6 @@ services:
       - STX_KEEP_CURRENT_TICK_MS=${STX_KEEP_CURRENT_TICK_MS:-500}
       - STX_KEEP_CURRENT_IDLE_MS=${STX_KEEP_CURRENT_IDLE_MS:-30000}
       - STX_KEEP_CURRENT_INITIAL_DELAY_MS=${STX_KEEP_CURRENT_INITIAL_DELAY_MS:-15000}
-      - STX_KEEP_CURRENT_WEEKLY_FULL=${STX_KEEP_CURRENT_WEEKLY_FULL:-1}
       - STX_KEEP_CURRENT_CHECKPOINT_PATH=${STX_KEEP_CURRENT_CHECKPOINT_PATH:-.data/stx-shopify-keep-current.json}
       - SHOPIFY_API_RESERVE_POINTS=${SHOPIFY_STX_SYNC_API_RESERVE_POINTS:-800}
     command: ["npx", "tsx", "scripts/workers/stxShopifyKeepCurrentWorker.ts"]
