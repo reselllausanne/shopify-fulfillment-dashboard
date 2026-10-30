@@ -97,6 +97,38 @@ export function isStockxInboundDeliveryMilestone(key: string | null | undefined)
   return key === "SWISS_POST_TRACKING_AVAILABLE" || key === "SWISS_POST_TRACKING_AVAILABLE_EXPRESS";
 }
 
+export function isPurchaseConfirmedMilestoneKey(key: string | null | undefined): boolean {
+  return key === "PURCHASE_CONFIRMED" || key === "EXPRESS_CONFIRMED";
+}
+
+/** First-step confirmation milestone (STANDARD vs EXPRESS). */
+export function getPurchaseConfirmedMilestone(
+  checkoutType: string | null,
+  orderNumber?: string | null
+): MilestoneDefinition {
+  return sequenceForCheckout(checkoutType, orderNumber)[0];
+}
+
+/**
+ * Link-time purchase confirmation: always PURCHASE_CONFIRMED / EXPRESS_CONFIRMED.
+ * When stockxStates empty, forceSyntheticStates still yields that milestone (cron hole).
+ */
+export function resolvePurchaseConfirmedMilestone(opts: {
+  checkoutType: string | null;
+  orderNumber?: string | null;
+  hasStockxStates: boolean;
+  forceSyntheticStates: boolean;
+}): (MilestoneDefinition & { synthetic: boolean }) | null {
+  const milestone = getPurchaseConfirmedMilestone(opts.checkoutType, opts.orderNumber ?? null);
+  if (opts.hasStockxStates) {
+    return { ...milestone, synthetic: false };
+  }
+  if (opts.forceSyntheticStates) {
+    return { ...milestone, synthetic: true };
+  }
+  return null;
+}
+
 export function detectMilestone(
   checkoutType: string | null,
   states: StockXState[] | null,
