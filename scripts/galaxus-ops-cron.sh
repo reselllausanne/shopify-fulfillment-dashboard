@@ -275,12 +275,10 @@ run_image_sync_full() {
 run_snapshot_rebuild() {
   log "START rebuild-feed-snapshots (tsx, off web HTTP)"
   snapshot_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  # Run in a one-off container (`run`), NOT `exec -T web`: the ~80min rebuild used to die
-  # whenever a deploy recreated the web container mid-run, so the snapshot never refreshed
-  # (stale > 48h -> fast snapshot path disabled -> every push fell back to the 80min live
-  # build -> also killed). A `compose run` container is not managed by `up -d`, so deploys
-  # no longer tear it down. worker-ops-background image carries the 8GB heap this needs.
-  if ! docker compose run --rm --no-deps worker-ops-background npx tsx scripts/run-feed-snapshot-rebuild.ts; then
+  # Survive deploys: plain docker run labelled resell-oneshot (compose run on
+  # project=resell gets SIGKILL when worker-ops-background is rebuilt).
+  if ! bash scripts/vps-ops-oneshot-run.sh feed-snap-rebuild \
+    npx tsx scripts/run-feed-snapshot-rebuild.ts; then
     log "WARN: rebuild-feed-snapshots tsx failed — continuing with best-available snapshots"
     return 0
   fi
@@ -289,11 +287,8 @@ run_snapshot_rebuild() {
 
 run_master_specs_snapshot_rebuild() {
   log "START rebuild-master-specs-snapshot (tsx, ops-background heap, Phase-2 memory-flat)"
-  # stdbuf -oL: progress logs under docker compose redirect (Node buffers when not a TTY).
-  if ! docker compose run --rm --no-deps \
-    -e NODE_OPTIONS="${OPS_BACKGROUND_NODE_OPTIONS:---max-old-space-size=10240 --expose-gc}" \
-    worker-ops-background \
-    sh -c 'stdbuf -oL -eL npx tsx scripts/run-master-specs-snapshot-rebuild.ts'; then
+  if ! bash scripts/vps-ops-oneshot-run.sh master-specs-snap-rebuild \
+    npx tsx scripts/run-master-specs-snapshot-rebuild.ts; then
     log "ERROR: rebuild-master-specs-snapshot failed — refusing live fallback (OOM)"
     return 1
   fi
