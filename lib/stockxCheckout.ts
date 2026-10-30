@@ -1010,6 +1010,7 @@ export type ShopifyLineCtx = {
   customerEmail: string | null;
   customerFirstName: string | null;
   customerLastName: string | null;
+  lineItemImageUrl: string | null;
   deliveryMode: string | null;
   deliveryModeLabel: string | null;
   shippingLineTitles: string[];
@@ -1057,6 +1058,7 @@ export async function loadShopifyLine(
     customerEmail: line.customerEmail ? String(line.customerEmail) : null,
     customerFirstName: line.customerFirstName ? String(line.customerFirstName) : null,
     customerLastName: line.customerLastName ? String(line.customerLastName) : null,
+    lineItemImageUrl: line.lineItemImageUrl ? String(line.lineItemImageUrl) : null,
     deliveryMode: line.deliveryMode ?? null,
     deliveryModeLabel: line.deliveryModeLabel ?? null,
     shippingLineTitles,
@@ -1864,6 +1866,7 @@ export async function runStockxAutoCheckoutForOrder(options: {
         shopifyCustomerEmail: shopify.customerEmail,
         shopifyCustomerFirstName: shopify.customerFirstName,
         shopifyCustomerLastName: shopify.customerLastName,
+        shopifyLineItemImageUrl: shopify.lineItemImageUrl,
         stockxOrderNumber,
         stockxProductName: shopify.title,
         stockxSizeEU: shopify.sizeEU,
