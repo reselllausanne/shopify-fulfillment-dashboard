@@ -23,6 +23,13 @@ const LIMIT = (() => {
 
 const BATCH = 50;
 
+function toOrderGid(id: string): string {
+  const s = String(id || "").trim();
+  if (!s) return s;
+  if (s.startsWith("gid://")) return s;
+  return `gid://shopify/Order/${s}`;
+}
+
 type OrderNode = {
   id: string;
   name: string;
@@ -78,7 +85,11 @@ async function main() {
   const rows = await prisma.orderMatch.findMany({
     where: {
       shopifyCustomerEmail: null,
-      stockxOrderNumber: { not: null },
+      OR: [
+        { stockxOrderNumber: { startsWith: "01-" } },
+        { stockxOrderNumber: { startsWith: "02-" } },
+        { stockxOrderNumber: { startsWith: "03-" } },
+      ],
     },
     select: {
       id: true,
@@ -90,14 +101,14 @@ async function main() {
     orderBy: { createdAt: "desc" },
   });
 
-  const targets = rows.filter((r) => /^0[1-3]-/.test(String(r.stockxOrderNumber || "")));
+  const targets = rows;
   console.log(
-    `[backfill-email] candidates=${targets.length} (of ${rows.length} null-email rows scanned, limit=${LIMIT}) apply=${APPLY}`
+    `[backfill-email] candidates=${targets.length} apply=${APPLY}`
   );
 
   const byOrder = new Map<string, typeof targets>();
   for (const r of targets) {
-    const oid = String(r.shopifyOrderId || "").trim();
+    const oid = toOrderGid(String(r.shopifyOrderId || "").trim());
     if (!oid) continue;
     const list = byOrder.get(oid) ?? [];
     list.push(r);
