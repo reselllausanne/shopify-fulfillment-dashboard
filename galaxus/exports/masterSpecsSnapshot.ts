@@ -1,14 +1,39 @@
 import { createHash } from "crypto";
 import { prisma } from "@/app/lib/prisma";
 import { openCsvWriter, type CsvRow } from "@/galaxus/exports/csvStream";
-import { collectCriticalGtinProviderKeys } from "@/galaxus/exports/feedValidation";
-import { buildMasterSpecsFeedExport } from "@/galaxus/exports/masterSpecsFeed";
+import { isValidGtin } from "@/galaxus/exports/feedValidation";
+import {
+  loadMappingsByIdsForExport,
+  hydrateExportCandidateKickdbRawJson,
+  scanSlimMasterSpecsWinners,
+  type FeedExportCandidate,
+} from "@/galaxus/exports/feedMappingLoader";
+import { filterExportCandidates } from "@/galaxus/exports/gtinSelection";
+import {
+  buildGalaxusAlternativeMasterRows,
+  buildGalaxusAlternativeSpecRows,
+  filterAlternativeProducts,
+  loadAlternativeProductsForExport,
+} from "@/galaxus/exports/alternative";
+import {
+  buildMasterRowsFromCandidates,
+  buildSpecsRowsFromCandidates,
+} from "@/galaxus/exports/masterSpecsFeed";
 import { loadStxFeedGateProviderKeys } from "@/galaxus/exports/stxFeedGate";
 import { loadWelCardOmitProviderKeys } from "@/galaxus/exports/welFeedOmit";
 import { skipGalaxusFeedValidationForTrigger } from "@/galaxus/feedExecutor";
+import { attachAvailableStock } from "@/inventory/availableStock";
+import {
+  isPhysicalMergeEnabled,
+  loadPhysicalMirrorStockByGtin,
+  type PhysicalStockMap,
+} from "@/shopify/inventory/physicalAvailability";
+import type { SlimGtinWinner } from "@/galaxus/exports/gtinSelection";
 
 const SNAPSHOT_META_ID = "default";
 const UPSERT_CHUNK_SIZE = 3000;
+/** Pass-2 materialize batch — full include + rawJson for this many winners only. */
+const MATERIALIZE_CHUNK_SIZE = 1500;
 
 /**
  * Fixed header order — Galaxus rejects rows with extra/missing columns. Legacy
@@ -45,122 +70,61 @@ type SnapshotBuildResult = {
   invalidSupplierVariantIds: string[];
 };
 
-/**
- * Full rebuild — runs the existing master/specs build pipeline once, then
- * bulk-upserts every row into the snapshot tables. After this succeeds, daily
- * pushes stream straight from the snapshot (no KickDB rawJson, no in-memory
- * row arrays, no giant CSV strings).
- *
- * Phase 1: the rebuild itself still uses the legacy pipeline, so the memory
- * peak matches today. It only needs to succeed once for daily pushes to
- * become cheap. Phase 2 replaces this with a two-pass memory-flat rebuild.
- */
-export async function rebuildMasterSpecsSnapshot(params?: {
-  supplier?: string | null;
-  providerKeys?: string[];
-}): Promise<SnapshotBuildResult> {
-  const startedAt = Date.now();
-  const built = await buildMasterSpecsFeedExport({
-    supplier: params?.supplier ?? null,
-    providerKeys: params?.providerKeys,
-  });
-
-  // Bake the same row-level filters legacy runFeedUpload applies in-memory:
-  //   1. critical GTIN issues (empty / invalid / wrong check digit) — from the
-  //      validation report attached to the build result.
-  //   2. wel-pokemon opt-outs — from the persisted omit list.
-  // Baking them at rebuild time keeps the snapshot upload path a byte-for-byte
-  // subset of what the legacy path would upload — no risk of pushing rows
-  // Galaxus would reject.
-  const criticalGtinKeys = collectCriticalGtinProviderKeys(built.report ?? {});
-  const welPokemonKeys = await loadWelCardOmitProviderKeys();
-  const stxGateKeys = await loadStxFeedGateProviderKeys();
-  const blocked = new Set<string>([
-    ...Array.from(criticalGtinKeys),
-    ...Array.from(welPokemonKeys),
-    ...Array.from(stxGateKeys),
-  ]);
-
-  const masterRows = blocked.size
-    ? built.masterRows.filter(
-        (row) => !blocked.has(String(row.ProviderKey ?? "").trim())
-      )
-    : built.masterRows;
-  const specsRows = blocked.size
-    ? built.specsRows.filter(
-        (row) => !blocked.has(String(row.ProviderKey ?? "").trim())
-      )
-    : built.specsRows;
-  const masterRowCount = masterRows.length;
-  const specsRowCount = specsRows.length;
-  if (masterRowCount <= 0 || specsRowCount <= 0) {
-    throw new Error(`Refusing to publish empty master/specs snapshot (master=${masterRowCount}, specs=${specsRowCount})`);
+function maybeExposeGc(): void {
+  try {
+    if (typeof global.gc === "function") global.gc();
+  } catch {
+    // expose-gc not enabled
   }
-
-  // Free the source arrays' hold on the giant candidate blob so the master
-  // upsert doesn't have to fight the specs graph for heap.
-  (built as { masterRows?: unknown }).masterRows = undefined;
-
-  await replaceMasterSnapshotRows(masterRows);
-  // Free master rows once persisted — 1.1M objects × ~500B = ~550 MB.
-  masterRows.length = 0;
-  if (global.gc) global.gc();
-
-  (built as { specsRows?: unknown }).specsRows = undefined;
-  await replaceSpecsSnapshotRows(specsRows);
-  specsRows.length = 0;
-  if (global.gc) global.gc();
-
-  const now = new Date();
-  await (prisma as any).galaxusFeedSnapshotMeta.upsert({
-    where: { id: SNAPSHOT_META_ID },
-    create: {
-      id: SNAPSHOT_META_ID,
-      masterRowCount,
-      specsRowCount,
-      masterHeadersJson: [...MASTER_CSV_HEADERS],
-      specsHeadersJson: [...SPECS_CSV_HEADERS],
-      masterRebuiltAt: now,
-      specsRebuiltAt: now,
-      updatedAt: now,
-    },
-    update: {
-      masterRowCount,
-      specsRowCount,
-      masterHeadersJson: [...MASTER_CSV_HEADERS],
-      specsHeadersJson: [...SPECS_CSV_HEADERS],
-      masterRebuiltAt: now,
-      specsRebuiltAt: now,
-      updatedAt: now,
-    },
-  });
-
-  console.info("[GALAXUS][FEED][SNAPSHOT][MASTER_SPECS] rebuilt", {
-    masterRowsOut: masterRowCount,
-    specsRowsOut: specsRowCount,
-    blockedCriticalGtin: criticalGtinKeys.size,
-    blockedWelPokemon: welPokemonKeys.size,
-    blockedStxGate: stxGateKeys.size,
-    ms: Date.now() - startedAt,
-  });
-
-  return {
-    masterRows: masterRowCount,
-    specsRows: specsRowCount,
-    ms: Date.now() - startedAt,
-    criticalGtinIssues: built.criticalGtinIssues,
-    invalidSupplierVariantIds: built.invalidSupplierVariantIds,
-  };
 }
 
-async function replaceMasterSnapshotRows(rows: Array<Record<string, string>>) {
-  const prismaAny = prisma as any;
-  await prismaAny.galaxusFeedSnapshotMeta.updateMany({
-    where: { id: SNAPSHOT_META_ID },
-    data: { masterRebuiltAt: null, masterRowCount: 0 },
+function logHeap(phase: string, extra?: Record<string, unknown>): void {
+  const heap = process.memoryUsage();
+  console.info("[GALAXUS][FEED][SNAPSHOT][MASTER_SPECS] heap", {
+    phase,
+    heapMb: Math.round(heap.heapUsed / 1024 / 1024),
+    rssMb: Math.round(heap.rss / 1024 / 1024),
+    ...extra,
   });
-  await prismaAny.galaxusFeedMasterSnapshot.deleteMany({});
-  const now = new Date();
+}
+
+function winnersByMappingId(
+  winners: Map<string, SlimGtinWinner>
+): Map<string, SlimGtinWinner> {
+  const byId = new Map<string, SlimGtinWinner>();
+  for (const winner of winners.values()) {
+    byId.set(winner.mappingId, winner);
+  }
+  return byId;
+}
+
+function candidatesFromMappings(
+  mappings: any[],
+  winnersById: Map<string, SlimGtinWinner>
+): FeedExportCandidate[] {
+  const out: FeedExportCandidate[] = [];
+  for (const mapping of mappings) {
+    const mappingId = String(mapping?.id ?? "").trim();
+    const winner = winnersById.get(mappingId);
+    if (!winner) continue;
+    out.push({
+      mapping,
+      variant: mapping.supplierVariant ?? null,
+      product: mapping.kickdbVariant?.product ?? null,
+      providerKey: winner.providerKey,
+      gtin: winner.gtin,
+      sellPriceExVat: winner.sellPriceExVat,
+    });
+  }
+  return out;
+}
+
+async function insertMasterSnapshotRows(
+  rows: Array<Record<string, string>>,
+  now: Date
+): Promise<number> {
+  const prismaAny = prisma as any;
+  let inserted = 0;
   for (let offset = 0; offset < rows.length; offset += UPSERT_CHUNK_SIZE) {
     const chunk = rows.slice(offset, offset + UPSERT_CHUNK_SIZE);
     const data = chunk
@@ -178,17 +142,17 @@ async function replaceMasterSnapshotRows(rows: Array<Record<string, string>>) {
       .filter((v): v is NonNullable<typeof v> => v !== null);
     if (data.length === 0) continue;
     await prismaAny.galaxusFeedMasterSnapshot.createMany({ data, skipDuplicates: true });
+    inserted += data.length;
   }
+  return inserted;
 }
 
-async function replaceSpecsSnapshotRows(rows: Array<Record<string, string>>) {
+async function insertSpecsSnapshotRows(
+  rows: Array<Record<string, string>>,
+  now: Date
+): Promise<number> {
   const prismaAny = prisma as any;
-  await prismaAny.galaxusFeedSnapshotMeta.updateMany({
-    where: { id: SNAPSHOT_META_ID },
-    data: { specsRebuiltAt: null, specsRowCount: 0 },
-  });
-  await prismaAny.galaxusFeedSpecsSnapshot.deleteMany({});
-  const now = new Date();
+  let inserted = 0;
   for (let offset = 0; offset < rows.length; offset += UPSERT_CHUNK_SIZE) {
     const chunk = rows.slice(offset, offset + UPSERT_CHUNK_SIZE);
     const data = chunk
@@ -210,7 +174,258 @@ async function replaceSpecsSnapshotRows(rows: Array<Record<string, string>>) {
       .filter((v): v is NonNullable<typeof v> => v !== null);
     if (data.length === 0) continue;
     await prismaAny.galaxusFeedSpecsSnapshot.createMany({ data, skipDuplicates: true });
+    inserted += data.length;
   }
+  return inserted;
+}
+
+/**
+ * Phase-2 memory-flat rebuild:
+ *   1) Slim cursor scan — Map of gtin to {mappingId, scores} only (no full-catalog graphs)
+ *   2) Truncate snapshot tables (meta invalidated first)
+ *   3) Materialize winners in chunks: load → hydrate → stock → build rows → insert → free
+ * Peak heap stays well under 8GB; NODE_OPTIONS=10240 is headroom.
+ */
+export async function rebuildMasterSpecsSnapshot(params?: {
+  supplier?: string | null;
+  providerKeys?: string[];
+}): Promise<SnapshotBuildResult> {
+  const startedAt = Date.now();
+  const supplier = params?.supplier ?? null;
+  const providerKeys = params?.providerKeys;
+
+  console.info("[GALAXUS][FEED][SNAPSHOT][MASTER_SPECS] rebuild phase", {
+    phase: "slim-scan",
+  });
+  const slim = await scanSlimMasterSpecsWinners({
+    supplier,
+    providerKeys,
+    includeTrmDiagnostics: false,
+  });
+  logHeap("slim-scan-done", {
+    masterGtins: slim.masterByGtin.size,
+    specsGtins: slim.specsByGtin.size,
+    mappingsScanned: slim.mappingsScanned,
+    scanMs: slim.ms,
+  });
+
+  const welPokemonKeys = await loadWelCardOmitProviderKeys();
+  const stxGateKeys = await loadStxFeedGateProviderKeys();
+  const blocked = new Set<string>([
+    ...Array.from(welPokemonKeys),
+    ...Array.from(stxGateKeys),
+  ]);
+
+  const masterById = winnersByMappingId(slim.masterByGtin);
+  const specsById = winnersByMappingId(slim.specsByGtin);
+  const unionIds = Array.from(
+    new Set([...Array.from(masterById.keys()), ...Array.from(specsById.keys())])
+  );
+
+  // Invalidate before wipe so a mid-rebuild crash cannot serve truncated tables as ready.
+  const prismaAny = prisma as any;
+  await prismaAny.galaxusFeedSnapshotMeta.updateMany({
+    where: { id: SNAPSHOT_META_ID },
+    data: {
+      masterRebuiltAt: null,
+      specsRebuiltAt: null,
+      masterRowCount: 0,
+      specsRowCount: 0,
+    },
+  });
+  await prismaAny.galaxusFeedMasterSnapshot.deleteMany({});
+  await prismaAny.galaxusFeedSpecsSnapshot.deleteMany({});
+  maybeExposeGc();
+  logHeap("tables-wiped", { unionWinners: unionIds.length });
+
+  const mergePhysical = isPhysicalMergeEnabled();
+  const now = new Date();
+  let masterRowCount = 0;
+  let specsRowCount = 0;
+  let criticalGtinIssues = 0;
+  const invalidSupplierVariantIds: string[] = [];
+  let materializeChunks = 0;
+
+  console.info("[GALAXUS][FEED][SNAPSHOT][MASTER_SPECS] rebuild phase", {
+    phase: "materialize",
+    unionWinners: unionIds.length,
+    chunkSize: MATERIALIZE_CHUNK_SIZE,
+  });
+
+  for (let offset = 0; offset < unionIds.length; offset += MATERIALIZE_CHUNK_SIZE) {
+    const idChunk = unionIds.slice(offset, offset + MATERIALIZE_CHUNK_SIZE);
+    materializeChunks += 1;
+    const mappings = await loadMappingsByIdsForExport(idChunk);
+    const masterFiltered = filterExportCandidates(
+      candidatesFromMappings(mappings, masterById)
+    );
+    const specsFiltered = filterExportCandidates(
+      candidatesFromMappings(mappings, specsById)
+    );
+    if (masterFiltered.invalidSupplierVariantIds.length > 0) {
+      invalidSupplierVariantIds.push(...masterFiltered.invalidSupplierVariantIds);
+    }
+    if (specsFiltered.invalidSupplierVariantIds.length > 0) {
+      invalidSupplierVariantIds.push(...specsFiltered.invalidSupplierVariantIds);
+    }
+    const masterCandidates = masterFiltered.valid as FeedExportCandidate[];
+    const specsCandidates = specsFiltered.valid as FeedExportCandidate[];
+
+    await hydrateExportCandidateKickdbRawJson(masterCandidates, specsCandidates);
+
+    const stockBySupplierVariantId = await attachAvailableStock(
+      masterCandidates.map((candidate) => candidate.variant).filter(Boolean)
+    );
+    let physicalByGtin: PhysicalStockMap = new Map();
+    if (mergePhysical) {
+      const gtins = masterCandidates
+        .map((candidate) => String(candidate?.mapping?.gtin ?? candidate.gtin ?? "").trim())
+        .filter((g) => g.length > 0);
+      physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
+    }
+
+    let masterRows = buildMasterRowsFromCandidates(
+      masterCandidates,
+      stockBySupplierVariantId,
+      false,
+      mergePhysical,
+      physicalByGtin
+    );
+    let specsRows = buildSpecsRowsFromCandidates(specsCandidates);
+
+    if (blocked.size > 0) {
+      masterRows = masterRows.filter((row) => !blocked.has(String(row.ProviderKey ?? "").trim()));
+      specsRows = specsRows.filter((row) => !blocked.has(String(row.ProviderKey ?? "").trim()));
+    }
+
+    // Bake critical GTIN failures (same as legacy validation report filter).
+    const nextMaster: typeof masterRows = [];
+    for (const row of masterRows) {
+      const gtin = String(row.Gtin ?? "").trim();
+      if (!gtin || !isValidGtin(gtin)) {
+        criticalGtinIssues += 1;
+        continue;
+      }
+      nextMaster.push(row);
+    }
+    masterRows = nextMaster;
+
+    masterRowCount += await insertMasterSnapshotRows(masterRows, now);
+    specsRowCount += await insertSpecsSnapshotRows(specsRows, now);
+
+    if (materializeChunks % 20 === 0 || offset + MATERIALIZE_CHUNK_SIZE >= unionIds.length) {
+      logHeap("materialize-progress", {
+        chunk: materializeChunks,
+        done: Math.min(offset + idChunk.length, unionIds.length),
+        total: unionIds.length,
+        masterRowCount,
+        specsRowCount,
+      });
+    }
+
+    masterRows.length = 0;
+    specsRows.length = 0;
+    masterCandidates.length = 0;
+    specsCandidates.length = 0;
+    mappings.length = 0;
+    maybeExposeGc();
+  }
+
+  // NER alternatives — small set; price maps from slim specs winners (no full candidates).
+  const allowAlternatives = !supplier || supplier.toLowerCase() === "ner";
+  if (allowAlternatives) {
+    const normalByGtin = new Map<string, number>();
+    const normalByProviderKey = new Map<string, number>();
+    for (const winner of slim.specsByGtin.values()) {
+      if (winner.gtin && Number.isFinite(winner.sellPriceExVat)) {
+        normalByGtin.set(winner.gtin, winner.sellPriceExVat);
+      }
+      if (winner.providerKey && Number.isFinite(winner.sellPriceExVat)) {
+        normalByProviderKey.set(winner.providerKey, winner.sellPriceExVat);
+      }
+    }
+    const alternatives = await loadAlternativeProductsForExport({
+      providerKeys: providerKeys && providerKeys.length > 0 ? providerKeys : undefined,
+    });
+    const { exportable } = filterAlternativeProducts({
+      alternatives,
+      normalByGtin,
+      normalByProviderKey,
+    });
+    let altMaster = buildGalaxusAlternativeMasterRows(exportable, {
+      minimal: false,
+      includeWeight: false,
+    });
+    let altSpecs = buildGalaxusAlternativeSpecRows(exportable);
+    if (blocked.size > 0) {
+      altMaster = altMaster.filter((row) => !blocked.has(String(row.ProviderKey ?? "").trim()));
+      altSpecs = altSpecs.filter((row) => !blocked.has(String(row.ProviderKey ?? "").trim()));
+    }
+    masterRowCount += await insertMasterSnapshotRows(altMaster, now);
+    specsRowCount += await insertSpecsSnapshotRows(altSpecs, now);
+    console.info("[GALAXUS][FEED][SNAPSHOT][MASTER_SPECS] alternatives", {
+      exportable: exportable.length,
+      altMaster: altMaster.length,
+      altSpecs: altSpecs.length,
+    });
+  }
+
+  // Drop slim maps before meta write so GC can reclaim.
+  slim.masterByGtin.clear();
+  slim.specsByGtin.clear();
+  masterById.clear();
+  specsById.clear();
+  unionIds.length = 0;
+  maybeExposeGc();
+
+  if (masterRowCount <= 0 || specsRowCount <= 0) {
+    throw new Error(
+      `Refusing to publish empty master/specs snapshot (master=${masterRowCount}, specs=${specsRowCount})`
+    );
+  }
+
+  const finishedAt = new Date();
+  await prismaAny.galaxusFeedSnapshotMeta.upsert({
+    where: { id: SNAPSHOT_META_ID },
+    create: {
+      id: SNAPSHOT_META_ID,
+      masterRowCount,
+      specsRowCount,
+      masterHeadersJson: [...MASTER_CSV_HEADERS],
+      specsHeadersJson: [...SPECS_CSV_HEADERS],
+      masterRebuiltAt: finishedAt,
+      specsRebuiltAt: finishedAt,
+      updatedAt: finishedAt,
+    },
+    update: {
+      masterRowCount,
+      specsRowCount,
+      masterHeadersJson: [...MASTER_CSV_HEADERS],
+      specsHeadersJson: [...SPECS_CSV_HEADERS],
+      masterRebuiltAt: finishedAt,
+      specsRebuiltAt: finishedAt,
+      updatedAt: finishedAt,
+    },
+  });
+
+  logHeap("rebuilt-done", { masterRowCount, specsRowCount });
+  console.info("[GALAXUS][FEED][SNAPSHOT][MASTER_SPECS] rebuilt", {
+    masterRowsOut: masterRowCount,
+    specsRowsOut: specsRowCount,
+    blockedWelPokemon: welPokemonKeys.size,
+    blockedStxGate: stxGateKeys.size,
+    criticalGtinIssues,
+    materializeChunks,
+    ms: Date.now() - startedAt,
+  });
+
+  return {
+    masterRows: masterRowCount,
+    specsRows: specsRowCount,
+    ms: Date.now() - startedAt,
+    criticalGtinIssues,
+    invalidSupplierVariantIds,
+  };
 }
 
 function normaliseMasterRow(row: Record<string, string>): Record<string, string> {
