@@ -316,7 +316,38 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
           source: "snapshot",
         };
       }
-      console.info("[GALAXUS][FEEDS][UPLOAD] master-specs snapshot not ready, using legacy build");
+      // Full-catalog live build OOMs (~10GB). Nightly cron rebuilds the snap first;
+      // refuse live fallback unless explicitly armed for emergencies.
+      const allowLive =
+        String(process.env.GALAXUS_MASTER_SPECS_ALLOW_LIVE ?? "").trim() === "1";
+      if (!allowLive) {
+        const msg =
+          "master-specs snapshot not ready — refusing live full-catalog build (OOM). Rebuild via scripts/run-master-specs-snapshot-rebuild.ts / galaxus-ops-cron.sh push-master-specs, or set GALAXUS_MASTER_SPECS_ALLOW_LIVE=1";
+        console.error(`[GALAXUS][FEEDS][UPLOAD] ${msg}`);
+        if (auditId) {
+          await (prisma as any).galaxusJobRun.update({
+            where: { id: auditId },
+            data: {
+              finishedAt: new Date(),
+              success: false,
+              errorMessage: msg,
+            },
+          });
+        }
+        return {
+          ok: false,
+          status: 503,
+          runId,
+          uploaded: [],
+          counts: { master: null, stock: null, offer: null, specs: null },
+          omittedByFeed: { master: 0, stock: 0, offer: 0, specs: 0 },
+          error: msg,
+          source: "snapshot-required",
+        };
+      }
+      console.warn(
+        "[GALAXUS][FEEDS][UPLOAD] master-specs snapshot not ready, GALAXUS_MASTER_SPECS_ALLOW_LIVE=1 — legacy build"
+      );
     }
 
     let masterCsv: string | Buffer = "";

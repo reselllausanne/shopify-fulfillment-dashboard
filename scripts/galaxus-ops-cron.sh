@@ -3,11 +3,14 @@
 # Galaxus scheduled ops (VPS cron).
 #
 # Usage:
-#   bash scripts/galaxus-ops-cron.sh stock-price-flow # snapshots → stock + price
-#   bash scripts/galaxus-ops-cron.sh full-flow   # stock → price → master-specs (manual/catalog recovery)
-#   bash scripts/galaxus-ops-cron.sh full-push   # single push-full (heavy; can OOM)
+#   bash scripts/galaxus-ops-cron.sh stock-price-flow # nightly: stock/offer snap → stock + price
+#   bash scripts/galaxus-ops-cron.sh full-flow   # stock/offer + master/specs snaps → all three pushes
+#   bash scripts/galaxus-ops-cron.sh full-push   # single push-full (avoid; prefer snap paths)
 #   bash scripts/galaxus-ops-cron.sh stx-full    # full StockX/KickDB catalog sync
-#   bash scripts/galaxus-ops-cron.sh push-master-specs  # master+specs only (recovery)
+#   bash scripts/galaxus-ops-cron.sh push-master-specs  # nightly: master/specs snap rebuild → push
+#
+# Durable nightly (VPS crontab): stock-price-flow @02:00 UTC, push-master-specs @04:00 UTC.
+# Master push must NEVER fall back to live full-catalog build (OOM). Rebuild fails → hard fail.
 #
 # Env overrides:
 #   GALAXUS_OPS_BASE_URL   default http://127.0.0.1:3000
@@ -285,9 +288,13 @@ run_snapshot_rebuild() {
 }
 
 run_master_specs_snapshot_rebuild() {
-  log "START rebuild-master-specs-snapshot (tsx, ops-background heap)"
-  if ! docker compose run --rm --no-deps worker-ops-background npx tsx scripts/run-master-specs-snapshot-rebuild.ts; then
-    log "ERROR: rebuild-master-specs-snapshot failed — master push will fall back to live build (OOM risk)"
+  log "START rebuild-master-specs-snapshot (tsx, ops-background heap, Phase-2 memory-flat)"
+  # stdbuf -oL: progress logs under docker compose redirect (Node buffers when not a TTY).
+  if ! docker compose run --rm --no-deps \
+    -e NODE_OPTIONS="${OPS_BACKGROUND_NODE_OPTIONS:---max-old-space-size=10240 --expose-gc}" \
+    worker-ops-background \
+    sh -c 'stdbuf -oL -eL npx tsx scripts/run-master-specs-snapshot-rebuild.ts'; then
+    log "ERROR: rebuild-master-specs-snapshot failed — refusing live fallback (OOM)"
     return 1
   fi
   log "DONE rebuild-master-specs-snapshot"
@@ -354,7 +361,12 @@ case "$ACTION" in
     fi
     ;;
   push-master-specs)
-    run_master_specs_snapshot_rebuild || log "WARN: master snapshot rebuild failed — live fallback"
+    # Nightly durable path: rebuild snap on ops-background, then feed worker streams [SNAPSHOT].
+    # Never enqueue push after a failed rebuild — live build OOMs the feed worker.
+    if ! run_master_specs_snapshot_rebuild; then
+      log "ERROR: push-master-specs aborted — snapshot rebuild failed (no live fallback)"
+      exit 1
+    fi
     run_push "push-master-specs"
     log "DONE push-master-specs"
     ;;
