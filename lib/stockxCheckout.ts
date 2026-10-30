@@ -2153,6 +2153,23 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
       estimatedDelivery: totals.eta,
     });
 
+    // Link fail (e.g. StockX # already on another Galaxus line) ≠ easy_buy.
+    if (!linked.ok) {
+      return {
+        kind: "needs_human",
+        reason: "link_fail",
+        detail: linked.error ?? `paid ${stockxOrderNumber} but link failed`,
+        stockxOrderNumber,
+        totalChf,
+        lane: selected.lane.label,
+        pickReason: selected.pickReason,
+        link: {
+          matchId: linked.matchId,
+          unitLinkStatus: linked.unitLinkStatus,
+        },
+      };
+    }
+
     return {
       kind: "easy_buy",
       stockxOrderNumber,
@@ -2163,7 +2180,7 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
         matchId: linked.matchId,
         unitLinkStatus: linked.unitLinkStatus,
       },
-      detail: linked.ok ? null : linked.error,
+      detail: null,
     };
   } catch (e: any) {
     return {
