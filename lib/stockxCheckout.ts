@@ -851,41 +851,46 @@ export async function selectAndVerifyStockxLane(
 
   let clicked = false;
   let verifiedSubtotal: number | null = null;
-  // Retry click — StockX often keeps Express selected after a soft wrapper click.
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    clicked = (await clickLaneCard(page, picked)) || clicked;
-    await page.waitForTimeout(attempt === 1 ? 1100 : 1500);
-    const after = await page.locator("body").innerText().catch(() => "");
-    verifiedSubtotal = extractCheckoutSubtotalChf(after);
 
+  // Single-price Xpress: no lane radios to click — skip click thrash (OOM risk) and
+  // take live Sous-total as all-in below.
+  if (!singleXpressSynth) {
+    // Retry click — StockX often keeps Express selected after a soft wrapper click.
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      clicked = (await clickLaneCard(page, picked)) || clicked;
+      await page.waitForTimeout(attempt === 1 ? 1100 : 1500);
+      const after = await page.locator("body").innerText().catch(() => "");
+      verifiedSubtotal = extractCheckoutSubtotalChf(after);
+
+      if (liveSubtotalLooksLikeExpress(verifiedSubtotal, lanes, desiredForVerify)) {
+        // Fail-closed signal: keep retrying click; do NOT accept Express as STANDARD.
+        console.warn(
+          `[STOCKX-CHECKOUT] lane click attempt ${attempt}: still Express subtotal=${verifiedSubtotal} want=${picked.totalChf}`
+        );
+        continue;
+      }
+      if (verifiedSubtotal != null && laneMatchesSubtotal(picked, verifiedSubtotal)) {
+        break;
+      }
+      // Subtotal 0,00 / missing — wait once more for SPA settle before next click.
+      if (verifiedSubtotal == null || verifiedSubtotal < 1) {
+        await page.waitForTimeout(900);
+        const after2 = await page.locator("body").innerText().catch(() => "");
+        verifiedSubtotal = extractCheckoutSubtotalChf(after2);
+        if (verifiedSubtotal != null && laneMatchesSubtotal(picked, verifiedSubtotal)) break;
+        if (liveSubtotalLooksLikeExpress(verifiedSubtotal, lanes, desiredForVerify)) continue;
+      }
+    }
+
+    // Still Express while desired STANDARD → hard fail (never Place Order on Express).
     if (liveSubtotalLooksLikeExpress(verifiedSubtotal, lanes, desiredForVerify)) {
-      // Fail-closed signal: keep retrying click; do NOT accept Express as STANDARD.
-      console.warn(
-        `[STOCKX-CHECKOUT] lane click attempt ${attempt}: still Express subtotal=${verifiedSubtotal} want=${picked.totalChf}`
-      );
-      continue;
+      return {
+        ok: false,
+        reason: "price_moved",
+        lanes,
+        detail: `STANDARD click did not stick — live subtotal still Express ${verifiedSubtotal} (want ${picked.totalChf}) clicked=${clicked} (${pickReason})`,
+      };
     }
-    if (verifiedSubtotal != null && laneMatchesSubtotal(picked, verifiedSubtotal)) {
-      break;
-    }
-    // Subtotal 0,00 / missing — wait once more for SPA settle before next click.
-    if (verifiedSubtotal == null || verifiedSubtotal < 1) {
-      await page.waitForTimeout(900);
-      const after2 = await page.locator("body").innerText().catch(() => "");
-      verifiedSubtotal = extractCheckoutSubtotalChf(after2);
-      if (verifiedSubtotal != null && laneMatchesSubtotal(picked, verifiedSubtotal)) break;
-      if (liveSubtotalLooksLikeExpress(verifiedSubtotal, lanes, desiredForVerify)) continue;
-    }
-  }
-
-  // Still Express while desired STANDARD → hard fail (never Place Order on Express).
-  if (liveSubtotalLooksLikeExpress(verifiedSubtotal, lanes, desiredForVerify)) {
-    return {
-      ok: false,
-      reason: "price_moved",
-      lanes,
-      detail: `STANDARD click did not stick — live subtotal still Express ${verifiedSubtotal} (want ${picked.totalChf}) clicked=${clicked} (${pickReason})`,
-    };
   }
 
   // Single-price Xpress: there are no lane cards to click; the live checkout subtotal
