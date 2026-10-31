@@ -360,8 +360,17 @@ export async function computeExplorerEligibilityDebug(
           "shopify_product_id"::text AS shopify_product_id,
           BOOL_OR("lifecycle_status" IN ('selected','labeling','active')) AS in_active_batch,
           BOOL_OR(
-            "exit_reason" IN ('exposed_no_click', 'zombie_no_click')
-            AND "exited_at" >= (CURRENT_TIMESTAMP - INTERVAL '60 day')
+            ("cooldown_until" IS NOT NULL AND "cooldown_until" > CURRENT_TIMESTAMP)
+            OR ("retest_at" IS NOT NULL AND "retest_at" > CURRENT_TIMESTAMP)
+            OR (
+              "destination" = 'ADS_EXCLUDED'
+              AND "exited_at" IS NOT NULL
+              AND "exited_at" >= (CURRENT_TIMESTAMP - INTERVAL '60 day')
+            )
+            OR (
+              "exit_reason" IN ('exposed_no_click', 'zombie_no_click', 'underexposed', 'inconclusive', 'long_tail_kill_no_convert')
+              AND "exited_at" >= (CURRENT_TIMESTAMP - INTERVAL '60 day')
+            )
           ) AS in_cooldown
         FROM "public"."ads_explorer_batch_models"
         GROUP BY "shopify_product_id"

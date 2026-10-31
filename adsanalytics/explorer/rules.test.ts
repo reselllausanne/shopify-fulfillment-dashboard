@@ -59,13 +59,13 @@ describe("explorer exit rules", () => {
     expect(decision).toBeNull();
   });
 
-  it("rule 3: 100 impressions and zero clicks is a zombie with a 60 day cooldown", () => {
+  it("rule 3: 50 impressions and zero clicks is a zombie with a 60 day cooldown", () => {
     const decision = decideExplorerDestination(
-      model({ impressions: 100, clicks: 0 }),
+      model({ impressions: 50, clicks: 0 }),
       DEFAULT_EXPLORER_RULES,
       NOW
     );
-    expect(decision).toMatchObject({ destination: "LONG_TAIL_ALL", reason: "zombie_no_click" });
+    expect(decision).toMatchObject({ destination: "ADS_EXCLUDED", reason: "zombie_no_click" });
     expect(decision?.cooldownUntil).not.toBeNull();
     expect(daysBetween(NOW, decision!.cooldownUntil!)).toBe(60);
   });
@@ -79,24 +79,34 @@ describe("explorer exit rules", () => {
     expect(decision?.reason).toBe("zombie_no_click");
   });
 
-  it("rule 4: under 50 impressions at day 10 is underexposed with a retest date", () => {
+  it("49 imps + 0 clicks is still starved (not zombie) at day 10 → CORE", () => {
+    const decision = decideExplorerDestination(
+      model({ impressions: 49, clicks: 0, elapsedDays: 10 }),
+      DEFAULT_EXPLORER_RULES,
+      NOW
+    );
+    expect(decision).toMatchObject({ destination: "CORE_ALL", reason: "underexposed_return" });
+  });
+
+  it("rule 4: under 50 impressions at day 10 returns to CORE (starved, not failed)", () => {
     const decision = decideExplorerDestination(
       model({ impressions: 12, clicks: 1, elapsedDays: 10 }),
       DEFAULT_EXPLORER_RULES,
       NOW
     );
-    expect(decision).toMatchObject({ destination: "LONG_TAIL_ALL", reason: "underexposed" });
-    expect(daysBetween(NOW, decision!.retestAt!)).toBe(60);
+    expect(decision).toMatchObject({ destination: "CORE_ALL", reason: "underexposed_return" });
+    expect(decision?.retestAt).not.toBeNull();
+    expect(daysBetween(NOW, decision!.retestAt!)).toBe(14);
     expect(decision?.cooldownUntil).toBeNull();
   });
 
-  it("rule 5: exposed but no positive threshold at day 10 is inconclusive", () => {
+  it("rule 5: exposed but no positive threshold at day 10 is inconclusive → exclude", () => {
     const decision = decideExplorerDestination(
       model({ impressions: 80, clicks: 2, elapsedDays: 10 }),
       DEFAULT_EXPLORER_RULES,
       NOW
     );
-    expect(decision).toMatchObject({ destination: "LONG_TAIL_ALL", reason: "inconclusive" });
+    expect(decision).toMatchObject({ destination: "ADS_EXCLUDED", reason: "inconclusive" });
     expect(decision?.retestAt).not.toBeNull();
   });
 
@@ -120,7 +130,7 @@ describe("explorer exit rules", () => {
   });
 });
 
-describe("long tail phase 1", () => {
+describe("long tail drain", () => {
   it("promotes a converting Long Tail model back to CORE_ALL", () => {
     const decision = decideLongTailDestination(
       model({ destination: "LONG_TAIL_ALL", ltConversions: 1 }),
@@ -130,20 +140,29 @@ describe("long tail phase 1", () => {
     expect(decision).toMatchObject({ destination: "CORE_ALL", reason: "long_tail_converted" });
   });
 
-  it("leaves a non converting Long Tail model where it is", () => {
+  it("kills a non converting Long Tail model (no paid long tail)", () => {
+    const decision = decideLongTailDestination(
+      model({ destination: "LONG_TAIL_ALL", impressions: 9000, clicks: 40 }),
+      DEFAULT_EXPLORER_RULES,
+      NOW
+    );
+    expect(decision).toMatchObject({
+      destination: "ADS_EXCLUDED",
+      reason: "long_tail_kill_no_convert",
+    });
+  });
+
+  it("never moves a CORE_ALL or ADS_EXCLUDED model", () => {
     expect(
-      decideLongTailDestination(
-        model({ destination: "LONG_TAIL_ALL", impressions: 9000, clicks: 40 }),
+      decideDestination(
+        model({ destination: "CORE_ALL", conversions: 5, clicks: 90 }),
         DEFAULT_EXPLORER_RULES,
         NOW
       )
     ).toBeNull();
-  });
-
-  it("never moves a CORE_ALL model", () => {
     expect(
       decideDestination(
-        model({ destination: "CORE_ALL", conversions: 5, clicks: 90 }),
+        model({ destination: "ADS_EXCLUDED", conversions: 0, clicks: 0 }),
         DEFAULT_EXPLORER_RULES,
         NOW
       )
@@ -158,7 +177,17 @@ describe("batch closure", () => {
       DEFAULT_EXPLORER_RULES,
       NOW
     );
-    expect(decision?.destination).toBe("LONG_TAIL_ALL");
+    // 60 imps + 1 click = inconclusive → exclude; starved cases return to core.
+    expect(decision?.destination).toBe("ADS_EXCLUDED");
+  });
+
+  it("batch closure returns starved models to CORE instead of killing them", () => {
+    const decision = decideBatchClosure(
+      model({ impressions: 5, clicks: 0, elapsedDays: 11 }),
+      DEFAULT_EXPLORER_RULES,
+      NOW
+    );
+    expect(decision).toMatchObject({ destination: "CORE_ALL", reason: "underexposed_return" });
   });
 
   it("does not close a batch that is still running", () => {
@@ -206,6 +235,6 @@ describe("per-batch window override", () => {
     const config = loadExplorerRuleConfig({ batchDays: 5 }, {});
     const input = model({ elapsedDays: 5.1, impressions: 20 });
     expect(decideBatchClosure(input, DEFAULT_EXPLORER_RULES, NOW)).toBeNull();
-    expect(decideBatchClosure(input, config, NOW)?.destination).toBe("LONG_TAIL_ALL");
+    expect(decideBatchClosure(input, config, NOW)?.destination).toBe("CORE_ALL");
   });
 });

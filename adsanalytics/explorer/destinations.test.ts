@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ADS_EXCLUDED_LABEL,
+  CAMPAIGN_ROLES,
   DESTINATION_LABEL,
   DESTINATIONS,
   destinationForLabel,
   destinationOperation,
+  isCampaignRole,
   isDestination,
   labelForDestination,
   EXPLORER_ACTIVE_LABEL,
@@ -19,6 +22,7 @@ describe("destination label mapping", () => {
     expect(labelForDestination("CORE_ALL")).toBeNull();
     expect(labelForDestination("EXPLORER_ALL")).toBe(EXPLORER_ACTIVE_LABEL);
     expect(labelForDestination("LONG_TAIL_ALL")).toBe(LONG_TAIL_ALL_LABEL);
+    expect(labelForDestination("ADS_EXCLUDED")).toBe(ADS_EXCLUDED_LABEL);
   });
 
   it("round trips every destination through its label", () => {
@@ -34,8 +38,10 @@ describe("destination label mapping", () => {
     expect(destinationForLabel("some_other_feed_label")).toBe("CORE_ALL");
   });
 
-  it("owns every explorer label plus long tail", () => {
-    expect([...ROUTED_LABELS].sort()).toEqual([...EXPLORER_LABELS, LONG_TAIL_ALL_LABEL].sort());
+  it("owns every explorer label plus long tail plus ads_excluded", () => {
+    expect([...ROUTED_LABELS].sort()).toEqual(
+      [...EXPLORER_LABELS, LONG_TAIL_ALL_LABEL, ADS_EXCLUDED_LABEL].sort()
+    );
     const labels = DESTINATIONS.map((d) => DESTINATION_LABEL[d]).filter((l): l is string => l != null);
     for (const label of labels) expect(ROUTED_LABELS).toContain(label);
   });
@@ -44,14 +50,17 @@ describe("destination label mapping", () => {
     for (const label of EXPLORER_LABELS) expect(destinationForLabel(label)).toBe("EXPLORER_ALL");
   });
 
-  it("validates destination strings", () => {
+  it("validates destination strings and campaign roles", () => {
     expect(isDestination("EXPLORER_ALL")).toBe(true);
+    expect(isDestination("ADS_EXCLUDED")).toBe(true);
     expect(isDestination("explorer_all")).toBe(false);
-    expect(isDestination(undefined)).toBe(false);
+    expect(isCampaignRole("CORE_ALL")).toBe(true);
+    expect(isCampaignRole("ADS_EXCLUDED")).toBe(false);
+    expect(CAMPAIGN_ROLES).not.toContain("ADS_EXCLUDED");
   });
 });
 
-describe("the three label transitions", () => {
+describe("label transitions", () => {
   const transitions: Array<{
     from: Destination;
     to: Destination;
@@ -59,7 +68,9 @@ describe("the three label transitions", () => {
     merchantAction: "insert" | "delete";
   }> = [
     { from: "CORE_ALL", to: "EXPLORER_ALL", expectedLabel: EXPLORER_ACTIVE_LABEL, merchantAction: "insert" },
-    { from: "EXPLORER_ALL", to: "LONG_TAIL_ALL", expectedLabel: LONG_TAIL_ALL_LABEL, merchantAction: "insert" },
+    { from: "EXPLORER_ALL", to: "ADS_EXCLUDED", expectedLabel: ADS_EXCLUDED_LABEL, merchantAction: "insert" },
+    { from: "LONG_TAIL_ALL", to: "ADS_EXCLUDED", expectedLabel: ADS_EXCLUDED_LABEL, merchantAction: "insert" },
+    { from: "ADS_EXCLUDED", to: "CORE_ALL", expectedLabel: null, merchantAction: "delete" },
     { from: "LONG_TAIL_ALL", to: "CORE_ALL", expectedLabel: null, merchantAction: "delete" },
   ];
 
@@ -80,6 +91,6 @@ describe("the three label transitions", () => {
   it("scopes one outbox operation per destination", () => {
     const operations = DESTINATIONS.map(destinationOperation);
     expect(new Set(operations).size).toBe(DESTINATIONS.length);
-    expect(operations).toContain("set:LONG_TAIL_ALL");
+    expect(operations).toContain("set:ADS_EXCLUDED");
   });
 });
