@@ -15,7 +15,7 @@ export type ExplorerRuleConfig = {
   underexposedImpressions: number;
   /** Batch duration, in days, after which the terminal rules apply. */
   batchDays: number;
-  /** Days before a Long Tail model is offered for a new Explorer test. */
+  /** Days before an excluded model is offered for a new Explorer test. */
   retestAfterDays: number;
 };
 
@@ -90,6 +90,28 @@ function addDaysUtc(now: Date, days: number): Date {
   return new Date(now.getTime() + days * 86_400_000);
 }
 
+/**
+ * Failed / unproven Explorer exits go to ADS_EXCLUDED (custom_label_3=ads_excluded),
+ * not paid Long Tail. No Shopping/PMax campaign includes that label.
+ */
+function excludeDecision(
+  base: { modelId: string },
+  reason: string,
+  ruleId: string,
+  now: Date,
+  config: ExplorerRuleConfig,
+  kind: "cooldown" | "retest"
+): RuleDecision {
+  return {
+    ...base,
+    destination: "ADS_EXCLUDED",
+    reason,
+    ruleId,
+    cooldownUntil: kind === "cooldown" ? addDaysUtc(now, config.zombieCooldownDays) : null,
+    retestAt: kind === "retest" ? addDaysUtc(now, config.retestAfterDays) : null,
+  };
+}
+
 /** Rules for a model currently sitting in Explorer All. First match wins. */
 export function decideExplorerDestination(
   input: ModelRuleInput,
@@ -105,39 +127,24 @@ export function decideExplorerDestination(
     return { ...base, destination: "CORE_ALL", reason: "discovered", ruleId: "explorer_discovered" };
   }
   if (input.impressions >= config.zombieImpressions && input.clicks === 0) {
-    return {
-      ...base,
-      destination: "LONG_TAIL_ALL",
-      reason: "zombie_no_click",
-      ruleId: "explorer_zombie_no_click",
-      cooldownUntil: addDaysUtc(now, config.zombieCooldownDays),
-    };
+    return excludeDecision(base, "zombie_no_click", "explorer_zombie_no_click", now, config, "cooldown");
   }
   if (input.elapsedDays < config.batchDays) return null;
 
   if (input.impressions < config.underexposedImpressions) {
-    return {
-      ...base,
-      destination: "LONG_TAIL_ALL",
-      reason: "underexposed",
-      ruleId: "explorer_underexposed",
-      retestAt: addDaysUtc(now, config.retestAfterDays),
-    };
+    return excludeDecision(base, "underexposed", "explorer_underexposed", now, config, "retest");
   }
-  return {
-    ...base,
-    destination: "LONG_TAIL_ALL",
-    reason: "inconclusive",
-    ruleId: "explorer_inconclusive",
-    retestAt: addDaysUtc(now, config.retestAfterDays),
-  };
+  return excludeDecision(base, "inconclusive", "explorer_inconclusive", now, config, "retest");
 }
 
-/** Long Tail phase 1: any conversion promotes the model back to the core campaign. */
+/**
+ * Long Tail phase: conversion → core. Otherwise drain into ADS_EXCLUDED so we stop
+ * paying for models that never converted in Long Tail either.
+ */
 export function decideLongTailDestination(
   input: ModelRuleInput,
-  _config: ExplorerRuleConfig,
-  _now: Date = new Date()
+  config: ExplorerRuleConfig,
+  now: Date = new Date()
 ): RuleDecision | null {
   if (input.ltConversions > 0) {
     return {
@@ -149,7 +156,14 @@ export function decideLongTailDestination(
       retestAt: null,
     };
   }
-  return null;
+  return excludeDecision(
+    { modelId: input.modelId },
+    "long_tail_kill_no_convert",
+    "long_tail_kill_no_convert",
+    now,
+    config,
+    "retest"
+  );
 }
 
 export function decideDestination(
@@ -163,13 +177,14 @@ export function decideDestination(
     case "LONG_TAIL_ALL":
       return decideLongTailDestination(input, config, now);
     case "CORE_ALL":
+    case "ADS_EXCLUDED":
       return null;
   }
 }
 
 /**
  * End-of-batch guarantee: past the batch window no model may still be explorer_active.
- * Anything undecided is forced to Long Tail rather than left in Explorer.
+ * Anything undecided is forced to ADS_EXCLUDED rather than left in Explorer or Long Tail.
  */
 export function decideBatchClosure(
   input: ModelRuleInput,
@@ -180,12 +195,12 @@ export function decideBatchClosure(
   if (input.elapsedDays < config.batchDays) return null;
   const decision = decideExplorerDestination(input, config, now);
   if (decision) return decision;
-  return {
-    modelId: input.modelId,
-    destination: "LONG_TAIL_ALL",
-    reason: "inconclusive",
-    ruleId: "explorer_batch_closure",
-    cooldownUntil: null,
-    retestAt: addDaysUtc(now, config.retestAfterDays),
-  };
+  return excludeDecision(
+    { modelId: input.modelId },
+    "inconclusive",
+    "explorer_batch_closure",
+    now,
+    config,
+    "retest"
+  );
 }

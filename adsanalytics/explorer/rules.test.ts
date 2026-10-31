@@ -65,7 +65,7 @@ describe("explorer exit rules", () => {
       DEFAULT_EXPLORER_RULES,
       NOW
     );
-    expect(decision).toMatchObject({ destination: "LONG_TAIL_ALL", reason: "zombie_no_click" });
+    expect(decision).toMatchObject({ destination: "ADS_EXCLUDED", reason: "zombie_no_click" });
     expect(decision?.cooldownUntil).not.toBeNull();
     expect(daysBetween(NOW, decision!.cooldownUntil!)).toBe(60);
   });
@@ -85,7 +85,7 @@ describe("explorer exit rules", () => {
       DEFAULT_EXPLORER_RULES,
       NOW
     );
-    expect(decision).toMatchObject({ destination: "LONG_TAIL_ALL", reason: "underexposed" });
+    expect(decision).toMatchObject({ destination: "ADS_EXCLUDED", reason: "underexposed" });
     expect(daysBetween(NOW, decision!.retestAt!)).toBe(60);
     expect(decision?.cooldownUntil).toBeNull();
   });
@@ -96,7 +96,7 @@ describe("explorer exit rules", () => {
       DEFAULT_EXPLORER_RULES,
       NOW
     );
-    expect(decision).toMatchObject({ destination: "LONG_TAIL_ALL", reason: "inconclusive" });
+    expect(decision).toMatchObject({ destination: "ADS_EXCLUDED", reason: "inconclusive" });
     expect(decision?.retestAt).not.toBeNull();
   });
 
@@ -120,7 +120,7 @@ describe("explorer exit rules", () => {
   });
 });
 
-describe("long tail phase 1", () => {
+describe("long tail drain", () => {
   it("promotes a converting Long Tail model back to CORE_ALL", () => {
     const decision = decideLongTailDestination(
       model({ destination: "LONG_TAIL_ALL", ltConversions: 1 }),
@@ -130,20 +130,29 @@ describe("long tail phase 1", () => {
     expect(decision).toMatchObject({ destination: "CORE_ALL", reason: "long_tail_converted" });
   });
 
-  it("leaves a non converting Long Tail model where it is", () => {
+  it("kills a non converting Long Tail model (no paid long tail)", () => {
+    const decision = decideLongTailDestination(
+      model({ destination: "LONG_TAIL_ALL", impressions: 9000, clicks: 40 }),
+      DEFAULT_EXPLORER_RULES,
+      NOW
+    );
+    expect(decision).toMatchObject({
+      destination: "ADS_EXCLUDED",
+      reason: "long_tail_kill_no_convert",
+    });
+  });
+
+  it("never moves a CORE_ALL or ADS_EXCLUDED model", () => {
     expect(
-      decideLongTailDestination(
-        model({ destination: "LONG_TAIL_ALL", impressions: 9000, clicks: 40 }),
+      decideDestination(
+        model({ destination: "CORE_ALL", conversions: 5, clicks: 90 }),
         DEFAULT_EXPLORER_RULES,
         NOW
       )
     ).toBeNull();
-  });
-
-  it("never moves a CORE_ALL model", () => {
     expect(
       decideDestination(
-        model({ destination: "CORE_ALL", conversions: 5, clicks: 90 }),
+        model({ destination: "ADS_EXCLUDED", conversions: 0, clicks: 0 }),
         DEFAULT_EXPLORER_RULES,
         NOW
       )
@@ -158,7 +167,7 @@ describe("batch closure", () => {
       DEFAULT_EXPLORER_RULES,
       NOW
     );
-    expect(decision?.destination).toBe("LONG_TAIL_ALL");
+    expect(decision?.destination).toBe("ADS_EXCLUDED");
   });
 
   it("does not close a batch that is still running", () => {
@@ -206,6 +215,6 @@ describe("per-batch window override", () => {
     const config = loadExplorerRuleConfig({ batchDays: 5 }, {});
     const input = model({ elapsedDays: 5.1, impressions: 20 });
     expect(decideBatchClosure(input, DEFAULT_EXPLORER_RULES, NOW)).toBeNull();
-    expect(decideBatchClosure(input, config, NOW)?.destination).toBe("LONG_TAIL_ALL");
+    expect(decideBatchClosure(input, config, NOW)?.destination).toBe("ADS_EXCLUDED");
   });
 });

@@ -25,6 +25,7 @@ import {
   CUSTOM_LABEL_3_INDEX,
   ROUTED_LABELS,
   explorerLabelForBrand,
+  isExplorerNewBatchPaused,
 } from "@/adsanalytics/explorer/labels";
 import { googleAdsMutate, searchAll } from "@/adsanalytics/google/adsClient";
 import { findSubdivisionsMissingLabelExclusion } from "@/adsanalytics/google/listingGroupMutations";
@@ -291,6 +292,18 @@ export async function explorerBrandCycleCommand(
   options: ExplorerBrandCycleOptions = {}
 ): Promise<number> {
   return withSyncRun("explorer:brand:cycle", options, async () => {
+    if (isExplorerNewBatchPaused()) {
+      log("explorer_brand_cycle.paused", {
+        reason: "ADS_EXPLORER_PAUSE_NEW_BATCHES",
+        hint: "Set ADS_EXPLORER_PAUSE_NEW_BATCHES=0 to resume brand Explorer after core ROAS recovers",
+      });
+      return {
+        skipped: true,
+        reason: "new_batches_paused",
+        brands: [],
+        outcomes: [],
+      };
+    }
     const brands = (options.brands?.trim() || Object.keys(BRAND_SOURCE_CAMPAIGNS).join(","))
       .split(",")
       .map((b) => b.trim().toLowerCase())

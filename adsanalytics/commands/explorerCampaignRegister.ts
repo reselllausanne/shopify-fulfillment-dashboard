@@ -5,7 +5,11 @@ import {
   upsertCampaignRegistry,
 } from "@/adsanalytics/explorer/campaignRegistry";
 import { writeExplorerReport } from "@/adsanalytics/explorer/core";
-import { DESTINATIONS, isDestination, labelForDestination } from "@/adsanalytics/explorer/destinations";
+import {
+  CAMPAIGN_ROLES,
+  isCampaignRole,
+  labelForDestination,
+} from "@/adsanalytics/explorer/destinations";
 import { ROUTED_LABELS } from "@/adsanalytics/explorer/labels";
 import { log, withSyncRun } from "@/adsanalytics/run";
 
@@ -26,8 +30,8 @@ export async function explorerCampaignRegisterCommand(
 ): Promise<number> {
   return withSyncRun("explorer:campaign:register", options, async () => {
     const role = options.role?.trim().toUpperCase();
-    if (!isDestination(role)) {
-      throw new Error(`Missing or invalid --role. Expected one of ${DESTINATIONS.join(", ")}`);
+    if (!isCampaignRole(role)) {
+      throw new Error(`Missing or invalid --role. Expected one of ${CAMPAIGN_ROLES.join(", ")}`);
     }
     const campaignId = options.campaignId?.trim();
     if (!campaignId) throw new Error("Missing --campaign-id=<googleCampaignId>");
@@ -120,7 +124,7 @@ export async function explorerCampaignRegisterCommand(
       mismatches,
       campaignFacts: facts,
       registry: Object.fromEntries(finalRegistry),
-      missingRoles: DESTINATIONS.filter((d) => !finalRegistry.has(d)),
+      missingRoles: CAMPAIGN_ROLES.filter((d) => !finalRegistry.has(d)),
     };
     const outPath = await writeExplorerReport("explorer-campaign-registry.json", report);
     log("explorer_campaign_register.summary", {

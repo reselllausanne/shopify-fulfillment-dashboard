@@ -7,7 +7,7 @@ import {
   saveListingBackups,
   writeExplorerReport,
 } from "@/adsanalytics/explorer/core";
-import { LONG_TAIL_ALL_LABEL, ROUTED_LABELS } from "@/adsanalytics/explorer/labels";
+import { ADS_EXCLUDED_LABEL, ROUTED_LABELS } from "@/adsanalytics/explorer/labels";
 import {
   applyAdditionalLabelExclusions,
   findSubdivisionsMissingLabelExclusion,
@@ -31,7 +31,7 @@ export async function explorerCoreExclusionsExtendCommand(
   options: ExplorerCoreExclusionsExtendOptions = {}
 ): Promise<number> {
   return withSyncRun("explorer:core-exclusions:extend", options, async () => {
-    const label = (options.label ?? LONG_TAIL_ALL_LABEL).trim();
+    const label = (options.label ?? ADS_EXCLUDED_LABEL).trim();
     if (!(ROUTED_LABELS as readonly string[]).includes(label)) {
       throw new Error(`Label ${label} is not a routed label (${ROUTED_LABELS.join(", ")})`);
     }

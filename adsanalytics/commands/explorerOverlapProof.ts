@@ -4,7 +4,11 @@ import { prisma } from "@/app/lib/prisma";
 import { latestInventorySyncMeta } from "@/adsanalytics/commands/inventorySync";
 import { loadCampaignRegistry } from "@/adsanalytics/explorer/campaignRegistry";
 import { EXPLORER_DEFAULT_MERCHANT_ID, writeExplorerReport } from "@/adsanalytics/explorer/core";
-import { DESTINATIONS, destinationForLabel, type Destination } from "@/adsanalytics/explorer/destinations";
+import {
+  CAMPAIGN_ROLES,
+  destinationForLabel,
+  type Destination,
+} from "@/adsanalytics/explorer/destinations";
 import { log, withSyncRun } from "@/adsanalytics/run";
 
 export type ExplorerOverlapProofOptions = {
@@ -40,8 +44,8 @@ export async function explorerOverlapProofCommand(
 ): Promise<number> {
   return withSyncRun("explorer:overlap:proof", options, async () => {
     const registry = await loadCampaignRegistry();
-    const missingRoles = DESTINATIONS.filter((d) => !registry.has(d));
-    const registeredRoles = DESTINATIONS.filter((d) => registry.has(d));
+    const missingRoles = CAMPAIGN_ROLES.filter((d) => !registry.has(d));
+    const registeredRoles = CAMPAIGN_ROLES.filter((d) => registry.has(d));
 
     // A missing role still yields a useful partial proof for the roles that do exist, so
     // the run reports evidence instead of aborting; the missing role stays a blocker.
@@ -75,6 +79,7 @@ export async function explorerOverlapProofCommand(
       CORE_ALL: { offers: 0, correctlyTargeted: 0 },
       EXPLORER_ALL: { offers: 0, correctlyTargeted: 0 },
       LONG_TAIL_ALL: { offers: 0, correctlyTargeted: 0 },
+      ADS_EXCLUDED: { offers: 0, correctlyTargeted: 0 },
     };
     const violations: Violation[] = [];
     let overlapCount = 0;
@@ -87,6 +92,26 @@ export async function explorerOverlapProofCommand(
       const expectedCampaignId = registry.get(expectedDestination)?.campaignId ?? null;
       const actual = row.targeted_campaign_ids.filter((id) => routedCampaignIds.has(id));
       byDestination[expectedDestination].offers += 1;
+
+      // True-kill label: success = no routed campaign targets the offer.
+      if (expectedDestination === "ADS_EXCLUDED") {
+        if (actual.length === 0) {
+          byDestination.ADS_EXCLUDED.correctlyTargeted += 1;
+        } else {
+          wrongCampaignCount += 1;
+          if (violations.length < MAX_SAMPLES * 3) {
+            violations.push({
+              kind: "wrong_campaign",
+              offerId: row.offer_id,
+              label: row.custom_attr3,
+              expectedDestination,
+              expectedCampaignId: null,
+              actualCampaignIds: actual,
+            });
+          }
+        }
+        continue;
+      }
 
       if (expectedCampaignId === null) {
         unregisteredDestinationCount += 1;
@@ -180,7 +205,7 @@ export async function explorerOverlapProofCommand(
       inventoryMeta,
       missingRoles,
       campaigns: Object.fromEntries(
-        DESTINATIONS.map((role) => [
+        CAMPAIGN_ROLES.map((role) => [
           role,
           registry.has(role)
             ? {

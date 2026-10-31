@@ -11,32 +11,53 @@ import {
   type MerchantProductRef,
 } from "@/adsanalytics/explorer/merchantClient";
 import {
+  ADS_EXCLUDED_LABEL,
   EXPLORER_ACTIVE_LABEL,
   EXPLORER_LABELS,
   LONG_TAIL_ALL_LABEL,
   ROUTED_LABELS,
 } from "@/adsanalytics/explorer/labels";
 
-export { EXPLORER_ACTIVE_LABEL, EXPLORER_LABELS, LONG_TAIL_ALL_LABEL, ROUTED_LABELS };
+export {
+  ADS_EXCLUDED_LABEL,
+  EXPLORER_ACTIVE_LABEL,
+  EXPLORER_LABELS,
+  LONG_TAIL_ALL_LABEL,
+  ROUTED_LABELS,
+};
 
-export const DESTINATIONS = ["CORE_ALL", "EXPLORER_ALL", "LONG_TAIL_ALL"] as const;
+/** All routing destinations, including true-kill ADS_EXCLUDED (no Ads campaign). */
+export const DESTINATIONS = ["CORE_ALL", "EXPLORER_ALL", "LONG_TAIL_ALL", "ADS_EXCLUDED"] as const;
 export type Destination = (typeof DESTINATIONS)[number];
+
+/**
+ * Destinations that map 1:1 to a registered Shopping/PMax campaign role.
+ * ADS_EXCLUDED has no campaign — products sit on a label no campaign includes.
+ */
+export const CAMPAIGN_ROLES = ["CORE_ALL", "EXPLORER_ALL", "LONG_TAIL_ALL"] as const;
+export type CampaignRole = (typeof CAMPAIGN_ROLES)[number];
 
 /** custom_label_3 value that materializes each destination. CORE_ALL means "no label". */
 export const DESTINATION_LABEL: Record<Destination, string | null> = {
   CORE_ALL: null,
   EXPLORER_ALL: EXPLORER_ACTIVE_LABEL,
   LONG_TAIL_ALL: LONG_TAIL_ALL_LABEL,
+  ADS_EXCLUDED: ADS_EXCLUDED_LABEL,
 };
 
 export function isDestination(value: unknown): value is Destination {
   return typeof value === "string" && (DESTINATIONS as readonly string[]).includes(value);
 }
 
+export function isCampaignRole(value: unknown): value is CampaignRole {
+  return typeof value === "string" && (CAMPAIGN_ROLES as readonly string[]).includes(value);
+}
+
 export function destinationForLabel(label: string | null | undefined): Destination {
   const normalized = (label ?? "").trim();
   if ((EXPLORER_LABELS as readonly string[]).includes(normalized)) return "EXPLORER_ALL";
   if (normalized === LONG_TAIL_ALL_LABEL) return "LONG_TAIL_ALL";
+  if (normalized === ADS_EXCLUDED_LABEL) return "ADS_EXCLUDED";
   return "CORE_ALL";
 }
 
@@ -294,7 +315,7 @@ async function mutateOffers(
             }
           } else {
             // productInputs:insert upserts on (offerId, contentLanguage, feedLabel),
-            // so EXPLORER_ALL -> LONG_TAIL_ALL is a single overwrite.
+            // so EXPLORER_ALL -> ADS_EXCLUDED / LONG_TAIL_ALL is a single overwrite.
             await insertSupplementalProductLabel(
               ctx.merchantId,
               ctx.dataSource,

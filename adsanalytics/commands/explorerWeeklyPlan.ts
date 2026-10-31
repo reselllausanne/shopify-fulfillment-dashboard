@@ -25,6 +25,7 @@ import {
   planHashFromPayload,
   writeExplorerReport,
 } from "@/adsanalytics/explorer/core";
+import { isExplorerNewBatchPaused } from "@/adsanalytics/explorer/labels";
 import { EXIT_OK, log, withSyncRun } from "@/adsanalytics/run";
 
 const SOURCE_CAMPAIGN_NAME = "all";
@@ -279,6 +280,18 @@ export async function explorerWeeklyPlanCommand(): Promise<number> {
   return withSyncRun("explorer:weekly:plan", {}, async () => {
     const seed = isoWeekSeed();
     log("explorer_weekly.start", { seed });
+    if (isExplorerNewBatchPaused()) {
+      log("explorer_weekly.paused", {
+        seed,
+        reason: "ADS_EXPLORER_PAUSE_NEW_BATCHES",
+        hint: "Set ADS_EXPLORER_PAUSE_NEW_BATCHES=0 to resume weekly Explorer after core ROAS recovers",
+      });
+      return {
+        skipped: true,
+        reason: "new_batches_paused",
+        seed,
+      };
+    }
     const authExit = await authHealthCommand();
     if (authExit !== EXIT_OK) {
       throw new Error(`auth:health exited with code ${authExit}`);
