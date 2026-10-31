@@ -59,9 +59,9 @@ describe("explorer exit rules", () => {
     expect(decision).toBeNull();
   });
 
-  it("rule 3: 100 impressions and zero clicks is a zombie with a 60 day cooldown", () => {
+  it("rule 3: 50 impressions and zero clicks is a zombie with a 60 day cooldown", () => {
     const decision = decideExplorerDestination(
-      model({ impressions: 100, clicks: 0 }),
+      model({ impressions: 50, clicks: 0 }),
       DEFAULT_EXPLORER_RULES,
       NOW
     );
@@ -77,6 +77,15 @@ describe("explorer exit rules", () => {
       NOW
     );
     expect(decision?.reason).toBe("zombie_no_click");
+  });
+
+  it("49 imps + 0 clicks is still starved (not zombie) at day 10 → CORE", () => {
+    const decision = decideExplorerDestination(
+      model({ impressions: 49, clicks: 0, elapsedDays: 10 }),
+      DEFAULT_EXPLORER_RULES,
+      NOW
+    );
+    expect(decision).toMatchObject({ destination: "CORE_ALL", reason: "underexposed_return" });
   });
 
   it("rule 4: under 50 impressions at day 10 returns to CORE (starved, not failed)", () => {

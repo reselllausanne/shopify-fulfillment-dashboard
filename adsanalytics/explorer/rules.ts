@@ -21,8 +21,13 @@ export type ExplorerRuleConfig = {
 
 export const DEFAULT_EXPLORER_RULES: ExplorerRuleConfig = {
   discoveredClicks: 3,
-  zombieImpressions: 100,
+  /** Niche catalog: 50 imps + 0 clicks is enough to call a fail (was 100). */
+  zombieImpressions: 50,
   zombieCooldownDays: 60,
+  /**
+   * Below this = starved by budget/competition, not a fail → return to core.
+   * Must stay ≤ zombieImpressions so a model cannot be both "starved" and "zombie".
+   */
   underexposedImpressions: 50,
   batchDays: 10,
   retestAfterDays: 60,

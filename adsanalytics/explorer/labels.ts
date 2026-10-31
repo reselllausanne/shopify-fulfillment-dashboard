@@ -41,11 +41,11 @@ export const CUSTOM_LABEL_3_INDEX = "INDEX3";
 
 /**
  * When true, weekly + brand-cycle planners skip shipping new Explorer batches.
- * Default ON — set ADS_EXPLORER_PAUSE_NEW_BATCHES=0 to resume after core ROAS recovers.
+ * Default OFF (batches run). Set ADS_EXPLORER_PAUSE_NEW_BATCHES=1 to freeze.
  */
 export function isExplorerNewBatchPaused(
   env: Record<string, string | undefined> = process.env
 ): boolean {
-  const raw = (env.ADS_EXPLORER_PAUSE_NEW_BATCHES ?? "1").trim().toLowerCase();
-  return raw !== "0" && raw !== "false" && raw !== "off" && raw !== "no";
+  const raw = (env.ADS_EXPLORER_PAUSE_NEW_BATCHES ?? "0").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "on" || raw === "yes";
 }
