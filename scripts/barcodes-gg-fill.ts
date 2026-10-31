@@ -350,30 +350,43 @@ async function loadPrioritySkus(limit: number): Promise<string[]> {
   }
 
   if (PRIORITY === "in_stock") {
+    // Prefer never-looked-up styles; otherwise recycle forever on top stock.
     const rows = await prisma.$queryRaw<Array<{ supplierSku: string }>>`
-      SELECT "supplierSku"
-      FROM "SupplierVariant"
-      WHERE (gtin IS NULL OR btrim(gtin) = '')
-        AND stock > 0
-        AND "supplierVariantId" LIKE 'stx_%'
-        AND "supplierSku" IS NOT NULL
-      GROUP BY "supplierSku"
-      ORDER BY SUM(stock) DESC
+      SELECT sv."supplierSku"
+      FROM "SupplierVariant" sv
+      LEFT JOIN "BarcodesGgStyleCache" c
+        ON c."styleCode" = UPPER(TRIM(sv."supplierSku"))
+      WHERE (sv.gtin IS NULL OR btrim(sv.gtin) = '')
+        AND sv.stock > 0
+        AND sv."supplierVariantId" LIKE 'stx_%'
+        AND sv."supplierSku" IS NOT NULL
+        AND btrim(sv."supplierSku") <> ''
+        AND c."styleCode" IS NULL
+      GROUP BY sv."supplierSku"
+      ORDER BY SUM(sv.stock) DESC
       LIMIT ${limit}
     `;
-    return rows.map((r) => r.supplierSku);
+    return rows
+      .map((r) => normalizeStyleCode(r.supplierSku))
+      .filter((s): s is string => Boolean(s));
   }
 
   const rows = await prisma.$queryRaw<Array<{ supplierSku: string }>>`
-    SELECT "supplierSku"
-    FROM "SupplierVariant"
-    WHERE (gtin IS NULL OR btrim(gtin) = '')
-      AND "supplierVariantId" LIKE 'stx_%'
-      AND "supplierSku" IS NOT NULL
-    GROUP BY "supplierSku"
+    SELECT sv."supplierSku"
+    FROM "SupplierVariant" sv
+    LEFT JOIN "BarcodesGgStyleCache" c
+      ON c."styleCode" = UPPER(TRIM(sv."supplierSku"))
+    WHERE (sv.gtin IS NULL OR btrim(sv.gtin) = '')
+      AND sv."supplierVariantId" LIKE 'stx_%'
+      AND sv."supplierSku" IS NOT NULL
+      AND btrim(sv."supplierSku") <> ''
+      AND c."styleCode" IS NULL
+    GROUP BY sv."supplierSku"
     LIMIT ${limit}
   `;
-  return rows.map((r) => r.supplierSku);
+  return rows
+    .map((r) => normalizeStyleCode(r.supplierSku))
+    .filter((s): s is string => Boolean(s));
 }
 
 type SvNeed = {
