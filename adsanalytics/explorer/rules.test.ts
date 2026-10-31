@@ -79,18 +79,19 @@ describe("explorer exit rules", () => {
     expect(decision?.reason).toBe("zombie_no_click");
   });
 
-  it("rule 4: under 50 impressions at day 10 is underexposed with a retest date", () => {
+  it("rule 4: under 50 impressions at day 10 returns to CORE (starved, not failed)", () => {
     const decision = decideExplorerDestination(
       model({ impressions: 12, clicks: 1, elapsedDays: 10 }),
       DEFAULT_EXPLORER_RULES,
       NOW
     );
-    expect(decision).toMatchObject({ destination: "ADS_EXCLUDED", reason: "underexposed" });
-    expect(daysBetween(NOW, decision!.retestAt!)).toBe(60);
+    expect(decision).toMatchObject({ destination: "CORE_ALL", reason: "underexposed_return" });
+    expect(decision?.retestAt).not.toBeNull();
+    expect(daysBetween(NOW, decision!.retestAt!)).toBe(14);
     expect(decision?.cooldownUntil).toBeNull();
   });
 
-  it("rule 5: exposed but no positive threshold at day 10 is inconclusive", () => {
+  it("rule 5: exposed but no positive threshold at day 10 is inconclusive → exclude", () => {
     const decision = decideExplorerDestination(
       model({ impressions: 80, clicks: 2, elapsedDays: 10 }),
       DEFAULT_EXPLORER_RULES,
@@ -167,7 +168,17 @@ describe("batch closure", () => {
       DEFAULT_EXPLORER_RULES,
       NOW
     );
+    // 60 imps + 1 click = inconclusive → exclude; starved cases return to core.
     expect(decision?.destination).toBe("ADS_EXCLUDED");
+  });
+
+  it("batch closure returns starved models to CORE instead of killing them", () => {
+    const decision = decideBatchClosure(
+      model({ impressions: 5, clicks: 0, elapsedDays: 11 }),
+      DEFAULT_EXPLORER_RULES,
+      NOW
+    );
+    expect(decision).toMatchObject({ destination: "CORE_ALL", reason: "underexposed_return" });
   });
 
   it("does not close a batch that is still running", () => {
@@ -215,6 +226,6 @@ describe("per-batch window override", () => {
     const config = loadExplorerRuleConfig({ batchDays: 5 }, {});
     const input = model({ elapsedDays: 5.1, impressions: 20 });
     expect(decideBatchClosure(input, DEFAULT_EXPLORER_RULES, NOW)).toBeNull();
-    expect(decideBatchClosure(input, config, NOW)?.destination).toBe("ADS_EXCLUDED");
+    expect(decideBatchClosure(input, config, NOW)?.destination).toBe("CORE_ALL");
   });
 });

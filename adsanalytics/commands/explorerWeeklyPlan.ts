@@ -30,10 +30,13 @@ import { EXIT_OK, log, withSyncRun } from "@/adsanalytics/run";
 
 const SOURCE_CAMPAIGN_NAME = "all";
 const EXPLORER_ROLE = "EXPLORER_ALL";
-/** Weekly target; effective size is min(target, availablePool). */
-const WEEKLY_TARGET_MODELS = 1000;
+/**
+ * Weekly target. Keep small: CHF ~50/day budget cannot expose 1000 models
+ * (historical underexposed median was 1 impression). Resume only after pause off.
+ */
+const WEEKLY_TARGET_MODELS = 100;
 /** Below this pool size the weekly run skips instead of shipping a tiny batch. */
-const WEEKLY_FLOOR_MODELS = 100;
+const WEEKLY_FLOOR_MODELS = 40;
 /** Statuses that indicate a batch is not terminal — presence blocks re-planning. */
 const NON_TERMINAL_STATUSES = [
   "planned",

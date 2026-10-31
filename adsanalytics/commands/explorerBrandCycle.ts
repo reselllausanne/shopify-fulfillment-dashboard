@@ -39,8 +39,9 @@ export const BRAND_SOURCE_CAMPAIGNS: Record<string, string> = {
 };
 
 const CYCLE_MARKER = "brand_cycle";
-const DEFAULT_MODELS = 300;
-const DEFAULT_BATCH_DAYS = 5;
+/** Small batches so each model can actually reach ≥50 imps before exit rules fire. */
+const DEFAULT_MODELS = 50;
+const DEFAULT_BATCH_DAYS = 10;
 const DEFAULT_MAX_CPC_MICROS = 700_000;
 const POOL_FLOOR_MODELS = 50;
 const LOOKBACK_DAYS = 30;

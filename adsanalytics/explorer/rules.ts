@@ -91,8 +91,8 @@ function addDaysUtc(now: Date, days: number): Date {
 }
 
 /**
- * Failed / unproven Explorer exits go to ADS_EXCLUDED (custom_label_3=ads_excluded),
- * not paid Long Tail. No Shopping/PMax campaign includes that label.
+ * True kill only after a real exposure test failed.
+ * custom_label_3=ads_excluded — no Shopping/PMax campaign includes that label.
  */
 function excludeDecision(
   base: { modelId: string },
@@ -112,6 +112,25 @@ function excludeDecision(
   };
 }
 
+/** Put the model back on the main catalog (clear label). Used when Explorer never really tested it. */
+function returnToCore(
+  base: { modelId: string },
+  reason: string,
+  ruleId: string,
+  now: Date,
+  config: ExplorerRuleConfig
+): RuleDecision {
+  return {
+    ...base,
+    destination: "CORE_ALL",
+    reason,
+    ruleId,
+    cooldownUntil: null,
+    // Short retest gate so the next weekly batch does not immediately re-pull the same starved SKU.
+    retestAt: addDaysUtc(now, Math.min(14, config.retestAfterDays)),
+  };
+}
+
 /** Rules for a model currently sitting in Explorer All. First match wins. */
 export function decideExplorerDestination(
   input: ModelRuleInput,
@@ -126,20 +145,24 @@ export function decideExplorerDestination(
   if (input.clicks >= config.discoveredClicks) {
     return { ...base, destination: "CORE_ALL", reason: "discovered", ruleId: "explorer_discovered" };
   }
+  // Real test failed: many imps, zero clicks → kill ads.
   if (input.impressions >= config.zombieImpressions && input.clicks === 0) {
     return excludeDecision(base, "zombie_no_click", "explorer_zombie_no_click", now, config, "cooldown");
   }
   if (input.elapsedDays < config.batchDays) return null;
 
+  // Starved (median ~1 imp historically) — NOT a fail. Give back to core, do not exclude.
   if (input.impressions < config.underexposedImpressions) {
-    return excludeDecision(base, "underexposed", "explorer_underexposed", now, config, "retest");
+    return returnToCore(base, "underexposed_return", "explorer_underexposed_return", now, config);
   }
+  // Got exposure + some engagement but no convert — soft kill, retest later.
   return excludeDecision(base, "inconclusive", "explorer_inconclusive", now, config, "retest");
 }
 
 /**
- * Long Tail phase: conversion → core. Otherwise drain into ADS_EXCLUDED so we stop
- * paying for models that never converted in Long Tail either.
+ * Long Tail drain: conversion → core. Else ADS_EXCLUDED (stop paying for parked junk).
+ * Historical Long Tail is mostly underexposed leftovers — those still get killed here because
+ * they already burned LT budget; new Explorer underexposed never enter LT anymore.
  */
 export function decideLongTailDestination(
   input: ModelRuleInput,
@@ -184,7 +207,7 @@ export function decideDestination(
 
 /**
  * End-of-batch guarantee: past the batch window no model may still be explorer_active.
- * Anything undecided is forced to ADS_EXCLUDED rather than left in Explorer or Long Tail.
+ * Undecided leftovers return to core (same as underexposed) — never invent a fail.
  */
 export function decideBatchClosure(
   input: ModelRuleInput,
@@ -195,12 +218,5 @@ export function decideBatchClosure(
   if (input.elapsedDays < config.batchDays) return null;
   const decision = decideExplorerDestination(input, config, now);
   if (decision) return decision;
-  return excludeDecision(
-    { modelId: input.modelId },
-    "inconclusive",
-    "explorer_batch_closure",
-    now,
-    config,
-    "retest"
-  );
+  return returnToCore(input, "batch_closure_return", "explorer_batch_closure", now, config);
 }
