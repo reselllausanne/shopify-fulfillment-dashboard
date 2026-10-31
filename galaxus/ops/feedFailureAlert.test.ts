@@ -77,6 +77,7 @@ describe("notifyGalaxusFeedFailure", () => {
     const body = JSON.parse(String((global.fetch as any).mock.calls[0][1].body));
     expect(body.text).toContain("master/specs");
     expect(body.text).toContain("31h");
+    expect(body.text).toContain("push-master-specs");
   });
 
   it("posts crash-loop hard-stop alert", async () => {

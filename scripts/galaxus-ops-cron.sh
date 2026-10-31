@@ -3,25 +3,22 @@
 # Galaxus scheduled ops (VPS cron).
 #
 # Usage:
-#   bash scripts/galaxus-ops-cron.sh stock-price-flow # nightly: stock/offer snap → stock + price
-#   bash scripts/galaxus-ops-cron.sh full-flow   # stock/offer + master/specs snaps → all three pushes
-#   bash scripts/galaxus-ops-cron.sh full-push   # single push-full (avoid; prefer snap paths)
-#   bash scripts/galaxus-ops-cron.sh stx-full    # full StockX/KickDB catalog sync
-#   bash scripts/galaxus-ops-cron.sh push-master-specs  # nightly: master/specs snap rebuild → push
+#   bash scripts/galaxus-ops-cron.sh stock-price-flow   # nightly: stock/offer snap → stock + price
+#   bash scripts/galaxus-ops-cron.sh push-master-specs  # nightly: master/specs snap → COPY → SFTP
+#   bash scripts/galaxus-ops-cron.sh stx-full           # full StockX/KickDB catalog sync
 #
 # Durable nightly (VPS crontab): stock-price-flow @02:00 UTC, push-master-specs @04:00 UTC.
-# Master push must NEVER fall back to live full-catalog build (OOM). Rebuild fails → hard fail.
+# Locks are PER ACTION — stock must never block master (shared flock caused 04:00 SKIP).
+# Master = Postgres COPY + oneshot SFTP only. Never feed-worker Prisma stream.
 #
 # Env overrides:
 #   GALAXUS_OPS_BASE_URL   default http://127.0.0.1:3000
 #   GALAXUS_OPS_LOG_DIR    default /var/log/resell
 #   GALAXUS_OPS_WAIT_SEC            default 3600 (stock/price max wait)
-#   GALAXUS_OPS_MASTER_WAIT_SEC     default 14400 (master-specs max wait; export+SFTP is slow)
-#   GALAXUS_OPS_IMAGE_SYNC_WAIT_SEC default 5400 (max wait for image-sync before feeds; ~90m)
-#   GALAXUS_OPS_IMAGE_SYNC_BLOCK_FEEDS default 0 — when 1, abort full-flow if image-sync still busy
-#   GALAXUS_OPS_SNAPSHOT_WAIT_SEC     default 4500 (max wait for async snapshot rebuild; ~75m — rebuild often 35–45m)
-#   GALAXUS_OPS_MASTER_NONBLOCKING    default 1 — full-flow continue if master-specs fails
-#                                     (still Slack via ops tick / crash breaker; set 0 to exit non-zero)
+#   GALAXUS_OPS_IMAGE_SYNC_WAIT_SEC default 5400
+#   GALAXUS_OPS_IMAGE_SYNC_BLOCK_FEEDS default 0
+#   GALAXUS_OPS_SNAPSHOT_WAIT_SEC     default 4500
+#   GALAXUS_MASTER_SPECS_SKIP_REBUILD_IF_FRESH_HOURS default 36
 #
 set -euo pipefail
 
@@ -33,21 +30,25 @@ MASTER_WAIT_SEC="${GALAXUS_OPS_MASTER_WAIT_SEC:-14400}"
 IMAGE_SYNC_WAIT_SEC="${GALAXUS_OPS_IMAGE_SYNC_WAIT_SEC:-5400}"
 IMAGE_SYNC_BLOCK_FEEDS="${GALAXUS_OPS_IMAGE_SYNC_BLOCK_FEEDS:-0}"
 SNAPSHOT_WAIT_SEC="${GALAXUS_OPS_SNAPSHOT_WAIT_SEC:-4500}"
-MASTER_NONBLOCKING="${GALAXUS_OPS_MASTER_NONBLOCKING:-1}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/galaxus-ops-cron.log"
-LOCK_FILE="/tmp/galaxus-ops-cron.lock"
-MASTER_FAILED=0
-
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] SKIP already running (lock $LOCK_FILE)" | tee -a "$LOG_FILE"
-  exit 0
-fi
 
 log() {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" | tee -a "$LOG_FILE"
 }
+
+if [[ -z "$ACTION" ]]; then
+  log "ERROR: missing action (stock-price-flow | push-master-specs | stx-full)"
+  exit 2
+fi
+
+# Per-action flock — stock-price-flow and push-master-specs may overlap.
+LOCK_FILE="/tmp/galaxus-ops-${ACTION}.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  log "SKIP already running (lock $LOCK_FILE)"
+  exit 0
+fi
 
 feed_scope_for_action() {
   case "$1" in
@@ -334,22 +335,6 @@ const maxH=Number(process.env.MAX_H||${max_hours});
 " 2>/dev/null
 }
 
-handle_master_failure() {
-  local msg="$1"
-  MASTER_FAILED=1
-  if [[ "$MASTER_NONBLOCKING" == "1" ]]; then
-    log "WARN: $msg (MASTER_NONBLOCKING=1 — continuing; ops tick Slack will page if still stale)"
-    return 0
-  fi
-  log "ERROR: $msg (MASTER_NONBLOCKING=0 — failing cron)"
-  return 1
-}
-
-if [[ -z "$ACTION" ]]; then
-  log "ERROR: missing action (stock-price-flow | full-flow | full-push | stx-full | push-master-specs)"
-  exit 2
-fi
-
 cd /opt/resell
 
 case "$ACTION" in
@@ -364,31 +349,6 @@ case "$ACTION" in
     wait_scope_success "price" "$step_started" "$WAIT_SEC" \
       || log "WARN: price failed/timed out"
     log "DONE stock-price-flow"
-    ;;
-  full-flow)
-    run_image_sync_full || true
-    log "START full-flow (stock/offer snapshots -> master/specs snapshot -> stock + price + master-specs)"
-    run_snapshot_rebuild || true
-    # Rebuild master/specs snapshot on ops-background BEFORE stock/price wait so catalog
-    # identity is fresh; push master via COPY+SFTP (not feed-worker Prisma stream).
-    if ! run_master_specs_snapshot_rebuild; then
-      handle_master_failure "master/specs snapshot rebuild failed" || exit 1
-    fi
-    step_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    post_json '{"action":"push-stock"}' >/dev/null || log "WARN: enqueue push-stock failed"
-    post_json '{"action":"push-price"}' >/dev/null || log "WARN: enqueue push-price failed"
-    wait_scope_success "stock" "$step_started" "$WAIT_SEC" \
-      || log "WARN: stock failed/timed out — continuing to master COPY push"
-    wait_scope_success "price" "$step_started" "$WAIT_SEC" \
-      || log "WARN: price failed/timed out — continuing to master COPY push"
-    if ! run_master_specs_copy_push; then
-      handle_master_failure "master-specs COPY/SFTP failed" || exit 1
-    fi
-    if [[ "$MASTER_FAILED" == "1" ]]; then
-      log "DONE full-flow (master WARN — see above; MASTER_NONBLOCKING=1)"
-    else
-      log "DONE full-flow"
-    fi
     ;;
   push-master-specs)
     # Nightly durable: rebuild snap (if stale) → Postgres COPY CSVs → SFTP oneshot.
@@ -405,12 +365,9 @@ case "$ACTION" in
     fi
     log "DONE push-master-specs"
     ;;
-  full-push)
-    log "START action=full-push"
-    step_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    post_json '{"action":"push-full"}' >/dev/null
-    wait_scope_success "full" "$step_started" "$MASTER_WAIT_SEC"
-    log "DONE action=full-push"
+  full-flow|full-push)
+    log "ERROR: '$ACTION' removed — run stock-price-flow and push-master-specs separately (split locks)"
+    exit 2
     ;;
   stx-full)
     log "START action=stx-full"
@@ -418,7 +375,7 @@ case "$ACTION" in
     log "DONE action=stx-full (async job accepted)"
     ;;
   *)
-    log "ERROR: unknown action '$ACTION'"
+    log "ERROR: unknown action '$ACTION' (stock-price-flow | push-master-specs | stx-full)"
     exit 2
     ;;
 esac

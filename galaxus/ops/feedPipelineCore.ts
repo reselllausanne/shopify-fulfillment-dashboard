@@ -751,6 +751,21 @@ async function tryStartPendingFeedPush(
   pending: { id: string; scope: string; triggerSource: string | null }
 ): Promise<FeedPushStartResult | null> {
   const scope = pending.scope as FeedScope;
+  // Drop leftover scraper master-specs triggers (pre-clean cut) — do not Prisma-stream.
+  if (scope === "master-specs" && pending.triggerSource === "scraper") {
+    const prismaAny = prisma as any;
+    await prismaAny.galaxusFeedTrigger.updateMany({
+      where: { id: pending.id, status: "PENDING" },
+      data: {
+        status: "CANCELLED",
+        consumedAt: new Date(),
+      },
+    });
+    console.info("[GALAXUS][FEED][QUEUE] cancelled scraper master-specs trigger", {
+      id: pending.id,
+    });
+    return null;
+  }
   const locked = await withAdvisoryXactLock(feedPushLockKey(scope), async () => {
     // Reconcile already ran in drainFeedPushQueue, outside this lock — keep the tx short.
     const active = await getActiveFeedRun(scope, { reconcile: false });
@@ -882,6 +897,14 @@ export async function requestFeedPush(params: {
   const scope: FeedScope =
     isStockPriceSideEffect && params.scope === "full" ? "stock-price" : params.scope;
 
+  // Master/specs: nightly cron COPY→SFTP only. Scraper Prisma path hung/OOM'd for days.
+  if (scope === "master-specs" && triggerSource === "scraper") {
+    console.info(
+      "[GALAXUS][FEED] skip scraper master-specs enqueue — use cron push-master-specs (COPY)"
+    );
+    return { ok: true, queued: false, skipped: "master_via_cron_copy" as const };
+  }
+
   if (runNow && isStockPriceSideEffect) {
     return startFeedPushAsync({ origin, scope, triggerSource });
   }
@@ -906,8 +929,8 @@ export async function runPendingFeedTriggers(params: { origin: string; scope: Fe
 }
 
 const STALE_PRICE_FEED_MS = 6 * 60 * 60 * 1000;
-/** ProductData + SpecificationData — full-day SLA. */
-const STALE_MASTER_SPECS_FEED_MS = 30 * 60 * 60 * 1000;
+/** ProductData + SpecificationData — alert if nightly 04:00 COPY push missed (~26h). */
+const STALE_MASTER_SPECS_FEED_MS = 26 * 60 * 60 * 1000;
 /** A whole PriceData file is ~620k rows; sales in a burst share one delayed upload. */
 const POST_SALE_PRICE_FEED_COOLDOWN_MS = 10 * 60 * 1000;
 

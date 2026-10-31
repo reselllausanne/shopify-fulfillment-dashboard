@@ -114,7 +114,8 @@ export async function notifyGalaxusMasterSpecsFeedStale(params: {
     `• at: ${new Date().toISOString()}`,
     "",
     "Product identity, images, and categories on Galaxus may be outdated.",
-    "Check Galaxus ops → Rebuild master/specs snapshot, then Push master/specs.",
+    "Fix: `bash scripts/galaxus-ops-cron.sh push-master-specs` (COPY dump → oneshot SFTP).",
+    "Do not use feed-worker Prisma stream — nightly cron only.",
   ].join("\n");
   return postSlack(text);
 }

@@ -17,9 +17,10 @@ export function scraperGalaxusFeedPushEnabled(): boolean {
 }
 
 /**
- * Queue Galaxus master-specs + stock-price immediately (uses sourceImageUrl when
- * hosted not ready). Optionally host images in the background afterward; feed
- * picker prefers hosted JPEG once SYNCED, so later master pushes switch over.
+ * Queue Galaxus stock-price after scraper writes.
+ *
+ * Master/specs is NOT enqueued here — feed-worker Prisma stream hangs/OOMs on
+ * ~7M specs. Nightly cron `push-master-specs` does Postgres COPY → oneshot SFTP.
  */
 export async function scheduleScraperGalaxusFeedPush(params: {
   shop: ScraperShop;
@@ -33,16 +34,15 @@ export async function scheduleScraperGalaxusFeedPush(params: {
   const origin = feedPushOrigin();
 
   try {
-    await requestFeedPush({ origin, scope: "master-specs", triggerSource: "scraper", runNow: true });
     await requestFeedPush({ origin, scope: "stock-price", triggerSource: "scraper", runNow: true });
-    console.info(`[SCRAPER] ${shop.key} Galaxus feed push queued (wrote=${wrote})`);
+    console.info(`[SCRAPER] ${shop.key} Galaxus stock-price push queued (wrote=${wrote})`);
   } catch (err) {
     console.warn(`[SCRAPER] ${shop.key} Galaxus feed push failed:`, (err as Error)?.message || err);
   }
 
   if (!syncImages) return;
 
-  // Gradual host — do not delay the push above.
+  // Gradual host — do not delay the push above. Master refresh is nightly COPY cron.
   void (async () => {
     try {
       const result = await runImageSync({
@@ -53,15 +53,6 @@ export async function scheduleScraperGalaxusFeedPush(params: {
       });
       const synced = Number((result as { synced?: number } | null)?.synced ?? 0);
       console.info(`[SCRAPER] ${shop.key} background image sync done (synced=${synced})`);
-      if (synced > 0) {
-        // Re-push master so Galaxus picks hosted URLs for newly synced rows.
-        await requestFeedPush({
-          origin,
-          scope: "master-specs",
-          triggerSource: "scraper",
-          runNow: true,
-        });
-      }
     } catch (err) {
       console.warn(
         `[SCRAPER] ${shop.key} background image sync failed:`,
