@@ -2895,7 +2895,7 @@ model AdsExplorerBatchModel {
   ltConversions      Decimal  @default(0) @map("lt_conversions") @db.Decimal(18, 6)
   ltConversionValue  Decimal  @default(0) @map("lt_conversion_value") @db.Decimal(18, 6)
   metricsSyncedAt    DateTime? @map("metrics_synced_at") @db.Timestamptz(3)
-  /// Verified routing destination: CORE_ALL | EXPLORER_ALL | LONG_TAIL_ALL.
+  /// Verified routing destination: CORE_ALL | EXPLORER_ALL | LONG_TAIL_ALL | ADS_EXCLUDED.
   destination        String   @default("EXPLORER_ALL")
   /// Destination requested by the rule engine, awaiting Merchant readback.
   pendingDestination String?  @map("pending_destination")

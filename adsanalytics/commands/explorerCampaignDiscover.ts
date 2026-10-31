@@ -2,8 +2,11 @@ import { resolveAdsConfig } from "@/adsanalytics/config";
 import { fetchCampaignFacts, listShoppingCampaignIds } from "@/adsanalytics/explorer/campaignInspect";
 import { loadCampaignRegistry } from "@/adsanalytics/explorer/campaignRegistry";
 import { writeExplorerReport } from "@/adsanalytics/explorer/core";
-import { DESTINATIONS, labelForDestination } from "@/adsanalytics/explorer/destinations";
-import type { Destination } from "@/adsanalytics/explorer/destinations";
+import {
+  CAMPAIGN_ROLES,
+  labelForDestination,
+  type CampaignRole,
+} from "@/adsanalytics/explorer/destinations";
 import { log, withSyncRun } from "@/adsanalytics/run";
 
 export type ExplorerCampaignDiscoverOptions = {
@@ -25,8 +28,12 @@ export async function explorerCampaignDiscoverCommand(
     const campaignIds = await listShoppingCampaignIds(config);
     const facts = await fetchCampaignFacts(config, campaignIds);
 
-    const registeredByCampaignId = new Map<string, Destination>();
-    for (const [role, row] of registry) registeredByCampaignId.set(row.campaignId, role);
+    const registeredByCampaignId = new Map<string, CampaignRole>();
+    for (const [role, row] of registry) {
+      if ((CAMPAIGN_ROLES as readonly string[]).includes(role)) {
+        registeredByCampaignId.set(row.campaignId, role as CampaignRole);
+      }
+    }
 
     const nameFilter = options.name?.trim().toLowerCase();
     const campaigns = [...facts.values()]
@@ -34,14 +41,14 @@ export async function explorerCampaignDiscoverCommand(
       .map((c) => ({
         ...c,
         registeredRole: registeredByCampaignId.get(c.campaignId) ?? null,
-        matchesRoleByLabel: DESTINATIONS.filter((role) => {
+        matchesRoleByLabel: CAMPAIGN_ROLES.filter((role) => {
           const label = labelForDestination(role);
           return label !== null && c.includedCustomLabel3.includes(label);
         }),
       }));
 
-    const roles = (options.role ? [options.role.trim().toUpperCase()] : [...DESTINATIONS]).filter(
-      (role): role is Destination => (DESTINATIONS as readonly string[]).includes(role)
+    const roles = (options.role ? [options.role.trim().toUpperCase()] : [...CAMPAIGN_ROLES]).filter(
+      (role): role is CampaignRole => (CAMPAIGN_ROLES as readonly string[]).includes(role)
     );
 
     const roleFindings = roles.map((role) => {

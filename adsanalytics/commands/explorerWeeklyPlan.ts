@@ -25,14 +25,18 @@ import {
   planHashFromPayload,
   writeExplorerReport,
 } from "@/adsanalytics/explorer/core";
+import { isExplorerNewBatchPaused } from "@/adsanalytics/explorer/labels";
 import { EXIT_OK, log, withSyncRun } from "@/adsanalytics/run";
 
 const SOURCE_CAMPAIGN_NAME = "all";
 const EXPLORER_ROLE = "EXPLORER_ALL";
-/** Weekly target; effective size is min(target, availablePool). */
-const WEEKLY_TARGET_MODELS = 1000;
+/**
+ * Weekly target. Keep small: CHF ~50/day budget cannot expose 1000 models
+ * (historical underexposed median was 1 impression). Resume only after pause off.
+ */
+const WEEKLY_TARGET_MODELS = 100;
 /** Below this pool size the weekly run skips instead of shipping a tiny batch. */
-const WEEKLY_FLOOR_MODELS = 100;
+const WEEKLY_FLOOR_MODELS = 40;
 /** Statuses that indicate a batch is not terminal — presence blocks re-planning. */
 const NON_TERMINAL_STATUSES = [
   "planned",
@@ -279,6 +283,18 @@ export async function explorerWeeklyPlanCommand(): Promise<number> {
   return withSyncRun("explorer:weekly:plan", {}, async () => {
     const seed = isoWeekSeed();
     log("explorer_weekly.start", { seed });
+    if (isExplorerNewBatchPaused()) {
+      log("explorer_weekly.paused", {
+        seed,
+        reason: "ADS_EXPLORER_PAUSE_NEW_BATCHES",
+        hint: "Set ADS_EXPLORER_PAUSE_NEW_BATCHES=0 to resume weekly Explorer after core ROAS recovers",
+      });
+      return {
+        skipped: true,
+        reason: "new_batches_paused",
+        seed,
+      };
+    }
     const authExit = await authHealthCommand();
     if (authExit !== EXIT_OK) {
       throw new Error(`auth:health exited with code ${authExit}`);
