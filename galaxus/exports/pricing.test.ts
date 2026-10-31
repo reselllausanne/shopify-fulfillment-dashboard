@@ -97,10 +97,25 @@ describe("Galaxus STX locked margin", () => {
     process.env.GALAXUS_TARGET_NET_MARGIN = "0.13";
     expect(resolveGalaxusTargetNetMarginForSupplier("ner")).toBeCloseTo(0.13, 5);
     const nerSell = resolveGalaxusSellExVatForChannel(100, "ner", new Set());
-    expect(nerSell).toBeLessThanOrEqual(100.05);
-    expect(nerSell).toBeGreaterThanOrEqual(100);
-    expect(resolveGalaxusSellExVatForChannel(108.88, "rei", new Set())).toBeCloseTo(108.9, 2);
-    expect(resolveGalaxusSellExVatForChannel(99, "wrk", new Set())).toBeCloseTo(99, 1);
+    expect(nerSell).toBe(100);
+    expect(resolveGalaxusSellExVatForChannel(108.88, "rei", new Set())).toBe(108.88);
+    expect(resolveGalaxusSellExVatForChannel(99, "wrk", new Set())).toBe(99);
+  });
+
+  it("does not add CHF 0.50 when the round step is 0.50", () => {
+    process.env.GALAXUS_PRICE_ROUND_TO = "0.5";
+    expect(resolveGalaxusSellExVatForChannel(58, "ner", new Set())).toBe(58);
+    expect(resolveGalaxusSellExVatForChannel(58.5, "the", new Set())).toBe(58.5);
+    expect(
+      computeGalaxusSellPriceExVat({
+        buyPriceExVatCHF: 80,
+        shippingPerPairCHF: 0,
+        targetNetMargin: 0.2,
+        bufferPerPairCHF: 0,
+        roundTo: 0.5,
+        vatRate: 0,
+      }).sellPriceExVatCHF
+    ).toBe(100);
   });
 
   it("legacy computeGalaxusSellPriceExVat still available for non-STX", () => {

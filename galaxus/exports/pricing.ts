@@ -87,10 +87,20 @@ const WEL_DEFAULT_BUFFER = 1;
 /** baby-walz.ch catalog: at least 15% net (default ship/buffer). */
 const BWZ_DEFAULT_TARGET_MARGIN = 0.15;
 
+/** Round up to `increment`. Values already on the grid stay put (no +epsilon ceil bump). */
 function roundUpToIncrement(value: number, increment: number): number {
-  if (increment <= 0) return value;
-  const scale = 1 / increment;
-  return Math.ceil((value + 1e-12) * scale) / scale;
+  if (!(increment > 0) || !Number.isFinite(value)) return value;
+  const steps = value / increment;
+  const nearest = Math.round(steps);
+  if (Math.abs(steps - nearest) < 1e-6) {
+    return Math.round(nearest * increment * 100) / 100;
+  }
+  const up = Math.ceil(steps - 1e-9);
+  return Math.round(up * increment * 100) / 100;
+}
+
+function roundToCentime(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function readNumberEnv(keys: string[], fallback: number): number {
@@ -400,7 +410,8 @@ export function resolveGalaxusSellExVatForChannel(
   const k = supplierKey?.toLowerCase() ?? "";
 
   if (GALAXUS_ZERO_MARGIN_SUPPLIER_KEYS.has(k)) {
-    return roundUpToIncrement(buyPriceExVatCHF, roundTo);
+    // Partner shelf is the Galaxus price. Do not round up (a 0.50 step was adding CHF 0.50).
+    return roundToCentime(buyPriceExVatCHF);
   }
   if (isGldGalaxusSupplierKey(k)) {
     if (!Number.isFinite(buyPriceExVatCHF) || buyPriceExVatCHF <= 0) {
