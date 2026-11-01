@@ -1,6 +1,10 @@
 import { prisma } from "@/app/lib/prisma";
 import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
-import { patchFeedSnapshotsForProviderKeys, invalidateFeedSnapshot } from "@/galaxus/exports/feedSnapshot";
+import {
+  patchFeedSnapshotsForProviderKeys,
+  invalidateFeedSnapshot,
+  startFeedSnapshotRebuildAsync,
+} from "@/galaxus/exports/feedSnapshot";
 import { startFeedPushAsync } from "@/galaxus/ops/feedPipelineCore";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 
@@ -177,9 +181,18 @@ export async function runStxRefreshMarketplaceFeedPush(
     if (providerKeys.length > PATCH_KEY_CAP) {
       await invalidateFeedSnapshot();
       invalidated = true;
+      // Re-arm the snapshot immediately: while it is invalid every push runs a live
+      // full-catalog export (slow + heavy DB egress), so don't wait for the next
+      // scheduled rebuild. Enqueue is idempotent (409 when already running).
+      const rebuild = await startFeedSnapshotRebuildAsync(origin).catch((err: any) => ({
+        ok: false,
+        error: err?.message ?? String(err),
+      }));
       console.info("[stx-refresh][galaxus-feed] invalidated snapshot (key cap)", {
         keys: providerKeys.length,
         cap: PATCH_KEY_CAP,
+        rebuildQueued: rebuild.ok,
+        rebuildError: rebuild.ok ? undefined : rebuild.error,
       });
     } else {
       patched = await patchKeysInChunks(origin, providerKeys);

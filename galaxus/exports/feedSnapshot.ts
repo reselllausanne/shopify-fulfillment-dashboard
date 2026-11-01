@@ -7,6 +7,11 @@ import { skipGalaxusFeedValidationForTrigger } from "@/galaxus/feedExecutor";
 import { enqueueOpsBackgroundJob } from "@/galaxus/ops/enqueueOpsBackgroundJob";
 import { runOpsJob } from "@/galaxus/ops/jobRunner";
 import { OPS_SNAPSHOT_REBUILD_JOB } from "@/galaxus/ops/opsBackgroundJobs";
+import {
+  clearSnapshotLocalCache,
+  readSnapshotLocalCache,
+  writeSnapshotLocalCache,
+} from "@/galaxus/exports/feedSnapshotLocalCache";
 
 export const GALAXUS_STOCK_CSV_HEADERS = [
   "ProviderKey",
@@ -419,6 +424,46 @@ export async function patchFeedSnapshotsForProviderKeys(params: {
   return { patched: keys.length };
 }
 
+type SnapshotPullBatch = { providerKey: string; rowJson: unknown; updatedAt: Date };
+
+async function pullSnapshotRows(
+  model: any,
+  where: Record<string, unknown> | undefined,
+  into: Map<string, Record<string, string>>
+): Promise<{ pulled: number; maxUpdatedAtMs: number }> {
+  let pulled = 0;
+  let maxUpdatedAtMs = 0;
+  let cursor: string | undefined;
+  for (;;) {
+    const batch: SnapshotPullBatch[] = await model.findMany({
+      ...(where ? { where } : {}),
+      orderBy: { providerKey: "asc" },
+      take: CHUNK_SIZE,
+      ...(cursor ? { cursor: { providerKey: cursor }, skip: 1 } : {}),
+      select: { providerKey: true, rowJson: true, updatedAt: true },
+    });
+    if (batch.length === 0) break;
+    for (const item of batch) {
+      into.set(item.providerKey, item.rowJson as Record<string, string>);
+      const t = new Date(item.updatedAt).getTime();
+      if (Number.isFinite(t) && t > maxUpdatedAtMs) maxUpdatedAtMs = t;
+      pulled += 1;
+    }
+    cursor = batch[batch.length - 1]?.providerKey;
+    if (batch.length < CHUNK_SIZE) break;
+  }
+  return { pulled, maxUpdatedAtMs };
+}
+
+/** Re-pull rows written up to this long before the watermark (same-timestamp races). */
+const SNAPSHOT_INCREMENTAL_OVERLAP_MS = 60_000;
+
+/**
+ * Load snapshot rows for CSV export — from the local disk cache plus an incremental
+ * DB pull (`updatedAt` > watermark) instead of re-reading the full ~1.6M-row table
+ * from Supabase on every push. Deletes are detected via a row-count mismatch and
+ * reconciled with a key-only pull; any remaining drift falls back to a full reload.
+ */
 async function loadSnapshotCsv(scope: "stock" | "offer"): Promise<{ csv: string; count: number }> {
   const meta = await getFeedSnapshotMeta();
   const prismaAny = prisma as any;
@@ -427,28 +472,89 @@ async function loadSnapshotCsv(scope: "stock" | "offer"): Promise<{ csv: string;
       ? (meta?.stockHeadersJson as string[]) ?? [...GALAXUS_STOCK_CSV_HEADERS]
       : (meta?.offerHeadersJson as string[]) ?? defaultOfferCsvHeaders();
 
-  const rows: Array<Record<string, string>> = [];
   const model =
     scope === "stock" ? prismaAny.galaxusFeedStockSnapshot : prismaAny.galaxusFeedOfferSnapshot;
+  const rebuiltAtIso = meta?.rebuiltAt ? new Date(meta.rebuiltAt).toISOString() : null;
 
-  let cursor: string | undefined;
-  for (;;) {
-    const batch: Array<{ providerKey: string; rowJson: unknown }> = await model.findMany({
-      orderBy: { providerKey: "asc" },
-      take: CHUNK_SIZE,
-      ...(cursor ? { cursor: { providerKey: cursor }, skip: 1 } : {}),
-      select: { providerKey: true, rowJson: true },
-    });
-    if (batch.length === 0) break;
-    for (const item of batch) {
-      rows.push(item.rowJson as Record<string, string>);
+  let rows = new Map<string, Record<string, string>>();
+  let maxUpdatedAtMs = 0;
+  let source: "cache-incremental" | "full-pull" = "full-pull";
+  let pulledRows = 0;
+
+  const cached = rebuiltAtIso
+    ? await readSnapshotLocalCache(scope).catch((err: any) => {
+        console.warn("[GALAXUS][FEED][SNAPSHOT] local cache read failed — full pull", {
+          scope,
+          error: err?.message ?? String(err),
+        });
+        return null;
+      })
+    : null;
+
+  if (cached && cached.rebuiltAt === rebuiltAtIso) {
+    rows = cached.rows;
+    maxUpdatedAtMs = cached.maxUpdatedAtMs;
+    const since = new Date(Math.max(0, maxUpdatedAtMs - SNAPSHOT_INCREMENTAL_OVERLAP_MS));
+    const changed = await pullSnapshotRows(model, { updatedAt: { gte: since } }, rows);
+    pulledRows = changed.pulled;
+    if (changed.maxUpdatedAtMs > maxUpdatedAtMs) maxUpdatedAtMs = changed.maxUpdatedAtMs;
+    source = "cache-incremental";
+
+    // Patches can also DELETE rows (keys the live export stopped emitting). Upserts all
+    // bump `updatedAt` and are caught above, so a count mismatch can only mean deletes
+    // (or drift) — reconcile with a key-only pull, and full-reload if that is not enough.
+    const dbCount: number = await model.count();
+    if (rows.size !== dbCount) {
+      const keyRows: Array<{ providerKey: string }> = await model.findMany({
+        select: { providerKey: true },
+      });
+      const keep = new Set(keyRows.map((row) => row.providerKey));
+      for (const key of rows.keys()) {
+        if (!keep.has(key)) rows.delete(key);
+      }
+      if (rows.size !== dbCount) {
+        console.warn("[GALAXUS][FEED][SNAPSHOT] cache drift — full reload", {
+          scope,
+          cacheRows: rows.size,
+          dbCount,
+        });
+        await clearSnapshotLocalCache(scope);
+        rows = new Map();
+        const full = await pullSnapshotRows(model, undefined, rows);
+        pulledRows = full.pulled;
+        maxUpdatedAtMs = full.maxUpdatedAtMs;
+        source = "full-pull";
+      }
     }
-    cursor = batch[batch.length - 1]?.providerKey;
-    if (batch.length < CHUNK_SIZE) break;
+  } else {
+    const full = await pullSnapshotRows(model, undefined, rows);
+    pulledRows = full.pulled;
+    maxUpdatedAtMs = full.maxUpdatedAtMs;
   }
 
-  const csv = toCsv(headers, rows);
-  return { csv, count: rows.length };
+  if (rebuiltAtIso) {
+    await writeSnapshotLocalCache(scope, { rebuiltAt: rebuiltAtIso, maxUpdatedAtMs, rows }).catch(
+      (err: any) => {
+        console.warn("[GALAXUS][FEED][SNAPSHOT] local cache write failed (non-fatal)", {
+          scope,
+          error: err?.message ?? String(err),
+        });
+      }
+    );
+  }
+
+  console.info("[GALAXUS][FEED][SNAPSHOT] load", {
+    scope,
+    source,
+    rows: rows.size,
+    pulledFromDb: pulledRows,
+  });
+
+  // Deterministic order so the upload sha256 skip-unchanged check stays stable run-to-run.
+  const sortedKeys = Array.from(rows.keys()).sort();
+  const rowList = sortedKeys.map((key) => rows.get(key)!);
+  const csv = toCsv(headers, rowList);
+  return { csv, count: rowList.length };
 }
 
 export async function tryExportCsvFromSnapshot(params: {
