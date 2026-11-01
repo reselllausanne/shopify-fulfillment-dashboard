@@ -319,6 +319,55 @@ verify_web_deployment() {
   echo "== POST_DEPLOY_VERIFY ok service=$DEPLOY_SERVICE cid=$cid sha=$want_sha"
 }
 
+# Critical workers that must be *running* after deploy (not merely Created/Exited).
+# A Created-but-never-started feed worker silently kills stock/price for days.
+# Override: DEPLOY_CRITICAL_WORKERS="worker-galaxus-feed worker-ops-background"
+DEPLOY_CRITICAL_WORKERS="${DEPLOY_CRITICAL_WORKERS:-worker-galaxus-feed}"
+
+# Wait until compose service is running. If stuck in created/exited, force start.
+# Exit 17 on timeout — deploy must not report DEPLOY_OK with a dead feed worker.
+verify_compose_service_running() {
+  local svc="$1"
+  local timeout_sec="${2:-90}"
+  local deadline=$((SECONDS + timeout_sec))
+  local cid state
+
+  echo "== verify running: $svc (timeout ${timeout_sec}s)"
+  while (( SECONDS < deadline )); do
+    cid="$(docker compose ps -aq "$svc" 2>/dev/null | head -1 || true)"
+    if [ -z "$cid" ]; then
+      echo "== $svc: no container — compose up -d --no-deps"
+      docker compose up -d --no-deps "$svc" || true
+      sleep 2
+      continue
+    fi
+    state="$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo missing)"
+    if [ "$state" = "running" ]; then
+      echo "== POST_DEPLOY_VERIFY worker ok $svc cid=$cid"
+      return 0
+    fi
+    echo "== $svc state=$state — forcing start"
+    # Created/exited: compose up alone sometimes no-ops; docker start recovers Created.
+    docker start "$cid" 2>/dev/null || true
+    docker compose up -d --no-deps "$svc" || true
+    sleep 3
+  done
+
+  echo "FATAL: POST_DEPLOY_VERIFY — $svc not running after ${timeout_sec}s (feeds will stall)"
+  docker compose ps -a "$svc" || true
+  docker inspect -f 'Status={{.State.Status}} Error={{.State.Error}} Exit={{.State.ExitCode}} OOM={{.State.OOMKilled}}' \
+    "$(docker compose ps -aq "$svc" 2>/dev/null | head -1)" 2>/dev/null || true
+  exit 17
+}
+
+verify_critical_workers_running() {
+  local svc
+  for svc in $DEPLOY_CRITICAL_WORKERS; do
+    [ -n "$svc" ] || continue
+    verify_compose_service_running "$svc" 90
+  done
+}
+
 resolve_deploy_workers() {
   if [ -n "$DEPLOY_WORKERS" ]; then
     echo "$DEPLOY_WORKERS"
@@ -429,7 +478,9 @@ main() {
     echo "   verify web running + labels (+ image when available)"
     for svc in $(resolve_deploy_workers); do
       echo "   docker compose build $svc && docker compose up -d --no-deps $svc"
+      echo "   verify_compose_service_running $svc"
     done
+    echo "   verify_critical_workers_running ($DEPLOY_CRITICAL_WORKERS)"
     validate_deploy_config "$REPO"
     cleanup_stale_web_rename_containers
     echo "DRY_RUN_OK requested=$WANT pre_head=$PRE_HEAD"
@@ -477,7 +528,12 @@ main() {
       echo "FATAL: worker $svc not redeployed (web is live on $WANT)"
       exit 16
     fi
+    # Every worker must leave Created — especially worker-galaxus-feed (stock/price).
+    verify_compose_service_running "$svc" 90
   done
+
+  echo "== critical workers: $DEPLOY_CRITICAL_WORKERS"
+  verify_critical_workers_running
 
   # Cron Python (SSE consumer / create queue) runs from /opt/shopify-automation;
   # keep it on the same GitHub SHA. Non-fatal: web is already live.

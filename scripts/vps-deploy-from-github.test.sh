@@ -162,14 +162,14 @@ else
   bad "missing sha rejected: $msg2"
 fi
 
-# --- migrate-before-up order (static) ---
+# --- migrate-before-up order (static; match deploy main path, not helper up -d) ---
 mig_block="$(awk '/if \[ "\$RUN_MIGRATE" = "1" \]/,/^  else$/' "$ROOT/scripts/vps-deploy-from-github.sh" | head -20)"
 if echo "$mig_block" | grep -q 'prisma migrate deploy' \
   && awk '
     /echo/ { next }
-    /docker compose build/ && !b { b=NR }
+    /docker compose build "\$DEPLOY_SERVICE"/ && !b { b=NR }
     /prisma migrate deploy/ && !m { m=NR }
-    /docker compose up -d/ && !u { u=NR }
+    /docker compose up -d --no-deps "\$DEPLOY_SERVICE"/ && !u { u=NR }
     END { exit !(b && m && u && b < m && m < u) }
   ' "$ROOT/scripts/vps-deploy-from-github.sh"; then
   pass "migrate: build < migrate < up order"
@@ -183,6 +183,26 @@ if grep -q 'verify_web_deployment' "$ROOT/scripts/vps-deploy-from-github.sh" \
   pass "post-deploy verify_web_deployment present"
 else
   bad "post-deploy verify missing"
+fi
+
+# --- feed worker must not stay Created after deploy ---
+if grep -q 'verify_compose_service_running' "$ROOT/scripts/vps-deploy-from-github.sh" \
+  && grep -q 'verify_critical_workers_running' "$ROOT/scripts/vps-deploy-from-github.sh" \
+  && grep -q 'worker-galaxus-feed' "$ROOT/scripts/vps-deploy-from-github.sh" \
+  && grep -q 'exit 17' "$ROOT/scripts/vps-deploy-from-github.sh"; then
+  pass "post-deploy worker running guard (feed worker) present"
+else
+  bad "post-deploy worker running guard missing"
+fi
+
+if awk '
+  /for svc in \$workers/ { in_loop=1 }
+  in_loop && /verify_compose_service_running "\$svc"/ { hit=1 }
+  in_loop && /^  done$/ { exit !(hit) }
+' "$ROOT/scripts/vps-deploy-from-github.sh"; then
+  pass "each worker up followed by running verify"
+else
+  bad "worker loop missing verify_compose_service_running"
 fi
 
 if [ "$fail" -ne 0 ]; then
