@@ -29,7 +29,12 @@ export type GalaxusBuyCandidate = {
   supplierVariantId: string | null;
 };
 
-/** Size from "Title (44.5)" / "Title (EU 44)" / line.size. */
+/** True for OS / O/S / One size / onesize tokens (skate-deck / plush / LEGO class). */
+export function isGalaxusOneSizeToken(raw: string): boolean {
+  return /^(os|o\/s|one[\s-]*size|onesize)$/i.test(String(raw ?? "").trim());
+}
+
+/** Size from "Title (44.5)" / "Title (EU 44)" / line.size / One size. */
 export function sizeEuFromGalaxusLine(line: {
   size?: string | null;
   productName?: string | null;
@@ -37,15 +42,32 @@ export function sizeEuFromGalaxusLine(line: {
 }): string | null {
   const rawSize = String(line.size ?? "").trim();
   if (rawSize) {
+    if (isGalaxusOneSizeToken(rawSize)) return "OS";
     return rawSize.replace(/^EU\s*/i, "").trim() || null;
   }
   const title = `${line.productName ?? ""} ${line.description ?? ""}`;
+  // Explicit one-size wording in title/description (Arc'teryx "One size", etc.).
+  if (
+    /\b(?:one[\s-]*size|onesize|o\/s)\b/i.test(title) ||
+    /\(\s*(?:os|o\/s|one[\s-]*size|onesize)\s*\)/i.test(title)
+  ) {
+    return "OS";
+  }
   const m =
     title.match(/\(\s*EU\s*([0-9]+(?:[.,][0-9]+)?)\s*\)/i) ||
     title.match(/\(\s*([0-9]+(?:[.,][0-9]+)?)\s*\)\s*$/) ||
     title.match(/\(\s*([0-9]+(?:[.,][0-9]+)?)\s*\)/);
   if (!m?.[1]) return null;
   return m[1].replace(",", ".").trim();
+}
+
+/**
+ * After slug resolve: empty size → OS (LEGO / Jellycat / skate deck / collectibles).
+ * Never fail size_unresolved once the product slug is known.
+ */
+export function galaxusBuySizeEuOrOs(parsed: string | null | undefined): string {
+  const s = String(parsed ?? "").trim();
+  return s || "OS";
 }
 
 function decToNum(v: unknown): number | null {
@@ -161,15 +183,15 @@ export async function resolveGalaxusStxBuyCandidate(input: {
     return { ok: false, reason: "slug_unresolved" };
   }
 
-  const sizeEU =
+  // Slug known → never size_unresolved. Empty / missing size = OS class
+  // (LEGO, plush, collectibles, Arc'teryx One size, skate decks).
+  const sizeEU = galaxusBuySizeEuOrOs(
     sizeEuFromGalaxusLine({
       size: line.size ?? sv?.sizeRaw ?? null,
       productName: line.productName,
       description: line.description,
-    }) || "";
-  if (!sizeEU) {
-    return { ok: false, reason: "size_unresolved" };
-  }
+    })
+  );
 
   const expressBuyChf = decToNum(sv?.expressBuyPrice);
   const standardBuyChf = decToNum(sv?.standardBuyPrice) ?? decToNum(sv?.price);
