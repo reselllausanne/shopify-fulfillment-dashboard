@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { prisma } from "@/app/lib/prisma";
 import {
   nextStockxPlaywrightProxy,
@@ -12,6 +12,8 @@ import {
   attachStockxBandwidthGuard,
   type BandwidthTracker,
 } from "@/lib/stockxBandwidthGuard";
+import { connectWarmBrowser } from "@/lib/stockxWarmBrowser";
+import { killChromeForUserDataDir } from "@/lib/stockxBrowserProcess";
 import {
   chooseLane,
   chooseLaneByCsAtMargin,
@@ -1080,6 +1082,11 @@ export async function launchStockxContext(options?: {
    * Galaxus buy MUST pass `"galaxus"` (`stockx-profile-galaxus`).
    */
   account?: "default" | "galaxus";
+  /**
+   * Skip warm CDP attach (force cold launch). Used when reminting through a sticky
+   * proxy — CDP session cannot take a new proxy mid-flight.
+   */
+  forceCold?: boolean;
 }): Promise<{
   ctx: BrowserContext;
   page: Page;
@@ -1090,10 +1097,6 @@ export async function launchStockxContext(options?: {
   const files = stockxAccountFiles(account);
   // VPS Xvfb / VNC: without DISPLAY Chromium dies. Default :99 like stockx login.
   if (!process.env.DISPLAY) process.env.DISPLAY = ":99";
-  for (const lockName of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
-    await fs.rm(path.join(files.profileDir, lockName), { force: true }).catch(() => undefined);
-    await fs.rm(path.join(files.profileDir, "Default", lockName), { force: true }).catch(() => undefined);
-  }
 
   const wantSticky =
     options?.useStickyProxy === true ||
@@ -1104,10 +1107,39 @@ export async function launchStockxContext(options?: {
       : wantSticky
         ? nextStockxPlaywrightProxy()
         : null;
+
+  // Prefer long-lived warm-daemon CDP. Operator should never need noVNC for buys when
+  // the vacation browser is already up. CDP cannot inject a sticky proxy → skip when
+  // caller asked for proxy / forceCold.
+  if (!options?.forceCold && !proxy) {
+    const warm = await connectWarmBrowser(account);
+    if (warm) {
+      const bandwidth = attachStockxBandwidthGuard(warm.context, {
+        proxyLabel: null,
+        context: "stockx-checkout-cdp",
+      });
+      const page =
+        warm.context.pages().find((p) => !p.isClosed()) || (await warm.context.newPage());
+      // ctx.close() from batch/finally must DISCONNECT only — never kill warm Chromium.
+      patchContextCloseToDisconnect(warm.context, warm.browser);
+      console.log(
+        `[STOCKX-CHECKOUT] account=${account} via warm CDP ${warm.cdpUrl} (no VNC)`
+      );
+      return { ctx: warm.context, page, proxy: null, bandwidth };
+    }
+  }
+
   console.log(
     `[STOCKX-CHECKOUT] account=${account} profile=${files.profileDir}` +
-      (proxy ? ` sticky proxy=${proxy.label}` : "")
+      (proxy ? ` sticky proxy=${proxy.label}` : " cold")
   );
+
+  // Cold launch on the same profile as warm-daemon → reclaim locks first.
+  await killChromeForUserDataDir(files.profileDir).catch(() => undefined);
+  for (const lockName of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+    await fs.rm(path.join(files.profileDir, lockName), { force: true }).catch(() => undefined);
+    await fs.rm(path.join(files.profileDir, "Default", lockName), { force: true }).catch(() => undefined);
+  }
 
   try {
     const ctx = await chromium.launchPersistentContext(files.profileDir, {
@@ -1141,9 +1173,17 @@ export async function launchStockxContext(options?: {
     const msg = e?.message || String(e);
     throw new Error(
       `StockX browser launch failed (DISPLAY=${process.env.DISPLAY}, profile=${files.profileDir}): ${msg}. ` +
-        "On VPS ensure Xvfb/VNC on :99 and no stuck Chromium holding the profile lock."
+        "Warm CDP down and cold launch failed — check stockx-warm-daemon / Xvfb :99 (operator VNC is last resort)."
     );
   }
+}
+
+/** Make BrowserContext.close() disconnect CDP instead of shutting down warm Chromium. */
+function patchContextCloseToDisconnect(ctx: BrowserContext, browser: Browser): void {
+  const disconnect = async () => {
+    await browser.close().catch(() => undefined);
+  };
+  (ctx as unknown as { close: () => Promise<void> }).close = disconnect;
 }
 
 function parseCheckoutTotals(text: string) {

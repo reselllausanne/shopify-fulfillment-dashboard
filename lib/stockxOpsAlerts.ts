@@ -9,6 +9,10 @@
  * cancelled/refunded + eta_passed, so these never leak to customers — the operator is the
  * only recipient here.
  *
+ * Cancel detection is NOT Gmail/IMAP (that path is OTP + prebuy dedupe only). Each run
+ * first syncs CANCELLED/REFUNDED from StockX buying HISTORICAL onto linked matches, then
+ * reads DB `stockxStatus` for the digest.
+ *
  * Dedup: one StockxOrderAlert row per (scope, alertType, refKey). Re-running never re-mails
  * the same issue.
  */
@@ -28,6 +32,7 @@ import {
   shouldSkipOrderForFulfillmentMatching,
 } from "@/app/lib/shopifyOrderFulfillmentFilters";
 import { isStockxAutoBuyExcluded } from "@/lib/stockxAutoCheckout/precheckAvailability";
+import { syncLinkedMatchesFromStockxHistory } from "@/lib/stockxHistoricalCancelSync";
 
 const SHOP_TIMEZONE = "Europe/Zurich";
 
@@ -339,6 +344,14 @@ export type StockxOpsAlertResult = {
   skippedExisting: number;
   /** First-ever run: backlog recorded without a full per-item email (summary only). */
   baselineSeeded: boolean;
+  /** Live StockX HISTORICAL → DB status sync before digest (not Gmail). */
+  historySync?: {
+    ok: boolean;
+    shopifyUpdated: number;
+    galaxusUpdated: number;
+    terminalNodes: number;
+    error?: string;
+  };
 };
 
 function statusKey(s: string | null | undefined): string {
@@ -417,12 +430,45 @@ export async function runStockxOrderOpsAlerts(options?: {
   const prismaAny = prisma as any;
   const pending: PendingAlert[] = [];
 
+  // ---- Live StockX HISTORICAL → write CANCELLED/REFUNDED on linked matches ----
+  // Fixes silent misses when AWB left stockxStatus stale (e.g. AC_RECEIVED after cancel).
+  try {
+    const historySync = await syncLinkedMatchesFromStockxHistory({
+      maxPages: 5,
+      first: 50,
+      forceRefresh: false,
+    });
+    result.historySync = {
+      ok: historySync.ok,
+      shopifyUpdated: historySync.shopifyUpdated,
+      galaxusUpdated: historySync.galaxusUpdated,
+      terminalNodes: historySync.terminalNodes,
+      ...(historySync.error ? { error: historySync.error } : {}),
+    };
+  } catch (err: any) {
+    result.historySync = {
+      ok: false,
+      shopifyUpdated: 0,
+      galaxusUpdated: 0,
+      terminalNodes: 0,
+      error: String(err?.message ?? err),
+    };
+    console.warn("[STOCKX][OPS_ALERT] historical cancel sync failed:", err?.message ?? err);
+  }
+
   // ---- Shopify: cancelled / refunded / delayed (linked OrderMatch) ----
   try {
     const shopifyMatches = await prisma.orderMatch.findMany({
       where: {
-        shopifyCreatedAt: { gte: since },
         stockxOrderNumber: { not: "" },
+        // Include older links whose status was just flipped by HISTORICAL sync.
+        OR: [
+          { shopifyCreatedAt: { gte: since } },
+          {
+            updatedAt: { gte: since },
+            stockxStatus: { in: ["CANCELLED", "REFUNDED"] },
+          },
+        ],
       },
       select: {
         id: true,
@@ -498,8 +544,14 @@ export async function runStockxOrderOpsAlerts(options?: {
   try {
     const gxMatches = await prismaAny.galaxusStockxMatch.findMany({
       where: {
-        createdAt: { gte: since },
         stockxOrderNumber: { not: "" },
+        OR: [
+          { createdAt: { gte: since } },
+          {
+            updatedAt: { gte: since },
+            stockxStatus: { in: ["CANCELLED", "REFUNDED"] },
+          },
+        ],
       },
       select: {
         id: true,

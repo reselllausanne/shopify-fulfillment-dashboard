@@ -151,6 +151,8 @@ async function openSession(opts: {
     account: "galaxus",
     proxy: opts.proxy,
     useStickyProxy: Boolean(opts.proxy),
+    // Sticky remint cannot attach warm CDP (proxy injection) — force cold reclaim.
+    forceCold: Boolean(opts.proxy),
   });
   return {
     ctx: launched.ctx,
