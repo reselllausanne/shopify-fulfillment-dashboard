@@ -553,6 +553,48 @@ export async function runStockxOrderOpsAlerts(options?: {
     console.warn("[STOCKX][OPS_ALERT] galaxus scan failed:", err?.message ?? err);
   }
 
+  // ---- Galaxus ORDER cancelled (partner portal / ops cancel) ----
+  // Independent of StockX: GalaxusOrder.cancelledAt with no linked STX buy used to be silent
+  // (e.g. Pokémon Perfect Order 200521766 / 200523736). Operator must still get the mail.
+  try {
+    const gxCancelled = await prismaAny.galaxusOrder.findMany({
+      where: {
+        cancelledAt: { gte: since, not: null },
+      },
+      include: {
+        lines: {
+          select: { productName: true, description: true, lineNumber: true },
+          orderBy: { lineNumber: "asc" },
+          take: 3,
+        },
+      },
+      orderBy: { cancelledAt: "desc" },
+      take: 200,
+    });
+    for (const order of gxCancelled) {
+      const titles = (order.lines ?? [])
+        .map((l: any) => String(l.productName ?? l.description ?? "").trim())
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(", ");
+      const reason = String(order.cancelReason ?? "").trim();
+      pending.push({
+        scope: "galaxus",
+        alertType: "CANCELLED",
+        // Distinct from GalaxusStockxMatch.id refKeys used for StockX-status cancels.
+        refKey: `gx-order-cancel:${order.id}`,
+        orderRef: String(order.galaxusOrderId ?? order.id),
+        stockxOrderNumber: null,
+        productTitle: titles || null,
+        detail: reason
+          ? `Galaxus order cancelled ${fmtDate(order.cancelledAt)} — ${reason}`
+          : `Galaxus order cancelled ${fmtDate(order.cancelledAt)}`,
+      });
+    }
+  } catch (err: any) {
+    console.warn("[STOCKX][OPS_ALERT] galaxus order-cancel scan failed:", err?.message ?? err);
+  }
+
   // ---- Galaxus: not-purchased (paid STX line, no buy linked after N days) ----
   try {
     const orders = await prismaAny.galaxusOrder.findMany({
@@ -878,12 +920,91 @@ export async function runStockxOrderOpsAlerts(options?: {
 }
 
 const TYPE_LABEL: Record<AlertType, string> = {
-  CANCELLED: "Annulations StockX",
+  CANCELLED: "Annulations (StockX buy OU commande Galaxus)",
   REFUNDED: "Remboursements StockX",
   DELAYED: "Retards (ETA depassee)",
   NOT_PURCHASED: "Non achetes (buy manquant)",
   UNLINKED: "Non lies StockX (0/N linked)",
 };
+
+/**
+ * Immediate operator email when a Galaxus order is cancelled (portal / UI / script).
+ * Dedupes via StockxOrderAlert refKey `gx-order-cancel:<dbId>` — safe to call twice.
+ */
+export async function notifyGalaxusOrderCancelled(input: {
+  orderDbId: string;
+  galaxusOrderId: string;
+  cancelledAt?: Date | string | null;
+  cancelReason?: string | null;
+  productTitles?: string[];
+}): Promise<{ emailed: boolean; skippedExisting?: boolean; error?: string }> {
+  const prismaAny = prisma as any;
+  const refKey = `gx-order-cancel:${input.orderDbId}`;
+  const existing = await prismaAny.stockxOrderAlert.findUnique({
+    where: {
+      scope_alertType_refKey: {
+        scope: "galaxus",
+        alertType: "CANCELLED",
+        refKey,
+      },
+    },
+    select: { id: true },
+  });
+  if (existing) return { emailed: false, skippedExisting: true };
+
+  const operator =
+    (process.env.STOCKX_ALERT_EMAIL || "").trim() ||
+    (process.env.POSTMARK_FROM_EMAIL || "").trim();
+  if (!operator) return { emailed: false, error: "no_operator_email" };
+
+  const titles = (input.productTitles ?? []).filter(Boolean).slice(0, 3);
+  const reason = String(input.cancelReason ?? "").trim();
+  const cancelledAt = input.cancelledAt ? new Date(input.cancelledAt) : new Date();
+  const detail = reason
+    ? `Galaxus order cancelled ${fmtDate(cancelledAt)} — ${reason}`
+    : `Galaxus order cancelled ${fmtDate(cancelledAt)}`;
+  const alert: PendingAlert = {
+    scope: "galaxus",
+    alertType: "CANCELLED",
+    refKey,
+    orderRef: String(input.galaxusOrderId),
+    stockxOrderNumber: null,
+    productTitle: titles.join(", ") || null,
+    detail,
+  };
+  const { text, html, subject } = buildDigest([alert], {
+    CANCELLED: 1,
+    REFUNDED: 0,
+    DELAYED: 0,
+    NOT_PURCHASED: 0,
+    UNLINKED: 0,
+  });
+  try {
+    const sendRes = await getMailer().sendRawEmail({
+      to: operator,
+      subject,
+      textBody: text,
+      htmlBody: html,
+      ignoreOverride: true,
+    });
+    if (!sendRes.ok) return { emailed: false, error: sendRes.error };
+    await prismaAny.stockxOrderAlert.create({
+      data: {
+        scope: alert.scope,
+        alertType: alert.alertType,
+        refKey: alert.refKey,
+        orderRef: alert.orderRef,
+        stockxOrderNumber: alert.stockxOrderNumber,
+        productTitle: alert.productTitle,
+        detail: alert.detail,
+        emailTo: operator,
+      },
+    });
+    return { emailed: true };
+  } catch (err: any) {
+    return { emailed: false, error: String(err?.message ?? err) };
+  }
+}
 
 function buildBaselineSummary(
   byType: Record<AlertType, number>,
