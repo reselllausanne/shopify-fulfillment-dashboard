@@ -480,6 +480,7 @@ async function loadSnapshotCsv(scope: "stock" | "offer"): Promise<{ csv: string;
   let maxUpdatedAtMs = 0;
   let source: "cache-incremental" | "full-pull" = "full-pull";
   let pulledRows = 0;
+  let cacheMutated = true;
 
   const cached = rebuiltAtIso
     ? await readSnapshotLocalCache(scope).catch((err: any) => {
@@ -497,6 +498,9 @@ async function loadSnapshotCsv(scope: "stock" | "offer"): Promise<{ csv: string;
     const since = new Date(Math.max(0, maxUpdatedAtMs - SNAPSHOT_INCREMENTAL_OVERLAP_MS));
     const changed = await pullSnapshotRows(model, { updatedAt: { gte: since } }, rows);
     pulledRows = changed.pulled;
+    // The overlap window re-pulls the last already-cached rows on every push; only a
+    // strictly newer updatedAt means the table actually changed since the cache write.
+    cacheMutated = changed.maxUpdatedAtMs > maxUpdatedAtMs;
     if (changed.maxUpdatedAtMs > maxUpdatedAtMs) maxUpdatedAtMs = changed.maxUpdatedAtMs;
     source = "cache-incremental";
 
@@ -512,6 +516,7 @@ async function loadSnapshotCsv(scope: "stock" | "offer"): Promise<{ csv: string;
       for (const key of rows.keys()) {
         if (!keep.has(key)) rows.delete(key);
       }
+      cacheMutated = true;
       if (rows.size !== dbCount) {
         console.warn("[GALAXUS][FEED][SNAPSHOT] cache drift — full reload", {
           scope,
@@ -532,7 +537,9 @@ async function loadSnapshotCsv(scope: "stock" | "offer"): Promise<{ csv: string;
     maxUpdatedAtMs = full.maxUpdatedAtMs;
   }
 
-  if (rebuiltAtIso) {
+  // Rewriting ~1.6M JSONL lines (~300MB) per push is pure waste when nothing changed —
+  // most pushes touch a handful of keys in ONE scope and none in the other.
+  if (rebuiltAtIso && cacheMutated) {
     await writeSnapshotLocalCache(scope, { rebuiltAt: rebuiltAtIso, maxUpdatedAtMs, rows }).catch(
       (err: any) => {
         console.warn("[GALAXUS][FEED][SNAPSHOT] local cache write failed (non-fatal)", {
