@@ -37,6 +37,48 @@ log() {
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" | tee -a "$LOG_FILE"
 }
 
+# Stock/price need worker-galaxus-feed. Deploy once left it Created 20h → silent stall.
+# Start it if down; Slack + abort stock-price-flow if still not running.
+ensure_galaxus_feed_worker() {
+  local svc="worker-galaxus-feed"
+  local timeout_sec="${GALAXUS_FEED_WORKER_ENSURE_SEC:-90}"
+  local deadline=$((SECONDS + timeout_sec))
+  local cid state webhook
+
+  cd /opt/resell
+  while (( SECONDS < deadline )); do
+    cid="$(docker compose ps -aq "$svc" 2>/dev/null | head -1 || true)"
+    if [ -n "$cid" ]; then
+      state="$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo missing)"
+      if [ "$state" = "running" ]; then
+        log "OK $svc running cid=$cid"
+        return 0
+      fi
+      log "WARN $svc state=$state — starting"
+      docker start "$cid" 2>/dev/null || true
+    else
+      log "WARN $svc missing — compose up -d --no-deps"
+    fi
+    docker compose up -d --no-deps "$svc" || true
+    sleep 3
+  done
+
+  log "ERROR: $svc not running after ${timeout_sec}s — stock/price cannot upload"
+  docker compose ps -a "$svc" || true
+  webhook="$(
+    docker compose exec -T web printenv GALAXUS_ALERT_SLACK_WEBHOOK_URL 2>/dev/null \
+      || docker compose exec -T web printenv SLACK_WEBHOOK_URL 2>/dev/null \
+      || true
+  )"
+  webhook="$(echo "$webhook" | tr -d '\r' | head -1)"
+  if [[ -n "${webhook:-}" ]]; then
+    curl -sS -X POST "$webhook" -H "content-type: application/json" \
+      --data "{\"text\":\":rotating_light: *Galaxus feed worker DOWN*\\n• service: \\\`$svc\\\`\\n• cron action: \\\`$ACTION\\\`\\n• host: $(hostname)\\n• at: $(date -u +%Y-%m-%dT%H:%M:%SZ)\\n\\nStock/price enqueue aborted. \\\`docker compose up -d --no-deps $svc\\\` then re-run cron.\"}" \
+      --max-time 15 >/dev/null 2>&1 || log "WARN: Slack alert failed"
+  fi
+  return 1
+}
+
 if [[ -z "$ACTION" ]]; then
   log "ERROR: missing action (stock-price-flow | push-master-specs | stx-full)"
   exit 2
@@ -340,7 +382,16 @@ cd /opt/resell
 case "$ACTION" in
   stock-price-flow)
     log "START stock-price-flow (rebuild snapshots -> stock + price)"
+    if ! ensure_galaxus_feed_worker; then
+      log "ERROR: stock-price-flow aborted — worker-galaxus-feed not running"
+      exit 1
+    fi
     run_snapshot_rebuild || true
+    # Re-check after snapshot (long) — deploy mid-rebuild can leave worker Created again.
+    if ! ensure_galaxus_feed_worker; then
+      log "ERROR: stock-price-flow aborted after snapshot — worker-galaxus-feed not running"
+      exit 1
+    fi
     step_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     post_json '{"action":"push-stock"}' >/dev/null || log "WARN: enqueue push-stock failed"
     post_json '{"action":"push-price"}' >/dev/null || log "WARN: enqueue push-price failed"
