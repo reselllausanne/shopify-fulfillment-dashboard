@@ -6,9 +6,10 @@ import {
 } from "@/galaxus/feedExecutor";
 
 describe("skipGalaxusFeedValidationForTrigger", () => {
-  it("skips validation on post-sale triggers only", () => {
+  it("skips validation on qty/price-only triggers", () => {
     expect(skipGalaxusFeedValidationForTrigger("shopify-post-sale")).toBe(true);
     expect(skipGalaxusFeedValidationForTrigger("inventory-sync")).toBe(true);
+    expect(skipGalaxusFeedValidationForTrigger("stx-refresh")).toBe(true);
     expect(skipGalaxusFeedValidationForTrigger("manual")).toBe(false);
     expect(skipGalaxusFeedValidationForTrigger("scraper")).toBe(false);
     expect(skipGalaxusFeedValidationForTrigger(null)).toBe(false);

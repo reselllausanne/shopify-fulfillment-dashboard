@@ -24,12 +24,18 @@ export function galaxusHeavyFeedsPaused(): boolean {
 
 const HEAVY_TRIGGER_SOURCES = new Set<FeedTriggerSource>(["scraper", "unknown"]);
 
-/** Post-sale pushes only touch qty/price — skip the 2nd full-catalog validation pass. */
+/**
+ * Qty/price-only pushes — skip the 2nd full-catalog validation pass and serve
+ * stock/offer CSVs from the DB snapshot (validated at rebuild time). "stx-refresh"
+ * qualifies: it patches the snapshot for its provider keys (or invalidates it past
+ * the key cap, which disables the snapshot path anyway) before triggering the push,
+ * so a live full-catalog export per push was pure waste.
+ */
 export function skipGalaxusFeedValidationForTrigger(
   triggerSource?: FeedTriggerSource | string | null
 ): boolean {
   const src = String(triggerSource ?? "").trim();
-  return src === "shopify-post-sale" || src === "inventory-sync";
+  return src === "shopify-post-sale" || src === "inventory-sync" || src === "stx-refresh";
 }
 
 /** Skip check-all when stock/offer CSV came from DB snapshot (validated at rebuild time). */
