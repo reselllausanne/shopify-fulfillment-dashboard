@@ -21,6 +21,7 @@ import {
   inferBrandFromTitle,
 } from "@/lib/stockxAutoCheckout/sizeUsFallback";
 import type { GalaxusBuyCandidate } from "@/lib/stockxAutoCheckout/galaxusBuyCandidates";
+import { notifyGalaxusMarginNeedsHuman } from "@/lib/stockxAutoCheckout/galaxusMarginAlert";
 import { MAX_ALL_IN_CHF } from "@/lib/stockxAutoCheckout/types";
 import type { BrowserContext, Page } from "playwright";
 
@@ -49,6 +50,8 @@ export type GalaxusBatchBuySummary = {
   aborted: number;
   skipped: number;
   needsHuman: number;
+  /** Live margin skips that triggered (or attempted) an ops email. */
+  marginAlertsEmailed: number;
   stoppedOn402: boolean;
   bandwidthMb: number;
   items: GalaxusBatchBuyItemResult[];
@@ -200,6 +203,7 @@ export async function runGalaxusBatchBuy(options: {
   let aborted = 0;
   let skipped = 0;
   let needsHuman = 0;
+  let marginAlertsEmailed = 0;
   let stoppedOn402 = false;
   let bandwidthMb = 0;
   let session: LiveSession | null = null;
@@ -295,6 +299,33 @@ export async function runGalaxusBatchBuy(options: {
       else if (result.kind === "skipped") skipped += 1;
       else needsHuman += 1;
 
+      // Live margin skip → ops email (Shopify batch already does; Galaxus did not).
+      // Deduped per line via StockxOrderAlert refKey gx-margin:<lineId>.
+      if (!dryRun && result.kind === "needs_human" && result.reason === "margin") {
+        try {
+          const alert = await notifyGalaxusMarginNeedsHuman({
+            candidate,
+            totalChf: result.totalChf ?? null,
+            detail: result.detail ?? null,
+            lane: result.lane != null ? String(result.lane) : null,
+          });
+          if (alert.emailed) marginAlertsEmailed += 1;
+          else if (alert.skippedExisting) {
+            console.log(
+              `[GALAXUS-BATCH-BUY] margin alert already sent for line=${candidate.lineId}`
+            );
+          } else if (alert.error) {
+            console.error(
+              `[GALAXUS-BATCH-BUY] margin alert failed line=${candidate.lineId}: ${alert.error}`
+            );
+          }
+        } catch (e: any) {
+          console.error(
+            `[GALAXUS-BATCH-BUY] margin alert threw line=${candidate.lineId}: ${e?.message || e}`
+          );
+        }
+      }
+
       out.push({
         galaxusOrderId: candidate.galaxusOrderId,
         lineId: candidate.lineId,
@@ -335,6 +366,7 @@ export async function runGalaxusBatchBuy(options: {
     aborted,
     skipped,
     needsHuman,
+    marginAlertsEmailed,
     stoppedOn402,
     bandwidthMb: Number(bandwidthMb.toFixed(1)),
     items: out,
