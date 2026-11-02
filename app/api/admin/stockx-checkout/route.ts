@@ -7,6 +7,7 @@ import {
   SHOPIFY_STANDARD_BATCH_13,
   type ShopifyBatchBuyItem,
 } from "@/lib/stockxAutoCheckout/shopifyBatchBuy";
+import { runShopifyExpressDailyBuy } from "@/lib/stockxAutoCheckout/shopifyExpressDailyBuy";
 import {
   confirmStockxCheckout,
   getStockxCheckoutState,
@@ -19,7 +20,13 @@ export const dynamic = "force-dynamic";
 /** Batch buy can run many sequential PDPs on one sticky session. */
 export const maxDuration = 900;
 
-async function requireAdmin(req: NextRequest) {
+function isLocalCron(req: NextRequest): boolean {
+  const host = (req.headers.get("host") || "").toLowerCase();
+  return host.startsWith("127.0.0.1") || host.startsWith("localhost");
+}
+
+async function requireAdminOrLocalCron(req: NextRequest) {
+  if (isLocalCron(req)) return true;
   const role = await getStaffRoleFromRequest(req);
   return role === "admin";
 }
@@ -48,7 +55,7 @@ function serializeQueuePlan(plan: Awaited<ReturnType<typeof dryRunPlan>>) {
 }
 
 export async function GET(req: NextRequest) {
-  if (!(await requireAdmin(req))) {
+  if (!(await requireAdminOrLocalCron(req))) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
   const state = await getStockxCheckoutState();
@@ -62,7 +69,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await requireAdmin(req))) {
+  if (!(await requireAdminOrLocalCron(req))) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
 
@@ -174,6 +181,21 @@ export async function POST(req: NextRequest) {
         items,
         dryRun,
         confirmLive,
+      });
+      return NextResponse.json({ ok: true, summary });
+    }
+
+    // Daily Express drop catch-up: lag 0, EXPRESS lane only, operator digest email.
+    if (action === "express_daily_buy" || action === "shopify_express_daily") {
+      const dryRun =
+        body.dryRun === true ||
+        body.dryRun === "true" ||
+        body.previewOnly === true ||
+        !(body.confirmLive === true || body.confirmLive === "true" || body.go === true || body.go === "true");
+      const summary = await runShopifyExpressDailyBuy({
+        days: body.days != null ? Number(body.days) : 14,
+        maxOrders: body.maxOrders != null ? Number(body.maxOrders) : 20,
+        dryRun,
       });
       return NextResponse.json({ ok: true, summary });
     }
