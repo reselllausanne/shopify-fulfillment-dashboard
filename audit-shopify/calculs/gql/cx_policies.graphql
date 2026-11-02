@@ -1,0 +1,6 @@
+{ shop { name myshopifyDomain primaryDomain{url host} currencyCode shipsToCountries
+  shopPolicies{ type title url updatedAt body }
+  enabledPresentmentCurrencies }
+  shopLocales{ locale name primary published }
+  pages(first:100){ nodes{ id title handle updatedAt isPublished } }
+  blogs(first:10){ nodes{ title handle articlesCount{count} } } }

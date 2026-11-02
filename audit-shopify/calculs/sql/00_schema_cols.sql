@@ -1,0 +1,4 @@
+select table_name, string_agg(column_name||':'||udt_name, ', ' order by ordinal_position) cols
+from information_schema.columns where table_schema='public'
+and table_name in ('ManualFinanceEvent','GalaxusOrder','DecathlonOrder','marketplace_returns','StxPurchaseUnit','BankTransaction','BankAccount','BankBalanceSnapshot','MonthlyVariableCosts','RecurringExpense','CashLedgerDaily','ExpectedCashEvent','MarketplaceRemittance','MarketplaceCashAssumption','CashFlowConfig','ForecastAssumption','OrderMetric','ExpenseCategory','PaymentAccount','LocalStockLot','ShopifyFulfillmentRecord','OperatingEvent','ads_campaign_daily','ads_product_daily','ads_shopping_product_current','funnel_events','ads_inventory_funnel_daily','ads_campaign_settings_daily','SupplierOrder','Shipment','PersonalExpense','ShopifyPaidLineState','StockxOrderAlert')
+group by 1 order by 1

@@ -1,0 +1,1 @@
+{ themes(first:5, roles:[MAIN]){ nodes{ id name role createdAt updatedAt files(first:250, filenames:["sections/*","snippets/*","templates/*","layout/*","config/*","locales/fr.json","locales/de.json","locales/en.default.json"]){ nodes{ filename size updatedAt } pageInfo{hasNextPage endCursor} } } } }

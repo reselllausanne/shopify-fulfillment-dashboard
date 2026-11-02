@@ -1,0 +1,84 @@
+{
+ "data": {
+  "m202501": {
+   "count": 348
+  },
+  "m202502": {
+   "count": 860
+  },
+  "m202503": {
+   "count": 667
+  },
+  "m202504": {
+   "count": 848
+  },
+  "m202505": {
+   "count": 0
+  },
+  "m202506": {
+   "count": 1
+  },
+  "m202507": {
+   "count": 696
+  },
+  "m202508": {
+   "count": 1081
+  },
+  "m202509": {
+   "count": 4458
+  },
+  "m202510": {
+   "count": 2922
+  },
+  "m202511": {
+   "count": 1204
+  },
+  "m202512": {
+   "count": 654
+  },
+  "m202601": {
+   "count": 2757
+  },
+  "m202602": {
+   "count": 748
+  },
+  "m202603": {
+   "count": 44
+  },
+  "m202604": {
+   "count": 394
+  },
+  "m202605": {
+   "count": 249
+  },
+  "m202606": {
+   "count": 537
+  },
+  "m202607": {
+   "count": 21264
+  },
+  "m202608": {
+   "count": 32442
+  },
+  "m202609": {
+   "count": 26336
+  },
+  "m202610": {
+   "count": 1
+  },
+  "m202611": {
+   "count": 0
+  }
+ },
+ "extensions": {
+  "cost": {
+   "requestedQueryCost": 230,
+   "actualQueryCost": 230,
+   "throttleStatus": {
+    "maximumAvailable": 2000,
+    "currentlyAvailable": 949,
+    "restoreRate": 100
+   }
+  }
+ }
+}

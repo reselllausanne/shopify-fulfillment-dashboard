@@ -1,0 +1,1 @@
+SELECT segments.conversion_lag_bucket, segments.conversion_action_name, metrics.conversions, metrics.conversions_value FROM customer WHERE segments.date BETWEEN '2026-07-01' AND '2026-10-15'

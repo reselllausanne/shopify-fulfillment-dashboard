@@ -1,0 +1,575 @@
+{
+ "normale": {
+  "commande": "#7112",
+  "creee_utc": "2026-09-10T08:23:57Z",
+  "annulee_utc": NaN,
+  "motif_annulation": NaN,
+  "statut_paiement": "PAID",
+  "statut_expedition": "FULFILLED",
+  "pays": "CH",
+  "passerelles": "shopify_payments",
+  "total_initial_ttc": 289.0,
+  "rembourse": 0.0,
+  "total_courant": 289.0,
+  "tva_courante": 21.65,
+  "livraison_facturee": 0.0,
+  "remises": 0.0,
+  "codes": NaN,
+  "derniere_visite": "Google",
+  "rang_client": 1.0,
+  "frais_paiement_shopify": 8.25,
+  "lignes": [
+   {
+    "titre": "Nike Vomero Plus Pearl Pink Silt Red (Women's)",
+    "taille": "39",
+    "prix_ligne_ttc": 289.0,
+    "stockx_statut": "BUYER_RECEIVED",
+    "source": "STOCKX",
+    "cout": 185.51
+   }
+  ],
+  "transactions": [
+   {
+    "kind": "SALE",
+    "status": "SUCCESS",
+    "gateway": "shopify_payments",
+    "processed": "2026-09-10T08:23:53Z",
+    "amount": 289.0,
+    "fee": 8.25
+   }
+  ],
+  "remboursements": [],
+  "fulfillment": [
+   {
+    "status": "success",
+    "stx_delivered": "2026-09-16 09:19:49.735",
+    "scan_done": "2026-09-21 06:18:38.373",
+    "label_at": "2026-09-21 06:18:40.6",
+    "fulfilled_at": "2026-09-21 06:18:41.657"
+   }
+  ],
+  "ordermatch": [
+   {
+    "stockxStatus": "BUYER_RECEIVED",
+    "stockx_purchase_utc": "2026-09-15 00:00:00",
+    "stx_eta": "2026-09-17 21:00:00",
+    "supplierCost": 185.51,
+    "marginAmount": 103.49,
+    "return_applied": NaN,
+    "returnFeeAmountChf": NaN,
+    "return_reason": NaN
+   }
+  ],
+  "pnl_commande": [
+   {
+    "name": "#7112",
+    "mois": "2026-09",
+    "cohorte": "mature",
+    "fin": "PAID",
+    "ful": "FULFILLED",
+    "ship_cc": "CH",
+    "gateways": "shopify_payments",
+    "source": "web",
+    "ventes_brutes_ttc": 289.0,
+    "refunded": 0.0,
+    "revenu_conserve_ttc": 289.0,
+    "tva": 21.65,
+    "revenu_net_ht": 267.35,
+    "cogs": 185.51,
+    "cogs_est": 0.0,
+    "n_unmatched": 0,
+    "frais_paiement": 8.25,
+    "fee_obs": 8.25,
+    "exp_prep": 14.5,
+    "discount_codes": NaN,
+    "cust_order_idx": 1.0,
+    "f_source": "Google",
+    "f_type": NaN,
+    "l_source": "Google",
+    "l_type": NaN,
+    "n_lines": 1,
+    "n_units": 1
+   }
+  ]
+ },
+ "annulee_avant_achat": {
+  "commande": "#7179",
+  "creee_utc": "2026-09-19T20:45:22Z",
+  "annulee_utc": "2026-09-19T20:46:28Z",
+  "motif_annulation": "CUSTOMER",
+  "statut_paiement": "REFUNDED",
+  "statut_expedition": "UNFULFILLED",
+  "pays": "CH",
+  "passerelles": "shopify_payments",
+  "total_initial_ttc": 189.0,
+  "rembourse": 189.0,
+  "total_courant": 0.0,
+  "tva_courante": 0.0,
+  "livraison_facturee": 0.0,
+  "remises": 0.0,
+  "codes": NaN,
+  "derniere_visite": "https://shopify.com/",
+  "rang_client": 1.0,
+  "frais_paiement_shopify": 5.5,
+  "lignes": [
+   {
+    "titre": "Polo Ralph Lauren Double Knit Jogger Pants Polo Black",
+    "taille": "L",
+    "prix_ligne_ttc": 189.0,
+    "stockx_statut": NaN,
+    "source": NaN,
+    "cout": NaN
+   }
+  ],
+  "transactions": [
+   {
+    "kind": "SALE",
+    "status": "SUCCESS",
+    "gateway": "shopify_payments",
+    "processed": "2026-09-19T20:45:20Z",
+    "amount": 189.0,
+    "fee": 5.5
+   },
+   {
+    "kind": "REFUND",
+    "status": "SUCCESS",
+    "gateway": "shopify_payments",
+    "processed": "2026-09-19T20:46:27Z",
+    "amount": 189.0,
+    "fee": 0.0
+   }
+  ],
+  "remboursements": [
+   {
+    "created_utc": "2026-09-19T20:46:27Z",
+    "note": "Order canceled",
+    "total": 189.0,
+    "items": "1:CANCEL"
+   }
+  ],
+  "fulfillment": [],
+  "ordermatch": [],
+  "pnl_commande": [
+   {
+    "name": "#7179",
+    "mois": "2026-09",
+    "cohorte": "recente",
+    "fin": "REFUNDED",
+    "ful": "UNFULFILLED",
+    "ship_cc": "CH",
+    "gateways": "shopify_payments",
+    "source": "web",
+    "ventes_brutes_ttc": 189.0,
+    "refunded": 189.0,
+    "revenu_conserve_ttc": 0.0,
+    "tva": 0.0,
+    "revenu_net_ht": 0.0,
+    "cogs": 0.0,
+    "cogs_est": 132.3,
+    "n_unmatched": 1,
+    "frais_paiement": 5.5,
+    "fee_obs": 5.5,
+    "exp_prep": 0.0,
+    "discount_codes": NaN,
+    "cust_order_idx": 1.0,
+    "f_source": "direct",
+    "f_type": NaN,
+    "l_source": "https://shopify.com/",
+    "l_type": NaN,
+    "n_lines": 1,
+    "n_units": 1
+   }
+  ]
+ },
+ "remboursee_apres_achat": {
+  "commande": "#6200",
+  "creee_utc": "2026-06-20T13:56:17Z",
+  "annulee_utc": NaN,
+  "motif_annulation": NaN,
+  "statut_paiement": "REFUNDED",
+  "statut_expedition": "FULFILLED",
+  "pays": "CH",
+  "passerelles": "Pay by Invoice / Pay Later (with PowerPay)",
+  "total_initial_ttc": 313.66,
+  "rembourse": 287.1,
+  "total_courant": 26.56,
+  "tva_courante": 0.0,
+  "livraison_facturee": 0.0,
+  "remises": 31.9,
+  "codes": NaN,
+  "derniere_visite": "direct",
+  "rang_client": 1.0,
+  "frais_paiement_shopify": 0.0,
+  "lignes": [
+   {
+    "titre": "Nike Maxfly 2 White Bright Spruce Barely Green Black",
+    "taille": "44.5",
+    "prix_ligne_ttc": 319.0,
+    "stockx_statut": "BUYER_RECEIVED",
+    "source": "STOCKX",
+    "cout": 233.95
+   }
+  ],
+  "transactions": [
+   {
+    "kind": "SALE",
+    "status": "SUCCESS",
+    "gateway": "Pay by Invoice / Pay Later (with PowerPay)",
+    "processed": "2026-06-20T13:55:53Z",
+    "amount": 287.1,
+    "fee": 0.0
+   },
+   {
+    "kind": "REFUND",
+    "status": "SUCCESS",
+    "gateway": "Pay by Invoice / Pay Later (with PowerPay)",
+    "processed": "2026-08-25T19:29:17Z",
+    "amount": 287.1,
+    "fee": 0.0
+   }
+  ],
+  "remboursements": [
+   {
+    "created_utc": "2026-08-25T19:29:18Z",
+    "note": NaN,
+    "total": 287.1,
+    "items": "1:RETURN"
+   }
+  ],
+  "fulfillment": [],
+  "ordermatch": [
+   {
+    "stockxStatus": "BUYER_RECEIVED",
+    "stockx_purchase_utc": "2026-06-22 00:00:00",
+    "stx_eta": "2026-06-30 12:00:00",
+    "supplierCost": 233.95,
+    "marginAmount": 53.15,
+    "return_applied": NaN,
+    "returnFeeAmountChf": NaN,
+    "return_reason": NaN
+   }
+  ],
+  "pnl_commande": [
+   {
+    "name": "#6200",
+    "mois": "2026-06",
+    "cohorte": "mature",
+    "fin": "REFUNDED",
+    "ful": "FULFILLED",
+    "ship_cc": "CH",
+    "gateways": "Pay by Invoice / Pay Later (with PowerPay)",
+    "source": "web",
+    "ventes_brutes_ttc": 313.66,
+    "refunded": 287.1,
+    "revenu_conserve_ttc": 26.56,
+    "tva": 0.0,
+    "revenu_net_ht": 26.56,
+    "cogs": 70.18,
+    "cogs_est": 0.0,
+    "n_unmatched": 0,
+    "frais_paiement": 8.61,
+    "fee_obs": 0.0,
+    "exp_prep": 14.5,
+    "discount_codes": NaN,
+    "cust_order_idx": 1.0,
+    "f_source": "direct",
+    "f_type": NaN,
+    "l_source": "direct",
+    "l_type": NaN,
+    "n_lines": 1,
+    "n_units": 1
+   }
+  ]
+ },
+ "remboursement_partiel": {
+  "commande": "#6960",
+  "creee_utc": "2026-09-01T10:57:11Z",
+  "annulee_utc": NaN,
+  "motif_annulation": NaN,
+  "statut_paiement": "PARTIALLY_REFUNDED",
+  "statut_expedition": "FULFILLED",
+  "pays": "CH",
+  "passerelles": "shopify_payments+shopify_store_credit",
+  "total_initial_ttc": 184.64,
+  "rembourse": 153.36,
+  "total_courant": 15.64,
+  "tva_courante": 0.0,
+  "livraison_facturee": 0.0,
+  "remises": 0.0,
+  "codes": NaN,
+  "derniere_visite": "Google",
+  "rang_client": 1.0,
+  "frais_paiement_shopify": 4.95,
+  "lignes": [
+   {
+    "titre": "adidas Samba LT Cream White Maroon (Women's)",
+    "taille": "38",
+    "prix_ligne_ttc": 169.0,
+    "stockx_statut": "AC_SHIPPED",
+    "source": "STOCKX",
+    "cout": 96.89
+   }
+  ],
+  "transactions": [
+   {
+    "kind": "SALE",
+    "status": "SUCCESS",
+    "gateway": "shopify_payments",
+    "processed": "2026-09-01T10:57:07Z",
+    "amount": 169.0,
+    "fee": 4.95
+   },
+   {
+    "kind": "REFUND",
+    "status": "SUCCESS",
+    "gateway": "shopify_store_credit",
+    "processed": "2026-10-07T07:21:33Z",
+    "amount": 153.36,
+    "fee": 0.0
+   }
+  ],
+  "remboursements": [
+   {
+    "created_utc": "2026-10-07T07:21:33Z",
+    "note": NaN,
+    "total": 153.36,
+    "items": "1:NO_RESTOCK"
+   }
+  ],
+  "fulfillment": [
+   {
+    "status": "SUCCESS",
+    "stx_delivered": NaN,
+    "scan_done": "2026-09-15 07:52:56.95",
+    "label_at": "2026-09-15 07:52:58.785",
+    "fulfilled_at": "2026-09-15 07:52:59.971"
+   }
+  ],
+  "ordermatch": [
+   {
+    "stockxStatus": "AC_SHIPPED",
+    "stockx_purchase_utc": "2026-09-04 00:00:00",
+    "stx_eta": "2026-09-15 00:00:00",
+    "supplierCost": 96.89,
+    "marginAmount": 72.11,
+    "return_applied": "2026-10-07 07:21:34.642",
+    "returnFeeAmountChf": 15.64,
+    "return_reason": "STORE_CREDIT"
+   }
+  ],
+  "pnl_commande": [
+   {
+    "name": "#6960",
+    "mois": "2026-09",
+    "cohorte": "mature",
+    "fin": "PARTIALLY_REFUNDED",
+    "ful": "FULFILLED",
+    "ship_cc": "CH",
+    "gateways": "shopify_payments+shopify_store_credit",
+    "source": "web",
+    "ventes_brutes_ttc": 169.0,
+    "refunded": 153.36,
+    "revenu_conserve_ttc": 15.64,
+    "tva": 0.0,
+    "revenu_net_ht": 15.64,
+    "cogs": 96.89,
+    "cogs_est": 0.0,
+    "n_unmatched": 0,
+    "frais_paiement": 4.95,
+    "fee_obs": 4.95,
+    "exp_prep": 14.5,
+    "discount_codes": NaN,
+    "cust_order_idx": 1.0,
+    "f_source": "Google",
+    "f_type": NaN,
+    "l_source": "Google",
+    "l_type": NaN,
+    "n_lines": 1,
+    "n_units": 1
+   }
+  ]
+ },
+ "avoir_ou_carte_cadeau": {
+  "commande": "#6472",
+  "creee_utc": "2026-07-27T14:19:50Z",
+  "annulee_utc": NaN,
+  "motif_annulation": NaN,
+  "statut_paiement": "PAID",
+  "statut_expedition": "FULFILLED",
+  "pays": "CH",
+  "passerelles": "TWINT+shopify_store_credit",
+  "total_initial_ttc": 169.0,
+  "rembourse": 0.0,
+  "total_courant": 169.0,
+  "tva_courante": 12.66,
+  "livraison_facturee": 0.0,
+  "remises": 0.0,
+  "codes": NaN,
+  "derniere_visite": NaN,
+  "rang_client": 3.0,
+  "frais_paiement_shopify": 0.0,
+  "lignes": [
+   {
+    "titre": "Nike Air Max Correlate Black White Grey",
+    "taille": "43",
+    "prix_ligne_ttc": 169.0,
+    "stockx_statut": "BUYER_RECEIVED",
+    "source": "STOCKX",
+    "cout": 98.88
+   }
+  ],
+  "transactions": [
+   {
+    "kind": "SALE",
+    "status": "SUCCESS",
+    "gateway": "TWINT",
+    "processed": "2026-07-27T14:19:29Z",
+    "amount": 10.0,
+    "fee": 0.0
+   },
+   {
+    "kind": "SALE",
+    "status": "SUCCESS",
+    "gateway": "shopify_store_credit",
+    "processed": "2026-07-27T14:19:48Z",
+    "amount": 159.0,
+    "fee": 0.0
+   }
+  ],
+  "remboursements": [],
+  "fulfillment": [],
+  "ordermatch": [
+   {
+    "stockxStatus": "BUYER_RECEIVED",
+    "stockx_purchase_utc": "2026-07-29 00:00:00",
+    "stx_eta": "2026-07-31 09:37:36.093",
+    "supplierCost": 98.88,
+    "marginAmount": 70.12,
+    "return_applied": NaN,
+    "returnFeeAmountChf": NaN,
+    "return_reason": NaN
+   }
+  ],
+  "pnl_commande": [
+   {
+    "name": "#6472",
+    "mois": "2026-07",
+    "cohorte": "mature",
+    "fin": "PAID",
+    "ful": "FULFILLED",
+    "ship_cc": "CH",
+    "gateways": "TWINT+shopify_store_credit",
+    "source": "web",
+    "ventes_brutes_ttc": 169.0,
+    "refunded": 0.0,
+    "revenu_conserve_ttc": 169.0,
+    "tva": 12.66,
+    "revenu_net_ht": 156.34,
+    "cogs": 98.88,
+    "cogs_est": 0.0,
+    "n_unmatched": 0,
+    "frais_paiement": 0.13,
+    "fee_obs": 0.0,
+    "exp_prep": 14.5,
+    "discount_codes": NaN,
+    "cust_order_idx": 3.0,
+    "f_source": NaN,
+    "f_type": NaN,
+    "l_source": NaN,
+    "l_type": NaN,
+    "n_lines": 1,
+    "n_units": 1
+   }
+  ]
+ },
+ "litige_perdu": {
+  "litige": {
+   "order_name": "#6390",
+   "initiatedAt": "2026-09-10T04:13:02Z",
+   "type": "CHARGEBACK",
+   "status": "LOST",
+   "reasonDetails": {
+    "reason": "PRODUCT_NOT_RECEIVED",
+    "networkReasonCode": "13.1"
+   },
+   "amount": {
+    "amount": "219.0",
+    "currencyCode": "CHF"
+   }
+  },
+  "commande": {
+   "commande": "#6390",
+   "creee_utc": "2026-07-14T07:35:08Z",
+   "annulee_utc": NaN,
+   "motif_annulation": NaN,
+   "statut_paiement": "PAID",
+   "statut_expedition": "UNFULFILLED",
+   "pays": "CH",
+   "passerelles": "shopify_payments",
+   "total_initial_ttc": 219.0,
+   "rembourse": 0.0,
+   "total_courant": 219.0,
+   "tva_courante": 16.41,
+   "livraison_facturee": 0.0,
+   "remises": 0.0,
+   "codes": NaN,
+   "derniere_visite": "direct",
+   "rang_client": 1.0,
+   "frais_paiement_shopify": 6.32,
+   "lignes": [
+    {
+     "titre": "Nike Air Max Plus Utility Safety Orange Pure Platinum",
+     "taille": "42.5",
+     "prix_ligne_ttc": 219.0,
+     "stockx_statut": NaN,
+     "source": NaN,
+     "cout": NaN
+    }
+   ],
+   "transactions": [
+    {
+     "kind": "SALE",
+     "status": "SUCCESS",
+     "gateway": "shopify_payments",
+     "processed": "2026-07-14T07:35:02Z",
+     "amount": 219.0,
+     "fee": 6.32
+    }
+   ],
+   "remboursements": [],
+   "fulfillment": [],
+   "ordermatch": [],
+   "pnl_commande": [
+    {
+     "name": "#6390",
+     "mois": "2026-07",
+     "cohorte": "mature",
+     "fin": "PAID",
+     "ful": "UNFULFILLED",
+     "ship_cc": "CH",
+     "gateways": "shopify_payments",
+     "source": "web",
+     "ventes_brutes_ttc": 219.0,
+     "refunded": 0.0,
+     "revenu_conserve_ttc": 219.0,
+     "tva": 16.41,
+     "revenu_net_ht": 202.59,
+     "cogs": 146.38,
+     "cogs_est": 146.38,
+     "n_unmatched": 1,
+     "frais_paiement": 6.32,
+     "fee_obs": 6.32,
+     "exp_prep": 14.5,
+     "discount_codes": NaN,
+     "cust_order_idx": 1.0,
+     "f_source": "an unknown source",
+     "f_type": NaN,
+     "l_source": "direct",
+     "l_type": NaN,
+     "n_lines": 1,
+     "n_units": 1
+    }
+   ]
+  }
+ }
+}

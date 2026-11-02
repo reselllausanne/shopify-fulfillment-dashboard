@@ -1,0 +1,7 @@
+test,resultat_apres_remun_12m,flux_net_12m,tresorerie_min_mois,tresorerie_min_13sem,delta_flux_vs_central
+Central (référence),-100585.0,-100996.0,-100996.0,-19255.0,0.0
+"S1 CPC +25 % (pub/commande ×1,25 à volume égal)",-135252.0,-135663.0,-135663.0,-32380.0,-34668.0
+S2 Remboursements +4 pts et litiges ×2,-114970.0,-116295.0,-116295.0,-25751.0,-15299.0
+S3 Pic manqué : nov-déc-jan −35 % de volume,-97314.0,-97725.0,-97725.0,-24106.0,3271.0
+S4 Réserve Shopify Payments 14 j (encaissement décalé 2 sem.),-100585.0,-100996.0,-100996.0,-57814.0,0.0
+S5 S1+S2+S3 combinés,-139867.0,-141192.0,-141192.0,-36872.0,-40196.0

@@ -1,0 +1,1 @@
+SELECT segments.conversion_attribution_event_type, segments.conversion_action_name, metrics.conversions, metrics.conversions_value, metrics.view_through_conversions FROM customer WHERE segments.date BETWEEN '2026-07-01' AND '2026-10-31'

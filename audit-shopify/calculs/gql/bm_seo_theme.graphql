@@ -1,0 +1,11 @@
+{
+  themes(first: 25) { nodes { id name role createdAt updatedAt processing } }
+  shopLocales { locale name primary published }
+  availableLocales: shop { name myshopifyDomain primaryDomain { url host sslEnabled } contactEmail }
+  productsCount { count precision }
+  collectionsCount { count precision }
+  active: productsCount(query: "status:active") { count precision }
+  draft: productsCount(query: "status:draft") { count precision }
+  archived: productsCount(query: "status:archived") { count precision }
+  online: publicationsCount { count }
+}

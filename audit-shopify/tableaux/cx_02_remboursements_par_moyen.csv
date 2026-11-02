@@ -1,0 +1,7 @@
+type,gw2,count,sum,median
+annulation,crédit magasin,1,207.8,207.8
+annulation,moyen de paiement d'origine,50,18727.0,214.0
+autre,crédit magasin,1,93.9,93.9
+autre,moyen de paiement d'origine,126,23146.8,141.0
+retour,crédit magasin,66,13108.7,180.6
+retour,moyen de paiement d'origine,18,2505.0,129.4

@@ -1,0 +1,15 @@
+parametre,valeur
+tva_taux,0.081
+cout_vat_recuperable_part,0.0
+frais_twint_pct,0.013
+frais_paypal_pct,0.034
+frais_paypal_fixe,0.55
+frais_powerpay_pct,0.03
+frais_cembra_pct,0.03
+exp_transport_chf,6.5
+exp_preparation_chf,8.0
+recup_stock_retour_pct,0.7
+cout_estime_ratio_defaut,0.7
+remuneration_dirigeant_mois,6000.0
+logiciels_mois,325.0
+mature_jusqua,2026-09-15

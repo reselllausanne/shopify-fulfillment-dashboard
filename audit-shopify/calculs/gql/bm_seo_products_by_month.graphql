@@ -1,0 +1,25 @@
+{
+  m202501: productsCount(query: "created_at:>=2025-01-01 created_at:<2025-02-01", limit: null) { count }
+  m202502: productsCount(query: "created_at:>=2025-02-01 created_at:<2025-03-01", limit: null) { count }
+  m202503: productsCount(query: "created_at:>=2025-03-01 created_at:<2025-04-01", limit: null) { count }
+  m202504: productsCount(query: "created_at:>=2025-04-01 created_at:<2025-05-01", limit: null) { count }
+  m202505: productsCount(query: "created_at:>=2025-05-01 created_at:<2025-06-01", limit: null) { count }
+  m202506: productsCount(query: "created_at:>=2025-06-01 created_at:<2025-07-01", limit: null) { count }
+  m202507: productsCount(query: "created_at:>=2025-07-01 created_at:<2025-08-01", limit: null) { count }
+  m202508: productsCount(query: "created_at:>=2025-08-01 created_at:<2025-09-01", limit: null) { count }
+  m202509: productsCount(query: "created_at:>=2025-09-01 created_at:<2025-10-01", limit: null) { count }
+  m202510: productsCount(query: "created_at:>=2025-10-01 created_at:<2025-11-01", limit: null) { count }
+  m202511: productsCount(query: "created_at:>=2025-11-01 created_at:<2025-12-01", limit: null) { count }
+  m202512: productsCount(query: "created_at:>=2025-12-01 created_at:<2026-01-01", limit: null) { count }
+  m202601: productsCount(query: "created_at:>=2026-01-01 created_at:<2026-02-01", limit: null) { count }
+  m202602: productsCount(query: "created_at:>=2026-02-01 created_at:<2026-03-01", limit: null) { count }
+  m202603: productsCount(query: "created_at:>=2026-03-01 created_at:<2026-04-01", limit: null) { count }
+  m202604: productsCount(query: "created_at:>=2026-04-01 created_at:<2026-05-01", limit: null) { count }
+  m202605: productsCount(query: "created_at:>=2026-05-01 created_at:<2026-06-01", limit: null) { count }
+  m202606: productsCount(query: "created_at:>=2026-06-01 created_at:<2026-07-01", limit: null) { count }
+  m202607: productsCount(query: "created_at:>=2026-07-01 created_at:<2026-08-01", limit: null) { count }
+  m202608: productsCount(query: "created_at:>=2026-08-01 created_at:<2026-09-01", limit: null) { count }
+  m202609: productsCount(query: "created_at:>=2026-09-01 created_at:<2026-10-01", limit: null) { count }
+  m202610: productsCount(query: "created_at:>=2026-10-01 created_at:<2026-11-01", limit: null) { count }
+  m202611: productsCount(query: "created_at:>=2026-11-01 created_at:<2026-12-01", limit: null) { count }
+}

@@ -1,0 +1,5 @@
+device,sessions,page_viewed,collection,search,product_viewed,variant_selected,added_to_cart,cart_viewed,checkout_started,contact_info,shipping_info,payment_info,checkout_completed,with_checkout_alert
+mobile,41113,23803,1207,1057,19363,1989,1027,513,437,133,151,110,79,70
+desktop,8968,4821,395,234,3001,443,861,83,737,35,35,27,23,15
+bot,7092,3569,180,0,3343,0,0,0,0,0,0,0,0,0
+tablet,304,164,6,4,144,10,4,1,2,1,1,1,1,1

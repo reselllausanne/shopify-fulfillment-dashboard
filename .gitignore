@@ -102,3 +102,7 @@ logs.jsonl
 77.42.74.184
 # Matching Review Lab local reviews (JSONL). Never commit secrets.
 data/matching-review-lab/reviews.jsonl
+
+# audit
+audit-shopify/.venv/
+audit-shopify/donnees_brutes/

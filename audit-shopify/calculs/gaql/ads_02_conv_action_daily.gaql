@@ -1,0 +1,1 @@
+SELECT segments.date, segments.conversion_action_name, segments.conversion_action, metrics.conversions, metrics.conversions_value, metrics.all_conversions, metrics.all_conversions_value FROM customer WHERE segments.date BETWEEN '2025-01-01' AND '2026-11-02'

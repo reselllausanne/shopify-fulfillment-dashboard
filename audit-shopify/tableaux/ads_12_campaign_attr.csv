@@ -1,0 +1,93 @@
+campaign_id,cname,a0,a1,a3,models,impr,clicks,cost,conv,val
+23201286875,Perf-max-vetements,,,,0,13715,2,8.57,1.00,59.00
+23201286875,Perf-max-vetements,,fear of god,,6,7484,45,38.67,0.00,0.00
+23201286875,Perf-max-vetements,,otherbrands,,12,16850,179,67.46,3.75,282.25
+23201286875,Perf-max-vetements,,supreme only / collectible,,4,19274,482,282.76,20.95,1410.86
+23201286875,Perf-max-vetements,bts_2026_ads,otherbrands,,2,4440,79,22.60,0.00,0.00
+23201286875,Perf-max-vetements,in_store,fear of god,,1,6128,62,43.82,3.00,274.00
+23201286875,Perf-max-vetements,in_store,otherbrands,,3,16437,196,68.87,2.75,237.25
+23201286875,Perf-max-vetements,sneakers,fear of god,,1,17015,167,88.96,4.81,400.70
+23201286875,Perf-max-vetements,sneakers,supreme only / collectible,,1,11,0,0.00,0.00,0.00
+23201286875,Perf-max-vetements,vetements,fear of god,,6,206461,2434,1393.68,45.41,4580.44
+23201286875,Perf-max-vetements,vetements,otherbrands,,28,259750,3248,1089.07,39.58,3833.02
+23201286875,Perf-max-vetements,vetements,supreme only / collectible,,4,3056,17,3.11,0.00,0.00
+23205414712,Sale-performance-max-lego,,,,0,1097,2,0.20,0.00,0.00
+23205414712,Sale-performance-max-lego,collectibles,lego,,1152,46196,501,131.49,1.25,267.75
+23573327952,Adidas PM Feed only,in_store,adidas,,1,1,0,0.00,0.00,0.00
+23573327952,Adidas PM Feed only,sneakers,adidas,,10293,1281185,19042,9189.98,149.70,34215.25
+23573327952,Adidas PM Feed only,sneakers,adidas,explorer_active_adidas,1,2,0,0.00,0.00,0.00
+23578590386,Nike PM Feed Only,in_store,nike,,1,2,0,0.00,0.00,0.00
+23578590386,Nike PM Feed Only,sneakers,nike,,17097,2552120,34388,13852.30,245.53,58083.63
+23578590386,Nike PM Feed Only,sneakers,nike,explorer_active_nike,1,1,0,0.00,0.00,0.00
+23578731287,Jordan PM Feed Only,sneakers,jordan,,5443,485884,6451,2744.66,42.77,11710.70
+23682200876,all,sneakers,asics,,2290,286522,3073,1406.92,11.76,2956.26
+23682200876,all,sneakers,asics,explorer_active,4,7,0,0.00,0.00,0.00
+23682200876,all,sneakers,jordan,,1,237,0,0.01,0.00,0.00
+23682200876,all,sneakers,maison mihara,,57,12506,132,72.35,0.03,1.89
+23682200876,all,sneakers,maison mihara,long_tail_all,2,67,0,0.00,0.00,0.00
+23682200876,all,sneakers,new balance,,3331,283601,3520,1641.70,31.80,7178.23
+23682200876,all,sneakers,new balance,explorer_active,3,3,0,0.00,0.00,0.00
+23682200876,all,sneakers,on,,2294,213752,3015,1441.82,18.70,5060.49
+23682200876,all,sneakers,on,explorer_active,4,16,0,0.00,0.00,0.00
+23682200876,all,sneakers,onitsuka tiger,,192,52334,417,195.18,5.00,1114.10
+23682200876,all,sneakers,onitsuka tiger,explorer_active,3,6,0,0.00,0.00,0.00
+23682200876,all,sneakers,onitsuka tiger,long_tail_all,9,93,0,0.01,0.00,0.00
+23682200876,all,sneakers,saucony,,433,165807,1480,546.82,7.74,1612.36
+23682200876,all,sneakers,under armour,,103,6518,116,63.17,2.00,507.80
+23682200876,all,sneakers,under armour,explorer_active,1,1,0,0.00,0.00,0.00
+23682200876,all,sneakers,under armour,long_tail_all,6,13,0,0.00,0.00,0.00
+23682200876,all,sneakers,yeezy,,29,6879,96,55.56,5.15,688.58
+23682200876,all,sneakers,yeezy,long_tail_all,3,4,0,0.00,0.00,0.00
+24119907036,Long Tail | All | CH,,adidas,long_tail_all,46,2473,26,4.19,0.00,0.00
+24119907036,Long Tail | All | CH,,asics,long_tail_all,134,6727,100,17.64,0.00,0.00
+24119907036,Long Tail | All | CH,,jordan,long_tail_all,489,30638,441,67.83,0.00,0.00
+24119907036,Long Tail | All | CH,,new balance,long_tail_all,44,2838,57,9.87,0.00,0.00
+24119907036,Long Tail | All | CH,,nike,long_tail_all,94,7334,97,15.14,0.00,0.00
+24119907036,Long Tail | All | CH,,on,long_tail_all,8,937,24,3.95,0.00,0.00
+24119907036,Long Tail | All | CH,,saucony,long_tail_all,7,75,1,0.18,0.00,0.00
+24119907036,Long Tail | All | CH,,under armour,long_tail_all,1,28,1,0.07,0.00,0.00
+24119907036,Long Tail | All | CH,,yeezy,long_tail_all,5,41,1,0.09,0.00,0.00
+24119907036,Long Tail | All | CH,in_store,adidas,long_tail_all,1,34,1,0.20,0.00,0.00
+24119907036,Long Tail | All | CH,in_store,jordan,long_tail_all,4,228,3,0.52,0.00,0.00
+24119907036,Long Tail | All | CH,sneakers,adidas,long_tail_all,653,18946,296,47.99,0.00,0.00
+24119907036,Long Tail | All | CH,sneakers,asics,long_tail_all,343,9593,181,30.58,0.00,0.00
+24119907036,Long Tail | All | CH,sneakers,jordan,long_tail_all,521,11512,176,27.51,0.00,0.00
+24119907036,Long Tail | All | CH,sneakers,maison mihara,long_tail_all,5,114,1,0.16,0.00,0.00
+24119907036,Long Tail | All | CH,sneakers,new balance,long_tail_all,532,20657,360,59.17,0.00,0.00
+24119907036,Long Tail | All | CH,sneakers,nike,long_tail_all,1034,52053,839,136.95,1.00,79.00
+24119907036,Long Tail | All | CH,sneakers,on,long_tail_all,239,17071,290,49.47,0.00,0.00
+24119907036,Long Tail | All | CH,sneakers,onitsuka tiger,long_tail_all,13,383,16,2.95,0.00,0.00
+24119907036,Long Tail | All | CH,sneakers,saucony,long_tail_all,41,1538,15,2.37,1.00,296.00
+24119907036,Long Tail | All | CH,sneakers,under armour,long_tail_all,13,332,5,0.78,0.00,0.00
+24119907036,Long Tail | All | CH,sneakers,yeezy,long_tail_all,3,22,0,0.00,0.00,0.00
+24120624946,Explorer | Long Tail | CH,,asics,explorer_active,183,6039,80,27.72,1.00,237.00
+24120624946,Explorer | Long Tail | CH,,new balance,explorer_active,52,1863,31,8.72,0.00,0.00
+24120624946,Explorer | Long Tail | CH,,on,explorer_active,14,2618,21,7.88,0.00,0.00
+24120624946,Explorer | Long Tail | CH,,saucony,explorer_active,10,246,2,1.10,0.00,0.00
+24120624946,Explorer | Long Tail | CH,,under armour,explorer_active,1,2,0,0.00,0.00,0.00
+24120624946,Explorer | Long Tail | CH,,yeezy,explorer_active,5,22,0,0.00,0.00,0.00
+24120624946,Explorer | Long Tail | CH,sneakers,asics,explorer_active,583,13390,200,67.11,2.00,588.00
+24120624946,Explorer | Long Tail | CH,sneakers,converse,explorer_active,1,68,0,0.00,0.00,0.00
+24120624946,Explorer | Long Tail | CH,sneakers,maison mihara,explorer_active,18,631,14,5.71,0.00,0.00
+24120624946,Explorer | Long Tail | CH,sneakers,new balance,explorer_active,906,21273,280,89.43,0.00,0.00
+24120624946,Explorer | Long Tail | CH,sneakers,on,explorer_active,585,24350,364,130.80,0.00,0.00
+24120624946,Explorer | Long Tail | CH,sneakers,onitsuka tiger,explorer_active,34,678,13,5.79,0.00,0.00
+24120624946,Explorer | Long Tail | CH,sneakers,puma,explorer_active,2,24,0,0.00,0.00,0.00
+24120624946,Explorer | Long Tail | CH,sneakers,saucony,explorer_active,138,2487,46,18.12,0.00,0.00
+24120624946,Explorer | Long Tail | CH,sneakers,under armour,explorer_active,34,637,7,3.52,0.00,0.00
+24120624946,Explorer | Long Tail | CH,sneakers,yeezy,explorer_active,5,60,2,0.97,0.00,0.00
+24155137616,Explorer | Nike | CH,,nike,explorer_active_nike,96,2388,22,4.59,0.00,0.00
+24155137616,Explorer | Nike | CH,in_store,nike,explorer_active_nike,1,98,4,0.68,0.00,0.00
+24155137616,Explorer | Nike | CH,sneakers,nike,explorer_active_nike,1254,18903,267,82.90,0.00,0.00
+24159881680,Explorer | Jordan | CH,,jordan,explorer_active_jordan,518,6372,98,31.25,0.00,0.00
+24159881680,Explorer | Jordan | CH,in_store,jordan,explorer_active_jordan,5,317,7,1.16,0.00,0.00
+24159881680,Explorer | Jordan | CH,sneakers,jordan,explorer_active_jordan,698,4879,75,22.45,0.00,0.00
+24159928264,Explorer | Adidas | CH,,adidas,explorer_active_adidas,48,628,9,2.66,0.00,0.00
+24159928264,Explorer | Adidas | CH,in_store,adidas,explorer_active_adidas,2,84,0,0.00,0.00,0.00
+24159928264,Explorer | Adidas | CH,sneakers,adidas,explorer_active_adidas,867,13227,227,87.84,0.00,0.00
+24159928264,Explorer | Adidas | CH,sneakers,nike,explorer_active_adidas,1,1,0,0.00,0.00,0.00
+24252573733,UGG PM Feed Only,,,,0,2533,5,3.32,0.00,0.00
+24252573733,UGG PM Feed Only,,ugg,,215,40457,283,228.26,2.00,476.00
+24252573733,UGG PM Feed Only,collectibles,ugg,,5,1129,5,1.31,0.00,0.00
+24252573733,UGG PM Feed Only,in_store,ugg,,16,24643,287,162.18,1.00,139.00
+24252573733,UGG PM Feed Only,sneakers,ugg,,566,287481,1781,508.26,1.00,292.22

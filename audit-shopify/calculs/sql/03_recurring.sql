@@ -1,0 +1,1 @@
+select r.name, r.amount, r."currencyCode", r."isBusiness", r."intervalMonths", r."startDate"::date, r."endDate"::date, r.active, r.note, c.name cat from "RecurringExpense" r left join "ExpenseCategory" c on c.id=r."categoryId" order by r.amount desc

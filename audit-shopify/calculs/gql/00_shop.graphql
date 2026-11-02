@@ -1,0 +1,5 @@
+{
+  shop { name myshopifyDomain currencyCode ianaTimezone taxesIncluded taxShipping primaryDomain { url } plan { displayName shopifyPlus } enabledPresentmentCurrencies shipsToCountries billingAddress { country city } }
+  currentAppInstallation { accessScopes { handle } }
+  orders(first: 1, sortKey: CREATED_AT, reverse: false) { edges { node { name createdAt } } }
+}

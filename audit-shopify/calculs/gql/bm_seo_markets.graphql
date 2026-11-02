@@ -1,0 +1,10 @@
+{
+  markets(first: 25) { nodes { id name handle enabled primary type
+    conditions { regionsCondition { regions(first: 30) { nodes { name ... on MarketRegionCountry { code } } } } }
+    currencySettings { baseCurrency { currencyCode } localCurrencies }
+    webPresence { domain { host } defaultLocale { locale } alternateLocales { locale } subfolderSuffix }
+  } }
+  webPresences(first: 10) { nodes { id subfolderSuffix defaultLocale { locale } alternateLocales { locale } domain { host } rootUrls { locale url } } }
+  urlRedirectsCount { count precision }
+  domains: shop { domains { host url sslEnabled } }
+}

@@ -1,0 +1,12 @@
+{
+  total: productsCount(limit: null) { count precision }
+  active: productsCount(query: "status:active", limit: null) { count precision }
+  draft: productsCount(query: "status:draft", limit: null) { count precision }
+  inStock: productsCount(query: "inventory_total:>0", limit: null) { count precision }
+  vendorNike: productsCount(query: "vendor:Nike", limit: null) { count precision }
+  vendorJordan: productsCount(query: "vendor:Jordan", limit: null) { count precision }
+  vendorAdidas: productsCount(query: "vendor:adidas", limit: null) { count precision }
+  y2026: productsCount(query: "created_at:>=2026-01-01", limit: null) { count precision }
+  y2025: productsCount(query: "created_at:>=2025-01-01 created_at:<2026-01-01", limit: null) { count precision }
+  before2025: productsCount(query: "created_at:<2025-01-01", limit: null) { count precision }
+}

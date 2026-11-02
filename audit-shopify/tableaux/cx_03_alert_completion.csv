@@ -1,0 +1,5 @@
+device,alert,sessions,completed,pct_completed
+desktop,0,726,15,2.1
+desktop,1,12,5,41.7
+mobile,0,367,40,10.9
+mobile,1,71,25,35.2

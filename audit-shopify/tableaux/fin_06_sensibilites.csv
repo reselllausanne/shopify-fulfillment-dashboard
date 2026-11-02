@@ -1,0 +1,9 @@
+scenario,resultat_apres_acquisition_avant_remuneration_chf
+"Base (assujetti 8,1 %, TVA import non récupérable)",-21192.0
+"B. TVA d'importation sur achats récupérable (COGS/1,081) — À PROUVER (documents douane)",11383.0
+D. Frais paiement autres passerelles +1 pt,-24328.0
+"E. Expédition+préparation 10 CHF/cmd au lieu de 14,5",-8628.0
+F. Expédition+préparation 20 CHF/cmd,-36548.0
+G. Coût estimé (lignes non appariées) −20 %,-9618.0
+H. Coût estimé (lignes non appariées) +20 %,-32765.0
+"I. Pub −20 % à ventes constantes (illustratif, non prouvé)",-1021.0
