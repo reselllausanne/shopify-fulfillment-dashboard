@@ -2,10 +2,31 @@ export type MailSendResult =
   | { ok: true; provider: string; providerMessageId?: string; to: string }
   | { ok: false; provider: string; to: string; error: string; skipped?: boolean };
 
+/** Optional presentation overrides (delay / cancel-rebuy apology mails). */
+export type StockXMilestoneTemplateOverrides = {
+  /** Full subject line (replaces default "Suivi commande #…"). */
+  emailSubject?: string;
+  headline?: string;
+  statusNote?: string;
+  preheaderText?: string;
+  /** 1–4 status tracker active step. */
+  activeStepIndex?: 1 | 2 | 3 | 4;
+  /** When set, used as ETA window (skips +2 business-day pad). */
+  estimatedArrivalStart?: Date | null;
+  estimatedArrivalEnd?: Date | null;
+  nextStep1?: string;
+  nextStep2?: string;
+  nextStep3?: string;
+};
+
 export type StockXMilestoneEmailInput = {
   to: string;
   stockxStates?: any[] | null;
   language?: "fr" | "en";
+  /** TEST / forced recipient — do not redirect via POSTMARK_OVERRIDE_TO. */
+  ignoreOverride?: boolean;
+  /** Delay / cancel-rebuy copy + ETA on the same Postmark ship templates. */
+  templateOverrides?: StockXMilestoneTemplateOverrides;
   match: {
     id: string;
     customerTrackingToken?: string | null;

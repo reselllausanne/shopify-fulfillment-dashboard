@@ -12,6 +12,7 @@ import {
 } from "@/lib/stockxAutoCheckout/sizeUsFallback";
 import type { StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
 import { rebuyEtaWindow } from "@/lib/stockxDelayRebuy/eta";
+import { resolveDelayMailProductImage } from "@/lib/stockxDelayRebuy/productImage";
 import type { DelayRebuyCase } from "@/lib/stockxDelayRebuy/types";
 
 function toNum(v: unknown): number {
@@ -104,6 +105,12 @@ export async function buildDelayRebuyCase(orderMatchId: string): Promise<DelayRe
     : rebuyEtaStart;
   const announceEtaEnd = latestStillAhead ? (etaEnd as Date) : rebuyEtaEnd;
 
+  const imageUrl = await resolveDelayMailProductImage({
+    orderMatchId: match.id,
+    shopifySku: sku,
+    shopifyLineItemImageUrl: match.shopifyLineItemImageUrl,
+  });
+
   return {
     orderMatchId: match.id,
     shopifyOrderName: match.shopifyOrderName,
@@ -113,7 +120,7 @@ export async function buildDelayRebuyCase(orderMatchId: string): Promise<DelayRe
     sku,
     sizeEU,
     saleChf,
-    imageUrl: match.shopifyLineItemImageUrl,
+    imageUrl,
     customerFirstName: match.shopifyCustomerFirstName,
     customerEmail: match.shopifyCustomerEmail,
     trackingToken: match.customerTrackingToken,
