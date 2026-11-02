@@ -1,0 +1,1 @@
+SELECT campaign.id, campaign.name, search_term_view.search_term, search_term_view.status, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value FROM search_term_view WHERE segments.date BETWEEN '2026-08-02' AND '2026-11-01' AND metrics.clicks > 0

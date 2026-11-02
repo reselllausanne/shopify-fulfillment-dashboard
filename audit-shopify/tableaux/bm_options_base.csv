@@ -1,0 +1,29 @@
+bloc,segment,ca_ttc_chf,part_ca_%,note
+marque,Nike+Jordan+adidas,501790,57.3,bm_mix_marque.csv (échantillon = lignes de commande avec vendor)
+marque,ASICS+New Balance+UGG+Saucony+Onitsuka,164088,18.7,bm_mix_marque.csv (échantillon = lignes de commande avec vendor)
+marque,Fear of God (Essentials),47830,5.5,bm_mix_marque.csv (échantillon = lignes de commande avec vendor)
+marque,LEGO+Swatch (collectibles/montres),90096,10.3,bm_mix_marque.csv (échantillon = lignes de commande avec vendor)
+sourcing,StockX à la commande,549321,88.5,marge affichée 31.0 % (surestimée) ; lignes 2340
+sourcing,autre/manuel,21483,3.5,marge affichée 45.0 % (surestimée) ; lignes 54
+sourcing,stock propre/fixe/protection,50245,8.1,marge affichée 77.0 % (surestimée) ; lignes 692
+tranche_prix,<50,4177,0.5,part unités 5.2 %
+tranche_prix,50-100,33257,3.8,part unités 11.2 %
+tranche_prix,100-150,78292,8.9,part unités 14.2 %
+tranche_prix,150-200,206361,23.6,part unités 27.7 %
+tranche_prix,200-300,296995,33.9,part unités 29.7 %
+tranche_prix,300-500,125365,14.3,part unités 8.1 %
+tranche_prix,>500,131479,15.0,part unités 3.9 %
+pays,CH,793203,98.9,"commandes 3529, AOV 224.8"
+pays,FR,3765,0.47,"commandes 15, AOV 251.0"
+pays,NA,1609,0.2,"commandes 4, AOV 402.2"
+pays,AT,1184,0.15,"commandes 3, AOV 394.8"
+pays,DE,886,0.11,"commandes 3, AOV 295.3"
+pays,NL,696,0.09,"commandes 3, AOV 231.8"
+pays,IT,536,0.07,"commandes 2, AOV 268.2"
+pays,ES,186,0.02,"commandes 1, AOV 185.5"
+recurrence,commande n°1.0,534920,88.5,commandes 2505
+recurrence,commande n°2.0,60742,8.5,commandes 241
+recurrence,commande n°3.0,32158,3.0,commandes 86
+acquisition,first visit : Google non étiqueté SEO (surtout Ads),,45.4,bm_mix_source_first_visit.csv
+acquisition,first visit : SEO (Google+Bing+Yahoo+DDG),,11.2,type SEO du journey Shopify
+acquisition,first visit : ChatGPT,,1.3,ChatGPT + chatgpt.com ; attribution déclarative

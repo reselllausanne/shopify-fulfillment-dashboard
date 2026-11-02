@@ -1,0 +1,6 @@
+jobKey,status,runs,first,last
+inventory-reconcile,RUNNING,1,2026-09-02 14:15:03.612,2026-09-02 14:15:03.612
+inventory-reconcile,SUCCESS,1291,2026-05-11 20:14:06.676,2026-11-02 19:15:06.309
+multichannel-stock-sync,FAILED,119,2026-08-08 05:15:06.037,2026-11-02 06:15:46.092
+multichannel-stock-sync,RUNNING,462,2026-08-04 14:19:42.327,2026-11-02 19:15:15.22
+multichannel-stock-sync,SUCCESS,501,2026-05-11 20:14:07.175,2026-11-02 17:15:23.382

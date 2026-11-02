@@ -1,0 +1,5 @@
+cat,n,chf,med
+ligne annulée/CANCEL (stock non expédié),85,19500.0,161.0
+ligne retournée/RETURN,69,11006.0,129.0
+montant seul/livraison,22,1596.0,21.0
+sans restock (NO_RESTOCK/LEGACY),134,25558.0,169.0

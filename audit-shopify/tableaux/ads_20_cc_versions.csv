@@ -1,0 +1,5 @@
+pixel_version,event_name,n,no_client,no_session,consent_mkt,first,last
+2026-10-20.g3,checkout_completed,69,0,0,69,2026-10-21 09:07:29.322+00,2026-11-02 11:25:42.507+00
+server.orders_paid,checkout_completed,50,50,50,0,2026-09-12 15:15:20+00,2026-11-02 19:55:23+00
+2026-10-15.p3,checkout_completed,36,0,0,36,2026-10-15 19:37:28.069+00,2026-10-20 19:54:24.095+00
+2026-10-15.p2,checkout_completed,1,0,0,1,2026-10-15 16:22:10.099+00,2026-10-15 16:22:10.099+00

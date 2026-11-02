@@ -15,7 +15,11 @@ def seg(col, name):
     g = p.groupby(col, dropna=False).agg(cmd=("name", "count"), ca_net_ht=("revenu_net_ht", "sum"), contrib_av_pub=("contrib_av_pub", "sum"), refund=("refunded", "sum"), brut=("ventes_brutes_ttc", "sum"))
     g["contrib_par_cmd"] = (g.contrib_av_pub / g.cmd).round(1); g["refund_pct_brut"] = (g.refund / g.brut * 100).round(1); g["part_cmd_pct"] = (g.cmd / g.cmd.sum() * 100).round(1)
     g.round(0).to_csv(T / f"fin_07_seg_{name}.csv"); print(f"\n== {name}\n", g.round(1).sort_values("cmd", ascending=False).head(12).to_string())
-seg("canal", "canal"); seg("l_source", "source_derniere_visite"); seg("gateways", "paiement")
+# passerelle = moyens des transactions SALE réussies uniquement (paymentGatewayNames inclut aussi les crédits de remboursement : correctif suite à revue cx)
+tx = pd.read_csv(D / "transactions_flat.csv"); tx = tx[(tx.kind == "SALE") & (tx.status == "SUCCESS")]
+gs = tx.groupby("order").gateway.apply(lambda s: "+".join(sorted(set(s)))).rename("gateways_vente")
+p = p.merge(gs, left_on="name", right_index=True, how="left")
+seg("canal", "canal"); seg("l_source", "source_derniere_visite"); seg("gateways_vente", "paiement")
 p["rang_client"] = np.where(p.cust_order_idx.fillna(1) <= 1, "1ère commande", "récurrente (rang ≥2)")
 seg("rang_client", "nouveau_vs_recurrent")
 seg("cohorte", "cohorte"); seg(p.fin, "statut_fin") if False else None

@@ -48,6 +48,8 @@ rows.append(("E. Expédition+préparation 10 CHF/cmd au lieu de 14,5", base + 4.
 rows.append(("F. Expédition+préparation 20 CHF/cmd", base - 5.5 * (p.exp_prep > 0).sum()))
 rows.append(("G. Coût estimé (lignes non appariées) −20 %", base + 0.2 * p.cogs_est.sum()))
 rows.append(("H. Coût estimé (lignes non appariées) +20 %", base - 0.2 * p.cogs_est.sum()))
+zc = x[x.has_match & x.stockxStatus.isin(["ESSENTIAL_STOCK", "PHYSICAL_STOCK"]) & (pd.to_numeric(np.where(x.manualCostOverride.notna(), x.manualCostOverride, x.supplierCost), errors="coerce") == 0)]
+rows.append(("J. Lignes de stock propre à coût 0 (211 lignes) valorisées 42 CHF hoodie / 26 CHF autres (règle du code)", base - (np.where(zc.title.str.contains("Hoodie", case=False), 42, 26) * zc.qty).sum()))
 rows.append(("I. Pub −20 % à ventes constantes (illustratif, non prouvé)", base + 0.2 * ads))
 sens = pd.DataFrame(rows, columns=["scenario", "resultat_apres_acquisition_avant_remuneration_chf"]).round(0)
 sens.to_csv(T / "fin_06_sensibilites.csv", index=False); print("\n", sens.to_string(index=False))

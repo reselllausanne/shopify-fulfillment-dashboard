@@ -1,0 +1,9 @@
+lifecycle_status,destination,exit_reason,models,impr,clicks,cost,conv,val,lt_clicks,lt_cost,lt_conv,lt_val,models_with_conv,models_30clicks_0conv
+exited,LONG_TAIL_ALL,underexposed,8123,42008,503,136.8,0.0,0.0,0,0.0,0.0,0.0,0,0
+selected,EXPLORER_ALL,-,3374,12926,153,64.9,0.0,0.0,0,0.0,0.0,0.0,0,0
+exited,LONG_TAIL_ALL,inconclusive,248,21411,235,79.7,0.0,0.0,0,0.0,0.0,0.0,0,0
+exited,CORE_ALL,discovered,216,28333,762,279.8,1.0,299.0,0,0.0,0.0,0.0,0,0
+exited,ADS_EXCLUDED,zombie_no_click,59,4151,5,2.3,0.0,0.0,0,0.0,0.0,0.0,0,0
+exited,LONG_TAIL_ALL,zombie_no_click,43,4830,0,0.0,0.0,0.0,4,0.6,0.0,0.0,0,0
+exited,ADS_EXCLUDED,long_tail_kill_no_convert,3,359,0,0.0,0.0,0.0,0,0.0,0.0,0.0,0,0
+exited,CORE_ALL,converted,2,43,7,3.2,2.0,526.0,0,0.0,0.0,0.0,0,0

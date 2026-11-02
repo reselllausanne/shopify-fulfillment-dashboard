@@ -1,0 +1,7 @@
+pays,port_cout_H,schema,contrib_avant_pub_CH_F,port_facture_F,droit_absorbe,contrib_avant_pub_EU
+DE,20.0,DAP (client paie droit+TVA à la livraison),28.9,31.0,0.0,39.9
+DE,20.0,"DDP droit absorbé par nous, TVA payée par le client",28.9,31.0,37.5,2.4
+DE,30.0,DAP (client paie droit+TVA à la livraison),28.9,31.0,0.0,29.9
+DE,30.0,"DDP droit absorbé par nous, TVA payée par le client",28.9,31.0,39.1,-9.2
+DE,40.0,DAP (client paie droit+TVA à la livraison),28.9,31.0,0.0,19.9
+DE,40.0,"DDP droit absorbé par nous, TVA payée par le client",28.9,31.0,40.8,-20.9

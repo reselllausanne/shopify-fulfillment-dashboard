@@ -1,31 +1,20 @@
-gateways,cmd,ca_net_ht,contrib_av_pub,refund,brut,contrib_par_cmd,refund_pct_brut,part_cmd_pct
-CembraPay - Kauf auf Rechnung,54,12143.0,2210.0,471.0,13598.0,41.0,4.0,2.0
-CembraPay - Kauf auf Rechnung+Pay by Invoice / Pay Later (with PowerPay),5,3029.0,862.0,0.0,3274.0,172.0,0.0,0.0
-CembraPay - Kauf auf Rechnung+TWINT,2,326.0,50.0,0.0,352.0,25.0,0.0,0.0
-CembraPay - Kauf auf Rechnung+shopify_payments,2,1130.0,207.0,0.0,1222.0,103.0,0.0,0.0
-Pay by Invoice / Pay Later (with PowerPay),416,96853.0,14948.0,8397.0,113085.0,36.0,7.0,14.0
-Pay by Invoice / Pay Later (with PowerPay)+TWINT,36,8991.0,585.0,425.0,10140.0,16.0,4.0,1.0
-Pay by Invoice / Pay Later (with PowerPay)+TWINT+shopify_store_credit,3,764.0,-293.0,748.0,1569.0,-98.0,48.0,0.0
+gateways_vente,cmd,ca_net_ht,contrib_av_pub,refund,brut,contrib_par_cmd,refund_pct_brut,part_cmd_pct
+CembraPay - Kauf auf Rechnung,58,15632.0,3019.0,471.0,17369.0,52.0,3.0,2.0
+Pay by Invoice / Pay Later (with PowerPay),444,100943.0,12654.0,12303.0,121379.0,28.0,10.0,15.0
+Pay by Invoice / Pay Later (with PowerPay)+TWINT,2,556.0,-895.0,226.0,823.0,-447.0,27.0,0.0
 Pay by Invoice / Pay Later (with PowerPay)+gift_card,1,341.0,68.0,0.0,369.0,68.0,0.0,0.0
-Pay by Invoice / Pay Later (with PowerPay)+paypal,2,249.0,31.0,209.0,478.0,15.0,44.0,0.0
-Pay by Invoice / Pay Later (with PowerPay)+paypal+shopify_payments,1,706.0,86.0,0.0,763.0,86.0,0.0,0.0
-Pay by Invoice / Pay Later (with PowerPay)+shopify_payments,40,7624.0,1307.0,1915.0,10156.0,33.0,19.0,1.0
-Pay by Invoice / Pay Later (with PowerPay)+shopify_payments+shopify_store_credit,3,582.0,-48.0,230.0,857.0,-16.0,27.0,0.0
-Pay by Invoice / Pay Later (with PowerPay)+shopify_store_credit,16,656.0,-3094.0,3778.0,4452.0,-193.0,85.0,1.0
-TWINT,671,114236.0,21418.0,6640.0,130123.0,32.0,5.0,23.0
+TWINT,739,127335.0,21317.0,10545.0,148155.0,29.0,7.0,26.0
 TWINT+gift_card,1,314.0,77.0,0.0,339.0,77.0,0.0,0.0
-TWINT+paypal,2,331.0,-105.0,0.0,358.0,-52.0,0.0,0.0
-TWINT+shopify_payments,23,4411.0,374.0,269.0,5033.0,16.0,5.0,1.0
-TWINT+shopify_store_credit,20,1654.0,-1401.0,2688.0,4449.0,-70.0,60.0,1.0
+TWINT+paypal,1,203.0,-110.0,0.0,219.0,-110.0,0.0,0.0
+TWINT+shopify_payments,9,1660.0,-149.0,0.0,1791.0,-17.0,0.0,0.0
+TWINT+shopify_store_credit,6,957.0,465.0,0.0,1035.0,78.0,0.0,0.0
 gift_card,4,857.0,153.0,70.0,997.0,38.0,7.0,0.0
 gift_card+shopify_payments,3,941.0,-41.0,0.0,1014.0,-14.0,0.0,0.0
 manual,17,5915.0,1336.0,249.0,6603.0,79.0,4.0,1.0
 manual+shopify_payments,2,583.0,104.0,0.0,630.0,52.0,0.0,0.0
-paypal,153,29882.0,4075.0,1288.0,33424.0,27.0,4.0,5.0
-paypal+shopify_payments,6,1716.0,-107.0,0.0,1855.0,-18.0,0.0,0.0
-paypal+shopify_store_credit,3,50.0,-464.0,493.0,543.0,-155.0,91.0,0.0
-shop_cash+shopify_payments,7,2705.0,72.0,0.0,2924.0,10.0,0.0,0.0
-shopify_payments,1334,277749.0,49006.0,23704.0,323534.0,37.0,7.0,46.0
-shopify_payments+shopify_store_credit,41,4071.0,-3525.0,6121.0,10476.0,-86.0,58.0,1.0
+paypal,163,31375.0,3856.0,1990.0,35735.0,24.0,6.0,6.0
+paypal+shopify_payments,2,1228.0,-235.0,0.0,1328.0,-118.0,0.0,0.0
+shopify_payments,1402,286380.0,45652.0,31463.0,340576.0,33.0,9.0,49.0
+shopify_payments+shopify_store_credit,14,3586.0,620.0,377.0,4254.0,44.0,9.0,0.0
 shopify_store_credit,11,2124.0,333.0,94.0,2390.0,30.0,4.0,0.0
 ,3,74.0,-6.0,0.0,80.0,-2.0,0.0,0.0

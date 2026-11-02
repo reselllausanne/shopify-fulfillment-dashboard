@@ -1,0 +1,1 @@
+SELECT segments.device, campaign.advertising_channel_type, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value FROM campaign WHERE segments.date BETWEEN '2026-08-02' AND '2026-11-01' AND campaign.status != 'REMOVED'

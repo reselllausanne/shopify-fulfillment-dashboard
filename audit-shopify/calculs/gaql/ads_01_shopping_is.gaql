@@ -1,0 +1,1 @@
+SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.search_impression_share, metrics.search_budget_lost_impression_share, metrics.search_rank_lost_impression_share, metrics.clicks, metrics.impressions FROM shopping_performance_view WHERE segments.date BETWEEN '2026-10-02' AND '2026-11-01' LIMIT 5

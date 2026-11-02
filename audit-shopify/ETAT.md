@@ -49,3 +49,15 @@
 ## Prochaine étape
 1. Inventaire détaillé des sources (DB, Shopify API, Google Ads, Klaviyo, Postmark, exports, docs) → SOURCES.md.
 2. Base financière commune : ShopifyOrder / OrderMatch / StxPurchaseUnit / ShopifyPayout / DailyAdSpend / Bank* / ManualFinanceEvent.
+
+## Journal (suite, 2026-11-02 soir)
+| Heure | Action | Résultat |
+|---|---|---|
+| 21:00-21:10 | Modèle trésorerie `tableaux/modele_tresorerie.xlsx` (formules vérifiées = moteur Python), `fin_10_*`, base financière `analyses/fin_00_base_financiere.md`, exemples `fin_09` | OK |
+| 21:10 | Trou de données : 211 lignes stock propre à coût 0 → résultat −28,8 k (scénario J de `fin_06`) | Documenté |
+| 21:15 | Sous-agent [Audit SAV emails avis fidélisation](7b78d56d-5d2f-4d9b-9cc3-330d2683dbd1) terminé : `analyses/cx_01..04` | Contrôlé : 97 vs 93/180 commandes bloquées réconciliées ; `fin_07_seg_paiement` corrigé (store credit = artefact). Alerte : jeton Postmark apparu dans une sortie d'outil → renouvellement recommandé |
+| — | Sous-agents Ads (`e2db25c1…`) et Benchmark (`530b59b3…`) | En cours |
+
+## Décisions de modélisation
+- Scénarios fin_06 C (TVA non due), G, H retirés (entité assujettie ; hypothèses irréalistes).
+- Trésorerie d'ouverture = 0 (aucune donnée bancaire) : les sorties sont des variations, pas des niveaux.

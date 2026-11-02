@@ -1,0 +1,4 @@
+bucket,n,chf,part_chf_%
+annulation avant expédition (commande annulée ou CANCEL),93,22829.0,39.6
+autre: ligne remboursée sans retour ni annulation (NO_RESTOCK/montant seul),95,15089.0,26.2
+retour physique (objet Return ou restock RETURN),122,19742.0,34.2

@@ -1,0 +1,13 @@
+cname,models,cost,conv,val,cost_overlap,share_overlap,roas
+Adidas PM Feed only,10294,9189.81,149.66,34215.31,31.0,0.003,3.723
+Explorer | Adidas | CH,897,90.5,0.0,0.0,82.3,0.909,0.0
+Explorer | Jordan | CH,1006,54.86,0.0,0.0,51.82,0.945,0.0
+Explorer | Long Tail | CH,2399,366.87,3.0,825.0,235.83,0.643,2.249
+Explorer | Nike | CH,1298,88.17,0.0,0.0,77.18,0.875,0.0
+Jordan PM Feed Only,5443,2744.5,42.77,11710.71,13.83,0.005,4.267
+Long Tail | All | CH,3894,477.61,2.0,375.0,465.63,0.975,0.785
+Nike PM Feed Only,17098,13852.02,245.46,58083.66,14.68,0.001,4.193
+Perf-max-vetements,51,3098.97,120.25,11018.51,,,3.556
+Sale-performance-max-lego,1152,131.44,1.25,267.75,,,2.037
+UGG PM Feed Only,640,900.0,4.0,907.22,,,1.008
+all,8742,5423.38,82.19,19119.75,124.95,0.023,3.525
