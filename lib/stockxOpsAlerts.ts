@@ -1223,7 +1223,13 @@ export async function runStockxOrderOpsAlerts(options?: {
     (p) => !existingKeys.has(`${p.scope}|${p.alertType}|${p.refKey}`)
   );
   result.skippedExisting = pending.length - fresh.length;
-  if (fresh.length === 0) return result;
+  if (fresh.length === 0) {
+    // Still report flag state so cron logs show customer-mail wiring is live.
+    result.customerMails = await processShopifyCustomerMailsFromOpsAlerts([], {
+      dryRun,
+    });
+    return result;
+  }
 
   for (const p of fresh) result.byType[p.alertType] += 1;
   result.newAlerts = fresh.length;
