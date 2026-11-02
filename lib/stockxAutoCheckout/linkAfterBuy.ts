@@ -1,9 +1,12 @@
 import { randomUUID } from "crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
 import { sendPurchaseConfirmedEmailForMatch } from "@/app/lib/notifications/stockxEmail";
 import type { StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
 import { enrichOrderMatchFromStockxOrderNumber } from "@/lib/stockxAutoCheckout/enrichAfterLink";
+import { isCustomerDelayMailEnabled } from "@/lib/stockxDelayRebuy/flags";
+import { sendCustomerDelayMail } from "@/lib/stockxDelayRebuy/sendCustomer";
 import {
   markOrderMatchMetafieldsSynced,
   setSupplierOrderMetafields,
@@ -92,6 +95,16 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
       ? toShopifyCreatedAtStorage(parsedCreated)
       : null;
 
+  const prev = await prisma.orderMatch.findUnique({
+    where: { shopifyLineItemId },
+    select: { stockxOrderNumber: true, stockxStatus: true },
+  });
+  const prevStatus = String(prev?.stockxStatus ?? "").toUpperCase();
+  const isCancelRebuy =
+    Boolean(prev?.stockxOrderNumber) &&
+    prev!.stockxOrderNumber !== stockxOrderNumber &&
+    (prevStatus.includes("CANCEL") || prevStatus.includes("REFUND"));
+
   const match = await prisma.orderMatch.upsert({
     where: { shopifyLineItemId },
     create: {
@@ -154,8 +167,14 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
       stockxPurchaseDate: new Date(),
       matchConfidence: "auto_checkout",
       matchScore: 100,
-      matchType: "STOCKX_AUTO_CHECKOUT",
-      matchReasons: JSON.stringify(["stockx_auto_checkout", `lane:${input.desiredLane}`]),
+      matchType: isCancelRebuy ? "STOCKX_CANCEL_REBUY" : "STOCKX_AUTO_CHECKOUT",
+      matchReasons: JSON.stringify([
+        isCancelRebuy ? "stockx_cancel_rebuy" : "stockx_auto_checkout",
+        `lane:${input.desiredLane}`,
+        ...(isCancelRebuy && prev?.stockxOrderNumber
+          ? [`prev:${prev.stockxOrderNumber}`]
+          : []),
+      ]),
       stockxStatus: "ORDERED",
       stockxCheckoutType: checkoutType,
       supplierCost: cost,
@@ -165,6 +184,23 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
     },
     select: { id: true, customerTrackingToken: true },
   });
+
+  // Drop stale tracking from the cancelled buy so AWB cron starts clean.
+  if (isCancelRebuy) {
+    await prisma.orderMatch.update({
+      where: { id: match.id },
+      data: {
+        stockxAwb: null,
+        stockxTrackingUrl: null,
+        stockxChainId: null,
+        stockxOrderId: null,
+        stockxStates: Prisma.DbNull,
+        stockxStatesHash: null,
+        stockxEstimatedDelivery: null,
+        stockxLatestEstimatedDelivery: null,
+      },
+    });
+  }
 
   // Rematch / older rows may lack a token — mint once (never rotate).
   if (!match.customerTrackingToken) {
@@ -219,25 +255,45 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
     console.error("[STOCKX-AUTO] enrich after link threw", e);
   }
 
-  // One confirmation mail now (synthetic OK). Cron still sends later milestones;
-  // emailedAt on PURCHASE_CONFIRMED / EXPRESS_CONFIRMED prevents double confirm.
+  // Cancel→rebuy: apology + new ETA (not a fresh "purchase confirmed").
+  // Else: one confirmation mail now. Cron still sends later milestones.
   try {
-    const emailRes = await sendPurchaseConfirmedEmailForMatch(match.id);
-    if (emailRes.sent) {
-      console.log(
-        `[STOCKX-AUTO] confirm email sent for ${input.shopifyOrderName} → ${emailRes.to} (${emailRes.milestoneKey})`
-      );
-    } else if (emailRes.skipped) {
-      console.warn(
-        `[STOCKX-AUTO] confirm email skipped for ${input.shopifyOrderName}: ${emailRes.reason}`
-      );
+    if (isCancelRebuy && isCustomerDelayMailEnabled()) {
+      const emailRes = await sendCustomerDelayMail({
+        orderMatchId: match.id,
+        kind: "CANCEL_REBUY_LEGIT",
+      });
+      if (emailRes.sent) {
+        console.log(
+          `[STOCKX-AUTO] cancel-rebuy email sent for ${input.shopifyOrderName} → ${emailRes.to}`
+        );
+      } else if (emailRes.skipped) {
+        console.warn(
+          `[STOCKX-AUTO] cancel-rebuy email skipped for ${input.shopifyOrderName}: ${emailRes.reason}`
+        );
+      } else {
+        console.warn(
+          `[STOCKX-AUTO] cancel-rebuy email failed for ${input.shopifyOrderName}: ${emailRes.error}`
+        );
+      }
     } else {
-      console.warn(
-        `[STOCKX-AUTO] confirm email failed for ${input.shopifyOrderName}: ${emailRes.error}`
-      );
+      const emailRes = await sendPurchaseConfirmedEmailForMatch(match.id);
+      if (emailRes.sent) {
+        console.log(
+          `[STOCKX-AUTO] confirm email sent for ${input.shopifyOrderName} → ${emailRes.to} (${emailRes.milestoneKey})`
+        );
+      } else if (emailRes.skipped) {
+        console.warn(
+          `[STOCKX-AUTO] confirm email skipped for ${input.shopifyOrderName}: ${emailRes.reason}`
+        );
+      } else {
+        console.warn(
+          `[STOCKX-AUTO] confirm email failed for ${input.shopifyOrderName}: ${emailRes.error}`
+        );
+      }
     }
   } catch (e) {
-    console.error("[STOCKX-AUTO] confirm email threw (link still ok)", e);
+    console.error("[STOCKX-AUTO] post-link email threw (link still ok)", e);
   }
 
   return {

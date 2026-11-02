@@ -5,6 +5,7 @@ import {
   buildClientPreviewHtml,
   buildClientPreviewText,
 } from "@/lib/stockxDelayRebuy/emails";
+import { customerDelayMailToOverride } from "@/lib/stockxDelayRebuy/flags";
 import { buildCustomerNarrative } from "@/lib/stockxDelayRebuy/narratives";
 import type { DelayNarrativeKind } from "@/lib/stockxDelayRebuy/types";
 
@@ -21,7 +22,7 @@ export type SendCustomerDelayOptions = {
   orderMatchId: string;
   kind: Exclude<DelayNarrativeKind, "CANCEL_NO_REBUY">;
   /**
-   * Force recipient (TEST). Prefer STOCKX_ALERT_EMAIL.
+   * Force recipient (TEST). Prefer STOCKX_ALERT_EMAIL / STOCKX_CUSTOMER_DELAY_MAIL_TO.
    * When set, ignoreOverride=true so Postmark always hits this address.
    */
   toOverride?: string | null;
@@ -29,6 +30,8 @@ export type SendCustomerDelayOptions = {
   force?: boolean;
   /** Prefix subject with [TEST] when mailing ops instead of customer. */
   testMode?: boolean;
+  /** Log only — no Postmark, no emailedAt stamp. */
+  dryRun?: boolean;
 };
 
 export type SendCustomerDelayResult = {
@@ -90,7 +93,8 @@ export async function sendCustomerDelayMail(
     };
   }
 
-  const override = (opts.toOverride || "").trim();
+  const envOverride = customerDelayMailToOverride();
+  const override = (opts.toOverride || envOverride || "").trim();
   const customer = (c.customerEmail || "").trim();
   const alert =
     (process.env.STOCKX_ALERT_EMAIL || "").trim() ||
@@ -107,6 +111,23 @@ export async function sendCustomerDelayMail(
       shopifyOrderName: c.shopifyOrderName,
       kind: opts.kind,
       milestoneKey,
+      etaLine: narrative.etaLine,
+    };
+  }
+
+  if (opts.dryRun) {
+    console.log(
+      `[delay-rebuy][dry-run] would send ${opts.kind} ${c.shopifyOrderName} → ${to} eta=${narrative.etaLine}`
+    );
+    return {
+      ok: true,
+      skipped: true,
+      reason: "dry_run",
+      matchId: c.orderMatchId,
+      shopifyOrderName: c.shopifyOrderName,
+      kind: opts.kind,
+      milestoneKey,
+      to,
       etaLine: narrative.etaLine,
     };
   }
