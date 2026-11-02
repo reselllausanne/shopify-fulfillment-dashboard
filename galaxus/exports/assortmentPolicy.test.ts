@@ -220,6 +220,7 @@ describe("galaxusAssortmentBlockReason", () => {
       { providerKey: "NER_32", title: "Lunettes Julbo Shield Reactiv 0-4 Noir/Bordeaux", sizeRaw: "OS" },
       { providerKey: "NER_33", title: "Verres de remplacement Oakley Sutro | Prizm 24K | Ref.103-121-011", sizeRaw: "OS" },
       { providerKey: "NER_34", title: "Bracelet de Montre Suunto Athletic 6 Silicone 22mm S+M Noir", sizeRaw: "OS" },
+      { providerKey: "NER_35", title: "Bracelet Nylon Garmin UltraFit 22 mm Noir", sizeRaw: "21" },
     ]) {
       expect(galaxusAssortmentBlockReason(input)).not.toBe("ner_not_apparel");
     }
@@ -241,9 +242,58 @@ describe("galaxusAssortmentBlockReason", () => {
       { providerKey: "NER_27", title: "Montre GPS Garmin Instinct 3 Solar - 45 mm Noir avec Bracelet en Silicone Noir", sizeRaw: "OS" },
       { providerKey: "NER_28", title: "Barre énergétique Chimpanzee Banane/Chocolat - 55g", sizeRaw: "OS" },
       { providerKey: "NER_29", title: "Sac de Couchage Mammut Relax Down -2C", sizeRaw: "OS" },
+      // New keys, not on the category blocklist. Size 16–52 must not keep them.
+      { providerKey: "NER_NEW_CROWN", title: "INSIGHT Couronne 5 Points Bleu", sizeRaw: "39" },
+      { providerKey: "NER_NEW_SPROCKET", title: "Pignon VAE BBB E-bike Sprocke Bleu", sizeRaw: "19" },
+      { providerKey: "NER_NEW_RACK", title: "Tubus Logo Classic pannier rack", sizeRaw: "27" },
+      { providerKey: "NER_NEW_DRY", title: "Lalizas Tenere dry sack 5L", sizeRaw: "32" },
+      { providerKey: "NER_NEW_WASH", title: "Trousse de Toilette The North Face Base Camp S", sizeRaw: "OS" },
+      { providerKey: "NER_NEW_PENCIL", title: "Vans Old Skool Youth pencil case", sizeRaw: "OS" },
+      { providerKey: "NER_NEW_LENZ", title: "Lenz Contact Protection RCB 1200 Lithium Pack", sizeRaw: "42" },
+      { providerKey: "NER_NEW_RING", title: "Folli follie 3R15S059Rc-52 ring", sizeRaw: "52" },
+      { providerKey: "NER_NEW_BANGLE", title: "Tom hope TM0140 bracelet", sizeRaw: "OS" },
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBe("ner_not_apparel");
     }
+  });
+
+  it("blocks new Funko, Labubu, Hot Wheels, and Spongebob toys without a key list", () => {
+    delete process.env.GALAXUS_FASHION_ONLY;
+    for (const input of [
+      { providerKey: "STX_NEW_FUNKO", title: "Funko Pop Animation 123", brand: "Funko", suggestedRetailInclVatChf: 20 },
+      { providerKey: "STX_NEW_LABUBU", title: "Labubu The Monsters Vinyl", brand: "Pop Mart", suggestedRetailInclVatChf: 40 },
+      { providerKey: "STX_NEW_HW", title: "Hot Wheels Boulevard car", brand: "Hot Wheels", suggestedRetailInclVatChf: 15 },
+      { providerKey: "STX_NEW_SB", title: "Youtooz Spongebob Heading Out Vinyl Figure", brand: "Youtooz", suggestedRetailInclVatChf: 30 },
+      { providerKey: "WEL_NEW_SB", title: "Plushieverse: Spongebob - 3 Inch Blind Box", brand: "TeeTurtle", supplierKey: "wel", suggestedRetailInclVatChf: 12 },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).not.toBeNull();
+    }
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_NEW_SB_SHOE",
+        title: "Nike Dunk Low Spongebob",
+        brand: "Nike",
+        sizeRaw: "42",
+        suggestedRetailInclVatChf: 150,
+      })
+    ).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_BEAR_NEW",
+        title: "Medicom Toy BE@RBRICK 400%",
+        brand: "Bearbrick",
+        suggestedRetailInclVatChf: 200,
+      })
+    ).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "WEL_NEW_GAME",
+        title: "Catan: 6th Edition",
+        brand: "Catan Studios",
+        supplierKey: "wel",
+        suggestedRetailInclVatChf: 40,
+      })
+    ).toBeNull();
   });
 
   it("blocks category cleanup rows", () => {
@@ -473,7 +523,7 @@ describe("galaxusAssortmentBlockReason", () => {
   });
 
   it("does not flag ordinary products with IT-looking words", () => {
-    expect(galaxusAssortmentBlockReason({ providerKey: "STX_16", title: "Ram Trucks Hot Wheels 2021", suggestedRetailInclVatChf: 20 })).toBeNull();
+    expect(galaxusAssortmentBlockReason({ providerKey: "STX_16", title: "Ram Trucks Hot Wheels 2021", suggestedRetailInclVatChf: 20 })).toBe("non_fashion");
     expect(
       galaxusAssortmentBlockReason({ providerKey: "STX_17", title: "Nike Air Force 1 Low White", sizeRaw: "EU 42", suggestedRetailInclVatChf: 150 })
     ).toBeNull();
@@ -632,7 +682,7 @@ describe("galaxusAssortmentBlockReason", () => {
         suggestedRetailInclVatChf: 339,
         brandRetailPrice: 2,
       })
-    ).toBe("price_outlier");
+    ).toBe("non_fashion");
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_11",

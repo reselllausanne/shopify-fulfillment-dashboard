@@ -98,7 +98,7 @@ const CONTROLLER_RE = /\b(dualsense|dualshock|controller|gamepad|joy-?con)\b/i;
 const LEGO_RE = /\b(lego set|lego duplo|building block|construction toy)\b/i;
 /** Soft toys / stuffed animals (Jellycat et al.). Not art figures (Bearbrick / KAWS hard). */
 const PLUSH_RE =
-  /\b(plush(?:ie)?s?|soft ?toys?|stuffed (?:animal|toy)|kuscheltiere?|stofftiere?|peluches?|doudous?)\b/i;
+  /\b(plushieverse|plush(?:ie)?s?|soft ?toys?|stuffed (?:animal|toy)|kuscheltiere?|stofftiere?|peluches?|doudous?)\b/i;
 const TRADINGCARD_RE = /\b(trading card|booster box|blaster box|card box|elite trainer box|pokemon|pokémon|tcg)\b/i;
 const STICKER_RE = /\bstickers?\b/i;
 const SKATEBOARD_RE = /\b(skateboard|skate deck|grip tape)\b/i;
