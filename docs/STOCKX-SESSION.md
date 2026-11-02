@@ -56,9 +56,22 @@ Ops digest also runs on `autoLinkOnly` + `awbOnly` success. Dedicated lightweigh
 
 `scripts/stockx-ops-alerts-cron.sh` → `{"opsAlertsOnly":true}` every ~20m (`CRON_TZ=Europe/Zurich`).
 
+Mid-hour AWB (no remint / autoLink; shares flock with hourly):
+
+`scripts/stockx-awb-only-cron.sh` → `{"awbOnly":true}` every ~30m.
+
+autoLink health watch (email once after 2 consecutive hourly autoLink fails/timeouts):
+
+`scripts/stockx-autolink-watch-cron.sh` → `{"autolinkFailAlert":true}` (e.g. `:50` Zurich).
+
+### Shopify buy crons (`CRON_TZ=Europe/Zurich`)
+
+- Express lag-0: `scripts/shopify-express-daily-buy-cron.sh` @ 09:15 → `express_daily_buy` + `confirmLive`
+- Cashflow lag queue: `scripts/shopify-cashflow-lag-buy-cron.sh` @ 10:00 → `auto_easy_email_rest` + `useQueue` + `confirmLive` (`--dry-run` supported)
+
 ### Operator email (`STOCKX_ALERT_EMAIL`)
 
-Postmark recipient for ops digests (cancel / refund / delayed / missing AWB / not-purchased / unlinked) and auth-broken alerts. Falls back to `POSTMARK_FROM_EMAIL` if unset. Requires `POSTMARK_SERVER_TOKEN` + `POSTMARK_FROM_EMAIL` on the web container.
+Postmark recipient for ops digests (cancel / refund / delayed / missing AWB / not-purchased / unlinked), auth-broken alerts, and autoLink ≥2h fail watch. Falls back to `POSTMARK_FROM_EMAIL` if unset. Requires `POSTMARK_SERVER_TOKEN` + `POSTMARK_FROM_EMAIL` on the web container.
 
 **Avoid** crontab `--force-refresh` every few hours while Auth0 is healthy — thrashing cold Chromium elevates Turnstile to interactive checkbox.
 

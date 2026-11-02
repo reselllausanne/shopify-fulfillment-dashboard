@@ -5,7 +5,7 @@ import { runGalaxusStockxAutoLinkSweep } from "@/galaxus/orders/autoLinkSweep";
 import { runDecathlonAwbBackfill } from "@/lib/decathlonAwbBackfill";
 import { runGalaxusAwbBackfill } from "@/lib/galaxusAwbBackfill";
 import { AWB_BUDGET_EXHAUSTED, runAwbBackfill } from "@/lib/stockxAwbBackfill";
-import { notifyStockxAuthBroken } from "@/lib/stockxAuthAlert";
+import { notifyStockxAuthBroken, sendStockxEmail } from "@/lib/stockxAuthAlert";
 import { runStockxOrderOpsAlerts } from "@/lib/stockxOpsAlerts";
 import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
 import { canRefreshStockxAccount, refreshStockxToken } from "@/lib/stockxSessionRefresh";
@@ -42,6 +42,12 @@ function isAuthAbort(reason: string | null | undefined): boolean {
  * Lightweight ops path (scripts/stockx-ops-alerts-cron.sh):
  * - opsAlertsOnly — runStockxOrderOpsAlerts only (survives autoLink timeout)
  *
+ * Mid-hour AWB (scripts/stockx-awb-only-cron.sh):
+ * - awbOnly — same as step 3 of hourly cron (no remint / autoLink)
+ *
+ * autoLink health (scripts/stockx-autolink-watch-cron.sh):
+ * - autolinkFailAlert — email STOCKX_ALERT_EMAIL once when autoLink failed 2h in a row
+ *
  * Runs inside the web process so Playwright can use the entrypoint Xvfb display.
  */
 export async function POST(req: NextRequest) {
@@ -65,10 +71,38 @@ export async function POST(req: NextRequest) {
     const awbOnly = Boolean(body?.awbOnly ?? false);
     // Ops-alerts-only: no remint / autolink / AWB — digest survives autoLink hang.
     const opsAlertsOnly = Boolean(body?.opsAlertsOnly ?? false);
+    // Watch cron: fire operator email when autoLink failed/timed out 2 consecutive hours.
+    const autolinkFailAlert = Boolean(body?.autolinkFailAlert ?? false);
     // 30d window: recent matched buys that still need AWB / chainId (cron, not historical dump).
     const days = Number(body?.days ?? 30);
     const limit = Number(body?.limit ?? 60);
     const dryRun = Boolean(body?.dryRun ?? false);
+
+    if (autolinkFailAlert) {
+      const detail = String(
+        body?.detail ??
+          "StockX autoLink failed or timed out for 2 consecutive hourly cron runs."
+      ).slice(0, 4000);
+      const emailed = await sendStockxEmail(
+        "[Resell] StockX autoLink failed ≥2h",
+        [
+          detail,
+          "",
+          "Hourly path: scripts/stockx-awb-cron.sh → autoLinkOnly.",
+          "Check /var/log/resell/stockx-awb-sync.log for autolink http=/curl= lines.",
+          `At: ${new Date().toISOString()}`,
+        ].join("\n")
+      );
+      console.log(
+        `[STOCKX-AWB-SYNC] autolinkFailAlert emailed=${emailed} elapsedMs=${Date.now() - startedAt}`
+      );
+      return NextResponse.json({
+        ok: true,
+        autolinkFailAlert: true,
+        emailed,
+        elapsedMs: Date.now() - startedAt,
+      });
+    }
 
     if (opsAlertsOnly) {
       const opsAlerts = await runStockxOrderOpsAlerts({ days, dryRun }).catch((err: any) => ({
