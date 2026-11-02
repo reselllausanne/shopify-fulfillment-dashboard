@@ -130,12 +130,19 @@ export async function POST(req: NextRequest) {
       const orderNames = Array.isArray(body.orderNames)
         ? body.orderNames.map((n) => String(n))
         : undefined;
-      // dryRun / previewOnly → classify + stop before Place Order (no charge, no ops email).
-      const dryRun =
+      // Cron: confirmLive/go → Place Order. dryRun/previewOnly → classify only.
+      // Admin UI posts dryRun true/false explicitly (no confirmLive) — keep that path.
+      const confirmLive =
+        body.confirmLive === true ||
+        body.confirmLive === "true" ||
+        body.go === true ||
+        body.go === "true";
+      const explicitDry =
         body.dryRun === true ||
         body.dryRun === "true" ||
         body.previewOnly === true ||
         body.previewOnly === "true";
+      const dryRun = confirmLive ? false : explicitDry;
       const useQueue = body.useQueue !== false && body.useQueue !== "false";
       const summary = await runStockxAutoEasyAndEmailRest({
         days: body.days != null ? Number(body.days) : undefined,
