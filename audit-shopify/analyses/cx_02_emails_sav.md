@@ -1,3 +1,5 @@
+> **ERRATUM 2026-11-02 23:30 (pilote).** Les chiffres de ce fichier reposent sur une TVA de 8,1 % extraite des prix. Le dirigeant déclare le forfait TDFN 2,1 % du CA TTC (non prouvé, relevés inaccessibles). Lire : contribution avant pub **40,3 CHF/commande** (et non 28,8), ROAS global d équilibre **≈ 5,4** (et non 7,6), résultat 2026 avant rémunération **+11,9 k CHF** (et non −21,2 k). Les conclusions « la pub dépasse la contribution » deviennent « la pub marginale (≈ 42-75 CHF/commande) dépasse la contribution unitaire (40,3) ; la moyenne reste légèrement positive ». Voir `fin_00_base_financiere.md`.
+
 # CX-02 — E-mails transactionnels et SAV (BRIEF §9, §3, §19)
 
 Sous-agent n°2. Lecture seule (Shopify, Postmark, Klaviyo, DB). Aucun e-mail envoyé, aucun réglage modifié. Date : 2026-11-02. Montants en CHF TTC. Aucune donnée nominative (destinataires hachés, notes de remboursement filtrées).

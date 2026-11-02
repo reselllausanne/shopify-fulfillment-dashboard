@@ -27,7 +27,7 @@ Scripts : `calculs/fin_02..11`. Tables : `tableaux/fin_05_*`, `fin_06_*`, `hypot
 | − rémunération du dirigeant (**H** 6 000/mois, non fournie) | −60 000 |
 | = résultat économique | **−48 075** |
 
-**I** : l'activité couvre ses coûts directs et la pub, mais pas une rémunération de 6 000 CHF/mois ; la marge « 219 k » du tableau de bord surestime d'un tiers environ la marge réellement disponible (avant frais, logistique et pub).
+**I** : l'activité couvre ses coûts directs et la pub, mais pas une rémunération de 6 000 CHF/mois ; la marge « 219 k » du tableau de bord surestime d'environ 18 % la marge brute réalisée (179 k), avant frais, logistique, litiges et pub.
 Résultat mensuel avant rémunération (`fin_05_pnl_mensuel.csv`) : jan +3,5 k ; fév −1,6 ; mar +1,8 ; avr +1,2 ; mai +0,5 ; juin −1,8 ; juil +0,6 ; août +1,7 ; sept −0,1 ; oct +6,2 (octobre contient 12 775 CHF de coûts estimés : à rapprocher).
 
 Sensibilités (`fin_06_sensibilites.csv`, base +11 925) : exp/prépa 10 CHF au lieu de 14,5 : +24,5 k ; 20 CHF : −3,4 k ; frais autres passerelles +1 pt : +8,8 k ; coût estimé ±20 % : +23,5 k / +0,4 k ; pub −20 % à ventes constantes : +32,1 k (illustratif, non prouvé) ; méthode effective (TVA 8,1 % moins TVA import déductible) : +11,4 k ≈ TDFN (choix de méthode quasi neutre) ; ancienne hypothèse sans TDFN : −21,2 k.
