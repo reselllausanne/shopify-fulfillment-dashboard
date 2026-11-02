@@ -2,8 +2,9 @@
  * Operator-facing StockX order issue alerts.
  *
  * Sends the OPERATOR (STOCKX_ALERT_EMAIL) a digest BEFORE any customer-facing flow when a
- * linked StockX buy is cancelled / refunded, running late (ETA passed, not shipped), or a
- * paid Galaxus STX line has no StockX buy after N days ("not purchased").
+ * linked StockX buy is cancelled / refunded, running late (ETA passed, not shipped), missing
+ * AWB >48h, or a paid STX line has no StockX buy after N days ("not purchased").
+ * Scopes: Shopify, Galaxus, Decathlon.
  *
  * Customer milestone emails (app/lib/notifications/stockxEmail.ts) deliberately SKIP
  * cancelled/refunded + eta_passed, so these never leak to customers — the operator is the
@@ -46,8 +47,43 @@ const STX_LINE_FILTER = {
   ],
 };
 
-type AlertScope = "shopify" | "galaxus";
-type AlertType = "CANCELLED" | "REFUNDED" | "DELAYED" | "NOT_PURCHASED" | "UNLINKED";
+const DECATHLON_STX_LINE_FILTER = {
+  OR: [
+    { offerSku: { startsWith: "STX_", mode: "insensitive" as const } },
+    { providerKey: { startsWith: "STX_", mode: "insensitive" as const } },
+    { supplierSku: { startsWith: "STX_", mode: "insensitive" as const } },
+  ],
+};
+
+const DECATHLON_CANCELLED_STATES = ["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"];
+
+/** Linked buy already done / not trackable — never MISSING_AWB. Mirrors daily recap. */
+const MISSING_AWB_TERMINAL = [
+  "BUYER_RECEIVED",
+  "COMPLETE",
+  "CANCELLED",
+  "REFUNDED",
+  "delivered",
+  "PHYSICAL_STOCK",
+  "ESSENTIAL_STOCK",
+  "MANUAL",
+  "MANUAL_COST",
+  "FIXED_PRICE_COST",
+  "MONEY_KICKZ_COST",
+];
+
+const MISSING_AWB_MIN_AGE_MS = 48 * 60 * 60 * 1000;
+const MISSING_AWB_MAX_AGE_MS = 30 * DAY_MS;
+const MISSING_AWB_TERMINAL_UPPER = new Set(MISSING_AWB_TERMINAL.map((t) => t.toUpperCase()));
+
+type AlertScope = "shopify" | "galaxus" | "decathlon";
+type AlertType =
+  | "CANCELLED"
+  | "REFUNDED"
+  | "DELAYED"
+  | "NOT_PURCHASED"
+  | "UNLINKED"
+  | "MISSING_AWB";
 
 /**
  * Pure detection of dashboard "0/N linked" orders (red cards on the direct-delivery list).
@@ -349,6 +385,7 @@ export type StockxOpsAlertResult = {
     ok: boolean;
     shopifyUpdated: number;
     galaxusUpdated: number;
+    decathlonUpdated?: number;
     terminalNodes: number;
     error?: string;
   };
@@ -368,6 +405,29 @@ function isRefundedStatus(s: string | null | undefined): boolean {
 // Statuses that are terminal (already delivered/received/complete) or not a real tracked
 // StockX buy (local physical stock / manual) — never "delayed".
 const NON_DELAYABLE_STATUS = /CANCEL|REFUND|DELIVER|COMPLET|RECEIV|LOCAL|MANUAL/;
+
+/** Pure: linked purchase older than 48h, younger than 30d, no AWB, non-terminal. */
+export function isMissingAwbCandidate(input: {
+  stockxAwb: string | null | undefined;
+  stockxStatus: string | null | undefined;
+  purchaseAt: Date | string | null | undefined;
+  now?: number;
+  minAgeMs?: number;
+  maxAgeMs?: number;
+}): boolean {
+  const awb = String(input.stockxAwb ?? "").trim();
+  if (awb) return false;
+  const sk = statusKey(input.stockxStatus);
+  // Empty status still eligible (Prisma notIn-terminal includes null).
+  if (sk && (NON_DELAYABLE_STATUS.test(sk) || MISSING_AWB_TERMINAL_UPPER.has(sk))) return false;
+  if (!input.purchaseAt) return false;
+  const t = new Date(input.purchaseAt).getTime();
+  if (!Number.isFinite(t)) return false;
+  const now = input.now ?? Date.now();
+  const minAge = input.minAgeMs ?? MISSING_AWB_MIN_AGE_MS;
+  const maxAge = input.maxAgeMs ?? MISSING_AWB_MAX_AGE_MS;
+  return t <= now - minAge && t >= now - maxAge;
+}
 
 /** True only for a genuinely-late tracked buy: real status, ETA just passed (recent window). */
 function isRecentlyLate(
@@ -422,7 +482,14 @@ export async function runStockxOrderOpsAlerts(options?: {
     newAlerts: 0,
     emailed: false,
     emailTo: null,
-    byType: { CANCELLED: 0, REFUNDED: 0, DELAYED: 0, NOT_PURCHASED: 0, UNLINKED: 0 },
+    byType: {
+      CANCELLED: 0,
+      REFUNDED: 0,
+      DELAYED: 0,
+      NOT_PURCHASED: 0,
+      UNLINKED: 0,
+      MISSING_AWB: 0,
+    },
     skippedExisting: 0,
     baselineSeeded: false,
   };
@@ -442,6 +509,7 @@ export async function runStockxOrderOpsAlerts(options?: {
       ok: historySync.ok,
       shopifyUpdated: historySync.shopifyUpdated,
       galaxusUpdated: historySync.galaxusUpdated,
+      decathlonUpdated: historySync.decathlonUpdated,
       terminalNodes: historySync.terminalNodes,
       ...(historySync.error ? { error: historySync.error } : {}),
     };
@@ -450,6 +518,7 @@ export async function runStockxOrderOpsAlerts(options?: {
       ok: false,
       shopifyUpdated: 0,
       galaxusUpdated: 0,
+      decathlonUpdated: 0,
       terminalNodes: 0,
       error: String(err?.message ?? err),
     };
@@ -605,6 +674,74 @@ export async function runStockxOrderOpsAlerts(options?: {
     console.warn("[STOCKX][OPS_ALERT] galaxus scan failed:", err?.message ?? err);
   }
 
+  // ---- Decathlon: cancelled / refunded / delayed (linked DecathlonStockxMatch) ----
+  try {
+    const dcMatches = await prismaAny.decathlonStockxMatch.findMany({
+      where: {
+        stockxOrderNumber: { not: "" },
+        OR: [
+          { createdAt: { gte: since } },
+          {
+            updatedAt: { gte: since },
+            stockxStatus: { in: ["CANCELLED", "REFUNDED"] },
+          },
+        ],
+      },
+      select: {
+        id: true,
+        decathlonOrderId: true,
+        decathlonProductName: true,
+        stockxOrderNumber: true,
+        stockxStatus: true,
+        stockxEstimatedDelivery: true,
+        stockxLatestEstimatedDelivery: true,
+        order: { select: { orderId: true, orderNumber: true } },
+      },
+    });
+    for (const m of dcMatches) {
+      const orderRef =
+        String(m.order?.orderId ?? m.order?.orderNumber ?? m.decathlonOrderId ?? "").trim() || null;
+      if (isCancelledStatus(m.stockxStatus)) {
+        pending.push({
+          scope: "decathlon",
+          alertType: "CANCELLED",
+          refKey: String(m.id),
+          orderRef,
+          stockxOrderNumber: m.stockxOrderNumber ?? null,
+          productTitle: m.decathlonProductName ?? null,
+          detail: `StockX status ${statusKey(m.stockxStatus)}`,
+        });
+        continue;
+      }
+      if (isRefundedStatus(m.stockxStatus)) {
+        pending.push({
+          scope: "decathlon",
+          alertType: "REFUNDED",
+          refKey: String(m.id),
+          orderRef,
+          stockxOrderNumber: m.stockxOrderNumber ?? null,
+          productTitle: m.decathlonProductName ?? null,
+          detail: `StockX status ${statusKey(m.stockxStatus)}`,
+        });
+        continue;
+      }
+      const eta = m.stockxLatestEstimatedDelivery || m.stockxEstimatedDelivery;
+      if (isRecentlyLate(m.stockxStatus, eta, now, lateWindowMs)) {
+        pending.push({
+          scope: "decathlon",
+          alertType: "DELAYED",
+          refKey: String(m.id),
+          orderRef,
+          stockxOrderNumber: m.stockxOrderNumber ?? null,
+          productTitle: m.decathlonProductName ?? null,
+          detail: `ETA ${fmtDate(eta)} passed, not delivered`,
+        });
+      }
+    }
+  } catch (err: any) {
+    console.warn("[STOCKX][OPS_ALERT] decathlon scan failed:", err?.message ?? err);
+  }
+
   // ---- Galaxus ORDER cancelled (partner portal / ops cancel) ----
   // Independent of StockX: GalaxusOrder.cancelledAt with no linked STX buy used to be silent
   // (e.g. Pokémon Perfect Order 200521766 / 200523736). Operator must still get the mail.
@@ -694,6 +831,54 @@ export async function runStockxOrderOpsAlerts(options?: {
     }
   } catch (err: any) {
     console.warn("[STOCKX][OPS_ALERT] galaxus not-purchased scan failed:", err?.message ?? err);
+  }
+
+  // ---- Decathlon: not-purchased (STX line, no DecathlonStockxMatch after N days) ----
+  try {
+    const dcOrders = await prismaAny.decathlonOrder.findMany({
+      where: {
+        orderDate: { gte: notPurchasedFloor, lte: notPurchasedCutoff },
+        NOT: { orderState: { in: DECATHLON_CANCELLED_STATES, mode: "insensitive" } },
+        lines: {
+          some: {
+            AND: [DECATHLON_STX_LINE_FILTER, { stockxMatch: null }],
+          },
+        },
+      },
+      select: {
+        id: true,
+        orderId: true,
+        orderNumber: true,
+        orderDate: true,
+        lines: {
+          where: {
+            AND: [DECATHLON_STX_LINE_FILTER, { stockxMatch: null }],
+          },
+          select: { id: true, productTitle: true, description: true },
+        },
+      },
+      take: 200,
+    });
+    for (const order of dcOrders) {
+      const needing = order.lines ?? [];
+      if (needing.length === 0) continue;
+      const titles = needing
+        .map((l: any) => String(l.productTitle ?? l.description ?? "").trim())
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(", ");
+      pending.push({
+        scope: "decathlon",
+        alertType: "NOT_PURCHASED",
+        refKey: String(order.id),
+        orderRef: String(order.orderId ?? order.orderNumber ?? order.id),
+        stockxOrderNumber: null,
+        productTitle: titles || null,
+        detail: `${needing.length} STX unit(s) unbought since ${fmtDate(order.orderDate)}`,
+      });
+    }
+  } catch (err: any) {
+    console.warn("[STOCKX][OPS_ALERT] decathlon not-purchased scan failed:", err?.message ?? err);
   }
 
   // ---- Galaxus: unlinked "0/N linked" orders (dashboard red cards) ----
@@ -881,6 +1066,135 @@ export async function runStockxOrderOpsAlerts(options?: {
     console.warn("[STOCKX][OPS_ALERT] shopify unlinked scan failed:", err?.message ?? err);
   }
 
+  // ---- MISSING_AWB: linked purchase >48h, <30d, no AWB, non-terminal (all channels) ----
+  const missingAwbOlderThan = new Date(now - MISSING_AWB_MIN_AGE_MS);
+  const missingAwbFloor = new Date(now - MISSING_AWB_MAX_AGE_MS);
+  const missingAwbWhere = {
+    stockxOrderNumber: { not: "" },
+    stockxPurchaseDate: { gte: missingAwbFloor, lt: missingAwbOlderThan },
+    OR: [{ stockxAwb: null }, { stockxAwb: "" }],
+    NOT: { stockxStatus: { in: MISSING_AWB_TERMINAL } },
+  };
+
+  try {
+    const shopifyMissing = await prisma.orderMatch.findMany({
+      where: { ...missingAwbWhere, supplierSource: "STOCKX" },
+      select: {
+        id: true,
+        shopifyOrderName: true,
+        shopifyProductTitle: true,
+        stockxOrderNumber: true,
+        stockxStatus: true,
+        stockxAwb: true,
+        stockxPurchaseDate: true,
+      },
+      take: 200,
+    });
+    for (const m of shopifyMissing) {
+      if (
+        !isMissingAwbCandidate({
+          stockxAwb: m.stockxAwb,
+          stockxStatus: m.stockxStatus,
+          purchaseAt: m.stockxPurchaseDate,
+          now,
+        })
+      ) {
+        continue;
+      }
+      pending.push({
+        scope: "shopify",
+        alertType: "MISSING_AWB",
+        refKey: m.id,
+        orderRef: m.shopifyOrderName ?? null,
+        stockxOrderNumber: m.stockxOrderNumber ?? null,
+        productTitle: m.shopifyProductTitle ?? null,
+        detail: `Achat ${fmtDate(m.stockxPurchaseDate)} — AWB absent >48h (${statusKey(m.stockxStatus) || "no status"})`,
+      });
+    }
+  } catch (err: any) {
+    console.warn("[STOCKX][OPS_ALERT] shopify missing-awb scan failed:", err?.message ?? err);
+  }
+
+  try {
+    const gxMissing = await prismaAny.galaxusStockxMatch.findMany({
+      where: missingAwbWhere,
+      select: {
+        id: true,
+        galaxusOrderRef: true,
+        galaxusProductName: true,
+        stockxOrderNumber: true,
+        stockxStatus: true,
+        stockxAwb: true,
+        stockxPurchaseDate: true,
+      },
+      take: 200,
+    });
+    for (const m of gxMissing) {
+      if (
+        !isMissingAwbCandidate({
+          stockxAwb: m.stockxAwb,
+          stockxStatus: m.stockxStatus,
+          purchaseAt: m.stockxPurchaseDate,
+          now,
+        })
+      ) {
+        continue;
+      }
+      pending.push({
+        scope: "galaxus",
+        alertType: "MISSING_AWB",
+        refKey: String(m.id),
+        orderRef: m.galaxusOrderRef ?? null,
+        stockxOrderNumber: m.stockxOrderNumber ?? null,
+        productTitle: m.galaxusProductName ?? null,
+        detail: `Achat ${fmtDate(m.stockxPurchaseDate)} — AWB absent >48h (${statusKey(m.stockxStatus) || "no status"})`,
+      });
+    }
+  } catch (err: any) {
+    console.warn("[STOCKX][OPS_ALERT] galaxus missing-awb scan failed:", err?.message ?? err);
+  }
+
+  try {
+    const dcMissing = await prismaAny.decathlonStockxMatch.findMany({
+      where: missingAwbWhere,
+      select: {
+        id: true,
+        decathlonOrderId: true,
+        decathlonProductName: true,
+        stockxOrderNumber: true,
+        stockxStatus: true,
+        stockxAwb: true,
+        stockxPurchaseDate: true,
+        order: { select: { orderId: true, orderNumber: true } },
+      },
+      take: 200,
+    });
+    for (const m of dcMissing) {
+      if (
+        !isMissingAwbCandidate({
+          stockxAwb: m.stockxAwb,
+          stockxStatus: m.stockxStatus,
+          purchaseAt: m.stockxPurchaseDate,
+          now,
+        })
+      ) {
+        continue;
+      }
+      pending.push({
+        scope: "decathlon",
+        alertType: "MISSING_AWB",
+        refKey: String(m.id),
+        orderRef:
+          String(m.order?.orderId ?? m.order?.orderNumber ?? m.decathlonOrderId ?? "").trim() || null,
+        stockxOrderNumber: m.stockxOrderNumber ?? null,
+        productTitle: m.decathlonProductName ?? null,
+        detail: `Achat ${fmtDate(m.stockxPurchaseDate)} — AWB absent >48h (${statusKey(m.stockxStatus) || "no status"})`,
+      });
+    }
+  } catch (err: any) {
+    console.warn("[STOCKX][OPS_ALERT] decathlon missing-awb scan failed:", err?.message ?? err);
+  }
+
   result.candidates = pending.length;
   if (pending.length === 0) return result;
 
@@ -977,7 +1291,14 @@ const TYPE_LABEL: Record<AlertType, string> = {
   DELAYED: "Retards (ETA depassee)",
   NOT_PURCHASED: "Non achetes (buy manquant)",
   UNLINKED: "Non lies StockX (0/N linked)",
+  MISSING_AWB: "AWB manquant (>48h apres achat)",
 };
+
+function scopeLabel(scope: AlertScope): string {
+  if (scope === "shopify") return "Shopify";
+  if (scope === "decathlon") return "Decathlon";
+  return "Galaxus";
+}
 
 /**
  * Immediate operator email when a Galaxus order is cancelled (portal / UI / script).
@@ -1030,6 +1351,7 @@ export async function notifyGalaxusOrderCancelled(input: {
     DELAYED: 0,
     NOT_PURCHASED: 0,
     UNLINKED: 0,
+    MISSING_AWB: 0,
   });
   try {
     const sendRes = await getMailer().sendRawEmail({
@@ -1062,7 +1384,9 @@ function buildBaselineSummary(
   byType: Record<AlertType, number>,
   total: number
 ): { subject: string; text: string; html: string } {
-  const rows = (["CANCELLED", "REFUNDED", "DELAYED", "NOT_PURCHASED", "UNLINKED"] as AlertType[])
+  const rows = (
+    ["CANCELLED", "REFUNDED", "DELAYED", "NOT_PURCHASED", "UNLINKED", "MISSING_AWB"] as AlertType[]
+  )
     .filter((t) => byType[t] > 0)
     .map((t) => `${TYPE_LABEL[t]}: ${byType[t]}`);
   const subject = `[Resell OPS] StockX alertes activees — baseline ${total} enregistree(s)`;
@@ -1084,12 +1408,19 @@ function buildDigest(
   alerts: PendingAlert[],
   byType: Record<AlertType, number>
 ): { subject: string; text: string; html: string } {
-  const order: AlertType[] = ["CANCELLED", "REFUNDED", "DELAYED", "NOT_PURCHASED", "UNLINKED"];
-  const parts: string[] = [];
+  const order: AlertType[] = [
+    "CANCELLED",
+    "REFUNDED",
+    "DELAYED",
+    "MISSING_AWB",
+    "NOT_PURCHASED",
+    "UNLINKED",
+  ];
   const subjParts: string[] = [];
   if (byType.CANCELLED) subjParts.push(`${byType.CANCELLED} annul`);
   if (byType.REFUNDED) subjParts.push(`${byType.REFUNDED} remb`);
   if (byType.DELAYED) subjParts.push(`${byType.DELAYED} retard`);
+  if (byType.MISSING_AWB) subjParts.push(`${byType.MISSING_AWB} awb`);
   if (byType.NOT_PURCHASED) subjParts.push(`${byType.NOT_PURCHASED} non-achat`);
   if (byType.UNLINKED) subjParts.push(`${byType.UNLINKED} non-lie`);
   const subject = `[Resell OPS] StockX: ${alerts.length} alerte(s) — ${subjParts.join(", ")}`;
@@ -1108,7 +1439,7 @@ function buildDigest(
     );
     for (const a of group) {
       const ref = a.orderRef ?? a.refKey;
-      const chan = a.scope === "shopify" ? "Shopify" : "Galaxus";
+      const chan = scopeLabel(a.scope);
       const stx = a.stockxOrderNumber ? ` · StockX ${a.stockxOrderNumber}` : "";
       const prod = a.productTitle ? ` · ${a.productTitle}` : "";
       const det = a.detail ? ` — ${a.detail}` : "";

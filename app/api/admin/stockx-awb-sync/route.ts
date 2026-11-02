@@ -36,8 +36,11 @@ function isAuthAbort(reason: string | null | undefined): boolean {
 /**
  * Hourly cron path (scripts/stockx-awb-cron.sh → this route):
  * 1. refreshOnly — remint StockX session/token (default + Galaxus)
- * 2. autoLinkOnly — match new StockX buys → Galaxus + Shopify
- * 3. awbOnly — enrich chainId + pull AWB/status (no remint/autolink redo)
+ * 2. autoLinkOnly — match new StockX buys → Galaxus + Shopify (+ ops alerts)
+ * 3. awbOnly — enrich chainId + pull AWB/status (no remint/autolink redo; + ops alerts)
+ *
+ * Lightweight ops path (scripts/stockx-ops-alerts-cron.sh):
+ * - opsAlertsOnly — runStockxOrderOpsAlerts only (survives autoLink timeout)
  *
  * Runs inside the web process so Playwright can use the entrypoint Xvfb display.
  */
@@ -60,10 +63,30 @@ export async function POST(req: NextRequest) {
     // AWB-only: skip remint + autoLink (cron already ran those). Bound wall-clock so
     // curl --max-time 780 always gets a fresh JSON body instead of hanging 13m.
     const awbOnly = Boolean(body?.awbOnly ?? false);
+    // Ops-alerts-only: no remint / autolink / AWB — digest survives autoLink hang.
+    const opsAlertsOnly = Boolean(body?.opsAlertsOnly ?? false);
     // 30d window: recent matched buys that still need AWB / chainId (cron, not historical dump).
     const days = Number(body?.days ?? 30);
     const limit = Number(body?.limit ?? 60);
     const dryRun = Boolean(body?.dryRun ?? false);
+
+    if (opsAlertsOnly) {
+      const opsAlerts = await runStockxOrderOpsAlerts({ days, dryRun }).catch((err: any) => ({
+        ok: false,
+        error: String(err?.message ?? err),
+      }));
+      console.log(
+        `[STOCKX-AWB-SYNC] opsAlertsOnly elapsedMs=${Date.now() - startedAt} newAlerts=${
+          (opsAlerts as any)?.newAlerts ?? "?"
+        } emailed=${(opsAlerts as any)?.emailed ?? false}`
+      );
+      return NextResponse.json({
+        ok: (opsAlerts as any)?.ok !== false,
+        opsAlertsOnly: true,
+        elapsedMs: Date.now() - startedAt,
+        opsAlerts,
+      });
+    }
 
     const remainingBudgetMs = () => Math.max(30_000, 480_000 - (Date.now() - startedAt));
 
@@ -200,6 +223,20 @@ export async function POST(req: NextRequest) {
         700_000
       );
       const passes = await runAwbPasses(token, Date.now() + budgetMs);
+      // Ops digest here too — survives autoLink timeout on the hourly cron path.
+      const opsAlerts = dryRun
+        ? null
+        : await runStockxOrderOpsAlerts({ days }).catch((err: any) => ({
+            ok: false,
+            error: String(err?.message ?? err),
+          }));
+      if (opsAlerts) {
+        console.log(
+          `[STOCKX-AWB-SYNC] awbOnly opsAlerts newAlerts=${(opsAlerts as any)?.newAlerts ?? "?"} emailed=${
+            (opsAlerts as any)?.emailed ?? false
+          }`
+        );
+      }
       return NextResponse.json({
         ok: passes.ok,
         awbOnly: true,
@@ -208,6 +245,7 @@ export async function POST(req: NextRequest) {
         galaxus: passes.galaxus,
         decathlon: passes.decathlon,
         stxResync: passes.stxResync,
+        opsAlerts,
         scanned: passes.shopify.scanned + passes.galaxus.scanned + passes.decathlon.scanned,
         candidates:
           passes.shopify.candidates + passes.galaxus.candidates + passes.decathlon.candidates,

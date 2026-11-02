@@ -19,4 +19,12 @@ describe("AWB cron hang fix invariants", () => {
     expect((body as { refreshOnly?: boolean }).refreshOnly).toBeUndefined();
     expect((body as { autoLinkOnly?: boolean }).autoLinkOnly).toBeUndefined();
   });
+
+  it("opsAlertsOnly body is lightweight (no remint/awb/autolink flags)", () => {
+    const body = { opsAlertsOnly: true, days: 30 };
+    expect(body.opsAlertsOnly).toBe(true);
+    expect((body as { awbOnly?: boolean }).awbOnly).toBeUndefined();
+    expect((body as { autoLinkOnly?: boolean }).autoLinkOnly).toBeUndefined();
+    expect((body as { refreshOnly?: boolean }).refreshOnly).toBeUndefined();
+  });
 });

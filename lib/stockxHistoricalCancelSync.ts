@@ -1,6 +1,6 @@
 /**
- * Sync CANCELLED / REFUNDED onto linked Shopify + Galaxus matches from StockX
- * buying HISTORICAL (live order history), not Gmail.
+ * Sync CANCELLED / REFUNDED onto linked Shopify + Galaxus + Decathlon matches
+ * from StockX buying HISTORICAL (live order history), not Gmail.
  *
  * Ops alerts only read DB `stockxStatus`. AWB often never refreshes rows that
  * already have an AWB (e.g. stuck AC_RECEIVED after StockX cancels) — this
@@ -39,6 +39,7 @@ export type HistoricalCancelSyncResult = {
   terminalNodes: number;
   shopifyUpdated: number;
   galaxusUpdated: number;
+  decathlonUpdated: number;
   orderNumbers: string[];
   error?: string;
 };
@@ -63,6 +64,7 @@ export async function syncLinkedMatchesFromStockxHistory(options?: {
     terminalNodes: 0,
     shopifyUpdated: 0,
     galaxusUpdated: 0,
+    decathlonUpdated: 0,
     orderNumbers: [],
   };
 
@@ -124,6 +126,7 @@ export async function syncLinkedMatchesFromStockxHistory(options?: {
   const prismaAny = prisma as any;
   let shopifyUpdated = 0;
   let galaxusUpdated = 0;
+  let decathlonUpdated = 0;
 
   // Shopify OrderMatch — only bump non-terminal rows.
   try {
@@ -169,9 +172,31 @@ export async function syncLinkedMatchesFromStockxHistory(options?: {
     console.warn("[STOCKX][HIST_CANCEL] galaxus update failed:", err?.message ?? err);
   }
 
-  if (shopifyUpdated || galaxusUpdated) {
+  // DecathlonStockxMatch — same.
+  try {
+    const dcRows = await prismaAny.decathlonStockxMatch.findMany({
+      where: {
+        stockxOrderNumber: { in: orderNumbers },
+        NOT: { stockxStatus: { in: ["CANCELLED", "REFUNDED"] } },
+      },
+      select: { id: true, stockxOrderNumber: true, stockxStatus: true },
+    });
+    for (const row of dcRows) {
+      const next = byOrder.get(normalizeStockxBuyOrderNumber(row.stockxOrderNumber));
+      if (!next) continue;
+      await prismaAny.decathlonStockxMatch.update({
+        where: { id: row.id },
+        data: { stockxStatus: next, updatedAt: new Date() },
+      });
+      decathlonUpdated += 1;
+    }
+  } catch (err: any) {
+    console.warn("[STOCKX][HIST_CANCEL] decathlon update failed:", err?.message ?? err);
+  }
+
+  if (shopifyUpdated || galaxusUpdated || decathlonUpdated) {
     console.log(
-      `[STOCKX][HIST_CANCEL] accounts=${accounts.length} hist=${historyNodes} terminal=${orderNumbers.length} shopify=${shopifyUpdated} galaxus=${galaxusUpdated}`
+      `[STOCKX][HIST_CANCEL] accounts=${accounts.length} hist=${historyNodes} terminal=${orderNumbers.length} shopify=${shopifyUpdated} galaxus=${galaxusUpdated} decathlon=${decathlonUpdated}`
     );
   }
 
@@ -182,6 +207,7 @@ export async function syncLinkedMatchesFromStockxHistory(options?: {
     terminalNodes: orderNumbers.length,
     shopifyUpdated,
     galaxusUpdated,
+    decathlonUpdated,
     orderNumbers: orderNumbers.slice(0, 50),
   };
 }
