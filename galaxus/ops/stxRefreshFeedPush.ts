@@ -9,9 +9,15 @@ import { startFeedPushAsync } from "@/galaxus/ops/feedPipelineCore";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 
 const DEBOUNCE_MS = 45_000;
-/** Above this, invalidate snapshot instead of per-key HTTP patch (full live until rebuild). */
-const PATCH_KEY_CAP = 2_000;
-const PATCH_CHUNK = 80;
+/**
+ * Above this, invalidate snapshot instead of per-key HTTP patch (full live until rebuild).
+ * A full rebuild takes ~5h, during which every push runs the heavy live export and
+ * patches no-op — the old cap of 2000 was routinely exceeded by ordinary stx-refresh
+ * waves (~2500 keys), so the snapshot almost never stayed valid. Patching 25k keys is
+ * ~2 minutes of bounded per-key exports; prefer it over nuking the snapshot.
+ */
+const PATCH_KEY_CAP = Number(process.env.GALAXUS_STX_PATCH_KEY_CAP ?? 25_000);
+const PATCH_CHUNK = Number(process.env.GALAXUS_STX_PATCH_CHUNK ?? 200);
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingSupplierVariantIds = new Set<string>();
