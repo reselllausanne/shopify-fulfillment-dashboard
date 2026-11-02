@@ -29,8 +29,8 @@ print('TOTAL jan-oct: cmd',tot.cmd,'contrib',round(tot.contrib),'cost',round(tot
 print(m.contrib.describe(percentiles=[.1,.25,.5,.75,.9]).round(1).to_dict())
 print('part commandes contrib<0:',round((m.contrib<0).mean()*100,1),'% ; contrib<10:',round((m.contrib<10).mean()*100,1),'% ; <30',round((m.contrib<30).mean()*100,1),'%')
 # par tranche de prix de commande (revenu conservé TTC)
-m['band']=pd.cut(m.revenu_conserve_ttc,[-1,0.5,100,150,200,250,300,400,5000],labels=['0 (remb.)','<100','100-150','150-200','200-250','250-300','300-400','>400'])
-b=m.groupby('band',observed=True).agg(cmd=('name','size'),conserve=('revenu_conserve_ttc','sum'),contrib=('contrib','sum')); b['c_par_cmd']=b.contrib/b.cmd; b['c_%_conserve']=b.contrib/b.conserve*100; b['roas_be']=b.conserve/b.contrib
+m['band']=pd.cut(m.ventes_brutes_ttc,[-1,100,150,200,250,300,400,5000],labels=['<100','100-150','150-200','200-250','250-300','300-400','>400'])  # tranche sur le panier brut (avant remboursement)
+b=m.groupby('band',observed=True).agg(cmd=('name','size'),brut=('ventes_brutes_ttc','sum'),conserve=('revenu_conserve_ttc','sum'),contrib=('contrib','sum'),paid=('gads_click','sum')); b['c_par_cmd']=b.contrib/b.cmd; b['c_%_brut']=b.contrib/b.brut*100; b['roas_be_brut']=b.brut/b.contrib; b['part_paid_%']=b.paid/b.cmd*100
 print(b.round(1)); b.round(2).to_csv(T+'ads_04_contrib_par_prix.csv')
 # Mois récents (août-octobre) caps
 r=mm.loc['2026-08':'2026-10'].sum(numeric_only=True)
