@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Daily Shopify Express → StockX Place Order (lag 0) + ops digest email.
-# Suggested VPS cron (Europe/Zurich): every day 09:15
+# Suggested VPS crontab (local 09:15 Zurich — set CRON_TZ so 15 9 is not UTC):
+#   CRON_TZ=Europe/Zurich
 #   15 9 * * * /opt/resell/scripts/shopify-express-daily-buy-cron.sh >> /var/log/resell/shopify-express-daily-buy.log 2>&1
 #
 set -euo pipefail

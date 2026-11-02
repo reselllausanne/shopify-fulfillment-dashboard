@@ -70,6 +70,8 @@ const PUBLIC_PATHS = [
   "/api/admin/stockx-awb-sync",
   // Consolidated StockX daily recap. Same localhost/admin gate.
   "/api/admin/stockx-daily-recap",
+  // Shopify Express daily buy cron. Same localhost/admin gate.
+  "/api/admin/stockx-checkout",
   // Phase 4 orphan reconciliation (physical stock without STX row).
   "/api/inventory/reconcile-orphans",
   "/api/tracking/token",
