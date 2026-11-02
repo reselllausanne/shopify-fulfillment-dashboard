@@ -461,6 +461,30 @@ export async function GET(request: Request) {
     }
   }
 
+  // Hard invariant: one row per ProviderKey (see stock route — duplicate keys break
+  // the snapshot rebuild row-count assert and are undefined behavior at Galaxus).
+  const seenFinalKeys = new Set<string>();
+  const duplicateKeySamples: string[] = [];
+  let duplicateRowsDropped = 0;
+  finalRows = finalRows.filter((row) => {
+    const key = String(row.ProviderKey ?? "").trim();
+    if (!key) return false;
+    if (seenFinalKeys.has(key)) {
+      duplicateRowsDropped += 1;
+      if (duplicateKeySamples.length < 20) duplicateKeySamples.push(key);
+      return false;
+    }
+    seenFinalKeys.add(key);
+    return true;
+  });
+  if (duplicateRowsDropped > 0) {
+    console.warn("[GALAXUS][EXPORT][OFFER] dropped duplicate ProviderKey rows", {
+      dropped: duplicateRowsDropped,
+      kept: finalRows.length,
+      sampleKeys: duplicateKeySamples,
+    });
+  }
+
   const csv = toCsv(headers, finalRows);
   const filename = `galaxus-offer-${supplier ?? "all"}-${Date.now()}.csv`;
   const trmExcluded = totalTrmFeedExclusions(trmExclusionStats);
