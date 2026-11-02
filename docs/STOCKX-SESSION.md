@@ -86,7 +86,7 @@ Wired into `opsAlertsOnly` / AWB opsAlerts path (`lib/stockxDelayRebuy`). Defaul
 
 Dedup: `StockXStatusEvent` keys `CUSTOMER_DELAY_SUPPLIER_CHANGE` / `CUSTOMER_CANCEL_REBUY`. Baseline seed never customer-mails.
 
-Mails use the same Postmark templates as ETA (`normal-ship` / `express-ship`) with product picture (`shopifyLineItemImageUrl`, KickDB fallback) + apology copy overrides. TEST: `npx tsx scripts/send-customer-delay-mails-test.ts --order=7602 --to=ops@example.com`.
+Delay / cancel-rebuy mails send Postmark HtmlBody (not the `normal-ship` / `express-ship` TemplateAlias). Layout keeps that chrome — 640px, tracker, summary rows, footer — with purchase-confirm placement: greeting, one-line status, ETA band, product image in the summary, short body under the card. Supplier is never named. TEST: `npx tsx scripts/send-customer-delay-mails-test.ts --order=7602 --to=ops@example.com`.
 
 **Avoid** crontab `--force-refresh` every few hours while Auth0 is healthy — thrashing cold Chromium elevates Turnstile to interactive checkbox.
 

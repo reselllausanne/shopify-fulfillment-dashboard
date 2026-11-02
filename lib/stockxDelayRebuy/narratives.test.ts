@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildClientPreviewHtml } from "@/lib/stockxDelayRebuy/emails";
 import { buildCustomerNarrative } from "@/lib/stockxDelayRebuy/narratives";
 import type { DelayRebuyCase } from "@/lib/stockxDelayRebuy/types";
 
@@ -49,15 +50,51 @@ describe("buildCustomerNarrative", () => {
   it("delay mentions apology + ETA, never StockX", () => {
     const n = buildCustomerNarrative(baseCase(), "SUPPLIER_CHANGE_DELAY");
     expect(n.subject).toContain("#9999");
-    expect(n.bodyParagraphs.join(" ")).toMatch(/Désolé/i);
+    expect(n.greeting).toBe("Bonjour Alex,");
+    expect(n.statusLine.length).toBeLessThan(80);
+    expect(n.statusLine).not.toMatch(/Désolé/i);
+    expect(n.bodyParagraphs.join(" ")).toMatch(/désolés/i);
     expect(n.bodyParagraphs.join(" ").toLowerCase()).not.toContain("stockx");
+    expect(n.headline.toLowerCase()).not.toContain("stockx");
     expect(n.etaLine.length).toBeGreaterThan(5);
+    expect(n.shippingLabel).toBe("Standard");
   });
 
   it("cancel-rebuy uses rebuy ETA window", () => {
     const n = buildCustomerNarrative(baseCase(), "CANCEL_REBUY_LEGIT");
-    expect(n.headline).toMatch(/racheté/i);
-    expect(n.bodyParagraphs.join(" ")).toMatch(/Désolé/i);
+    expect(n.headline).toBe("Article remplacé");
+    expect(n.statusLine).toMatch(/Nouvelle date/i);
+    expect(n.bodyParagraphs.join(" ")).toMatch(/désolés/i);
     expect(n.bodyParagraphs.join(" ").toLowerCase()).not.toContain("stockx");
+    expect(n.greeting).toBe("Bonjour Alex,");
+  });
+
+  it("express lane is a summary label, not a sentence", () => {
+    const n = buildCustomerNarrative(baseCase({ rebuyLane: "EXPRESS" }), "SUPPLIER_CHANGE_DELAY");
+    expect(n.shippingLabel).toBe("Prioritaire");
+    expect(n.bodyParagraphs.join(" ")).not.toMatch(/prioritaire/i);
+  });
+});
+
+describe("delay mail HTML placement", () => {
+  it("puts greeting, ETA band, product image, then short body", () => {
+    const c = baseCase({
+      imageUrl: "https://cdn.example/shoe.jpg",
+      productTitle: "Nike Dunk Low",
+    });
+    const n = buildCustomerNarrative(c, "SUPPLIER_CHANGE_DELAY");
+    const html = buildClientPreviewHtml(c, n);
+    const greetingAt = html.indexOf("Bonjour Alex,");
+    const etaAt = html.indexOf("Arrivée estimée");
+    const imgAt = html.indexOf('width="200"');
+    const bodyAt = html.indexOf("Nous sommes désolés");
+    expect(greetingAt).toBeGreaterThan(0);
+    expect(etaAt).toBeGreaterThan(greetingAt);
+    expect(imgAt).toBeGreaterThan(etaAt);
+    expect(bodyAt).toBeGreaterThan(imgAt);
+    expect(html).toContain("Nike Dunk Low");
+    expect(html).toContain("#9999");
+    expect(html.toLowerCase()).not.toContain("petit souci");
+    expect(html).not.toMatch(/background:rgba\(0,0,0/);
   });
 });
