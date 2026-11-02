@@ -22,14 +22,14 @@ print("  → le diviseur 0,92 approxime la TVA (1/1,081=0,925) mais ignore frais
 
 # 2) contribution réelle à un prix donné (ligne unique, achat réussi)
 def contrib(price, buy, ads_cmd=30.0, cancel_rate=0.0):
-    net = price / 1.081; fee = price * fee_rate
+    net = price * (1 - 0.021); fee = price * fee_rate
     c_before = net - buy - fee - EXP
     return c_before, c_before - ads_cmd
-print(f"\n2) Contribution par commande livrée (TTC→HT 8,1 %, frais {fee_rate*100:.2f} %, exp+prépa 14,5), achat = coût rendu 'buy'")
+print(f"\n2) Contribution par commande livrée (TTC→net TDFN 2,1 %, frais {fee_rate*100:.2f} %, exp+prépa 14,5), achat = coût rendu 'buy'")
 rows = []
 for price, buy in [(299, 188), (285, 188), (275, 188), (270, 188), (249, 188), (299, 160), (275, 160), (299, 220), (275, 220)]:
     cb, ca = contrib(price, buy, ads_cmd=30)
-    rows.append(dict(prix_ttc=price, buy_rendu=buy, net_ht=round(price / 1.081, 1), frais_paiement=round(price * fee_rate, 1), contrib_avant_pub=round(cb, 1), contrib_apres_pub_30=round(ca, 1)))
+    rows.append(dict(prix_ttc=price, buy_rendu=buy, net_ht=round(price * (1 - 0.021), 1), frais_paiement=round(price * fee_rate, 1), contrib_avant_pub=round(cb, 1), contrib_apres_pub_30=round(ca, 1)))
 df = pd.DataFrame(rows); print(df.to_string(index=False)); df.to_csv(T / "fin_08_contribution_par_prix.csv", index=False)
 print("  Lecture : au prix de 299 avec buy 188 : contribution avant pub %.1f CHF ; la pub plafonnée à 30–35 CHF consomme l'essentiel ; à 275 elle devient ≈ %.1f." % (contrib(299, 188)[0], contrib(275, 188)[0]))
 

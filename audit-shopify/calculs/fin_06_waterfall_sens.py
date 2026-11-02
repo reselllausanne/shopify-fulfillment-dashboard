@@ -38,9 +38,11 @@ print(f"− logiciels {fixed:,.0f} = {caa-fixed:,.0f} ; − rémunération hyp. 
 
 # ---- sensibilités (résultat après acquisition avant rémunération)
 base = caa - fixed
-rows = [("Base (assujetti 8,1 %, TVA import non récupérable)", base)]
+rows = [("Base (TDFN 2,1 % du CA TTC conservé, pas de TVA déductible)", base)]
 # B : TVA import récupérable sur COGS (coût TTC incluant 8,1 %)
-rows.append(("B. TVA d'importation sur achats récupérable (COGS/1,081) — À PROUVER (documents douane)", base + cogs_total * (0.081 / 1.081)))
+eff_vat = o[o.id.isin(ids)].tax_cur.sum()  # TVA 8,1 % incluse dans les lignes API
+rows.append(("B. Comparaison : méthode effective (TVA 8,1 % due moins TVA import déductible sur coûts) au lieu du TDFN 2,1 %", base + tot("tva") - eff_vat + cogs_total * (0.081 / 1.081)))
+rows.append(("B2. Comparaison : TVA 8,1 % due sans déduction (ancienne hypothèse, TDFN écartée)", base + tot("tva") - eff_vat))
 # C : non assujetti / TVA non due
 # (ancien scénario C « TVA non due » supprimé : l'entité est assujettie, CGV + IDE/TVA CHE-309.864.712)
 rows.append(("D. Frais paiement autres passerelles +1 pt", base - (p.revenu_conserve_ttc.sum() * 0.5 * 0.01)))

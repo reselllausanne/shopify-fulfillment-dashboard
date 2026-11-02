@@ -18,6 +18,8 @@ import json, re, pandas as pd, numpy as np, pathlib
 R = pathlib.Path(__file__).resolve().parents[1]
 D, T = R / "donnees_brutes", R / "tableaux"
 HYP = dict(
+    tva_mode="TDFN",                  # DÉCLARATION UTILISATEUR 2026-11-02 : TVA payée au taux forfaitaire (TDFN) de 2,1 % du CA TTC ; à confirmer par décomptes AFC/relevé bancaire
+    tdfn_taux=0.021,
     tva_taux=0.081,                     # observé sur 100 % des commandes depuis 2024-01 (taxes incluses)
     cout_vat_recuperable_part=0.0,      # part de TVA d'importation sur achats récupérable (0 = prudent ; max ≈ 0.081/1.081)
     frais_twint_pct=0.013, frais_paypal_pct=0.034, frais_paypal_fixe=0.55, frais_powerpay_pct=0.030, frais_cembra_pct=0.030,
@@ -52,7 +54,9 @@ o = o.merge(agg, left_on="id", right_index=True, how="left").fillna({"cogs_all":
 # --- revenu / refunds / TVA
 o["ventes_brutes_ttc"] = o.total_cur + o.refunded
 o["revenu_conserve_ttc"] = o.total_cur
-o["tva"] = o.tax_cur
+import os
+VAT_MODE = os.environ.get("VAT_MODE", HYP["tva_mode"])  # TDFN (défaut) ou EFFECTIF (8,1 % des lignes API)
+o["tva"] = o.tax_cur if VAT_MODE == "EFFECTIF" else o.revenu_conserve_ttc.clip(lower=0) * HYP["tdfn_taux"]
 o["revenu_net_ht"] = o.revenu_conserve_ttc - o.tva
 full_ref = (o.fin == "REFUNDED") | (o.total_cur <= 0.5)
 frac_kept = np.where(o.ventes_brutes_ttc > 0, o.total_cur / o.ventes_brutes_ttc, 1.0)

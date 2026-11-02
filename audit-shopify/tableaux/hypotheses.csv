@@ -1,4 +1,6 @@
 parametre,valeur
+tva_mode,TDFN
+tdfn_taux,0.021
 tva_taux,0.081
 cout_vat_recuperable_part,0.0
 frais_twint_pct,0.013

@@ -23,7 +23,7 @@ PARAMS = [  # key, label, unit, values(P,C,F,R), source/confiance
     ("vol", "Facteur de volume vs niveau 2026", "x", [0.85, 1.00, 1.15, 0.85], "Hypothèse. Redressement = pub réduite → moins de volume"),
     ("aov", "Panier brut TTC moyen", "CHF", [cal["aov"], cal["aov"], cal["aov"], 245.0], "Fait 2026 (fin_05). Redressement : +3 % via prix/mix (hypothèse)"),
     ("refund", "Taux de remboursement (part du brut)", "%", [0.095, cal["refund"], 0.070, 0.065], "Fait 2026 = 8,4 %. Redressement : délais/promesse (hypothèse)"),
-    ("vat", "TVA effective (part du TTC conservé)", "%", [cal["vat"]] * 4, "Fait fin_05 (lignes API). Méthode de décompte réelle inconnue"),
+    ("vat", "TVA TDFN (part du TTC conservé)", "%", [0.021] * 4, "DÉCLARATION UTILISATEUR 2026-11-02 : forfait 2,1 % — à prouver par décomptes AFC/banque"),
     ("cogs", "Coût d'achat (part du net HT conservé)", "%", [0.760, cal["cogs"], 0.735, cal["cogs"]], "Fait 2026 (dont ≈10 % estimé non apparié). TVA import non récupérée"),
     ("fees", "Frais de paiement (part du TTC conservé)", "%", [0.030, cal["fees"], 0.027, cal["fees"]], "Fait partiel (SP observés, autres estimés)"),
     ("exp", "Expédition + préparation par commande", "CHF", [15.0, cal["exp"], 13.0, 13.0], "Forfaits 6,5+8,0 du dépôt ; coûts réels Poste/main d'œuvre non fournis"),
@@ -34,8 +34,10 @@ PARAMS = [  # key, label, unit, values(P,C,F,R), source/confiance
     ("owner", "Rémunération du dirigeant par mois", "CHF", [6000.0] * 4, "HYPOTHÈSE (non fournie)"),
 ]
 KEYS = [k for k, *_ in PARAMS]
-VAT_Q3_2026 = 14950.0  # TVA estimée T3-2026 (jul-sep) à payer ~30 nov. Estimation depuis API ; décompte réel inconnu
-VAT_OCT_2026 = 6371.0  # tva oct-26 (fin_05)
+m_ = pd.read_csv(T / "fin_05_pnl_mensuel.csv"); m_ = m_[m_.mois.between("2026-07", "2026-10")]
+VAT_JUL_OCT = float(m_.tva.sum())  # TDFN 2,1 % déclaré par le dirigeant ; jul-oct 2026 faisant partie du semestre S2 (jul-déc), décompte dû ~28 fév 2027
+VAT_Q3_2026 = 0.0  # plus de paiement TVA trimestriel dans les 13 semaines (TDFN : décomptes semestriels)
+VAT_OCT_2026 = VAT_JUL_OCT
 OPENING_CASH = 0.0  # placeholder
 
 def engine(P, seas=SEAS, opening=OPENING_CASH, galaxus_support=0.0):
@@ -47,8 +49,9 @@ def engine(P, seas=SEAS, opening=OPENING_CASH, galaxus_support=0.0):
         rows.append(dict(mois=MONTHS[i].strftime("%Y-%m"), commandes=o, brut=g, rembours=rf, conserve=rt, tva=v, net_ht=net, cogs=cg, frais=fe, exp=ex, litiges=di,
                          contrib_avant_pub=cb, pub=ad, fixes=P["soft"] + P["fixother"], resultat_avant_remun=res, remun=P["owner"], resultat_apres_remun=res - P["owner"]))
     d = pd.DataFrame(rows)
-    vat_paid = np.zeros(12); vat_paid[0] = VAT_Q3_2026
-    vat_paid[3] = VAT_OCT_2026 + d.tva[0] + d.tva[1]; vat_paid[6] = d.tva[2:5].sum(); vat_paid[9] = d.tva[5:8].sum()
+    vat_paid = np.zeros(12)
+    vat_paid[3] = VAT_JUL_OCT + d.tva[0] + d.tva[1]  # fév-27 : S2-2026
+    vat_paid[9] = d.tva[2:8].sum()  # août-27 : S1-2027 (jan-juin)
     d["tva_payee"] = vat_paid
     d["flux"] = d.resultat_apres_remun + d.tva - d.tva_payee + galaxus_support
     d["tresorerie_fin"] = opening + d.flux.cumsum()
@@ -118,8 +121,8 @@ for r, (k, lab, unit, vals, src) in enumerate(PARAMS, 7):
     H.cell(r, 7, f"=INDEX(C{r}:F{r},1,$B$2)"); H.cell(r, 8, src)
     if unit == "%": H.cell(r, 7).number_format = "0.0%"
 r0 = 7 + len(PARAMS) + 1
-H.cell(r0, 1, "TVA T3-2026 à payer (≈ 30 nov. 2026) — estimation API").font = bold; H.cell(r0, 7, VAT_Q3_2026).fill = inp
-H.cell(r0 + 1, 1, "TVA octobre 2026 déjà due (fait fin_05)"); H.cell(r0 + 1, 7, VAT_OCT_2026).fill = inp
+H.cell(r0, 1, "(inutilisé) TVA trimestrielle — remplacée par TDFN semestriel").font = bold; H.cell(r0, 7, VAT_Q3_2026).fill = inp
+H.cell(r0 + 1, 1, "TVA TDFN 2,1 % jul-oct 2026 (S2-2026), payable ~28 fév 2027 — calculée sur le CA TTC conservé (fin_05)"); H.cell(r0 + 1, 7, VAT_OCT_2026).fill = inp
 H.cell(r0 + 2, 1, "Part encaissée la même semaine (reste = sem. suivante) — payout SP ≈ 4 j"); H.cell(r0 + 2, 7, 0.45).fill = inp
 H.cell(r0 + 3, 1, "Part des achats StockX payée la même semaine (délai 5 j par défaut du cron)"); H.cell(r0 + 3, 7, 0.29).fill = inp
 H.cell(r0 + 4, 1, "Soutien externe mensuel injecté (Galaxus/privé) CHF — 0 par défaut, aucune preuve de flux"); H.cell(r0 + 4, 7, 0.0).fill = inp
@@ -133,7 +136,7 @@ M.cell(3, 1, "Mois").font = bold
 for i, m in enumerate(MONTHS): M.cell(3, 2 + i, m.strftime("%Y-%m")).font = bold
 M.cell(3, 14, "Total").font = bold
 labels = ["Indice saisonnier (hyp.)", "Commandes", "Brut TTC", "Remboursements", "TTC conservé", "TVA", "Net HT", "Coût d'achat", "Frais paiement", "Expédition+prépa", "Litiges",
-          "Contribution avant pub", "Publicité", "Charges fixes", "Résultat avant rémunération", "Rémunération", "Résultat après rémunération", "TVA payée (trimestres, décalage 60 j)", "Soutien externe",
+          "Contribution avant pub", "Publicité", "Charges fixes", "Résultat avant rémunération", "Rémunération", "Résultat après rémunération", "TVA TDFN payée (semestres, décalage 60 j)", "Soutien externe",
           "Flux net trésorerie", "Trésorerie fin de mois"]
 for r, lab in enumerate(labels, 4): M.cell(r, 1, lab)
 for i in range(12):
@@ -143,7 +146,7 @@ for i in range(12):
     M[f(9)] = f"={f(8)}*{g('vat')}"; M[f(10)] = f"={f(8)}-{f(9)}"; M[f(11)] = f"={f(10)}*{g('cogs')}"; M[f(12)] = f"={f(8)}*{g('fees')}"; M[f(13)] = f"={f(5)}*{g('exp')}"; M[f(14)] = f"={f(8)}*{g('disp')}"
     M[f(15)] = f"={f(10)}-{f(11)}-{f(12)}-{f(13)}-{f(14)}"; M[f(16)] = f"={f(5)}*{g('ads')}"; M[f(17)] = f"={g('soft')}+{g('fixother')}"; M[f(18)] = f"={f(15)}-{f(16)}-{f(17)}"
     M[f(19)] = f"={g('owner')}"; M[f(20)] = f"={f(18)}-{f(19)}"
-    vp = {0: f"=Hypotheses!$G${R_VAT3}", 3: f"=Hypotheses!$G${R_VATO}+B9+C9", 6: "=SUM(D9:F9)", 9: "=SUM(G9:I9)"}
+    vp = {3: f"=Hypotheses!$G${R_VATO}+B9+C9", 9: "=SUM(D9:I9)"}
     M[f(21)] = vp.get(i, 0); M[f(22)] = f"=Hypotheses!$G${R_SUP}"
     M[f(23)] = f"={f(20)}+{f(9)}-{f(21)}+{f(22)}"
     M[f(24)] = (f"=Hypotheses!$B$3+{f(23)}" if i == 0 else f"={L(1 + i)}24+{f(23)}")
@@ -194,7 +197,7 @@ dump(wb.create_sheet("Stress"), pd.DataFrame(S).round(0), "Stress tests autour d
 dump(wb.create_sheet("Seuils"), pd.DataFrame(rows), "Seuil de rentabilité (commandes/mois) selon pub/commande et rémunération — contribution Central", f"Contribution avant pub par commande = {cpo:.1f} CHF (net HT − coût − frais − exp/prépa − litiges).")
 N = wb.create_sheet("Notes"); notes = ["LIMITES", "1. Aucune donnée bancaire (BankTransaction/BankBalanceSnapshot vides) : trésorerie d'ouverture = 0 par défaut ; résultats = variation de trésorerie, pas niveau réel.",
     "2. Frais TWINT/PayPal/PowerPay/Cembra non observés (taux contractuels supposés).", "3. Expédition/préparation = forfaits du dépôt (6,5 + 8,0), pas les factures Poste/main d'œuvre.",
-    "4. Rémunération 6 000 CHF/mois = hypothèse. Autres charges fixes = 0 (manquantes).", "5. TVA : taux effectif des lignes API ; méthode de décompte (effective/TDFN) inconnue ; TVA import non récupérée.",
+    "4. Rémunération 6 000 CHF/mois = hypothèse. Autres charges fixes = 0 (manquantes).", "5. TVA : TDFN 2,1 % du CA TTC (déclaration dirigeant, non vérifiée) ; aucune TVA d'import déductible ; décomptes semestriels.",
     "6. Galaxus exclu : aucune donnée de paiement/commission ; ne pas supposer qu'il finance Shopify.", "7. Saisonnalité = hypothèse issue des commandes 2024-2026 (nov ×1,4-2,0 ; déc ×2,7-2,9 vs octobre).",
     "8. Le scénario Redressement est un test de levier, pas une prévision prouvée : exige les preuves de la feuille 'Seuils' et des tests décrits dans le rapport."]
 for i, t in enumerate(notes, 1): N.cell(i, 1, t)
