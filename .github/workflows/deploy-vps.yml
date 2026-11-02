@@ -50,7 +50,8 @@ jobs:
   deploy:
     needs: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # next build on VPS can exceed 30m under load; keep headroom above command_timeout
+    timeout-minutes: 75
     steps:
       - name: Resolve target SHA
         id: target
@@ -88,7 +89,9 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          command_timeout: 40m
+          # Was 40m: PR #341 next build hit Run Command Timeout mid-compile; #342 then
+          # refused on deploy flock. Allow slow builds + lock wait in deploy script.
+          command_timeout: 60m
           script: |
             set -euo pipefail
             cd /opt/resell

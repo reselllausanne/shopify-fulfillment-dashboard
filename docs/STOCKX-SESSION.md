@@ -73,6 +73,19 @@ autoLink health watch (email once after 2 consecutive hourly autoLink fails/time
 
 Postmark recipient for ops digests (cancel / refund / delayed / missing AWB / not-purchased / unlinked), auth-broken alerts, and autoLink ≥2h fail watch. Falls back to `POSTMARK_FROM_EMAIL` if unset. Requires `POSTMARK_SERVER_TOKEN` + `POSTMARK_FROM_EMAIL` on the web container.
 
+### Shopify customer delay / cancel-rebuy (`STOCKX_CUSTOMER_DELAY_MAIL`)
+
+Wired into `opsAlertsOnly` / AWB opsAlerts path (`lib/stockxDelayRebuy`). Default **OFF**.
+
+| Env | Meaning |
+|-----|---------|
+| `STOCKX_CUSTOMER_DELAY_MAIL=1` | Enable: fresh Shopify **DELAYED** → customer delay mail; fresh **CANCELLED** → optional auto-rebuy; relink after cancel → cancel-rebuy apology + new ETA |
+| `STOCKX_CUSTOMER_DELAY_MAIL_TO=` | Force recipient (TEST). Never hits real customer when set |
+| `STOCKX_AUTO_REBUY_ON_CANCEL=1` | Place Order on fresh cancel when KickDB buyable (default OFF — Turnstile/cost) |
+| `STOCKX_CUSTOMER_DELAY_MAIL_MAX=5` | Cap per opsAlerts run |
+
+Dedup: `StockXStatusEvent` keys `CUSTOMER_DELAY_SUPPLIER_CHANGE` / `CUSTOMER_CANCEL_REBUY`. Baseline seed never customer-mails.
+
 **Avoid** crontab `--force-refresh` every few hours while Auth0 is healthy — thrashing cold Chromium elevates Turnstile to interactive checkbox.
 
 ## One bootstrap when CF shows “Un instant…”

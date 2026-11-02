@@ -66,6 +66,19 @@ bt=oa.get("byType") or {}
 if bt:
   bits.append("byType="+",".join(f"{k}:{v}" for k,v in bt.items() if v)
 )
+cm=oa.get("customerMails") or {}
+if cm:
+  bits.append(
+    "custMail=en:%s sent:%s skip:%s rebuy:%s/%s err:%s"
+    % (
+      cm.get("enabled"),
+      cm.get("delaySent"),
+      cm.get("delaySkipped"),
+      cm.get("cancelRebuyBought"),
+      cm.get("cancelRebuyAttempted"),
+      cm.get("errors"),
+    )
+  )
 print(" ".join(bits))
 PY
 )
