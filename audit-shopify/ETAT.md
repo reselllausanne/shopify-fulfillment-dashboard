@@ -63,3 +63,12 @@
 - Trésorerie d'ouverture = 0 (aucune donnée bancaire) : les sorties sont des variations, pas des niveaux.
 | 21:30 | Sous-agent [Benchmark repositionnement SEO UGC Europe](530b59b3-9205-4545-af9f-e3c1452455ae) terminé : `analyses/bm_01..05` | Contrôlé : ROAS global 6,2 (627 k / 100,9 k) et équilibre 7,6 (28,8/217,7 = 13,2 %) recalculés = OK. Faillite SneakerHype B.V. (20-05-2025, F.09/25/180) vérifiée via faillissementsdossier.nl : rapport du curateur = modèle « achat sur demande », causes : retours non négociés à l'achat → stock, sorties plus grandes → prix en baisse, besoin de volume ; Restocks failli fin 2023 (RTL). Non vérifiés : taux de douane DE, valeurs fiscales, tarifs créateurs (marqués partiels par le sous-agent). |
 | 21:38 | Sous-agent [Audit Ads Merchant feed tracking](e2db25c1-324c-4ae6-b369-5942f8a9944e) terminé : `analyses/ads_01..04` | Contrôlé : cohérent avec fin_00 (28,8 CHF/cmd avant pub ; tROAS d'équilibre 6,7-7,9 vs mon 7,6 ; CAC global 35,0). Ventes sous coût : 102/125 variantes soldées (−2,9 k si tout vendu : enjeu faible, mais promesse commerciale à corriger). Mes extractions DB castent déjà les dates en `::text` (pas de décalage −1 j). À trancher : récupérabilité TVA import (plafond pub ~10 k vs ~15 k/mois). |
+
+## Journal (2026-11-02 nuit)
+| Heure | Action | Résultat |
+|---|---|---|
+| 22:30 | Message dirigeant : TDFN 2,1 %, NER 10 %, achats après vente, soldes = retours, « accès banques » | TDFN appliquée partout (`fin_05..08`, modèle) : résultat avant rémunération +11,9 k (au lieu de −21,2 k) ; erratum sur 10 analyses sous-agents |
+| 23:00 | Backfill coûts via historique StockX (lecture seule, 6 004 achats) | 25 lignes sur 231 récupérées (`fin_11_backfill_proposition.csv`), **aucune écriture en base** |
+| 23:30 | Banque/UBS/cartes | **Aucun accès** (tables Bank* vides, pas d'intégration, pas d'export) : voir `donnees_manquantes.md` |
+| 23:45 | Rapport final, strat_01, données manquantes, registre des preuves, COUVERTURE mise à jour (177 IDs : 88 réalisés, 77 partiels, 3 non traités, 1 bloqué) | Poussé sur `feat/audit-shopify-reset` |
+| — | Relecture indépendante (`a1e1f171…`) | En cours → `analyses/relecture_independante.md` |

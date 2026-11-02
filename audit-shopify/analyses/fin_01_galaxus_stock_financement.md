@@ -70,3 +70,13 @@ Options (sources et limites) :
 4. **Revenue-based financing / avances sur ventes** (Shopify Capital, etc.) : disponibilité en Suisse non vérifiée ; coût effectif à comparer (**H**).
 5. **Business angel / capital** : impossible dans une raison individuelle ; exigerait une Sàrl/SA (avis fiduciaire/juriste requis, hors mandat). Illustration non recommandée : lever 100 k CHF à 500 k CHF de pré-money = 16,7 % de dilution ; sans trajectoire de profit prouvée la valorisation n'est pas défendable.
 **R** : pas de levée de fonds ni de dette avant (a) comptabilité et relevés reconstitués, (b) séparation Galaxus/Shopify, (c) contribution Shopify après pub ≥ 20 CHF/commande sur 8 semaines, (d) décision sur la structure juridique. Documents bancaires attendus : relevés UBS 24 mois, cartes, PayPal/TWINT/PowerPay/Cembra, décomptes TVA TDFN, factures Poste.
+
+## 6. Sourcing comparé (S5.6) — partiel
+| Mode | Preuve interne (F) | Prix/marge | Délai | Risque/garantie | Verdict |
+|---|---|---|---|---|---|
+| Achat StockX après commande (88 % du CA Shopify) | 2 340 lignes 2026 ; coût = enchère + ≈ 28 CHF ; marge affichée 31,1 % | contribution 40,3 CHF/cmd après TDFN | 10-13 j.o. médian (cron + attente) ; 179 achats annulés sur 6 004 (3 %) | authenticité StockX ; annulations avant expédition 40 % des remboursements ; retours non négociés à l'achat (cf. SneakerHype) | cœur actuel, à réparer (délais) |
+| Fournisseurs alternatifs (REI, BWZ, WEL, TUS, XNT, VEN… via `SupplierVariant`) | Utilisés côté Galaxus : ≈ 39 k de CA, coût 23,6 k, marge ≈ 40 % | marge plus haute, volumes faibles | non mesuré | garanties/authenticité non auditées ; comparabilité Shopify non testée | à tester sur 1-2 familles (non fait) |
+| Réseau de revendeurs | non mesuré | — | — | — | non traité (aucune donnée) |
+| Stock propre ciblé | 692 lignes (50 k TTC), coût déclaré | contribution hoodie ≈ 67, tee ≈ 16 | 2-5 j.o. attendus | stock immobilisé, rotation inconnue | pilote ≤ 4 k (cf. §3) |
+| Hybride (stock sur 20 modèles + StockX sinon) | 20 modèles = 13 % des unités | — | — | — | option recommandée, limitée |
+Limites : pas de comparaison de prix concurrents par référence exacte (S5.3 non traité : aucun GTIN/SKU rapproché ni scraping concurrent), pas de devis fournisseurs, pas de données de dépôt-vente (S6.6).
