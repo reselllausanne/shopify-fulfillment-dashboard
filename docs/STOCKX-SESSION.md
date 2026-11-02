@@ -50,7 +50,15 @@ Docker Compose service `stockx-warm` runs this continuously. Hourly cron then at
 
 ## Hourly cron
 
-`scripts/stockx-awb-cron.sh` → `POST /api/admin/stockx-awb-sync` (`refreshOnly`, then AWB).
+`scripts/stockx-awb-cron.sh` → `POST /api/admin/stockx-awb-sync` (`refreshOnly` → `autoLinkOnly` → `awbOnly`).
+
+Ops digest also runs on `autoLinkOnly` + `awbOnly` success. Dedicated lightweight path (survives autoLink hang):
+
+`scripts/stockx-ops-alerts-cron.sh` → `{"opsAlertsOnly":true}` every ~20m (`CRON_TZ=Europe/Zurich`).
+
+### Operator email (`STOCKX_ALERT_EMAIL`)
+
+Postmark recipient for ops digests (cancel / refund / delayed / missing AWB / not-purchased / unlinked) and auth-broken alerts. Falls back to `POSTMARK_FROM_EMAIL` if unset. Requires `POSTMARK_SERVER_TOKEN` + `POSTMARK_FROM_EMAIL` on the web container.
 
 **Avoid** crontab `--force-refresh` every few hours while Auth0 is healthy — thrashing cold Chromium elevates Turnstile to interactive checkbox.
 

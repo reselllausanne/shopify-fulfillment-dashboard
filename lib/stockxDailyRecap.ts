@@ -149,27 +149,50 @@ export async function buildStockxDailyRecap(hours = 24): Promise<StockxDailyReca
       },
       take: 25,
     }),
-    prisma.orderMatch.count({
+    prisma.orderMatch.findMany({
       where: {
         supplierSource: "STOCKX",
         stockxPurchaseDate: { gte: recentFloor, lt: olderThan48h },
-        stockxAwb: null,
+        OR: [{ stockxAwb: null }, { stockxAwb: "" }],
         stockxStatus: { notIn: TERMINAL_STATUSES },
       },
+      select: {
+        shopifyOrderName: true,
+        stockxOrderNumber: true,
+        stockxStatus: true,
+        stockxPurchaseDate: true,
+      },
+      take: 25,
     }),
-    prisma.galaxusStockxMatch.count({
+    prisma.galaxusStockxMatch.findMany({
       where: {
         stockxPurchaseDate: { gte: recentFloor, lt: olderThan48h },
-        stockxAwb: null,
+        OR: [{ stockxAwb: null }, { stockxAwb: "" }],
         stockxStatus: { notIn: TERMINAL_STATUSES },
       },
+      select: {
+        galaxusOrderRef: true,
+        galaxusOrderId: true,
+        stockxOrderNumber: true,
+        stockxStatus: true,
+        stockxPurchaseDate: true,
+      },
+      take: 25,
     }),
-    prisma.decathlonStockxMatch.count({
+    prisma.decathlonStockxMatch.findMany({
       where: {
         stockxPurchaseDate: { gte: recentFloor, lt: olderThan48h },
-        stockxAwb: null,
+        OR: [{ stockxAwb: null }, { stockxAwb: "" }],
         stockxStatus: { notIn: TERMINAL_STATUSES },
       },
+      select: {
+        decathlonOrderId: true,
+        stockxOrderNumber: true,
+        stockxStatus: true,
+        stockxPurchaseDate: true,
+        order: { select: { orderId: true } },
+      },
+      take: 25,
     }),
   ]);
 
@@ -216,13 +239,36 @@ export async function buildStockxDailyRecap(hours = 24): Promise<StockxDailyReca
       eta: row.stockxLatestEstimatedDelivery,
     })),
   ];
+  const missingAwbItems: RecapItem[] = [
+    ...missingShopify.map((row) => ({
+      channel: "Shopify" as const,
+      order: row.shopifyOrderName,
+      stockxOrder: row.stockxOrderNumber,
+      status: row.stockxStatus || "no AWB",
+      eta: row.stockxPurchaseDate,
+    })),
+    ...missingGalaxus.map((row) => ({
+      channel: "Galaxus" as const,
+      order: row.galaxusOrderRef || row.galaxusOrderId,
+      stockxOrder: row.stockxOrderNumber,
+      status: row.stockxStatus || "no AWB",
+      eta: row.stockxPurchaseDate,
+    })),
+    ...missingDecathlon.map((row) => ({
+      channel: "Decathlon" as const,
+      order: row.order?.orderId || row.decathlonOrderId,
+      stockxOrder: row.stockxOrderNumber,
+      status: row.stockxStatus || "no AWB",
+      eta: row.stockxPurchaseDate,
+    })),
+  ];
 
   const stats = {
     newLinks: newShopify + newGalaxus + newDecathlon,
     updatedLinks: updatedShopify + updatedGalaxus + updatedDecathlon,
     cancellations: cancellations.length,
     overdue: overdue.length,
-    missingAwb: missingShopify + missingGalaxus + missingDecathlon,
+    missingAwb: missingAwbItems.length,
   };
   const attention = stats.cancellations + stats.overdue + stats.missingAwb;
   const subject = `[Resell] StockX recap — ${stats.newLinks} liens, ${attention} alertes`;
@@ -241,9 +287,13 @@ export async function buildStockxDailyRecap(hours = 24): Promise<StockxDailyReca
     "ALERTES",
     `Annulations/remboursements: ${stats.cancellations}`,
     `ETA dépassées actives: ${stats.overdue}`,
-    `AWB absent après 48h, achats des 30 derniers jours: ${stats.missingAwb} (Shopify ${missingShopify}, Galaxus ${missingGalaxus}, Decathlon ${missingDecathlon})`,
+    `AWB absent après 48h, achats des 30 derniers jours: ${stats.missingAwb} (Shopify ${missingShopify.length}, Galaxus ${missingGalaxus.length}, Decathlon ${missingDecathlon.length})`,
     ...cancellations.map((item) => itemLine("ANNULE", item)),
     ...overdue.map((item) => itemLine("RETARD", item)),
+    ...missingAwbItems.map((item) => {
+      const bought = item.eta ? ` — achat ${formatZurich(item.eta)}` : "";
+      return `AWB_MANQUANT ${item.channel} ${item.order} — StockX ${item.stockxOrder} — ${item.status}${bought}`;
+    }),
     "",
     `Réparer connexion téléphone: https://solution.resell-lausanne.ch/admin/stockx-login`,
   ].join("\n");

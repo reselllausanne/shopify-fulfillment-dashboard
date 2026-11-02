@@ -116,7 +116,22 @@ LINK_RESP="$(cat "$LINK_BODY_FILE" 2>/dev/null || true)"
 if [[ "$LINK_CURL" -ne 0 || -z "$LINK_RESP" ]]; then
   LINK_RESP="(empty — curl=$LINK_CURL http=$LINK_HTTP; no stale body)"
 fi
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] autolink http=$LINK_HTTP curl=$LINK_CURL secs=$LINK_SECS resp=${LINK_RESP:0:600}" | tee -a "$LOG_FILE"
+LINK_OPS_NOTE=""
+if [[ -n "$(cat "$LINK_BODY_FILE" 2>/dev/null || true)" ]]; then
+  LINK_OPS_NOTE=$(python3 - "$LINK_BODY_FILE" <<'PY' 2>/dev/null || true
+import json,sys
+d=json.load(open(sys.argv[1]))
+oa=d.get("opsAlerts") or {}
+if not oa: raise SystemExit(0)
+bits=["opsAlerts","new="+str(oa.get("newAlerts")),"emailed="+str(oa.get("emailed"))]
+bt=oa.get("byType") or {}
+if bt:
+  bits.append("byType="+",".join(f"{k}:{v}" for k,v in bt.items() if v))
+print(" ".join(bits))
+PY
+)
+fi
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] autolink http=$LINK_HTTP curl=$LINK_CURL secs=$LINK_SECS ${LINK_OPS_NOTE} resp=${LINK_RESP:0:600}" | tee -a "$LOG_FILE"
 
 # 2) AWB / status only — no remint, no autoLink redo (those already ran above).
 #    Server hard-caps ~600s so curl --max-time 780 always gets a fresh body.
@@ -166,6 +181,13 @@ if d.get("abortedReason") and d.get("abortedReason")!="budget_exhausted":
   bits.append("abort="+str(d.get("abortedReason"))[:80])
 bits.append("updated="+str(d.get("updated")))
 bits.append("elapsedMs="+str(d.get("elapsedMs")))
+oa=d.get("opsAlerts") or {}
+if oa:
+  bits.append("opsAlerts_new="+str(oa.get("newAlerts")))
+  bits.append("opsAlerts_emailed="+str(oa.get("emailed")))
+  bt=oa.get("byType") or {}
+  if bt:
+    bits.append("opsByType="+",".join(f"{k}:{v}" for k,v in bt.items() if v))
 print(" ".join(bits))
 PY
 )

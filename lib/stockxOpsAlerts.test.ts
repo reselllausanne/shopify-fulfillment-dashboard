@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectUnlinkedGalaxusOrders,
   detectUnlinkedShopifyOrders,
+  isMissingAwbCandidate,
   isShopifyLineStockxIneligibleForAlert,
   type ShopifyUnlinkedLineInput,
 } from "@/lib/stockxOpsAlerts";
@@ -171,5 +172,55 @@ describe("detectUnlinkedShopifyOrders", () => {
     });
     const res = detectUnlinkedShopifyOrders({ ...base, candidateLines: [tooNew, tooOld] });
     expect(res).toHaveLength(0);
+  });
+});
+
+describe("isMissingAwbCandidate", () => {
+  const now = Date.UTC(2026, 10, 2, 12);
+
+  it("flags linked buy >48h old with no AWB and active status", () => {
+    expect(
+      isMissingAwbCandidate({
+        stockxAwb: null,
+        stockxStatus: "AUTHENTICATING",
+        purchaseAt: new Date(now - 3 * DAY),
+        now,
+      })
+    ).toBe(true);
+  });
+
+  it("rejects when AWB present, terminal, too new, or too old", () => {
+    expect(
+      isMissingAwbCandidate({
+        stockxAwb: "AWB123",
+        stockxStatus: "AUTHENTICATING",
+        purchaseAt: new Date(now - 3 * DAY),
+        now,
+      })
+    ).toBe(false);
+    expect(
+      isMissingAwbCandidate({
+        stockxAwb: null,
+        stockxStatus: "CANCELLED",
+        purchaseAt: new Date(now - 3 * DAY),
+        now,
+      })
+    ).toBe(false);
+    expect(
+      isMissingAwbCandidate({
+        stockxAwb: null,
+        stockxStatus: "AUTHENTICATING",
+        purchaseAt: new Date(now - 12 * 60 * 60 * 1000),
+        now,
+      })
+    ).toBe(false);
+    expect(
+      isMissingAwbCandidate({
+        stockxAwb: null,
+        stockxStatus: "AUTHENTICATING",
+        purchaseAt: new Date(now - 45 * DAY),
+        now,
+      })
+    ).toBe(false);
   });
 });
