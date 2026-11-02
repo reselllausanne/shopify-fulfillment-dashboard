@@ -514,7 +514,8 @@ function isShoeCapInScope(input: GalaxusAssortmentInput): boolean {
 /** Suppliers fully delisted from Galaxus. GALAXUS_DISABLED_SUPPLIERS overrides (comma list, "" = none). */
 export function galaxusDisabledSuppliers(): Set<string> {
   const raw = process.env.GALAXUS_DISABLED_SUPPLIERS;
-  const list = raw === undefined ? "bwz" : raw;
+  // rei: whole catalog off (2026-11-02). Jetson Orin Nano stays via assortment exception.
+  const list = raw === undefined ? "bwz,rei" : raw;
   return new Set(
     list
       .split(",")
