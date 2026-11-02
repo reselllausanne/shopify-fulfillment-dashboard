@@ -129,9 +129,9 @@ export async function runStockxAutoEasyAndEmailRest(options?: {
     }
   }
 
-  // Skip email for pure skips that ops don't need (pickup / physical / already matched)
+  // Skip email for pure skips that ops don't need (pickup / physical / already matched / non-StockX)
   const emailable = needsHuman.filter(
-    (n) => !["pickup", "physical_stock", "already_matched"].includes(n.reason)
+    (n) => !["pickup", "physical_stock", "already_matched", "non_stockx"].includes(n.reason)
   );
   // Dry-run: never email. Live: needs_human / bot_fail only — never success spam.
   const emailResult = dryRun

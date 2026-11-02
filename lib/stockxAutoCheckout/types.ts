@@ -46,6 +46,7 @@ export type StockxNeedsHumanReason =
   | "setup"
   | "margin"
   | "slug"
+  | "non_stockx"
   | "already_matched"
   | "physical_stock"
   | "pickup"
@@ -91,6 +92,7 @@ export const STOCKX_NEEDS_HUMAN_REASON_FR: Record<StockxNeedsHumanReason, string
   setup: "Setup / commande Shopify introuvable",
   margin: "Marge négative (vente < total StockX)",
   slug: "Slug StockX introuvable pour ce SKU",
+  non_stockx: "Produit non achetable sur StockX (merch / socks) — skip auto",
   already_matched: "Déjà matché (StockX lié)",
   physical_stock: "Stock physique magasin — skip auto",
   pickup: "Retrait magasin — skip auto",
