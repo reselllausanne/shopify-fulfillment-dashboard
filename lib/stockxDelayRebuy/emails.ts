@@ -40,37 +40,58 @@ function stepIcon(i: number, active: boolean): string {
   return STEP_ICONS[i]!.replace(/COLOR/g, color);
 }
 
+function summaryRow(label: string, value: string, last = false): string {
+  const border = last ? "none" : "1px solid #e6e6ea";
+  const pad = last ? "12px 0 2px 0" : "12px 0";
+  return `<tr>
+    <td style="padding:${pad};border-bottom:${border};font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;color:#6b7280;font-weight:400;vertical-align:middle;">${esc(label)}</td>
+    <td align="right" style="padding:${pad};border-bottom:${border};font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:18px;color:#111111;font-weight:600;vertical-align:middle;">${esc(value)}</td>
+  </tr>`;
+}
+
 /**
- * Local HTML mirror of Postmark normal-ship / express-ship (product card + hero).
- * Production send uses the same Postmark TemplateAlias; this is for preview / text fallback.
+ * Customer HTML for delay / cancel-rebuy.
+ * Visual system from normal-ship.html / express-ship.html (640px, beige canvas,
+ * tracker icons, #f6f6f8 summary, footer). Information placement follows the
+ * purchase-confirm hierarchy: greeting, one-line status, ETA band, product
+ * image in the summary, short body underneath. The apology is not painted
+ * over the product photo.
  */
 export function buildClientPreviewHtml(
   c: DelayRebuyCase,
   narrative: CustomerNarrative
 ): string {
   const activeIdx = activeStepIndexFromLabel(narrative.activeStepLabel);
-  const statusNote = narrative.bodyParagraphs.join(" ");
   const title = esc(c.productTitle.replace(/\s*[-–]\s*(EU\s*)?\d+(?:[.,]\d+)?$/i, "").trim());
   const imgSrc = (c.imageUrl || "").trim();
   const img = imgSrc
-    ? `<img class="prod-img" src="${esc(imgSrc)}" width="160" alt="${title}" style="border-radius:18px;height:auto;display:block;" />`
+    ? `<td width="200" class="stack" style="width:200px;vertical-align:top;padding-right:18px;">
+        <img class="prod-img" src="${esc(imgSrc)}" width="200" alt="${title}" style="width:200px;max-width:200px;height:auto;border-radius:8px;background:#ffffff;border:1px solid #e6e6ea;display:block;" />
+      </td>`
     : "";
-  const heroBg = imgSrc
-    ? `background:url('${esc(imgSrc)}') center/cover no-repeat;`
-    : "background:#0b0b0f;";
 
   const steps = STEPS.map((label, i) => {
     const on = i + 1 === activeIdx;
-    const cls = on ? "tracker-label-active" : "tracker-label-inactive";
     const color = on ? "#3ea8f4" : "#a0a0a0";
     const weight = on ? 700 : 400;
     return `<td align="center" width="25%" style="width:25%;vertical-align:top;">
       <img src="${stepIcon(i, on)}" alt="" width="40" style="margin:0 auto;display:block;" />
-      <div class="${cls}" style="font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:14px;padding:8px 4px 0 4px;color:${color};font-weight:${weight}">${esc(label)}</div>
+      <div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:14px;padding:8px 4px 0 4px;color:${color};font-weight:${weight}">${esc(label)}</div>
     </td>`;
   }).join("");
 
+  const body = narrative.bodyParagraphs
+    .map(
+      (p, i) =>
+        `<p style="margin:0 0 ${i === narrative.bodyParagraphs.length - 1 ? "0" : "12px"} 0;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:23px;color:#111111;">${esc(p)}</p>`
+    )
+    .join("");
+
   const year = String(new Date().getFullYear());
+  const support = (process.env.SUPPORT_EMAIL || process.env.POSTMARK_FROM_EMAIL || "").trim();
+  const helpLine = support
+    ? `<br/>Besoin d'aide ? <a href="mailto:${esc(support)}" style="color:#3ea8f4;text-decoration:underline;font-weight:700;">${esc(support)}</a>`
+    : "";
 
   return `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -82,19 +103,19 @@ export function buildClientPreviewHtml(
     .container{width:100%!important}
     .px{padding-left:16px!important;padding-right:16px!important}
     .stack{display:block!important;width:100%!important}
-    .prod-img{width:140px!important;max-width:140px!important}
-    .hero-h{height:290px!important}
+    .prod-img{width:180px!important;max-width:180px!important;margin:0 0 14px 0!important}
   }
 </style>
 </head>
 <body style="margin:0;padding:0;background:#eae8e3;">
+<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${esc(narrative.statusLine)} ${esc(narrative.etaLine)}</div>
 <center style="width:100%;background:#eae8e3;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#eae8e3;">
     <tr><td align="center" style="padding:22px 10px;">
       <table role="presentation" class="container" width="640" cellspacing="0" cellpadding="0" border="0" style="width:640px;max-width:640px;">
         <tr>
           <td class="px" style="padding:0 24px 10px 24px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:16px;color:#7b7b7b;">
-            Mise à jour automatique de ta commande.
+            Mise à jour de ta commande.
           </td>
         </tr>
         <tr>
@@ -102,7 +123,7 @@ export function buildClientPreviewHtml(
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
               <tr>
                 <td align="left" style="vertical-align:middle;">
-                  <a href="https://resell-lausanne.ch" style="font-family:Arial,Helvetica,sans-serif;font-size:30px;line-height:34px;color:#111111;font-weight:800;text-decoration:none;">Resell-Lausanne</a>
+                  <a href="https://www.resell-lausanne.ch" style="font-family:Arial,Helvetica,sans-serif;font-size:28px;line-height:32px;color:#111111;font-weight:800;text-decoration:none;">Resell-Lausanne</a>
                 </td>
                 <td align="right" style="vertical-align:middle;">
                   <span style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:18px;color:#6b7280;">
@@ -114,82 +135,85 @@ export function buildClientPreviewHtml(
           </td>
         </tr>
         <tr>
-          <td style="background:#d4d1c7;border-radius:18px;overflow:hidden;">
-            <div class="hero-h" style="${heroBg}width:100%;height:320px;">
-              <table role="presentation" width="100%" height="320" cellspacing="0" cellpadding="0" border="0" style="height:320px;">
-                <tr>
-                  <td style="background:rgba(0,0,0,.70);padding:38px 28px 28px 28px;vertical-align:top;">
-                    <div style="font-family:Arial,Helvetica,sans-serif;font-size:40px;line-height:44px;font-weight:800;color:#ffffff;">${esc(narrative.headline)}</div>
-                    <div style="height:8px;"></div>
-                    <div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:22px;color:#ffffff;font-weight:700;">Arrivée estimée:</div>
-                    <div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:22px;color:#ffffff;font-weight:400;">${esc(narrative.etaLine)}</div>
-                    <div style="height:12px;"></div>
-                    <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:23px;color:#d4d1c7;">${esc(statusNote)}</div>
-                  </td>
-                </tr>
-              </table>
-            </div>
+          <td style="background:#ffffff;border-radius:18px 18px 0 0;padding:28px 28px 8px 28px;">
+            <div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:22px;color:#111111;">${esc(narrative.greeting)}</div>
+            <div style="height:14px;line-height:14px;font-size:14px;">&nbsp;</div>
+            <div style="font-family:Arial,Helvetica,sans-serif;font-size:28px;line-height:34px;font-weight:800;color:#111111;">${esc(narrative.headline)}</div>
+            <div style="height:8px;line-height:8px;font-size:8px;">&nbsp;</div>
+            <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:22px;color:#374151;">${esc(narrative.statusLine)}</div>
           </td>
         </tr>
         <tr>
-          <td style="background:#ffffff;padding:26px 16px 14px 16px;border-top:1px solid #d4d1c7;">
+          <td style="background:#ffffff;padding:16px 18px 6px 18px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f6f6f8;border-radius:12px;">
+              <tr>
+                <td style="padding:16px 18px;">
+                  <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:14px;letter-spacing:.4px;text-transform:uppercase;color:#6b7280;font-weight:700;">Arrivée estimée</div>
+                  <div style="height:6px;line-height:6px;font-size:6px;">&nbsp;</div>
+                  <div style="font-family:Arial,Helvetica,sans-serif;font-size:18px;line-height:24px;color:#111111;font-weight:700;">${esc(narrative.etaLine)}</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#ffffff;padding:22px 16px 8px 16px;">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>${steps}</tr></table>
           </td>
         </tr>
         <tr>
-          <td style="background:#ffffff;padding:0 0 14px 0;border-radius:0 0 18px 18px;overflow:hidden;">
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-              <tr><td style="padding:18px 18px 0 18px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f6f6f8;border-radius:18px;">
-                  <tr><td style="padding:16px;">
-                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                      <tr>
-                        <td width="160" class="stack" style="width:160px;vertical-align:top;padding-right:14px;">${img}</td>
-                        <td class="stack" style="vertical-align:top;">
-                          <div style="font-family:Arial,Helvetica,sans-serif;font-size:18px;line-height:24px;color:#111111;font-weight:700;padding-bottom:10px;">${title}</div>
-                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                            <tr>
-                              <td style="padding:6px 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#6b7280;font-weight:700;">ID de style</td>
-                              <td align="right" style="padding:6px 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111111;font-weight:700;">${esc(c.sku || "—")}</td>
-                            </tr>
-                            <tr>
-                              <td style="padding:6px 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#6b7280;font-weight:700;">Taille</td>
-                              <td align="right" style="padding:6px 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111111;font-weight:700;">${esc(c.sizeEU || "—")}</td>
-                            </tr>
-                            <tr>
-                              <td style="padding:6px 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#6b7280;font-weight:700;">Numéro de commande</td>
-                              <td align="right" style="padding:6px 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111111;font-weight:700;">${esc(c.shopifyOrderName)}</td>
-                            </tr>
-                            <tr>
-                              <td style="padding:10px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#6b7280;font-weight:700;">Prix de vente</td>
-                              <td align="right" style="padding:10px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:16px;color:#111111;font-weight:800;">CHF ${c.saleChf.toFixed(2)}</td>
-                            </tr>
-                          </table>
-                        </td>
-                      </tr>
-                    </table>
-                  </td></tr>
+          <td style="background:#ffffff;padding:8px 18px 0 18px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f6f6f8;border-radius:12px;">
+              <tr><td style="padding:18px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                  <tr>
+                    ${img}
+                    <td class="stack" style="vertical-align:top;">
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:18px;line-height:24px;color:#111111;font-weight:700;padding-bottom:8px;">${title}</div>
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                        ${summaryRow("ID de style", c.sku || "—")}
+                        ${summaryRow("Taille", c.sizeEU || "—")}
+                        ${summaryRow("Numéro de commande", c.shopifyOrderName)}
+                        ${summaryRow("Livraison", narrative.shippingLabel)}
+                        ${summaryRow("Prix", `CHF ${c.saleChf.toFixed(2)}`, true)}
+                      </table>
+                    </td>
+                  </tr>
                 </table>
-                <div style="height:16px;"></div>
-                <div style="font-family:Arial,Helvetica,sans-serif;font-size:18px;line-height:24px;color:#111111;font-weight:700;padding:0 2px 10px 2px;">Avant de contacter le support :</div>
-                <ul style="margin:0 0 16px 18px;padding:0;font-family:Arial,Helvetica,sans-serif;color:#111111;font-size:14px;line-height:22px;">
-                  <li style="margin:0 0 6px 0;">Tu recevras un e-mail automatique a chaque etape.</li>
-                  <li style="margin:0 0 6px 0;">Merci d'attendre la date de livraison estimee indiquée ci-dessus.</li>
-                  <li style="margin:0;">Si rien n'est livre 48h apres cette date, contacte-nous avec ton numero de commande.</li>
-                </ul>
-                <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:20px;color:#6b7280;padding:0 2px;">
-                  FAQ, delais et retours :
-                  <a href="https://www.resell-lausanne.ch/fr-fr/pages/faq" style="color:#3ea8f4;text-decoration:underline;font-weight:800;">Voir la page d'aide</a>
-                </div>
-              </td></tr>
-              <tr><td style="padding:18px 18px 0 18px;"><div style="height:1px;background:#e6e6ea;"></div></td></tr>
-              <tr><td style="padding:14px 18px 18px 18px;">
-                <div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:16px;color:#6b7280;">
-                  © ${year} Resell Lausanne. Tous droits réservés.<br/>
-                  Expéditeur: Resell Lausanne, Chemin de Bas de Plan 6, 1030 Bussigny, Suisse.
-                </div>
               </td></tr>
             </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#ffffff;padding:18px 28px 8px 28px;">
+            ${body}
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#ffffff;padding:8px 28px 0 28px;">
+            <div style="height:1px;background:#e6e6ea;line-height:1px;font-size:1px;">&nbsp;</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#ffffff;padding:16px 28px 8px 28px;">
+            <div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:22px;color:#111111;font-weight:700;padding-bottom:8px;">Et ensuite</div>
+            <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:#111111;">Un e-mail automatique part à chaque étape.</div>
+            <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:#111111;">La date de livraison estimée figure ci-dessus.</div>
+            <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:#111111;">Si rien n'est livré 48 h après cette date, contacte-nous avec ton numéro de commande.</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#ffffff;padding:14px 28px 8px 28px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:20px;color:#6b7280;">
+            FAQ, délais et retours :
+            <a href="https://www.resell-lausanne.ch/fr-fr/pages/faq" style="color:#3ea8f4;text-decoration:underline;font-weight:700;">Voir la page d'aide</a>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#ffffff;border-radius:0 0 18px 18px;padding:8px 28px 22px 28px;">
+            <div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;color:#6b7280;">
+              © ${year} Resell Lausanne. Tous droits réservés.<br/>
+              Expéditeur : Resell Lausanne, Chemin de Bas de Plan 6, 1030 Bussigny, Suisse.${helpLine}
+            </div>
           </td>
         </tr>
       </table>
@@ -201,19 +225,31 @@ export function buildClientPreviewHtml(
 
 export function buildClientPreviewText(
   c: DelayRebuyCase,
-  narrative: CustomerNarrative
+  narrative: CustomerNarrative,
+  opts?: { forCustomer?: boolean }
 ): string {
   return [
     narrative.subject,
     "",
+    narrative.greeting,
+    narrative.headline,
+    narrative.statusLine,
+    "",
+    `Arrivée estimée : ${narrative.etaLine}`,
+    "",
     ...narrative.bodyParagraphs,
     "",
-    `Arrivée estimée: ${narrative.etaLine}`,
-    `Produit: ${c.productTitle}`,
-    `SKU: ${c.sku || "—"} · Taille: ${c.sizeEU || "—"} · ${c.saleChf.toFixed(2)} CHF`,
-    `Statut actif: ${narrative.activeStepLabel}`,
+    `Produit : ${c.productTitle}`,
+    `ID de style : ${c.sku || "—"}`,
+    `Taille : ${c.sizeEU || "—"}`,
+    `Commande : ${c.shopifyOrderName}`,
+    `Livraison : ${narrative.shippingLabel}`,
+    `Prix : ${c.saleChf.toFixed(2)} CHF`,
+    `Statut : ${narrative.activeStepLabel}`,
     "",
-    "— Resell Lausanne (preview client, pas envoyé au client)",
+    opts?.forCustomer
+      ? "— Resell Lausanne"
+      : "— Resell Lausanne (preview client, pas envoyé au client)",
   ].join("\n");
 }
 

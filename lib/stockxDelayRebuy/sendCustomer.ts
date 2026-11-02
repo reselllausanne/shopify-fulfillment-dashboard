@@ -2,7 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import { getMailer } from "@/app/lib/mailer";
 import { buildDelayRebuyCase } from "@/lib/stockxDelayRebuy/buildCase";
 import {
-  activeStepIndexFromLabel,
+  buildClientPreviewHtml,
   buildClientPreviewText,
 } from "@/lib/stockxDelayRebuy/emails";
 import { customerDelayMailToOverride } from "@/lib/stockxDelayRebuy/flags";
@@ -51,9 +51,11 @@ export type SendCustomerDelayResult = {
 };
 
 /**
- * Shopify customer delay / cancel-rebuy mail (StockX never named).
- * Uses the same Postmark normal-ship / express-ship templates as ETA mails
- * (product picture + status tracker). Dedup via StockXStatusEvent.
+ * Shopify customer delay / cancel-rebuy mail (supplier never named).
+ * HTML follows normal-ship / express-ship chrome, with purchase-confirm
+ * placement: greeting, one-line status, ETA band, product summary, short body.
+ * Sent as Postmark HtmlBody so the apology is not dumped into the ship-template hero.
+ * Dedup via StockXStatusEvent.
  */
 export async function sendCustomerDelayMail(
   opts: SendCustomerDelayOptions
@@ -140,68 +142,26 @@ export async function sendCustomerDelayMail(
   const subject = testMode
     ? `[TEST] ${narrative.subject}`
     : narrative.subject;
-  const statusNote = narrative.bodyParagraphs.join(" ");
-  const etaStart =
-    opts.kind === "CANCEL_REBUY_LEGIT" ? c.rebuyEtaStart : c.announceEtaStart;
-  const etaEnd =
-    opts.kind === "CANCEL_REBUY_LEGIT" ? c.rebuyEtaEnd : c.announceEtaEnd;
+  const html = buildClientPreviewHtml(c, narrative);
+  const text = buildClientPreviewText(c, narrative, { forCustomer: true });
 
   const mailer = getMailer();
-  const sendRes = await mailer.sendStockXMilestoneEmail({
+  const sendRes = await mailer.sendRawEmail({
     to,
-    language: "fr",
+    subject,
+    textBody: text,
+    htmlBody: html,
     ignoreOverride: Boolean(override) || testMode,
-    stockxStates: null,
-    templateOverrides: {
-      emailSubject: subject,
-      headline: narrative.headline,
-      statusNote,
-      preheaderText: narrative.headline,
-      activeStepIndex: activeStepIndexFromLabel(narrative.activeStepLabel),
-      estimatedArrivalStart: etaStart,
-      estimatedArrivalEnd: etaEnd,
-      nextStep1: "Tu recevras un e-mail automatique a chaque etape.",
-      nextStep2:
-        "Merci d'attendre la nouvelle date de livraison estimee indiquée ci-dessus.",
-      nextStep3:
-        "Si rien n'est livre 48h apres cette date, contacte-nous avec ton numero de commande.",
-    },
-    match: {
-      id: c.orderMatchId,
-      customerTrackingToken: c.trackingToken,
-      shopifyOrderName: c.shopifyOrderName,
-      shopifyProductTitle: c.productTitle,
-      shopifySku: c.sku,
-      shopifySizeEU: c.sizeEU,
-      shopifyTotalPriceChf: c.saleChf,
-      shopifyLineItemImageUrl: c.imageUrl,
-      shopifyCustomerFirstName: c.customerFirstName,
-      shopifyCustomerLastName: null,
-      stockxCheckoutType: c.checkoutType,
-      stockxOrderNumber: c.stockxOrderNumber,
-      stockxSkuKey: c.sku,
-      stockxSizeEU: c.sizeEU,
-      stockxTrackingUrl: null,
-      stockxAwb: null,
-      stockxEstimatedDelivery: etaStart,
-      stockxLatestEstimatedDelivery: etaEnd,
-    },
-    milestone: {
-      key: milestoneKey,
-      title: narrative.headline,
-      description: statusNote,
-    },
   });
 
-  // Text audit trail for ops (template path has no TextBody).
   if (process.env.STOCKX_DELAY_MAIL_LOG_TEXT === "1") {
     console.log(
-      buildClientPreviewText(c, narrative).replace(
-        "— Resell Lausanne (preview client, pas envoyé au client)",
-        testMode
-          ? `— Resell Lausanne [TEST → ${to}; client serait ${customer || "n/a"}]`
-          : "— Resell Lausanne"
-      )
+      testMode
+        ? text.replace(
+            "— Resell Lausanne",
+            `— Resell Lausanne [TEST → ${to}; client serait ${customer || "n/a"}]`
+          )
+        : text
     );
   }
 

@@ -4,10 +4,17 @@ import type { DelayNarrativeKind, DelayRebuyCase } from "@/lib/stockxDelayRebuy/
 export type CustomerNarrative = {
   kind: DelayNarrativeKind;
   subject: string;
+  /** Short status title. Sits above the ETA band, not inside a paragraph. */
   headline: string;
+  /** One sentence under the title. Never the full apology. */
+  statusLine: string;
+  greeting: string;
+  /** Two short paragraphs under the order summary. */
   bodyParagraphs: string[];
   activeStepLabel: string;
   etaLine: string;
+  /** Standard or Prioritaire — order-summary row, not prose. */
+  shippingLabel: string;
 };
 
 /** Client-facing mito — never mention StockX by name. */
@@ -15,54 +22,60 @@ export function buildCustomerNarrative(
   c: DelayRebuyCase,
   kind: DelayNarrativeKind
 ): CustomerNarrative {
-  const first = (c.customerFirstName || "").trim() || "Bonjour";
-  const laneLabel = c.rebuyLane === "EXPRESS" ? "prioritaire" : "standard";
-  // Delay uses announced ETA (StockX refresh or synthetic); cancel-rebuy always rebuy window.
+  const name = (c.customerFirstName || "").trim();
+  const greeting = name ? `Bonjour ${name},` : "Bonjour,";
+  const shippingLabel = c.rebuyLane === "EXPRESS" ? "Prioritaire" : "Standard";
+  // Delay uses announced ETA (supplier refresh or synthetic); cancel-rebuy always rebuy window.
   const delayEtaRange = `${formatFrDate(c.announceEtaStart)} – ${formatFrDate(c.announceEtaEnd)}`;
   const rebuyEtaRange = `${formatFrDate(c.rebuyEtaStart)} – ${formatFrDate(c.rebuyEtaEnd)}`;
 
   if (kind === "SUPPLIER_CHANGE_DELAY") {
     return {
       kind,
-      subject: `Suivi commande ${c.shopifyOrderName} — délai mis à jour`,
+      subject: `Commande ${c.shopifyOrderName} — délai de livraison mis à jour`,
       headline: "Délai de livraison mis à jour",
+      statusLine: "Nouvelle date de livraison confirmée.",
+      greeting,
       bodyParagraphs: [
-        `${first},`,
-        `Le fournisseur initial n'a pas expédié ta paire à temps. On active un autre vendeur vérifié pour la même référence — ça arrive parfois sur les pièces très demandées.`,
-        `Ta commande ${c.shopifyOrderName} reste active. Nouvelle arrivée estimée (parcours ${laneLabel}) : ${delayEtaRange}.`,
-        `Désolé pour ce contretemps. Tu recevras un e-mail automatique dès la prochaine étape réelle (authentification ou expédition). Pas besoin de nous écrire tant que cette nouvelle date n'est pas dépassée de 48h.`,
+        `Le vendeur initial n'a pas expédié l'article dans le délai prévu. Nous avons passé la commande auprès d'un autre vendeur vérifié, pour la même référence et la même taille.`,
+        `Nous sommes désolés pour ce contretemps. Tu n'as rien à faire : un e-mail part automatiquement à la prochaine étape.`,
       ],
       activeStepLabel: "Authentification en cours",
       etaLine: delayEtaRange,
+      shippingLabel,
     };
   }
 
   if (kind === "CANCEL_REBUY_LEGIT") {
     return {
       kind,
-      subject: `Suivi commande ${c.shopifyOrderName} — article recommandé`,
-      headline: "Petit souci de contrôle — on a déjà racheté",
+      subject: `Commande ${c.shopifyOrderName} — article remplacé`,
+      headline: "Article remplacé",
+      statusLine: "Même référence recommandée. Nouvelle date ci-dessous.",
+      greeting,
       bodyParagraphs: [
-        `${first},`,
-        `Lors du contrôle d'authenticité, l'article n'a pas passé la validation. On a immédiatement commandé le même modèle auprès d'un autre vendeur vérifié pour ne pas te faire attendre inutilement.`,
-        `Désolé pour ce contretemps. Nouvelle arrivée estimée (parcours ${laneLabel}) : ${rebuyEtaRange}.`,
-        `Rien à faire de ton côté. On te tient au courant à chaque étape.`,
+        `Lors du contrôle d'authenticité, l'article n'a pas été validé. Nous avons immédiatement commandé le même modèle, même taille, auprès d'un autre vendeur vérifié.`,
+        `Nous sommes désolés pour ce contretemps. Ta commande ${c.shopifyOrderName} reste active. Aucune action de ton côté.`,
       ],
       activeStepLabel: "Commande confirmée",
       etaLine: rebuyEtaRange,
+      shippingLabel,
     };
   }
 
   return {
     kind,
-    subject: `Suivi commande ${c.shopifyOrderName} — mise à jour importante`,
-    headline: "Commande fournisseur annulée",
+    subject: `Commande ${c.shopifyOrderName} — mise à jour importante`,
+    headline: "Commande non finalisée",
+    statusLine: "Nous te recontactons avec une solution.",
+    greeting,
     bodyParagraphs: [
-      `${first},`,
-      `Le fournisseur n'a pas pu finaliser cette commande. On te recontacte très vite avec une solution (nouvel article ou remboursement).`,
+      `Le vendeur n'a pas pu finaliser cette commande. Nous te recontactons très vite avec un nouvel article ou un remboursement.`,
+      `Nous sommes désolés pour ce contretemps.`,
     ],
     activeStepLabel: "Commande confirmée",
-    etaLine: "à confirmer",
+    etaLine: "À confirmer",
+    shippingLabel,
   };
 }
 
