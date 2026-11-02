@@ -103,7 +103,7 @@ function formatDigest(summary: ShopifyExpressDailySummary): { subject: string; t
   if (bought.length) {
     lines.push("BOUGHT:");
     for (const b of bought) {
-      const r = b.result as Extract<StockxAutoCheckoutResult, { kind: "easy_buy" }>;
+      const r = b.result;
       lines.push(
         `- ${b.orderName} · ${b.title.slice(0, 50)} · ${b.sizeEU} · ${r.totalChf ?? "?"} CHF · ${r.stockxOrderNumber ?? "?"}`
       );
