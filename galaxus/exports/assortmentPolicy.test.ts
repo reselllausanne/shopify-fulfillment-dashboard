@@ -161,6 +161,26 @@ describe("galaxusAssortmentBlockReason", () => {
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
   });
 
+  it("delists every REI row by default except the Jetson", () => {
+    delete process.env.GALAXUS_DISABLED_SUPPLIERS;
+    delete process.env.GALAXUS_REI_ALLOWLIST;
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "REI_8", title: "PNY NVIDIA RTX A2000 12GB", brand: "PNY" })
+    ).toBe("supplier_disabled");
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "REI_7350001162034", title: "Kksb HAT Case Raspberry Pi 5" })
+    ).toBe("supplier_disabled");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "REI_0812674025278",
+        gtin: "0812674025278",
+        title: "NVIDIA Kit NVIDIA Jetson Orin Nano Super Dev., 67 TOPS, 8 Go DDR5",
+        brand: "NVIDIA",
+        purchasePriceExVatChf: 599,
+      })
+    ).toBeNull();
+  });
+
   it("delists former BWZ Lansinoh trial SKUs after Monday rollback", () => {
     delete process.env.GALAXUS_DISABLED_SUPPLIERS;
     delete process.env.GALAXUS_FASHION_ONLY;
@@ -227,7 +247,14 @@ describe("galaxusAssortmentBlockReason", () => {
   });
 
   it("blocks category cleanup rows", () => {
-    for (const providerKey of ["NER_0036121950047", "ner_0036121621008", "STX_000002739779"]) {
+    for (const providerKey of [
+      "NER_0036121950047",
+      "ner_0036121621008",
+      "STX_000002739779",
+      // 2026-11-02 off-sheet NER: bike parts, racks, dry sacks, toiletry, Lenz packs
+      "NER_8717565647701",
+      "NER_198266025506",
+    ]) {
       expect(galaxusAssortmentBlockReason({ providerKey, title: "x" })).toBe("category_block");
     }
   });

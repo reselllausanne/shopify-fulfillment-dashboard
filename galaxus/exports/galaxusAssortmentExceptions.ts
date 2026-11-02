@@ -130,6 +130,18 @@ export const GALAXUS_ASSORTMENT_EXCEPTIONS: GalaxusAssortmentException[] = [
     reviewAt: "2026-10-26",
     active: false,
   },
+  {
+    providerKey: "REI_0812674025278",
+    gtin: "0812674025278",
+    title: "NVIDIA Jetson Orin Nano Super Dev kit, 8 Go DDR5",
+    supplierKey: "rei",
+    gates: ["supplier_disabled"],
+    bypassSupplierDisabled: true,
+    reason: "market_gap",
+    note: "Only REI row kept. Reichelt CHF 557.82 incl VAT. Feed 599 ex VAT. Rest of REI is supplier_disabled.",
+    addedAt: "2026-11-02",
+    active: true,
+  },
 ];
 
 /**

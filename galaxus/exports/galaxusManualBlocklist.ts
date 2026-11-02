@@ -8,13 +8,15 @@ const GALAXUS_MANUAL_BLOCKLIST = new Set<string>([
   // Jellycat soft toys — Galaxus complaint (Tali, 2026-10-27); also covered by assortment plush rule
   "STX_670983164428", // Bashful Bunny 'Snow Suit' Plush
   "STX_670983109511", // Amuseables Cloud Plush
+  "WEL_196744024119", // TeeTurtle Plushieverse Spongebob blind box
 ]);
 
 /**
  * Category cleanup snapshot (2026-10-14 review): ProviderKeys grouped by category
  * (home/kitchen, bike drivetrain without sales, forks/shocks/bearings, camping,
  * lubes/cleaners, plush priced > 3x retail; round 2: tyres, wheels, bike tools/pumps/locks/racks,
- * StockX toys/books/balls). New catalog rows are not covered.
+ * StockX toys/books/balls; 2026-11-02 NER bike parts, racks, dry sacks,
+ * toiletry bags, Lenz packs). New catalog rows are not covered.
  */
 const GALAXUS_CATEGORY_BLOCKLIST = new Map<string, string>(
   Object.entries(categoryBlocklist as Record<string, string[]>).flatMap(([category, keys]) =>
