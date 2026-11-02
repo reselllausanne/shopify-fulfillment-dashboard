@@ -61,3 +61,4 @@
 ## Décisions de modélisation
 - Scénarios fin_06 C (TVA non due), G, H retirés (entité assujettie ; hypothèses irréalistes).
 - Trésorerie d'ouverture = 0 (aucune donnée bancaire) : les sorties sont des variations, pas des niveaux.
+| 21:30 | Sous-agent [Benchmark repositionnement SEO UGC Europe](530b59b3-9205-4545-af9f-e3c1452455ae) terminé : `analyses/bm_01..05` | Contrôlé : ROAS global 6,2 (627 k / 100,9 k) et équilibre 7,6 (28,8/217,7 = 13,2 %) recalculés = OK. Faillite SneakerHype B.V. (20-05-2025, F.09/25/180) vérifiée via faillissementsdossier.nl : rapport du curateur = modèle « achat sur demande », causes : retours non négociés à l'achat → stock, sorties plus grandes → prix en baisse, besoin de volume ; Restocks failli fin 2023 (RTL). Non vérifiés : taux de douane DE, valeurs fiscales, tarifs créateurs (marqués partiels par le sous-agent). |

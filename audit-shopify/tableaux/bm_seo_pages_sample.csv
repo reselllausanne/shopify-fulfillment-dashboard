@@ -1,0 +1,19 @@
+url,statut_http,url_finale,canonical,robots_meta,nb_hreflang,types_json_ld,h1,titre,source_mesure
+/,200,/,/,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite",1,"Resell Lausanne — Sneakers & Streetwear authentiques Suisse",fetch navigateur 2026-11-02
+/de,200,/de,/de,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite",1,"Verkauf von Turnschuhen - Lausanne CH – Resell Lausanne",fetch navigateur 2026-11-02
+/en,200,/en,/en,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite",1,"Sneakers sale - Lausanne CH – Resell Lausanne",fetch navigateur 2026-11-02
+/it,404,/it,/404,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite",1,"404 Page introuvable – Resell Lausanne",fetch navigateur 2026-11-02
+/Sneakers/Nike,404,/Sneakers/Nike,/404,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite",1,"404 Page introuvable – Resell Lausanne",fetch navigateur 2026-11-02
+/collections/all,200,/collections/all,/collections/all,"noindex,follow",4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite,BreadcrumbList,ItemList",1,"Produits — Sneakers & Streetwear | Resell Lausanne",fetch navigateur 2026-11-02
+/collections,200,/collections,/collections,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite",1,"Collections – Resell Lausanne",fetch navigateur 2026-11-02
+/search?q=jordan+4,200,/search?q=jordan+4,/search,"noindex,follow",4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite",0,"Recherche : 1000 résultats trouvés pour « jordan 4 »",fetch navigateur 2026-11-02
+/collections/air-jordan-4?sort_by=price-ascending&page=2,200,idem,/collections/air-jordan-4?page=2,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite,BreadcrumbList,ItemList",1,"Air Jordan 4 Suisse | Colorways recherchés & Tailles – Page 2",fetch navigateur 2026-11-02
+/collections/air-jordan-4?filter.v.availability=1,200,idem,/collections/air-jordan-4,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite,BreadcrumbList,ItemList",1,"Air Jordan 4 Suisse | Colorways recherchés & Tailles",fetch navigateur 2026-11-02
+/collections/zzz-not-exists,404,idem,/404,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite",1,"404 Page introuvable – Resell Lausanne",fetch navigateur 2026-11-02
+/products/zzz-not-exists,404,idem,/404,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite",1,"404 Page introuvable – Resell Lausanne",fetch navigateur 2026-11-02
+/pages/notre-concept,200,idem,/pages/notre-concept,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite,AboutPage,BreadcrumbList",1,"Notre concept | Resell Lausanne",fetch navigateur 2026-11-02
+/blogs/news,200,idem,/blogs/news,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite",1,"Resell Journal — Guides sneakers & streetwear en Suisse",fetch navigateur 2026-11-02
+/pages/politique-de-retour,404,idem,/404,,n/a,n/a,1,(page 404) ; URL déclarée dans returnPolicyUrl du JSON-LD MerchantReturnPolicy,fetch navigateur 2026-11-02
+/pages/faq-echanges-retours,404,idem,/404,,n/a,n/a,1,(page 404) ; URL devinée non existante,fetch navigateur 2026-11-02
+/de/collections/onitsuka-tiger,200,idem,/de/collections/onitsuka-tiger,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite,BreadcrumbList,FAQPage,ItemList",1,"Onitsuka Tiger Mexico 66 & Tokuten kaufen | Resell Lausanne",navigateur (rendu) 2026-11-02
+/products/adidas-tennis-hu-pharrell-grey-one,200,idem,/products/adidas-tennis-hu-pharrell-grey-one,,4,"Organization,MerchantReturnPolicy,LocalBusiness,WebSite,Product,BreadcrumbList",1,"adidas Tennis HU Pharrell Grey One | Resell Lausanne Suisse",navigateur (rendu) 2026-11-02

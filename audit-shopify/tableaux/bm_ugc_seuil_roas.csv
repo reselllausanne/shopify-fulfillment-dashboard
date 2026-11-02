@@ -1,0 +1,9 @@
+indicateur,valeur,etiquette,source
+CA conservé TTC 2026-01..10 (CHF),627297,F,fin_00 §1 (brut − remboursements)
+Contribution avant pub (CHF),82913,F,fin_00 §1
+Pub Google (CHF),100856,F,fin_00 §1
+Contribution avant pub par commande (CHF),28.8,F,fin_00 §3
+Contribution avant pub / CA conservé TTC (%),13.2,calcul,
+ROAS observé (CA conservé TTC / pub),6.22,calcul,
+ROAS d'équilibre avant frais fixes (= 1 / marge),7.57,calcul,valable pour une commande moyenne ; hors valeur de réachat
+CPA d'équilibre par nouvelle commande (CHF),28.8,calcul,nouveau client 28 CHF (fin_00 §5)

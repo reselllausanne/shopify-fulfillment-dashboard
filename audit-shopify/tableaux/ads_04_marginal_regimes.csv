@@ -1,0 +1,4 @@
+de,vers,delta_cost,delta_cmd,cout_par_cmd_suppl,delta_ventes_brutes,pub_par_chf_vente_suppl,roas_marginal_google,cout_par_conv_google_suppl
+A 2025-01..09 (faible dépense),B 2026-02..07 (~8k/mois),6506,86.3,75.4,26863,0.242,2.33,128.8
+B 2026-02..07 (~8k/mois),C 2026-08..10 (~14k/mois),5814,136.8,42.5,30806,0.189,3.36,56.3
+A 2025-01..09 (faible dépense),C 2026-08..10 (~14k/mois),12320,223.1,55.2,57670,0.214,2.82,80.1

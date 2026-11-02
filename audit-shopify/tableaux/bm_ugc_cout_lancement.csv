@@ -1,0 +1,4 @@
+scenario,videos,tarif_video_CHF(P),droits_pub_%(P),createurs_CHF,produits_offerts_CHF(F),heures_travail(H),travail_CHF(H),media_test_CHF(H),total_hors_media_CHF,total_CHF,commandes_pour_amortir_hors_media(a 28.8 CHF)
+bas,4,300,20,1440,0,35,1400,1500,2840,4340,99
+médian,8,400,25,4000,452,60,2400,3000,6852,9852,238
+haut,12,500,30,7800,754,90,3600,5000,12154,17154,422
