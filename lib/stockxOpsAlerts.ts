@@ -7,8 +7,9 @@
  * Scopes: Shopify, Galaxus, Decathlon.
  *
  * Customer milestone emails (app/lib/notifications/stockxEmail.ts) deliberately SKIP
- * cancelled/refunded + eta_passed, so these never leak to customers — the operator is the
- * only recipient here.
+ * cancelled/refunded + eta_passed. Separately, when STOCKX_CUSTOMER_DELAY_MAIL=1, fresh
+ * Shopify DELAYED/CANCELLED rows also drive customer delay / cancel-rebuy mails
+ * (lib/stockxDelayRebuy) — still ops-first; baseline seed never customer-mails.
  *
  * Cancel detection is NOT Gmail/IMAP (that path is OTP + prebuy dedupe only). Each run
  * first syncs CANCELLED/REFUNDED from StockX buying HISTORICAL onto linked matches, then
@@ -34,6 +35,10 @@ import {
 } from "@/app/lib/shopifyOrderFulfillmentFilters";
 import { isStockxAutoBuyExcluded } from "@/lib/stockxAutoCheckout/precheckAvailability";
 import { syncLinkedMatchesFromStockxHistory } from "@/lib/stockxHistoricalCancelSync";
+import {
+  processShopifyCustomerMailsFromOpsAlerts,
+  type ProcessFromOpsAlertsResult,
+} from "@/lib/stockxDelayRebuy/processFromOpsAlerts";
 
 const SHOP_TIMEZONE = "Europe/Zurich";
 
@@ -389,6 +394,8 @@ export type StockxOpsAlertResult = {
     terminalNodes: number;
     error?: string;
   };
+  /** Shopify customer delay / cancel-rebuy side effects (flag-gated). */
+  customerMails?: ProcessFromOpsAlertsResult;
 };
 
 function statusKey(s: string | null | undefined): string {
@@ -1232,6 +1239,40 @@ export async function runStockxOrderOpsAlerts(options?: {
     (process.env.STOCKX_ALERT_EMAIL || "").trim() ||
     (process.env.POSTMARK_FROM_EMAIL || "").trim();
   result.emailTo = operator || null;
+
+  // Customer delay / cancel-rebuy: only on non-baseline fresh Shopify alerts.
+  // Runs even on dryRun (internal dryRun flag) so ops can preview counts.
+  if (!baseline) {
+    try {
+      result.customerMails = await processShopifyCustomerMailsFromOpsAlerts(fresh, {
+        dryRun,
+      });
+    } catch (err: any) {
+      console.warn(
+        "[STOCKX][OPS_ALERT] customerMails failed:",
+        err?.message ?? err
+      );
+      result.customerMails = {
+        enabled: false,
+        dryRun,
+        processed: 0,
+        delaySent: 0,
+        delaySkipped: 0,
+        cancelRebuyAttempted: 0,
+        cancelRebuyBought: 0,
+        errors: 1,
+        details: [
+          {
+            alertType: "DELAYED",
+            orderRef: null,
+            action: "customer_mails",
+            ok: false,
+            reason: String(err?.message ?? err).slice(0, 200),
+          },
+        ],
+      };
+    }
+  }
 
   if (dryRun) return result;
 

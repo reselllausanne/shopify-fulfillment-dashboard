@@ -1508,6 +1508,11 @@ export async function runStockxAutoCheckoutForOrder(options: {
   skipGoto?: boolean;
   /** Override Shopify size when line load unavailable / plan size. */
   sizeEUOverride?: string | null;
+  /**
+   * Cancel→rebuy: allow Place Order when OrderMatch already has a StockX number
+   * but status is CANCELLED/REFUNDED. Skips prebuy block for that dead buy.
+   */
+  allowRebuyOfCancelled?: boolean;
 }): Promise<StockxAutoCheckoutResult> {
   const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
   let shopify: ShopifyLineCtx;
@@ -1551,24 +1556,41 @@ export async function runStockxAutoCheckoutForOrder(options: {
     return { kind: "skipped", reason: "physical_stock", needsHuman: nh };
   }
 
+  let rebuyOfCancelled = false;
   if (shopify.shopifyLineItemId) {
     const existing = await prisma.orderMatch.findUnique({
       where: { shopifyLineItemId: shopify.shopifyLineItemId },
-      select: { id: true, stockxOrderNumber: true },
+      select: { id: true, stockxOrderNumber: true, stockxStatus: true },
     });
     if (existing?.stockxOrderNumber) {
-      const nh = needsHumanBase(shopify, {
-        reason: "already_matched",
-        desiredLane: "STANDARD",
-        detail: existing.stockxOrderNumber,
-      });
-      return { kind: "skipped", reason: "already_matched", needsHuman: nh };
+      const st = String(existing.stockxStatus ?? "").toUpperCase();
+      const cancelled =
+        st.includes("CANCEL") || st.includes("REFUND");
+      if (options.allowRebuyOfCancelled && cancelled) {
+        rebuyOfCancelled = true;
+        console.log(
+          `[STOCKX-AUTO] rebuy-of-cancelled allowed ${shopify.orderName} prev=${existing.stockxOrderNumber} status=${existing.stockxStatus}`
+        );
+      } else {
+        const nh = needsHumanBase(shopify, {
+          reason: "already_matched",
+          desiredLane: "STANDARD",
+          detail: existing.stockxOrderNumber,
+        });
+        return { kind: "skipped", reason: "already_matched", needsHuman: nh };
+      }
     }
   }
 
   // Pre-buy dedupe: Gmail (StockX+GOAT) + both StockX account histories.
   // Clear unlinked STX match → link (no new purchase). GOAT-only → block.
-  if (shopify.shopifyLineItemId && shopify.shopifyOrderId && shopify.createdAt) {
+  // Cancel→rebuy skips dedupe — the dead buy would otherwise block forever.
+  if (
+    !rebuyOfCancelled &&
+    shopify.shopifyLineItemId &&
+    shopify.shopifyOrderId &&
+    shopify.createdAt
+  ) {
     const slugHint = (options.slug || (await resolveSlugFromSku(shopify.sku)) || "").trim();
     const prebuy = await runPrebuyDedupeCheck(
       {
