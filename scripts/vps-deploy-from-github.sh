@@ -262,14 +262,17 @@ validate_deploy_config() {
 
 acquire_lock() {
   local dir
+  local wait_secs="${DEPLOY_LOCK_WAIT_SECS:-900}"
   dir="$(dirname "$LOCK_FILE")"
   mkdir -p "$dir" 2>/dev/null || LOCK_FILE="/tmp/resell-deploy.lock"
   exec 9>"$LOCK_FILE"
-  if ! flock -n 9; then
-    echo "FATAL: another deploy holds $LOCK_FILE — refusing concurrent deploy"
+  # Wait for prior deploy (incl. CI overlap after a timed-out SSH session) instead of
+  # instant refuse — overlapping main pushes used to fail the newer SHA with exit 12.
+  if ! flock -w "$wait_secs" 9; then
+    echo "FATAL: another deploy still holds $LOCK_FILE after ${wait_secs}s wait"
     exit 12
   fi
-  echo "== lock $LOCK_FILE"
+  echo "== lock $LOCK_FILE (waited up to ${wait_secs}s)"
 }
 
 # After up: web must be running, labelled for this project/service, image matches built service image when available.
@@ -462,6 +465,17 @@ main() {
 
   echo "== pre-HEAD $PRE_HEAD"
   echo "== safety tag $PRE_TAG (rollback: EXPECTED_SHA=<prior-main-sha> bash scripts/vps-deploy-from-github.sh)"
+
+  # After SSH rescue / overlapping CI: already on target SHA with healthy web → no rebuild.
+  # Avoids another 30–60m next build when a prior Deploy VPS timed out but rescue landed the SHA.
+  if [ "$DRY_RUN" != "1" ] && [ "$PRE_HEAD" = "$WANT" ]; then
+    echo "== HEAD already REQUESTED_SHA — try skip-rebuild if web healthy"
+    if (verify_web_deployment "$WANT"); then
+      echo "DEPLOY_OK skipped_rebuild sha=$WANT (already live)"
+      exit 0
+    fi
+    echo "== verify failed at current HEAD — continuing full rebuild"
+  fi
 
   if [ "$DRY_RUN" = "1" ]; then
     echo "== dry-run plan:"
