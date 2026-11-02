@@ -2,7 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import { getMailer } from "@/app/lib/mailer";
 import { buildDelayRebuyCase } from "@/lib/stockxDelayRebuy/buildCase";
 import {
-  buildClientPreviewHtml,
+  activeStepIndexFromLabel,
   buildClientPreviewText,
 } from "@/lib/stockxDelayRebuy/emails";
 import { customerDelayMailToOverride } from "@/lib/stockxDelayRebuy/flags";
@@ -47,11 +47,13 @@ export type SendCustomerDelayResult = {
   to?: string;
   providerMessageId?: string | null;
   etaLine?: string;
+  imageUrl?: string | null;
 };
 
 /**
  * Shopify customer delay / cancel-rebuy mail (StockX never named).
- * Dedupe via StockXStatusEvent(orderMatchId, CUSTOMER_* milestoneKey).
+ * Uses the same Postmark normal-ship / express-ship templates as ETA mails
+ * (product picture + status tracker). Dedup via StockXStatusEvent.
  */
 export async function sendCustomerDelayMail(
   opts: SendCustomerDelayOptions
@@ -90,6 +92,7 @@ export async function sendCustomerDelayMail(
       kind: opts.kind,
       milestoneKey,
       etaLine: narrative.etaLine,
+      imageUrl: c.imageUrl,
     };
   }
 
@@ -112,12 +115,13 @@ export async function sendCustomerDelayMail(
       kind: opts.kind,
       milestoneKey,
       etaLine: narrative.etaLine,
+      imageUrl: c.imageUrl,
     };
   }
 
   if (opts.dryRun) {
     console.log(
-      `[delay-rebuy][dry-run] would send ${opts.kind} ${c.shopifyOrderName} → ${to} eta=${narrative.etaLine}`
+      `[delay-rebuy][dry-run] would send ${opts.kind} ${c.shopifyOrderName} → ${to} eta=${narrative.etaLine} img=${c.imageUrl ? "yes" : "no"}`
     );
     return {
       ok: true,
@@ -129,29 +133,77 @@ export async function sendCustomerDelayMail(
       milestoneKey,
       to,
       etaLine: narrative.etaLine,
+      imageUrl: c.imageUrl,
     };
   }
 
   const subject = testMode
     ? `[TEST] ${narrative.subject}`
     : narrative.subject;
-  const text = buildClientPreviewText(c, narrative).replace(
-    "— Resell Lausanne (preview client, pas envoyé au client)",
-    testMode
-      ? `— Resell Lausanne [TEST → ${to}; client serait ${customer || "n/a"}]`
-      : "— Resell Lausanne"
-  );
-  const html = buildClientPreviewHtml(c, narrative);
+  const statusNote = narrative.bodyParagraphs.join(" ");
+  const etaStart =
+    opts.kind === "CANCEL_REBUY_LEGIT" ? c.rebuyEtaStart : c.announceEtaStart;
+  const etaEnd =
+    opts.kind === "CANCEL_REBUY_LEGIT" ? c.rebuyEtaEnd : c.announceEtaEnd;
 
   const mailer = getMailer();
-  const sendRes = await mailer.sendRawEmail({
+  const sendRes = await mailer.sendStockXMilestoneEmail({
     to,
-    subject,
-    textBody: text,
-    htmlBody: html,
-    // Explicit test/override must not be redirected by POSTMARK_OVERRIDE_TO.
+    language: "fr",
     ignoreOverride: Boolean(override) || testMode,
+    stockxStates: null,
+    templateOverrides: {
+      emailSubject: subject,
+      headline: narrative.headline,
+      statusNote,
+      preheaderText: narrative.headline,
+      activeStepIndex: activeStepIndexFromLabel(narrative.activeStepLabel),
+      estimatedArrivalStart: etaStart,
+      estimatedArrivalEnd: etaEnd,
+      nextStep1: "Tu recevras un e-mail automatique a chaque etape.",
+      nextStep2:
+        "Merci d'attendre la nouvelle date de livraison estimee indiquée ci-dessus.",
+      nextStep3:
+        "Si rien n'est livre 48h apres cette date, contacte-nous avec ton numero de commande.",
+    },
+    match: {
+      id: c.orderMatchId,
+      customerTrackingToken: c.trackingToken,
+      shopifyOrderName: c.shopifyOrderName,
+      shopifyProductTitle: c.productTitle,
+      shopifySku: c.sku,
+      shopifySizeEU: c.sizeEU,
+      shopifyTotalPriceChf: c.saleChf,
+      shopifyLineItemImageUrl: c.imageUrl,
+      shopifyCustomerFirstName: c.customerFirstName,
+      shopifyCustomerLastName: null,
+      stockxCheckoutType: c.checkoutType,
+      stockxOrderNumber: c.stockxOrderNumber,
+      stockxSkuKey: c.sku,
+      stockxSizeEU: c.sizeEU,
+      stockxTrackingUrl: null,
+      stockxAwb: null,
+      stockxEstimatedDelivery: etaStart,
+      stockxLatestEstimatedDelivery: etaEnd,
+    },
+    milestone: {
+      key: milestoneKey,
+      title: narrative.headline,
+      description: statusNote,
+    },
   });
+
+  // Text audit trail for ops (template path has no TextBody).
+  if (process.env.STOCKX_DELAY_MAIL_LOG_TEXT === "1") {
+    console.log(
+      buildClientPreviewText(c, narrative).replace(
+        "— Resell Lausanne (preview client, pas envoyé au client)",
+        testMode
+          ? `— Resell Lausanne [TEST → ${to}; client serait ${customer || "n/a"}]`
+          : "— Resell Lausanne"
+      )
+    );
+  }
 
   if (!sendRes.ok) {
     await prisma.stockXStatusEvent.update({
@@ -172,6 +224,7 @@ export async function sendCustomerDelayMail(
       milestoneKey,
       to: sendRes.to,
       etaLine: narrative.etaLine,
+      imageUrl: c.imageUrl,
     };
   }
 
@@ -196,5 +249,6 @@ export async function sendCustomerDelayMail(
     to: sendRes.to,
     providerMessageId: sendRes.providerMessageId || null,
     etaLine: narrative.etaLine,
+    imageUrl: c.imageUrl,
   };
 }

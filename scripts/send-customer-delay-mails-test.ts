@@ -121,10 +121,14 @@ function kindsToSend(kindArg?: string): Array<Exclude<DelayNarrativeKind, "CANCE
 async function main() {
   const dryRun = hasFlag("dry-run");
   const to =
+    (arg("to") || "").trim() ||
+    (process.env.STOCKX_CUSTOMER_DELAY_MAIL_TO || "").trim() ||
     (process.env.STOCKX_ALERT_EMAIL || "").trim() ||
     (process.env.POSTMARK_OVERRIDE_TO || "").trim();
   if (!to && !dryRun) {
-    throw new Error("STOCKX_ALERT_EMAIL (or POSTMARK_OVERRIDE_TO) required for TEST send");
+    throw new Error(
+      "--to= / STOCKX_CUSTOMER_DELAY_MAIL_TO / STOCKX_ALERT_EMAIL required for TEST send"
+    );
   }
   if (!process.env.POSTMARK_SERVER_TOKEN?.trim() && !dryRun) {
     throw new Error("POSTMARK_SERVER_TOKEN missing");

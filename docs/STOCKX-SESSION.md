@@ -86,6 +86,8 @@ Wired into `opsAlertsOnly` / AWB opsAlerts path (`lib/stockxDelayRebuy`). Defaul
 
 Dedup: `StockXStatusEvent` keys `CUSTOMER_DELAY_SUPPLIER_CHANGE` / `CUSTOMER_CANCEL_REBUY`. Baseline seed never customer-mails.
 
+Mails use the same Postmark templates as ETA (`normal-ship` / `express-ship`) with product picture (`shopifyLineItemImageUrl`, KickDB fallback) + apology copy overrides. TEST: `npx tsx scripts/send-customer-delay-mails-test.ts --order=7602 --to=ops@example.com`.
+
 **Avoid** crontab `--force-refresh` every few hours while Auth0 is healthy — thrashing cold Chromium elevates Turnstile to interactive checkbox.
 
 ## One bootstrap when CF shows “Un instant…”

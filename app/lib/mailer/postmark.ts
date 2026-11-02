@@ -268,7 +268,12 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
     return Math.max(1, Math.min(3, done));
   })();
 
-  const activeIndex = outbound ? 4 : completedCount;
+  const ov = input.templateOverrides;
+  const activeIndex = outbound
+    ? 4
+    : ov?.activeStepIndex
+      ? Math.min(4, Math.max(1, ov.activeStepIndex))
+      : completedCount;
   const styleFor = (idx: number) =>
     activeIndex === idx
       ? "font-weight:700;color:#3ea8f4;"
@@ -319,12 +324,25 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
     return result;
   };
 
-  const emailSubject = `${copy.subjectPrefix} ${input.match.shopifyOrderName}`;
+  const emailSubject =
+    (ov?.emailSubject || "").trim() ||
+    `${copy.subjectPrefix} ${input.match.shopifyOrderName}`;
 
-  const estimatedStart = input.match.stockxEstimatedDelivery;
-  const estimatedEnd = input.match.stockxLatestEstimatedDelivery || input.match.stockxEstimatedDelivery;
-  const estimatedStartPlus2 = addBusinessDays(estimatedStart, 2);
-  const estimatedEndPlus2 = addBusinessDays(estimatedEnd, 2);
+  const estimatedStart =
+    ov?.estimatedArrivalStart !== undefined
+      ? ov.estimatedArrivalStart
+      : input.match.stockxEstimatedDelivery;
+  const estimatedEnd =
+    ov?.estimatedArrivalEnd !== undefined
+      ? ov.estimatedArrivalEnd
+      : input.match.stockxLatestEstimatedDelivery || input.match.stockxEstimatedDelivery;
+  // Delay/cancel-rebuy pass final announce window — no extra +2 pad.
+  const useRawEta = Boolean(
+    ov &&
+      (ov.estimatedArrivalStart !== undefined || ov.estimatedArrivalEnd !== undefined)
+  );
+  const estimatedStartPlus2 = useRawEta ? estimatedStart : addBusinessDays(estimatedStart, 2);
+  const estimatedEndPlus2 = useRawEta ? estimatedEnd : addBusinessDays(estimatedEnd, 2);
 
   let trackingUrl = "";
   const trackingEnabled = isCustomerTrackingEnabled();
@@ -371,9 +389,12 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
 
     // Hero
     email_subject: emailSubject,
-    preheader_text: activeLabel || input.milestone.description || "",
-    headline: activeLabel || input.milestone.description || "",
-    hero_text: activeLabel || input.milestone.description || "",
+    preheader_text:
+      (ov?.preheaderText || "").trim() || activeLabel || input.milestone.description || "",
+    headline:
+      (ov?.headline || "").trim() || activeLabel || input.milestone.description || "",
+    hero_text:
+      (ov?.headline || "").trim() || activeLabel || input.milestone.description || "",
     estimated_arrival_start: toLocalizedDate(estimatedStartPlus2, language),
     estimated_arrival_end: toLocalizedDate(estimatedEndPlus2, language),
     hero_image_url: input.match.shopifyLineItemImageUrl || brandHeroImageUrl,
@@ -396,7 +417,7 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
     language,
     is_fr: language === "fr",
     is_en: language === "en",
-    status_note: statusNote,
+    status_note: (ov?.statusNote || "").trim() || statusNote,
 
     // Status
     active_step_title: stepLabels[activeIndex - 1],
@@ -447,9 +468,9 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
     footer_sender: copy.footerSender,
     footer_help: copy.footerHelp,
     next_steps_title: copy.nextStepsTitle,
-    next_step_1: nextStep1,
-    next_step_2: nextStep2,
-    next_step_3: nextStep3,
+    next_step_1: (ov?.nextStep1 || "").trim() || nextStep1,
+    next_step_2: (ov?.nextStep2 || "").trim() || nextStep2,
+    next_step_3: (ov?.nextStep3 || "").trim() || nextStep3,
     closing_1: copy.closing1,
     closing_2: copy.closing2,
     laposte_ready_text: copy.laPosteReady,
@@ -477,7 +498,7 @@ export function createPostmarkMailer(): Mailer {
   return {
     async sendStockXMilestoneEmail(input: StockXMilestoneEmailInput): Promise<MailSendResult> {
       const overrideTo = (process.env.POSTMARK_OVERRIDE_TO || "").trim();
-      const to = overrideTo || input.to;
+      const to = input.ignoreOverride ? input.to : overrideTo || input.to;
 
       if (!token || !from) {
         return {
