@@ -204,7 +204,20 @@ function isFoodItem(input: GalaxusAssortmentInput, supplierKey: string): boolean
 
 /** Soft toys — belt-and-braces when classifier kind is not yet plush (stale path / alias). */
 const PLUSH_SOFT_TOY_RE =
-  /\b(plush(?:ie)?s?|soft ?toys?|stuffed (?:animal|toy)|kuscheltiere?|stofftiere?|peluches?|doudous?)\b/i;
+  /\b(plushieverse|plush(?:ie)?s?|soft ?toys?|stuffed (?:animal|toy)|kuscheltiere?|stofftiere?|peluches?|doudous?)\b/i;
+
+/** Toys Tali pulled. Title match so a new GTIN is blocked without a key list. Apparel collabs stay. Bearbrick stays. */
+const OFFSHEET_COLLECTIBLE_RE = /\b(funko|labubu|pop\s?mart|hot\s?wheels)\b/i;
+const OFFSHEET_SPONGEBOB_RE = /\bsponge\s?bob\b/i;
+const OFFSHEET_TOY_RE = /\b(figures?|vinyl|plushieverse|plush(?:ie)?s?|blind\s?box|youtooz|kidrobot|dissectibles?)\b/i;
+
+function isOffSheetCollectible(input: GalaxusAssortmentInput): boolean {
+  const text = `${input.title ?? ""} ${input.brand ?? ""}`;
+  if (OFFSHEET_COLLECTIBLE_RE.test(text)) {
+    return !(APPAREL_TEXT_RE.test(text) || FOOTWEAR_TEXT_RE.test(text));
+  }
+  return OFFSHEET_SPONGEBOB_RE.test(text) && OFFSHEET_TOY_RE.test(text);
+}
 const PLUSH_SOFT_TOY_BRANDS = new Set(["jellycat"]);
 
 function isPlushSoftToy(input: GalaxusAssortmentInput): boolean {
@@ -608,6 +621,8 @@ export function galaxusAssortmentBlockReason(
   if (GIFT_CARD_RE.test(`${input.title ?? ""} ${input.supplierProductType ?? ""}`)) return "gift_card";
   if (supplierKey === "bwz" && isBwzShippingUnsafe(input)) return "bulky_shipping";
   if (supplierKey !== "wel" && isFoodItem(input, supplierKey)) return "food";
+  // Toys pulled 2026-11-02. Unknown STX kind would otherwise keep a new GTIN.
+  if (isOffSheetCollectible(input)) return "non_fashion";
   // Soft toys: always delist (independent of GALAXUS_FASHION_ONLY).
   if (kind === "plush" || isPlushSoftToy(input)) return "plush";
   if (isGalaxusFashionOnlyEnabled() && !isGalaxusFashionKept(kind, supplierKey, input)) return "non_fashion";

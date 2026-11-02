@@ -26,7 +26,22 @@ const BIKE_ACCESSORY_RE = /\bpour (?:v[ée]los?|vtt|roues?|cadres?|guidons?|sell
 /** Jersey + pant bundles sold as "Kit Maillot …". */
 const APPAREL_KIT_RE = /^kit (?:maillot|tenue)/i;
 
+/**
+ * Off the Tali sheet even when a 16–52 size looks like a shoe, or when "sac" / "bracelet"
+ * would otherwise count as a kept accessory. New catalog rows, not only the key blocklist.
+ * Sport-watch straps (Garmin, Suunto, "bracelet de montre") stay.
+ */
+const NER_OFFSHEET_RE =
+  /\b(couronnes?|pignons?|sprockets?|chainrings?|pannier racks?|porte-?v[ée]los?|jeux? de direction|lithium packs?|dry sacks?|sacs? [ée]tanches?|wash bags?|pencil cases?|trousses? de toilette)\b|\bcl[ée]s?\s+allen\b|\ballen\s+keys?\b|\bscrews?\b|\brings?\b|\bbagues?\b|\bcolliers?\b|\bnecklaces?\b|\bearrings?\b|\bpendentifs?\b|\bboucles?\s+d['’]oreilles?\b/i;
+const JEWELRY_BRACELET_RE = /\bbracelets?\b/i;
+const WATCH_STRAP_RE = /\b(garmin|polar|suunto|coros|wahoo|montres?|watch)\b/i;
+
 const SHOE_SIZE_RE = /^(?:EU\s*)?(1[6-9]|[2-4]\d|5[0-2])(?:[.,]5)?(?:\s?[123]\/3|\s?[⅓⅔])?$|^(?:US|UK)\s*\d/i;
+
+function isNerOffSheet(title: string): boolean {
+  if (NER_OFFSHEET_RE.test(title)) return true;
+  return JEWELRY_BRACELET_RE.test(title) && !WATCH_STRAP_RE.test(title);
+}
 
 export function isGalaxusNerApparelOnlyEnabled(): boolean {
   return String(process.env.GALAXUS_NER_APPAREL_ONLY ?? "").trim() !== "0";
@@ -44,6 +59,7 @@ function firstMatchAt(re: RegExp, text: string): number {
 export function isNerApparelOrShoe(input: { title?: string | null; sizeRaw?: string | null }): boolean {
   const title = String(input.title ?? "");
   const size = String(input.sizeRaw ?? "").trim();
+  if (isNerOffSheet(title)) return false;
   const gearAt = firstMatchAt(GEAR_TEXT_RE, title);
   const wearHits = [firstMatchAt(SHOE_TEXT_RE, title), firstMatchAt(APPAREL_TEXT_RE, title)].filter((i) => i >= 0);
   const wearAt = wearHits.length ? Math.min(...wearHits) : -1;
