@@ -219,7 +219,12 @@ export async function runShopifyExpressDailyBuy(options?: {
       else if (result.kind === "skipped") skipped += 1;
       else if (result.kind === "needs_human") {
         needsHuman += 1;
-        if (result.needsHuman && !["pickup", "physical_stock", "already_matched"].includes(result.needsHuman.reason)) {
+        if (
+          result.needsHuman &&
+          !["pickup", "physical_stock", "already_matched", "non_stockx"].includes(
+            result.needsHuman.reason
+          )
+        ) {
           needsHumanPayloads.push(result.needsHuman);
         }
       }

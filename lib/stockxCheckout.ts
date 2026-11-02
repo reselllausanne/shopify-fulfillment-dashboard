@@ -53,6 +53,7 @@ import {
   runPrebuyDedupeCheck,
   sizeFromSku,
 } from "@/lib/stockxAutoCheckout/prebuyDedupe";
+import { isClearlyNotStockxBuyable } from "@/lib/stockxAutoCheckout/nonStockxBuyable";
 import {
   MAX_ALL_IN_CHF,
   type StockxDesiredLane,
@@ -1619,6 +1620,25 @@ export async function runStockxAutoCheckoutForOrder(options: {
 
   const slug = (options.slug || (await resolveSlugFromSku(shopify.sku)) || "").trim();
   if (!slug) {
+    // Warehouse merch / retail socks: no StockX listing → skip (no needs-human mail).
+    // Sneakers / hobby boxes stay needs_human so ops can map the slug.
+    const nonStx = isClearlyNotStockxBuyable({
+      title: shopify.title,
+      sku: shopify.sku,
+    });
+    if (nonStx.notBuyable) {
+      const nh = needsHumanBase(shopify, {
+        reason: "non_stockx",
+        desiredLane,
+        detail: nonStx.label ?? null,
+      });
+      return {
+        kind: "skipped",
+        reason: "non_stockx",
+        detail: nonStx.label ?? null,
+        needsHuman: nh,
+      };
+    }
     const nh = needsHumanBase(shopify, { reason: "slug", desiredLane });
     return { kind: "needs_human", reason: "slug", needsHuman: nh };
   }
