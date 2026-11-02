@@ -649,12 +649,43 @@ export async function GET(request: Request) {
       }
     }
 
+    // Hard invariant: one row per ProviderKey. Candidates are unique, but the
+    // listing-alias superseded zeros, delist zeros and alternative-product merges can
+    // re-emit a key that already has a row. Duplicate keys poison the snapshot rebuild
+    // (createMany skipDuplicates persists fewer rows than parsed → assert fails →
+    // snapshot stays invalid → every push runs the expensive live path, 2026-11-01
+    // outage) and are undefined behavior on the Galaxus side. First occurrence wins —
+    // same row the snapshot persister kept.
+    const seenFinalKeys = new Set<string>();
+    const duplicateKeySamples: string[] = [];
+    let duplicateRowsDropped = 0;
+    const dedupedRows = finalRows.filter((row) => {
+      const key = String(row.ProviderKey ?? "").trim();
+      if (!key) return false;
+      if (seenFinalKeys.has(key)) {
+        duplicateRowsDropped += 1;
+        if (duplicateKeySamples.length < 20) duplicateKeySamples.push(key);
+        return false;
+      }
+      seenFinalKeys.add(key);
+      return true;
+    });
+    if (duplicateRowsDropped > 0) {
+      console.warn("[GALAXUS][EXPORT][STOCK] dropped duplicate ProviderKey rows", {
+        dropped: duplicateRowsDropped,
+        kept: dedupedRows.length,
+        sampleKeys: duplicateKeySamples,
+      });
+    }
+    finalRows = dedupedRows;
+
     mark("rowsAndAlternatives", tRows);
     timing.total = Date.now() - tStart;
     console.info("[GALAXUS][EXPORT][STOCK][TIMING] phase ms", {
       ...timing,
       candidates: exportCandidates.length,
       rows: finalRows.length,
+      duplicateRowsDropped,
     });
     const csv = toCsv(headers, finalRows);
     const filename = `galaxus-stock-${supplier ?? "all"}-${Date.now()}.csv`;
