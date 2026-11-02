@@ -1,6 +1,6 @@
 # SOURCES — accès, fichiers, dates, définitions, limites
 
-Mise à jour : 2026-11-02 (v1). Heure de référence dirigeant : Europe/Zurich. Devise : CHF sauf mention.
+Mise à jour : 2026-11-03 00:15 (v2, après relecture indépendante : statuts d'accès recalés sur l'usage réel). Heure de référence dirigeant : Europe/Zurich. Devise : CHF sauf mention.
 Aucune source ci-dessous n'a été modifiée. Statut = `OK` (lu), `PARTIEL`, `NON TESTÉ`, `INACCESSIBLE`.
 
 ## 1. Accès réellement disponibles
@@ -10,21 +10,22 @@ Aucune source ci-dessous n'a été modifiée. Statut = `OK` (lu), `PARTIEL`, `NO
 | Base Postgres (Supabase, projet `nhxg…`) | MCP `user-supabase.execute_sql` + script local `calculs/db_readonly.mjs` (transaction `READ ONLY`, SELECT/WITH uniquement) | OK | Voir §2 | Pas de compta : pas de banque, pas de payouts, pas de TVA, pas de salaires |
 | Shopify Admin API (GraphQL 2026-07) | `calculs/shopify_readonly.mjs` (refuse `mutation`) ; jeton app avec scopes lecture incl. `read_all_orders`, `read_analytics`, `read_reports`, `read_shopify_payments_payouts`, `read_shopify_payments_disputes`, `read_themes`, `read_translations`, `read_markets`, `read_customers`, `read_marketing_events`, `read_returns` | OK (testé 2026-11-02) | Commandes depuis #1001 (2022-12-19) | La base locale ne contient que 2026 ; l'API remonte plus loin |
 | Shopify boutique | `taxesIncluded=true`, `taxShipping=false`, plan « Shopify » (pas Plus), devises CHF/EUR, livre CH, DE, AT, FR, IT, ES, NL, fuseau Europe/Zurich, adresse de facturation Bussigny | OK | état au 2026-11-02 | Régime TVA réel non déductible de l'API (voir manques) |
-| Google Ads API | Identifiants dans `.env` (`GOOGLE_ADS_*`), code `adsanalytics/` | NON TESTÉ (à tester en lecture GAQL par sous-agent 1) | | |
-| Merchant Center | `GOOGLE_MERCHANT_REFRESH_TOKEN` | NON TESTÉ | | |
-| Klaviyo | `KLAVIYO_PRIVATE_API_KEY` ; `RecurringExpense` « KLAVIO » **inactive** | NON TESTÉ | | |
-| Postmark | `POSTMARK_SERVER_TOKEN` (emails transactionnels) | NON TESTÉ | | |
-| StockX / GOAT | sessions locales `.data/` (non utilisées : risque d'effet de bord) | NON UTILISÉ | | Rapprochement via tables `OrderMatch`/`StxPurchaseUnit` |
-| VPS Hetzner (`resell-vps`) | SSH non sollicité (non nécessaire, DB accessible directement) | NON UTILISÉ | | |
+| Google Ads API | Identifiants dans `.env` (`GOOGLE_ADS_*`), code `adsanalytics/` | **OK (lecture seule, GAQL, sous-agent Ads)** | 2025-07 → 2026-11 | Aucune écriture |
+| Merchant Center | `GOOGLE_MERCHANT_REFRESH_TOKEN` | **OK (lecture seule, sous-agent Ads)** | état au 2026-11-02 | Diagnostics par offre indisponibles |
+| Klaviyo | `KLAVIYO_PRIVATE_API_KEY` ; `RecurringExpense` « KLAVIO » **inactive** | **OK (lecture seule, sous-agent SAV/CRM)** | profils, flux, rapports | Consentement/délivrabilité partiels |
+| Postmark | `POSTMARK_SERVER_TOKEN` (emails transactionnels) | **OK (lecture seule, sous-agent SAV/CRM)** | messages échantillonnés | **Jeton apparu dans une sortie d'outil : à renouveler** |
+| StockX / GOAT | API GraphQL StockX en **lecture seule** (`fetchRecentStockxBuyingOrders`, `calculs/stockx_buying_history_readonly.ts`) avec le jeton copié depuis le VPS (`.data/stockx-token.json` local remplacé, sauvegarde `.bak-audit`) | **OK (lecture)** | 6 004 achats 2020-04 → 2026-11-02 | **Jeton et identifiants proxy apparus dans une sortie d'outil : à renouveler** |
+| VPS Hetzner (`resell-vps`) | SSH en lecture seule pour copier le jeton StockX (`.data/stockx-token.json`) | **OK (lecture)** | 2026-11-02 | Aucune modification sur le VPS |
 | Banque / comptabilité / TVA / contrats paiement / salaires | — | **INACCESSIBLE** | | Tables `BankTransaction`, `BankBalanceSnapshot`, `CashLedgerDaily`, `ExpectedCashEvent`, `MarketplaceRemittance`, `ShopifyPayout` existent mais sont **vides** (0 ligne) |
-| Search Console, GA4, Trustpilot, Google Business | — | NON TESTÉ / probablement INACCESSIBLE | | Avis publics : recherche web par sous-agent 2 |
+| Search Console, GA4, Trustpilot, Google Business | — | INACCESSIBLE (GSC, GA4) ; Trustpilot **403** ; Google Reviews non lus | | Avis publics : Judge.me seul exploité |
+| PDF Galaxus `Galaxus_Gutschrift_86563518.pdf` (Téléchargements du dirigeant, hors dépôt) | lecture locale | OK | un avoir | Galaxus achète HT + 8,1 % TVA |
 | Web (recherche externe) | outils WebSearch / WebFetch | OK | | |
 
 ## 2. Couverture des tables internes (extraction 2026-11-02 19:45 UTC, `donnees_brutes/00_profil_tables.csv`)
 
 | Table | Lignes | Début | Fin | Remarque |
 |---|---|---|---|---|
-| ShopifyOrder | 2 896 | 2026-01-01 | 2026-11-01 | Synchro 14 jours glissants ; **historique 2022-2025 absent** |
+| ShopifyOrder | 2 896 | 2026-01-01 | 2026-11-01 | Synchro 14 jours glissants ; **historique 2022-2025 absent de la table (≈ 6 650 commandes via l'API Shopify)** |
 | OrderMatch (ligne de commande ↔ achat fournisseur) | 4 053 | 2025-09-11 | 2026-10-31 | Coût d'achat (`supplierCost`) = montant StockX réglé ; marge = prix ligne − coût |
 | DailyAdSpend | 335 | 2025-07-06 | 2026-10-31 | Canal `google` seul ; aucune ligne Meta |
 | ads_campaign_daily / ads_product_daily | 2 082 / 4,47 M | 2025-07-06 | 2026-10-31 | Export Google Ads |

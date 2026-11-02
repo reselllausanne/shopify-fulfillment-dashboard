@@ -12,7 +12,7 @@ Légende : **[I]** interne · **[O]** source officielle · **[S]** source sector
 1. **L'Europe n'est pas un test de demande, c'est un test de coût d'entrée.** Le panier moyen (≈ 201,6 CHF HT, ≈ 217 EUR) dépasse le seuil de 150 EUR. Il subit donc le droit de pays tiers de **16,9 %** (code TARIC 6404 11 00, chaussures de sport) [O] puis la TVA d'importation du pays de destination. Le client final paie ≈ **+48 %** vs prix CH TTC (DE, port 30 CHF) — `tableaux/bm_eu_landed_cost.csv`.
 2. **La TVA n'est pas le handicap** : les concurrents UE facturent aussi la TVA locale. Le handicap est le **droit de douane (16,9 %) + le port transfrontalier**, que la concurrence établie dans l'UE ne supporte pas sur des produits déjà en libre pratique.
 3. **Si on absorbe le droit** (livraison DDP) : contribution avant pub ≈ **−9,2 CHF/commande** (DE, port réel 30 CHF) contre +28,9 en Suisse. En régime « client paie à la livraison » (DAP) : ≈ +29,9, mais avec risque de refus de colis ; avec un colis refusé = achat déjà fait (modèle achat après commande).
-4. **Contribution avant publicité ≈ 24–30 CHF** en DAP à 0–5 % de refus ; la publicité actuelle coûte 35,0 CHF/commande en Suisse (fin_00) → la contribution après acquisition y est déjà négative (−6,2 CHF). **Aucun budget pub payant n'est justifiable en Europe tant que la Suisse n'est pas positive après acquisition.**
+4. **Contribution avant publicité ≈ 24–30 CHF** en DAP à 0–5 % de refus (ancienne base TVA 8,1 % : à relire avec ≈ +11 CHF, soit ≈ 35–41 CHF) ; la publicité actuelle coûte 35,0 CHF/commande en Suisse (fin_00) → la contribution après acquisition suisse est mince (+5,3 CHF en moyenne, fragile). **Aucun budget pub payant n'est justifiable en Europe tant que la Suisse n'est pas démontrée positive sur cohortes mûres.**
 5. **Fait interne** : ≈ 31 commandes sur 12 mois hors Suisse ou non renseignées (27 pays identifiés + 4 « NA » ; ≈ 0,9 % des commandes), tirées par FR (15), dont 13 en 2026 — sans stratégie dédiée. Elles augmentent en août–octobre 2026 (DE, AT, IT, ES). C'est un signal faible, pas une preuve de demande.
 6. **Incohérences à traiter avant toute ouverture** : frais de port annoncés « 10 CHF Europe » vs ≈ 31 CHF facturés ; politique de retour 14 jours en **avoir** (StoreCreditRefund, CH seulement) alors que le droit UE de rétractation implique en principe un **remboursement** (§6) ; preuve d'exportation pour l'exonération de TVA suisse non vérifiée (§5).
 7. **Ordre d'entrée recommandé (hypothèse)** : (0) Suisse positive après acquisition ; (1) pilote DE + AT (+ FR) en DAP, sans publicité payante, plafond de 60 commandes ; (2) FR/IT/NL seulement si critères atteints. Stock UE / partenaire : à étudier **après** le pilote, pas avant.
@@ -124,7 +124,7 @@ Sensibilité au **refus de colis en DAP** (achat déjà fait, port aller + retou
 | 10 % | 19,4 | 16,4 | 13,4 |
 | 20 % | 8,9 | 2,9 | −3,2 |
 
-**Fait [I]** : la publicité actuelle coûte 35,0 CHF/commande ; après acquisition la contribution suisse est −6,2 CHF (fin_00). **Interprétation** : même sans refus, une contribution de ≈ 30 CHF est très en dessous du coût d'acquisition suisse ; **le pilote ne peut pas être financé par de la publicité payante** et doit s'appuyer sur la demande organique (SEO DE, mails, bouche-à-oreille). **Confiance** : moyenne (structure) / faible (valeurs H).
+**Fait [I]** : la publicité actuelle coûte 35,0 CHF/commande ; après acquisition la contribution suisse est +5,3 CHF en moyenne (fin_00, fragile). **Interprétation** : avec ≈ 35–41 CHF de contribution (à recalculer), un coût d'acquisition suisse de 35 CHF ne laisse aucune marge de test ; **le pilote ne doit pas être financé par de la publicité payante** et doit s'appuyer sur la demande organique (SEO DE, mails, bouche-à-oreille). **Confiance** : moyenne (structure) / faible (valeurs H).
 
 **À ne pas oublier (non chiffré)** : coût des retours transfrontaliers, remboursement (§6), support dans la langue, taux de change CHF/EUR/USD, temps de travail (au moins 1 h/semaine de suivi du pilote **[H]**), frais d'un éventuel intermédiaire IOSS, frais d'exportation (e-dec) par envoi.
 
@@ -164,7 +164,7 @@ Aucun droit au financement, aucune subvention ni aide à l'export n'a été rech
 
 ## 7. Ce qui doit d'abord être prouvé en Suisse
 
-1. **Contribution positive après acquisition** : aujourd'hui −6,2 CHF/commande (fin_00) ; résultat avant rémunération ≈ −21,2 k CHF. Une extension qui coûte du temps et du capital avant cette preuve est le motif d'échec le plus documenté (bm_01, E-lessons).
+1. **Contribution positive après acquisition démontrée** : aujourd'hui +5,3 CHF/commande en moyenne (fin_00), résultat avant rémunération ≈ +11,9 k CHF non démontré (fourchette ≈ 0 à +12 k). Une extension qui coûte du temps et du capital avant cette preuve est le motif d'échec le plus documenté (bm_01, E-lessons).
 2. **Délai de livraison tenu** : médiane 9–14 jours d'expédition (fin_00) vs promesse « 48 h » / « 5–10 jours » ; à l'étranger l'écart se creuse.
 3. **Promesses et politiques cohérentes** (port, retours, avis : cf. bm_03 A1, A6 ; bm_04) avant d'exposer des clients UE.
 4. **Capacité de support multilingue** : cx_02 (e-mails/SAV) ; le DE apporte déjà un tiers des commandes.

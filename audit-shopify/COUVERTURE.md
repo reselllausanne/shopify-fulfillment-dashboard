@@ -44,7 +44,7 @@ Chaque point = contexte dirigeant à vérifier (actualité, période, définitio
 ## S3 — Règles d'exécution et de preuve
 | ID | Exigence | Statut | Preuve | Blocage |
 |---|---|---|---|---|
-| 3.1 | Lecture seule prod ; rien modifié (prix, budgets, campagnes, flux, site, comptes, politiques) ; pas d'achat, pas de contact financeurs/clients | RÉALISÉ | RAPPORT_FINAL.md §9 (écarts signalés : copie du jeton StockX, jetons exposés) |  |
+| 3.1 | Lecture seule prod ; rien modifié (prix, budgets, campagnes, flux, site, comptes, politiques) ; pas d'achat, pas de contact financeurs/clients | PARTIEL | RAPPORT_FINAL.md §9 | écarts à la lecture seule : jeton StockX copié du VPS, jetons exposés dans des sorties |
 | 3.2 | Inventaire accès/exports/scripts/documents | RÉALISÉ | SOURCES.md |  |
 | 3.3 | Périodes, dates d'extraction, définitions, limites, ruptures de mesure | PARTIEL | SOURCES.md | ruptures de mesure non toutes documentées |
 | 3.4 | Réutiliser données/scripts existants | RÉALISÉ | SOURCES.md |  |
@@ -70,7 +70,7 @@ Chaque point = contexte dirigeant à vérifier (actualité, période, définitio
 | 4.10 | Logiciels, salaires, locaux, assurances, fixes, rémunération réaliste du dirigeant | PARTIEL | analyses/donnees_manquantes.md | charges fixes et rémunération manquantes |
 | 4.11 | 6 niveaux : marge affichée / contribution réalisée avant pub / après acquisition / résultat après fixes / résultat économique / variation de trésorerie + besoins | PARTIEL | analyses/fin_00_base_financiere.md §1 | variation de trésorerie réelle impossible sans banque |
 | 4.12 | Coûts propres Shopify, allocation explicite des communs, coût d'autonomie ; pas d'allocation arbitraire | NON TRAITÉ |  | coûts communs Galaxus/Shopify non alloués faute de données |
-| 4.13 | Séparer commandes récentes vs cohortes mûres ; pas de marge acquise sans achat/livraison | RÉALISÉ | analyses/fin_00_base_financiere.md (cohortes mature/récente) |  |
+| 4.13 | Séparer commandes récentes vs cohortes mûres ; pas de marge acquise sans achat/livraison | RÉALISÉ | analyses/fin_00_base_financiere.md §1 (cohortes mûre/récente), tableaux/fin_05_pnl_cohortes.csv (pub répartie au prorata) |  |
 | 4.14 | Découpes : marque, famille, taille, tranche prix, sourcing, stock/commande, dispo, canal, nouveau/récurrent, pays | PARTIEL | analyses/fin_00_base_financiere.md §5, tableaux/bm_mix_*.csv, ads_12_*.csv | famille/disponibilité non traitées |
 | 4.15 | Échantillon commandes normales/annulées/retournées/échangées/remboursées ; ≥1 exemple complet + exceptions ; couverture + incertitude | RÉALISÉ | analyses/fin_00_base_financiere.md §6 | échanges purs non reconstituables |
 | 4.16 | Seuil de rentabilité ; volume pour charges + rémunération ; volume compatible demande/opérations/trésorerie | RÉALISÉ | tableaux/fin_10_seuils.csv |  |
@@ -80,7 +80,7 @@ Chaque point = contexte dirigeant à vérifier (actualité, période, définitio
 | ID | Exigence | Statut | Preuve | Blocage |
 |---|---|---|---|---|
 | 5.1 | Auditer hypothèses : baisse de prix, formule (buy+14,5+30+15–20)/0,92, ask 160 → ticket 270–285 vs 299, plafond pub 10–12 % / 30–35 CHF, Long Tail réduit, Explorer limité, Core protégé, feed sélectif | PARTIEL | calculs/fin_08_price_formula.py, analyses/ads_04 | Long Tail/Explorer via ads ; benchmark prix non fait |
-| 5.2 | Vérifier arithmétique formule + exemple, devises, frais, fiscalité, coûts oubliés ; recalcul avec vrais paramètres | RÉALISÉ | calculs/fin_08_price_formula.py |  |
+| 5.2 | Vérifier arithmétique formule + exemple, devises, frais, fiscalité, coûts oubliés ; recalcul avec vrais paramètres | RÉALISÉ | analyses/fin_00_base_financiere.md §5 (Prix), calculs/fin_08_price_formula.py |  |
 | 5.3 | Benchmark compétitivité (réf. exacte, coloris, taille, état, service, dispo, délai, livraison, taxes, prix final) ; pas de GTIN/SKU mal rapprochés | NON TRAITÉ |  | aucun rapprochement GTIN/SKU concurrents ni scraping |
 | 5.4 | Si baisse de prix : contribution perdue, hausse de commandes requise, coûts sourcing/SAV/financement, plausibilité, test + limite de perte | RÉALISÉ | tableaux/fin_08_volume_requis_baisse_prix.csv | plausibilité de la demande non testée |
 | 5.5 | Frais sourcing, ask vs achat, achats impossibles, remplacements, regroupements, change, délais, remboursements fournisseurs | PARTIEL | analyses/fin_00_base_financiere.md §2, analyses/fin_01_galaxus_stock_financement.md §6 | remplacements/regroupements non mesurés |
@@ -206,7 +206,7 @@ Chaque point = contexte dirigeant à vérifier (actualité, période, définitio
 ## S17 — Trésorerie, financement croissance, scénarios
 | ID | Exigence | Statut | Preuve | Blocage |
 |---|---|---|---|---|
-| 17.1 | Vision rapprochée du cash + simulation mensuelle 12 mois | RÉALISÉ | tableaux/modele_tresorerie.xlsx | ouverture = 0 |
+| 17.1 | Vision rapprochée du cash + simulation mensuelle 12 mois | PARTIEL | tableaux/modele_tresorerie.xlsx | ouverture = 0 (banque absente) ; formules sans valeurs en cache |
 | 17.2 | Distinguer banque / résultat / stocks / créances / dettes / avoirs / remboursements / taxes / engagements | PARTIEL | analyses/fin_01_galaxus_stock_financement.md §4 | banque manquante |
 | 17.3 | Calendriers réels achats, cartes, remboursements, Google Ads, payouts Shopify/marketplaces (conditions actuelles) | PARTIEL | analyses/fin_01_galaxus_stock_financement.md §4 | calendriers réels manquants |
 | 17.4 | BFR en croissance | RÉALISÉ | analyses/fin_01_galaxus_stock_financement.md §4 |  |
@@ -235,7 +235,7 @@ Chaque point = contexte dirigeant à vérifier (actualité, période, définitio
 | 19.3 | Volumes, délais de conversion, saisonnalité, BFCM ; liquidation ≠ catalogue courant | PARTIEL | analyses/fin_01_galaxus_stock_financement.md §4 | BFCM modélisé par hypothèse |
 | 19.4 | Si test statistique impraticable : ce que le pilote montre / ne montre pas | RÉALISÉ | analyses/cx_01, analyses/ads_04 |  |
 | 19.5 | Évaluer en contribution totale + cash | RÉALISÉ | analyses/fin_00_base_financiere.md |  |
-| 19.6 | Étapes d'investissement : montant, objectif, preuve, date de revue, capital supplémentaire autorisable ; seuils issus du diagnostic | RÉALISÉ | analyses/strat_01_offre_organisation_feuille_de_route.md §4 |  |
+| 19.6 | Étapes d'investissement : montant, objectif, preuve, date de revue, capital supplémentaire autorisable ; seuils issus du diagnostic | RÉALISÉ | analyses/strat_01_offre_organisation_feuille_de_route.md §4 (enveloppe, perte max, dates de revue, capital autorisable) |  |
 
 ## S20 — Trajectoire 2 sem / 2 mois / 8 mois / 1 an
 Départ audit = 2026-11-02 (Europe/Zurich). Échéances : ~2026-11-16 · ~2027-01-02 · ~2027-07-02 · ~2027-11-02.
@@ -245,7 +245,7 @@ Départ audit = 2026-11-02 (Europe/Zurich). Échéances : ~2026-11-16 · ~2027-0
 | 20.2 | 2 mois : contribution matures, sourcing/service/acquisition, choisir/ajuster/abandonner, pilote stock/contenu/financement | RÉALISÉ | analyses/strat_01_offre_organisation_feuille_de_route.md §5 |  |
 | 20.3 | 8 mois : acquisition reproductible, service fiable, moins de dépendance, réachat/rendement stock/discipline, rebranding/Europe | RÉALISÉ | analyses/strat_01_offre_organisation_feuille_de_route.md §5 |  |
 | 20.4 | 1 an : Shopify finance fonctionnement + croissance ? échelle, équipe, capital ; accélérer/réduire/repositionner/arrêter | RÉALISÉ | analyses/strat_01_offre_organisation_feuille_de_route.md §5 |  |
-| 20.5 | Par horizon : actions, responsable, coût, charge, dépendances, indicateurs, critères de passage, reports | PARTIEL | analyses/strat_01_offre_organisation_feuille_de_route.md §5 | responsable unique = dirigeant ; coûts partiels |
+| 20.5 | Par horizon : actions, responsable, coût, charge, dépendances, indicateurs, critères de passage, reports | RÉALISÉ | analyses/strat_01_offre_organisation_feuille_de_route.md §5 (tableau par horizon) | responsable unique = dirigeant ; charges en heures = H |
 
 ## S21 — Livrables (15) + question finale
 | # | Livrable | Statut | Fichier |
@@ -253,7 +253,7 @@ Départ audit = 2026-11-02 (Europe/Zurich). Échéances : ~2026-11-16 · ~2027-0
 | L1 | Verdict Shopify (santé, viabilité, potentiel, confiance) | RÉALISÉ | RAPPORT_FINAL.md §1 |
 | L2 | Inventaire sources, qualité, manques, décisions affectées | RÉALISÉ | SOURCES.md, analyses/donnees_manquantes.md |
 | L3 | Reconstitution financière + rapprochement commandes/achats/encaissements | PARTIEL | analyses/fin_00_base_financiere.md ; limite : banque manquante |
-| L4 | Causes des pertes/problèmes/contraintes classées par impact | RÉALISÉ | RAPPORT_FINAL.md §4 |
+| L4 | Causes des pertes/problèmes/contraintes classées par impact | PARTIEL | RAPPORT_FINAL.md §4 ; limite : unités hétérogènes ; liens causaux délai→annulation = I |
 | L5 | Proposition Ads/Merchant/feed/tracking | RÉALISÉ | RAPPORT_FINAL.md §5, analyses/ads_04 |
 | L6 | Corrections site/sourcing/emails/SAV/politiques/réputation | RÉALISÉ | RAPPORT_FINAL.md §6, analyses/cx_01, analyses/cx_02, analyses/cx_03, analyses/cx_04 |
 | L7 | Plan croissance (fidélisation, contenu, UGC, SEO/GEO, canaux) | PARTIEL | RAPPORT_FINAL.md §7, analyses/bm_03, analyses/bm_04 |
@@ -262,7 +262,7 @@ Départ audit = 2026-11-02 (Europe/Zurich). Échéances : ~2026-11-16 · ~2027-0
 | L10 | Plan marque/nom/SEO transition/Europe | PARTIEL | analyses/bm_02, analyses/bm_03, analyses/bm_05 ; limite : registres de marques, redirections |
 | L11 | Politique stock + synergies Galaxus + protection cash | RÉALISÉ | analyses/fin_01_galaxus_stock_financement.md |
 | L12 | Besoin capital, options, verdict levée (aujourd'hui / jalons) | RÉALISÉ | analyses/fin_01_galaxus_stock_financement.md §5 |
-| L13 | Prévisionnels, trésorerie 13 sem, scénarios 12 mois modifiables | RÉALISÉ | tableaux/modele_tresorerie.xlsx ; limite : ouverture = 0 |
+| L13 | Prévisionnels, trésorerie 13 sem, scénarios 12 mois modifiables | RÉALISÉ | tableaux/modele_tresorerie.xlsx, fin_10_redressement_decomposition.csv ; limite : ouverture = 0 |
 | L14 | Organisation cible, revue décisions, 4 horizons | PARTIEL | analyses/strat_01_offre_organisation_feuille_de_route.md |
 | L15 | Registre garder/réparer/tester/développer/reporter/arrêter + tableau hebdo (indicateurs définis + source) + 5 décisions immédiates (possible maintenant ? preuve manquante ? risque de différer ? invalidation) | RÉALISÉ | analyses/strat_01_offre_organisation_feuille_de_route.md §7-9, tableaux/tableau_bord_hebdo.csv |
 | LF | Réponse à la question finale (offre/marque, où investir argent+temps, place Galaxus/stock, financement, preuves avant accélération) | RÉALISÉ | RAPPORT_FINAL.md §10 |
@@ -274,5 +274,15 @@ Départ audit = 2026-11-02 (Europe/Zurich). Échéances : ~2026-11-16 · ~2027-0
 | 22.2 | Sources et base financière d'abord ; agrégations puis exemples ; emails échantillonnés ; sources conservées | RÉALISÉ | ETAT.md |
 | 22.3 | Sous-agents (max 3 : Ads/feed/tracking ; parcours/SAV/avis/fidélisation ; benchmark/repositionnement/SEO/UGC/Europe), mandat + sources + définitions transmis ; pilote garde finance/cash/financement/stock-Galaxus/synthèse et contrôle les preuves | RÉALISÉ | ETAT.md (3 sous-agents + relecture) |
 | 22.4 | Points d'avancement courts ; sauvegarde avant limite de contexte ; à la reprise lire ETAT, SOURCES, COUVERTURE | PERMANENT (appliqué) | ETAT.md |
-| 22.5 | Vérification finale section par section (réalisé / partiel + limite / bloqué + donnée) | EN COURS | fin de COUVERTURE (vérification finale) |
-| 22.6 | Relecture indépendante finale (calculs, doubles comptes, attribution, preuves faibles, scénarios irréalistes, omissions) | EN COURS | analyses/relecture_independante.md |
+| 22.5 | Vérification finale section par section (réalisé / partiel + limite / bloqué + donnée) | RÉALISÉ | COUVERTURE.md, section « Vérification finale » |
+| 22.6 | Relecture indépendante finale (calculs, doubles comptes, attribution, preuves faibles, scénarios irréalistes, omissions) | RÉALISÉ | analyses/relecture_independante.md (agent a1e1f171) ; corrections C1-C13 appliquées ou documentées |
+
+## Vérification finale (S22.5)
+Dernière vérification : 2026-11-03 00:30 (Europe/Zurich), après relecture indépendante (`analyses/relecture_independante.md`).
+Total 177 exigences : RÉALISÉ 88 · PARTIEL 79 · NON TRAITÉ 3 · BLOQUÉ 1 · PERMANENT 6.
+
+**NON TRAITÉ (limite)** : 4.12, 5.3, 6.6. 5.3 benchmark de prix concurrents par référence exacte (aucun rapprochement GTIN/SKU ni scraping réalisé) ; 6.6 dépôt-vente/stock partenaire (aucune donnée) ; 4.12 allocation des coûts communs (données absentes).
+**BLOQUÉ (donnée exacte attendue)** : 6.8. 6.8 cash libre Galaxus : relevés bancaires UBS 24 mois, paiements/avoirs/pénalités Galaxus, convention NER.
+**PARTIEL (limite explicite dans la colonne Blocage)** : 1.4, 2.1, 2.3, 2.4, 2.5, 2.7, 2.14, 3.1, 3.3, 3.10, 4.1, 4.2, 4.5, 4.6, 4.7, 4.8, 4.10, 4.11, 4.14, 4.17, 5.1, 5.5, 5.6, 6.2, 6.3, 6.4, 6.5, 6.7, 6.9, 6.10, 7.4, 7.6, 7.7, 7.13, 8.1, 8.2, 9.1, 9.4, 9.6, 9.7, 9.8, 9.9, 10.4, 10.6, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 12.3, 12.4, 13.3, 13.4, 14.1, 15.1, 15.2, 16.1, 16.2, 16.3, 16.4, 16.5, 17.1, 17.2, 17.3, 17.8, 17.9, 17.11, 18.2, 18.3, 18.4, 18.5, 19.1, 19.3, L3, L4, L7, L10, L14.
+Les données réellement manquantes sont regroupées et classées par décision bloquée dans `analyses/donnees_manquantes.md` (21 lignes).
+Cohérence : les chiffres de référence sont ceux de `analyses/fin_00_base_financiere.md` et `RAPPORT_FINAL.md` (TDFN 2,1 %, 40,3 CHF/commande avant pub, ROAS d'équilibre 5,4, résultat avant rémunération ≈ 0 à +12 k non démontré). Les analyses des sous-agents ont été corrigées dans leur corps et portent un bandeau d'erratum.

@@ -1,0 +1,11 @@
+étape (cumulative),résultat avant rémunération 12 m,résultat après rémunération 12 m,flux net 12 m
+Central (référence),16943.0,-55057.0,-55222.0
+"+ volume ×0,85",13817.0,-58183.0,-59241.0
++ pub 18 CHF/commande,71068.0,-932.0,-1990.0
++ panier +3 % (non étayé),76675.0,4675.0,3772.0
+"+ remboursements 6,5 % (non étayé)",80659.0,8659.0,7866.0
++ litiges ÷2 (non étayé),84098.0,12098.0,11305.0
++ expédition 13 CHF (non étayé),87624.0,15624.0,14831.0
+"Redressement complet, volume ×0.75",76857.0,4857.0,3438.0
+"Redressement complet, volume ×0.7",71473.0,-527.0,-2259.0
+"Redressement complet, volume ×0.65",66089.0,-5911.0,-7956.0

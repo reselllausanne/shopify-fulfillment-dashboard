@@ -24,7 +24,7 @@ PARAMS = [  # key, label, unit, values(P,C,F,R), source/confiance
     ("aov", "Panier brut TTC moyen", "CHF", [cal["aov"], cal["aov"], cal["aov"], 245.0], "Fait 2026 (fin_05). Redressement : +3 % via prix/mix (hypothèse)"),
     ("refund", "Taux de remboursement (part du brut)", "%", [0.095, cal["refund"], 0.070, 0.065], "Fait 2026 = 8,4 %. Redressement : délais/promesse (hypothèse)"),
     ("vat", "TVA TDFN (part du TTC conservé)", "%", [0.021] * 4, "DÉCLARATION UTILISATEUR 2026-11-02 : forfait 2,1 % — à prouver par décomptes AFC/banque"),
-    ("cogs", "Coût d'achat (part du net HT conservé)", "%", [0.760, cal["cogs"], 0.735, cal["cogs"]], "Fait 2026 (dont ≈10 % estimé non apparié). TVA import non récupérée"),
+    ("cogs", "Coût d'achat (part du net HT conservé)", "%", [0.760, cal["cogs"], 0.700, cal["cogs"]], "Fait 2026 (dont ≈6 % du net estimé non apparié). TVA import non récupérée. Favorable ≤ Central (corrigé : relecture)"),
     ("fees", "Frais de paiement (part du TTC conservé)", "%", [0.030, cal["fees"], 0.027, cal["fees"]], "Fait partiel (SP observés, autres estimés)"),
     ("exp", "Expédition + préparation par commande", "CHF", [15.0, cal["exp"], 13.0, 13.0], "Forfaits 6,5+8,0 du dépôt ; coûts réels Poste/main d'œuvre non fournis"),
     ("disp", "Litiges / chargebacks (part du TTC conservé)", "%", [0.012, cal["disp"], 0.005, 0.004], "Fait 2026 (litiges perdus)"),

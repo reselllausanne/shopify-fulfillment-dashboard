@@ -67,6 +67,9 @@ bought_ratio = np.where(o.n_unmatched + o.n_cancelled_purchase >= x.groupby("ord
 o["cogs"] = np.where(full_ref, o.cogs_all * bought_ratio * (1 - HYP["recup_stock_retour_pct"]), o.cogs_all)
 o["cogs_vat_credit"] = o.cogs * HYP["cout_vat_recuperable_part"]
 o["cogs_net"] = o.cogs - o.cogs_vat_credit
+# part estimée réellement présente dans le coût retenu (correction relecture B3 : les lignes non appariées de commandes intégralement remboursées ne pèsent plus)
+o["cogs_est_brut"] = o.cogs_est
+o["cogs_est"] = np.where(o.cogs_all > 0, o.cogs_est / o.cogs_all, 0.0) * o.cogs_net
 
 # --- frais de paiement
 ts = t[(t.status == "SUCCESS") & (t.kind.isin(["SALE", "CAPTURE"]))].copy()
@@ -134,6 +137,7 @@ print("  contribution avant pub par commande conservée:", round(tot.contributio
 coh = {}
 for c in ["mature", "recente"]:
     d = o[o.cohorte == c]; ms = sorted(d.mois.unique())
-    coh[c] = pnl(d, ads.reindex(ms), disp.reindex(ms), c).sum(numeric_only=True)
+    part = (d.groupby("mois").size() / o.groupby("mois").size()).reindex(ms)   # pub/litiges du mois répartis au prorata des commandes (correction B1 : plus de double comptage)
+    coh[c] = pnl(d, ads.reindex(ms) * part, disp.reindex(ms) * part, c).sum(numeric_only=True)
 ch = pd.DataFrame(coh).T; ch.to_csv(T / "fin_05_pnl_cohortes.csv"); print("\nCohortes (la pub/litiges sont mensuels : cohorte récente = mois partiels, lire avec prudence)\n", ch.T.to_string())
 print("\nCOGS estimé (lignes non appariées, non remboursées):", round(o.cogs_est.sum()), "CHF sur", int(o.n_unmatched.sum()), "lignes")

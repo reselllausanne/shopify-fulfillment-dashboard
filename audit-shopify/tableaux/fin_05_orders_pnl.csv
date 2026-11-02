@@ -21,7 +21,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #4780,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,135.6,0.0,135.6,2.8476,132.7524,104.34,0.0,0,4.03,4.03,14.5,GSF-SPD-7J0FPGSADY,1.0,Google,,Google,,1,1
 #4781,2026-01,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,632.6,0.0,632.6,13.284600000000001,619.3154000000001,579.59,0.0,0,18.978,0.0,14.5,GSF-SPD-FXLMRZGJVW,1.0,Google,,Google,,1,1
 #4782,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,162.9,0.0,162.9,3.4209000000000005,159.47910000000002,109.45,0.0,0,4.78,4.78,14.5,GSF-SPD-6DTETY2HEZ,2.0,direct,,Google,,1,1
-#4783,2026-01,mature,REFUNDED,FULFILLED,CH,TWINT,web,98.1,98.1,0.0,0.0,0.0,0.0,76.3,1,1.2752999999999999,0.0,0.0,GSF-SPD-MOJ9F4A7BH,1.0,Google,,Google,,1,1
+#4783,2026-01,mature,REFUNDED,FULFILLED,CH,TWINT,web,98.1,98.1,0.0,0.0,0.0,0.0,0.0,1,1.2752999999999999,0.0,0.0,GSF-SPD-MOJ9F4A7BH,1.0,Google,,Google,,1,1
 #4784,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,189.0,0.0,189.0,3.9690000000000003,185.031,117.07,0.0,0,6.0,6.0,14.5,,1.0,an unknown source,,an unknown source,,1,1
 #4785,2026-01,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,181.1,0.0,181.1,3.8031,177.2969,148.61,0.0,0,5.433,0.0,14.5,GSF-SPD-D9QJNMQ8OI,1.0,an unknown source,,an unknown source,,1,1
 #4786,2026-01,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,249.0,0.0,249.0,5.229,243.771,174.63,0.0,0,7.47,0.0,14.5,,4.0,direct,,direct,,1,1
@@ -134,7 +134,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #4893,2026-01,mature,PARTIALLY_REFUNDED,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_store_credit,web,579.0,445.09,133.91,2.81211,131.09789,405.29999999999995,405.29999999999995,1,17.37,0.0,14.5,,1.0,an unknown source,,an unknown source,,1,1
 #4894,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,110.66,0.0,0,5.7,5.7,14.5,,2.0,Google,,Google,,1,1
 #4895,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,210.6,0.0,210.6,4.4226,206.1774,146.34,0.0,0,6.65,6.65,14.5,GSF-SPD-PXAI0YRG1N,1.0,Google,,Google,,1,1
-#4896,2026-01,mature,PENDING,UNFULFILLED,CH,,shopify_draft_order,0.0,0.0,0.0,0.0,0.0,0.0,933.4650006570416,5,0.0,0.0,0.0,,1.0,,,,,5,5
+#4896,2026-01,mature,PENDING,UNFULFILLED,CH,,shopify_draft_order,0.0,0.0,0.0,0.0,0.0,0.0,0.0,5,0.0,0.0,0.0,,1.0,,,,,5,5
 #4897,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,309.0,0.0,309.0,6.489000000000001,302.511,165.14,0.0,0,9.59,9.59,14.5,,1.0,,,,,1,1
 #4898,2026-01,mature,PAID,FULFILLED,CH,TWINT,web,185.0,0.0,185.0,3.8850000000000002,181.115,150.0,0.0,0,2.405,0.0,14.5,GSF-SPD-MHICA2KOGH,1.0,Google,,https://shopify.com/,,1,1
 #4899,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,309.0,0.0,309.0,6.489000000000001,302.511,234.88,0.0,0,8.8,8.8,14.5,,1.0,Google,,Google,,1,1
@@ -143,7 +143,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #4902,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,428.0,0.0,428.0,8.988000000000001,419.012,279.97,0.0,0,13.15,13.15,14.5,,1.0,Google,,direct,,2,2
 #4903,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,222.4,0.0,222.4,4.670400000000001,217.7296,0.0,0.0,0,6.42,6.42,14.5,,1.0,Google,,direct,,2,2
 #4904,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,548.0,0.0,548.0,11.508000000000001,536.492,359.2,0.0,0,15.37,15.37,14.5,,1.0,,,,,2,2
-#4905,2026-01,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,155.4,155.4,0.0,0.0,0.0,0.0,114.39440191387561,1,5.0,5.0,0.0,GSF-SPD-AMFEG8QBYX,1.0,Google,,Google,,1,1
+#4905,2026-01,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,155.4,155.4,0.0,0.0,0.0,0.0,0.0,1,5.0,5.0,0.0,GSF-SPD-AMFEG8QBYX,1.0,Google,,Google,,1,1
 #4906,2026-01,mature,PAID,FULFILLED,CH,TWINT+shopify_payments,web,167.0,0.0,167.0,3.507,163.493,199.68607913669067,105.34607913669066,1,5.204,5.1,14.5,,1.0,Google,,Google,,2,2
 #4907,2026-01,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_payments,web,219.0,0.0,219.0,4.599,214.401,139.0,0.0,0,6.9,6.9,14.5,,1.0,Google,SEO,Google,SEO,1,1
 #4908,2026-01,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,159.0,0.0,159.0,3.3390000000000004,155.661,111.7,0.0,0,4.77,0.0,14.5,,1.0,,,,,1,1
@@ -167,8 +167,8 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #4926,2026-01,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,181.1,0.0,181.1,3.8031,177.2969,119.75,0.0,0,5.433,0.0,14.5,GSF-SPD-D8B9ISIKAZ,1.0,Google,,Google,,1,1
 #4927,2026-01,mature,PAID,FULFILLED,CH,TWINT,web,159.0,0.0,159.0,3.3390000000000004,155.661,101.04,0.0,0,2.0669999999999997,0.0,14.5,,1.0,,,,,1,1
 #4928,2026-01,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,126.5,0.0,126.5,2.6565000000000003,123.8435,122.47,0.0,0,3.795,0.0,14.5,GSF-SPD-FSB9P4WYUL,1.0,Google,,Google,,1,1
-#4929,2026-01,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,269.0,269.0,0.0,0.0,0.0,0.0,179.80301587301588,1,3.497,0.0,0.0,,1.0,Instagram,,Instagram,,1,1
-#4930,2026-01,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,208.4,208.4,0.0,0.0,0.0,0.0,151.72485611510794,1,6.03,6.03,0.0,GSF-SPD-RCQHAWWKYR,1.0,Google,,Google,,1,1
+#4929,2026-01,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,269.0,269.0,0.0,0.0,0.0,0.0,0.0,1,3.497,0.0,0.0,,1.0,Instagram,,Instagram,,1,1
+#4930,2026-01,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,208.4,208.4,0.0,0.0,0.0,0.0,0.0,1,6.03,6.03,0.0,GSF-SPD-RCQHAWWKYR,1.0,Google,,Google,,1,1
 #4931,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,628.0,0.0,628.0,13.188,614.812,428.21000000000004,0.0,0,17.57,17.57,14.5,,1.0,Google,SEO,Google,SEO,2,2
 #4932,2026-01,mature,PAID,FULFILLED,CH,manual+shopify_payments,web,289.0,0.0,289.0,6.069,282.931,238.68,0.0,0,4.12,4.12,14.5,,1.0,Instagram,,Instagram,,2,2
 #4933,2026-01,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,239.0,0.0,239.0,5.019,233.981,193.16,0.0,0,7.17,0.0,14.5,,1.0,,,,,1,1
@@ -292,7 +292,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5051,2026-01,mature,PAID,FULFILLED,CH,TWINT,web,199.0,0.0,199.0,4.179,194.821,136.58,0.0,0,2.5869999999999997,0.0,14.5,,1.0,,,,,1,1
 #5052,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,149.0,0.0,149.0,3.129,145.871,82.31,0.0,0,4.4,4.4,14.5,,1.0,Google,,Google,,1,1
 #5053,2026-01,mature,PARTIALLY_REFUNDED,FULFILLED,CH,shopify_payments+shopify_store_credit,web,298.0,122.22,175.78,3.69138,172.08862,214.28,0.0,0,9.26,9.26,14.5,,1.0,Google,,Google,,2,2
-#5054,2026-01,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,169.0,169.0,0.0,0.0,0.0,0.0,114.39440191387561,1,5.069999999999999,0.0,0.0,,1.0,Google,,direct,,1,1
+#5054,2026-01,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,169.0,169.0,0.0,0.0,0.0,0.0,0.0,1,5.069999999999999,0.0,0.0,,1.0,Google,,direct,,1,1
 #5055,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,709.0,0.0,709.0,14.889000000000001,694.111,603.37,0.0,0,21.55,21.55,14.5,,1.0,,,,,1,1
 #5056,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,139.0,0.0,139.0,2.919,136.081,0.0,0.0,0,4.12,4.12,14.5,,2.0,direct,,direct,,1,1
 #5057,2026-01,mature,PAID,FULFILLED,CH,TWINT,web,139.0,0.0,139.0,2.919,136.081,0.0,0.0,0,1.807,0.0,14.5,,1.0,Google,,Google,,1,1
@@ -328,8 +328,8 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5087,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,209.0,0.0,209.0,4.389,204.611,135.51,0.0,0,6.05,6.05,14.5,,1.0,Google,,Google,,1,1
 #5088,2026-01,mature,PAID,UNFULFILLED,CH,shopify_payments,web,508.0,0.0,508.0,10.668000000000001,497.332,122.94915254237289,122.94915254237289,1,14.27,14.27,14.5,,1.0,direct,,direct,,2,2
 #5089,2026-01,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,635.6,0.0,635.6,13.347600000000002,622.2524,558.04,0.0,0,19.068,0.0,14.5,GSF-SPD-KXGZFDHGI8,1.0,Google,,Google,,1,1
-#5090,2026-01,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,1079.0,1079.0,0.0,0.0,0.0,0.0,730.659932795699,1,29.97,29.97,0.0,,2.0,direct,,direct,,1,1
-#5091,2026-01,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_payments,web,1389.0,1389.0,0.0,0.0,0.0,0.0,972.3,1,38.5,38.5,0.0,,1.0,Google,,direct,,1,1
+#5090,2026-01,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,1079.0,1079.0,0.0,0.0,0.0,0.0,0.0,1,29.97,29.97,0.0,,2.0,direct,,direct,,1,1
+#5091,2026-01,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_payments,web,1389.0,1389.0,0.0,0.0,0.0,0.0,0.0,1,38.5,38.5,0.0,,1.0,Google,,direct,,1,1
 #5092,2026-01,mature,PARTIALLY_PAID,FULFILLED,CH,paypal,web,164.8,0.0,164.8,3.4608000000000003,161.3392,134.3,0.0,0,5.847200000000001,0.0,14.5,GSF-SPD-ELCGEOX4PO,1.0,Google,,Google,,1,1
 #5093,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,169.0,0.0,169.0,3.5490000000000004,165.451,121.8,0.0,0,4.95,4.95,14.5,,1.0,Google,,Google,,1,1
 #5094,2026-01,mature,PAID,FULFILLED,CH,shopify_payments,web,226.6,0.0,226.6,4.7586,221.8414,170.81,0.0,0,6.53,6.53,14.5,GSF-SPD-ZQ3OBWUG1Z,1.0,Google,,Google,,1,1
@@ -342,12 +342,12 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5101,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,239.0,0.0,239.0,5.019,233.981,170.9,0.0,0,6.87,6.87,14.5,,1.0,Google,,Google,,1,1
 #5102,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,259.0,0.0,259.0,5.439,253.561,156.52,0.0,0,7.94,7.94,14.5,,1.0,Google,SEO,Google,SEO,1,1
 #5103,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,224.4,0.0,224.4,4.712400000000001,219.6876,0.0,0.0,0,6.47,6.47,14.5,,1.0,direct,,direct,,2,2
-#5104,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,450.0,450.0,0.0,0.0,0.0,0.0,294.2275799086758,2,12.68,12.68,0.0,,1.0,direct,,direct,,2,2
-#5105,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,1389.0,1389.0,0.0,0.0,0.0,0.0,972.3,1,38.5,38.5,0.0,,2.0,direct,,direct,,1,1
+#5104,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,450.0,450.0,0.0,0.0,0.0,0.0,0.0,2,12.68,12.68,0.0,,1.0,direct,,direct,,2,2
+#5105,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,1389.0,1389.0,0.0,0.0,0.0,0.0,0.0,1,38.5,38.5,0.0,,2.0,direct,,direct,,1,1
 #5106,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,229.4,0.0,229.4,4.8174,224.5826,146.76,0.0,0,6.61,6.61,14.5,GSF-SPD-AHQ0VSD5ET,1.0,Google,,Google,,1,1
 #5107,2026-02,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_payments,web,274.6,0.0,274.6,5.7666,268.83340000000004,254.92,0.0,0,8.238,0.0,14.5,GSF-SPD-QUSFNNHM0E,1.0,Google,,Google,,1,1
-#5108,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,837.05,837.05,0.0,0.0,0.0,0.0,559.4948492063493,4,23.32,23.32,0.0,,1.0,Google,SEO,direct,,4,4
-#5109,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,649.0,649.0,0.0,0.0,0.0,0.0,433.7998412698413,1,18.15,18.15,0.0,,1.0,direct,,direct,,1,1
+#5108,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,837.05,837.05,0.0,0.0,0.0,0.0,0.0,4,23.32,23.32,0.0,,1.0,Google,SEO,direct,,4,4
+#5109,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,649.0,649.0,0.0,0.0,0.0,0.0,0.0,1,18.15,18.15,0.0,,1.0,direct,,direct,,1,1
 #5110,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,338.0,0.0,338.0,7.098000000000001,330.902,201.51,0.0,0,9.6,9.6,14.5,,1.0,,,,,2,2
 #5111,2026-02,mature,PARTIALLY_REFUNDED,FULFILLED,CH,TWINT,web,189.0,3.77,185.23,3.88983,181.34017,213.9939182113555,105.2739182113555,1,2.457,0.0,14.5,,1.0,direct,,direct,,2,2
 #5112,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,125.1,0.0,125.1,2.6271,122.4729,0.0,0.0,0,3.74,3.74,14.5,GSF-SPD-DB9EBANPOT,1.0,Google,,Google,,1,1
@@ -355,11 +355,11 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5114,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,219.0,0.0,219.0,4.599,214.401,129.01,0.0,0,6.32,6.32,14.5,,1.0,Google,,Google,,1,1
 #5115,2026-02,mature,PAID,FULFILLED,CH,TWINT,web,95.0,0.0,95.0,1.995,93.005,65.98,0.0,0,1.2349999999999999,0.0,14.5,GSF-SPD-EILKPX6K1G,1.0,Google,,Google,,1,1
 #5116,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,139.0,0.0,139.0,2.919,136.081,0.0,0.0,0,4.12,4.12,14.5,,1.0,,,,,1,1
-#5117,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,847.05,847.05,0.0,0.0,0.0,0.0,561.4798972094214,4,23.59,23.59,0.0,,1.0,Google,SEO,direct,,4,4
+#5117,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,847.05,847.05,0.0,0.0,0.0,0.0,0.0,4,23.59,23.59,0.0,,1.0,Google,SEO,direct,,4,4
 #5118,2026-02,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,139.0,0.0,139.0,2.919,136.081,75.28,0.0,0,4.17,0.0,14.5,,1.0,Instagram,,Instagram,,1,1
 #5119,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,139.0,0.0,139.0,2.919,136.081,0.0,0.0,0,4.12,4.12,14.5,,1.0,Google,,direct,,1,1
 #5120,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,230.0,0.0,230.0,4.83,225.17,180.0,0.0,0,6.63,6.63,14.5,GSF-SPD-5DQCZ3RF9E,1.0,Google,,Google,,1,1
-#5121,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,129.0,129.0,0.0,0.0,0.0,0.0,56.847457627118644,1,3.85,3.85,0.0,,1.0,,,,,1,1
+#5121,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,129.0,129.0,0.0,0.0,0.0,0.0,0.0,1,3.85,3.85,0.0,,1.0,,,,,1,1
 #5122,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,269.0,0.0,269.0,5.649,263.351,176.0,0.0,0,8.39,8.39,14.5,,1.0,Google,,Google,,1,1
 #5123,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,159.0,0.0,159.0,3.3390000000000004,155.661,80.57,0.0,0,4.67,4.67,14.5,,1.0,Google,SEO,Google,SEO,1,1
 #5124,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,209.0,0.0,209.0,4.389,204.611,161.86,0.0,0,6.47,6.47,14.5,,1.0,,,,,1,1
@@ -459,8 +459,8 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5218,2026-02,mature,PAID,FULFILLED,CH,paypal,web,219.0,0.0,219.0,4.599,214.401,138.18,0.0,0,7.996,0.0,14.5,,1.0,,,,,1,1
 #5219,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,239.0,0.0,239.0,5.019,233.981,154.58,0.0,0,6.87,6.87,14.5,,1.0,Google,SEO,Google,SEO,1,1
 #5220,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,162.9,0.0,162.9,3.4209000000000005,159.47910000000002,108.63,0.0,0,4.78,4.78,14.5,GSF-SPD-R4EUZYGWQ1,1.0,Google,,Google,,1,1
-#5221,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,139.0,139.0,0.0,0.0,0.0,0.0,61.25423728813559,1,4.12,4.12,0.0,,1.0,,,,,1,1
-#5222,2026-02,mature,REFUNDED,UNFULFILLED,FR,shopify_payments,web,582.17,582.17,0.0,0.0,0.0,0.0,406.79799999999994,1,31.229999999999997,31.229999999999997,0.0,,1.0,Google,SEO,Google,SEO,1,1
+#5221,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,139.0,139.0,0.0,0.0,0.0,0.0,0.0,1,4.12,4.12,0.0,,1.0,,,,,1,1
+#5222,2026-02,mature,REFUNDED,UNFULFILLED,FR,shopify_payments,web,582.17,582.17,0.0,0.0,0.0,0.0,0.0,1,31.229999999999997,31.229999999999997,0.0,,1.0,Google,SEO,Google,SEO,1,1
 #5223,2026-02,mature,PAID,FULFILLED,CH,TWINT,web,169.0,0.0,169.0,3.5490000000000004,165.451,138.18,0.0,0,2.197,0.0,14.5,,1.0,direct,,Google,,1,1
 #5224,2026-02,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,199.0,0.0,199.0,4.179,194.821,180.59,0.0,0,5.97,0.0,14.5,,1.0,Google,,Google,,1,1
 #5225,2026-02,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,159.0,0.0,159.0,3.3390000000000004,155.661,111.08,0.0,0,4.77,0.0,14.5,,1.0,,,,,1,1
@@ -478,9 +478,9 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5237,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,159.0,0.0,159.0,3.3390000000000004,155.661,93.75,0.0,0,4.67,4.67,14.5,,1.0,an unknown source,,an unknown source,,1,1
 #5238,2026-02,mature,REFUNDED,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,157.6,157.6,0.0,0.0,0.0,32.529,0.0,0,4.728,0.0,14.5,GSF-SPD-NQRPOCFZHT,1.0,,,,,1,1
 #5239,2026-02,mature,PAID,FULFILLED,CH,TWINT+shopify_payments,web,299.65,0.0,299.65,6.29265,293.35735,55.0,0.0,0,3.8954499999999994,0.0,14.5,,1.0,Google,,Google,,2,2
-#5240,2026-02,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,100.0,100.0,0.0,0.0,0.0,0.0,66.84126984126985,1,1.3,0.0,0.0,,1.0,Google,,Google,,1,1
+#5240,2026-02,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,100.0,100.0,0.0,0.0,0.0,0.0,0.0,1,1.3,0.0,0.0,,1.0,Google,,Google,,1,1
 #5241,2026-02,mature,PAID,FULFILLED,CH,TWINT,web,199.0,0.0,199.0,4.179,194.821,119.85,0.0,0,2.5869999999999997,0.0,14.5,,2.0,https://twint.pend.ch/,,https://twint.pend.ch/,,1,1
-#5242,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,171.0,171.0,0.0,0.0,0.0,0.0,123.70590472751347,1,5.34,5.34,0.0,,1.0,an unknown source,,an unknown source,,1,1
+#5242,2026-02,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,171.0,171.0,0.0,0.0,0.0,0.0,0.0,1,5.34,5.34,0.0,,1.0,an unknown source,,an unknown source,,1,1
 #5243,2026-02,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,189.0,0.0,189.0,3.9690000000000003,185.031,115.85,0.0,0,5.67,0.0,14.5,,1.0,,,,,1,1
 #5244,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,139.0,0.0,139.0,2.919,136.081,0.0,0.0,0,4.12,4.12,14.5,,1.0,,,,,1,1
 #5245,2026-02,mature,PAID,FULFILLED,CH,TWINT,web,139.0,0.0,139.0,2.919,136.081,73.58,0.0,0,1.807,0.0,14.5,,1.0,,,,,1,1
@@ -510,7 +510,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5269,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,139.0,0.0,139.0,2.919,136.081,0.0,0.0,0,4.12,4.12,14.5,,1.0,Google,,Google,,1,1
 #5270,2026-02,mature,PAID,FULFILLED,CH,paypal,web,428.0,0.0,428.0,8.988000000000001,419.012,276.89,0.0,0,15.102000000000002,0.0,14.5,,2.0,,,,,2,2
 #5271,2026-02,mature,PAID,FULFILLED,CH,TWINT+shopify_payments,web,229.0,0.0,229.0,4.809,224.191,147.85,0.0,0,2.977,0.0,14.5,,1.0,Google,SEO,Google,SEO,1,1
-#5272,2026-02,mature,REFUNDED,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,80.0,80.0,0.0,0.0,0.0,0.0,54.15119617224881,1,2.4,0.0,0.0,,1.0,direct,,direct,,1,1
+#5272,2026-02,mature,REFUNDED,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,80.0,80.0,0.0,0.0,0.0,0.0,0.0,1,2.4,0.0,0.0,,1.0,direct,,direct,,1,1
 #5273,2026-02,mature,PARTIALLY_PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,118.0,0.0,118.0,2.478,115.522,76.15,0.0,0,3.27,0.0,14.5,resell10,2.0,direct,,direct,,1,1
 #5274,2026-02,mature,PAID,FULFILLED,CH,TWINT,web,209.0,0.0,209.0,4.389,204.611,140.22,0.0,0,2.717,0.0,14.5,,1.0,Google,,Google,,1,1
 #5275,2026-02,mature,PAID,FULFILLED,CH,gift_card,web,199.0,0.0,199.0,4.179,194.821,151.0,0.0,0,0.0,0.0,14.5,,2.0,direct,,https://shopify.com/,,1,1
@@ -531,7 +531,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5290,2026-02,mature,PAID,FULFILLED,CH,TWINT,web,139.0,0.0,139.0,2.919,136.081,103.91,0.0,0,1.807,0.0,14.5,,1.0,Google,SEO,direct,,1,1
 #5291,2026-02,mature,PAID,FULFILLED,CH,shopify_payments,web,229.0,0.0,229.0,4.809,224.191,146.63,0.0,0,6.6,6.6,14.5,,1.0,direct,,direct,,1,1
 #5292,2026-02,mature,PAID,FULFILLED,CH,TWINT,web,177.2,0.0,177.2,3.7212,173.47879999999998,123.34,0.0,0,2.3036,0.0,14.5,GSF-SPD-IIX4PDZRL7,2.0,Google,,Google,,1,1
-#5293,2026-02,mature,REFUNDED,UNFULFILLED,CH,manual,shopify_draft_order,249.0,249.0,0.0,0.0,0.0,0.0,168.6138306451613,1,0.0,0.0,0.0,,2.0,,,,,1,1
+#5293,2026-02,mature,REFUNDED,UNFULFILLED,CH,manual,shopify_draft_order,249.0,249.0,0.0,0.0,0.0,0.0,0.0,1,0.0,0.0,0.0,,2.0,,,,,1,1
 #5294,2026-02,mature,PAID,FULFILLED,CH,shopify_store_credit,web,199.0,0.0,199.0,4.179,194.821,124.46,0.0,0,0.0,0.0,14.5,,3.0,direct,,direct,,1,1
 #5295,2026-02,mature,PAID,FULFILLED,CH,paypal,web,148.8,0.0,148.8,3.1248000000000005,145.67520000000002,111.66,0.0,0,5.6092,0.0,14.5,GSF-SPD-GMNWUPBMVQ,1.0,Google,,Google,,1,1
 #5296,2026-02,mature,PAID,FULFILLED,CH,TWINT,web,229.0,0.0,229.0,4.809,224.191,168.68,0.0,0,2.977,0.0,14.5,,1.0,,,,,1,1
@@ -548,7 +548,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5307,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,618.0,0.0,618.0,12.978000000000002,605.022,412.01,0.0,0,17.3,17.3,14.5,,1.0,Google,,Google,,2,2
 #5308,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,251.1,0.0,251.1,5.2731,245.8269,188.81,0.0,0,7.71,7.71,14.5,GSF-SPD-YRFADVHTGQ,1.0,Google,,Google,,1,1
 #5309,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,189.0,0.0,189.0,3.9690000000000003,185.031,116.53,0.0,0,5.5,5.5,14.5,,1.0,direct,,direct,,1,1
-#5310,2026-03,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,3890849,141.0,141.0,0.0,0.0,0.0,0.0,94.1257930107527,1,4.18,4.18,0.0,,1.0,,,,,1,1
+#5310,2026-03,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,3890849,141.0,141.0,0.0,0.0,0.0,0.0,0.0,1,4.18,4.18,0.0,,1.0,,,,,1,1
 #5311,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,139.0,0.0,139.0,2.919,136.081,90.34,0.0,0,4.12,4.12,14.5,,1.0,,,,,1,1
 #5312,2026-03,mature,PAID,FULFILLED,CH,TWINT,web,181.1,0.0,181.1,3.8031,177.2969,167.78,0.0,0,2.3543,0.0,14.5,GSF-SPD-TLWP3DCXRJ,1.0,,,,,1,1
 #5313,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,159.0,0.0,159.0,3.3390000000000004,155.661,104.4245205479452,104.4245205479452,1,4.67,4.67,14.5,,1.0,,,,,1,1
@@ -639,7 +639,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5398,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,109.0,0.0,109.0,2.289,106.711,0.0,0.0,0,3.3,3.3,14.5,,1.0,Google,SEO,direct,,1,1
 #5399,2026-03,mature,PAID,FULFILLED,CH,paypal,web,139.0,0.0,139.0,2.919,136.081,94.04,0.0,0,5.276,0.0,14.5,,1.0,Google,,Google,,1,1
 #5400,2026-03,mature,PARTIALLY_REFUNDED,FULFILLED,CH,shopify_payments,web,219.0,21.9,197.1,4.1391,192.96089999999998,0.0,0.0,0,6.32,6.32,14.5,,1.0,an unknown source,,an unknown source,,1,1
-#5401,2026-03,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,179.0,179.0,0.0,0.0,0.0,0.0,121.16330143540671,1,2.327,0.0,0.0,,1.0,Google,,Google,,1,1
+#5401,2026-03,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,179.0,179.0,0.0,0.0,0.0,0.0,0.0,1,2.327,0.0,0.0,,1.0,Google,,Google,,1,1
 #5402,2026-03,mature,PAID,FULFILLED,CH,TWINT,web,169.0,0.0,169.0,3.5490000000000004,165.451,100.24,0.0,0,2.197,0.0,14.5,,1.0,direct,,direct,,1,1
 #5403,2026-03,mature,PAID,FULFILLED,CH,paypal,web,149.0,0.0,149.0,3.129,145.871,101.49,0.0,0,5.6160000000000005,0.0,14.5,,1.0,direct,,direct,,1,1
 #5404,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,157.6,0.0,157.6,3.3096,154.2904,162.56,0.0,0,4.63,4.63,14.5,GSF-SPD-HMMUKJ4KD7,1.0,Google,,Google,,1,1
@@ -658,10 +658,10 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5417,2026-03,mature,PAID,FULFILLED,CH,shopify_store_credit,web,149.0,0.0,149.0,3.129,145.871,97.27,0.0,0,0.0,0.0,14.5,,2.0,Google,SEO,Google,SEO,1,1
 #5418,2026-03,mature,PAID,FULFILLED,CH,TWINT,web,148.8,0.0,148.8,3.1248000000000005,145.67520000000002,104.46,0.0,0,1.9344000000000001,0.0,14.5,GSF-SPD-4NZV0WXJZ2,1.0,direct,,Google,,1,1
 #5419,2026-03,mature,PAID,FULFILLED,CH,TWINT,web,169.0,0.0,169.0,3.5490000000000004,165.451,92.25,0.0,0,2.197,0.0,14.5,,1.0,Google,,Google,,1,1
-#5420,2026-03,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,189.0,189.0,0.0,0.0,0.0,0.0,126.33000000000001,1,5.5,5.5,0.0,,1.0,Google,,Google,,1,1
-#5421,2026-03,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,179.0,179.0,0.0,0.0,0.0,0.0,121.16330143540671,1,2.327,0.0,0.0,,1.0,Google,SEO,Google,SEO,1,1
+#5420,2026-03,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,189.0,189.0,0.0,0.0,0.0,0.0,0.0,1,5.5,5.5,0.0,,1.0,Google,,Google,,1,1
+#5421,2026-03,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,179.0,179.0,0.0,0.0,0.0,0.0,0.0,1,2.327,0.0,0.0,,1.0,Google,SEO,Google,SEO,1,1
 #5422,2026-03,mature,PAID,FULFILLED,CH,TWINT,web,169.0,0.0,169.0,3.5490000000000004,165.451,104.46,0.0,0,2.197,0.0,14.5,,1.0,direct,,direct,,1,1
-#5423,2026-03,mature,REFUNDED,IN_PROGRESS,CH,Pay by Invoice / Pay Later (with PowerPay),web,1158.0,579.0,579.0,12.159,566.841,0.0,388.61183397683396,1,17.37,0.0,0.0,,1.0,direct,,direct,,1,1
+#5423,2026-03,mature,REFUNDED,IN_PROGRESS,CH,Pay by Invoice / Pay Later (with PowerPay),web,1158.0,579.0,579.0,12.159,566.841,0.0,0.0,1,17.37,0.0,0.0,,1.0,direct,,direct,,1,1
 #5424,2026-03,mature,PARTIALLY_REFUNDED,FULFILLED,CH,shopify_payments,web,139.0,13.0,126.0,2.6460000000000004,123.354,84.4,0.0,0,4.12,4.12,14.5,,1.0,Google,,Google,,1,1
 #5425,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,209.0,0.0,209.0,4.389,204.611,128.61,0.0,0,6.05,6.05,14.5,,1.0,,,,,1,1
 #5426,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,129.0,0.0,129.0,2.709,126.291,0.0,0.0,0,3.85,3.85,14.5,,1.0,,,,,1,1
@@ -729,7 +729,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5488,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,169.0,0.0,169.0,3.5490000000000004,165.451,120.04,0.0,0,4.95,4.95,14.5,,1.0,direct,,direct,,1,1
 #5489,2026-03,mature,PAID,FULFILLED,CH,TWINT,web,171.0,0.0,171.0,3.591,167.409,102.67,0.0,0,2.223,0.0,14.5,,1.0,direct,,direct,,1,1
 #5490,2026-03,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_payments,web,129.0,0.0,129.0,2.709,126.291,86.2252380952381,86.2252380952381,1,3.85,3.85,14.5,,1.0,,,,,1,1
-#5491,2026-03,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,169.0,169.0,0.0,0.0,0.0,0.0,114.39440191387561,1,4.95,4.95,0.0,,1.0,Google,,Google,,1,1
+#5491,2026-03,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,169.0,169.0,0.0,0.0,0.0,0.0,0.0,1,4.95,4.95,0.0,,1.0,Google,,Google,,1,1
 #5492,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,149.0,0.0,149.0,3.129,145.871,27.075598086124405,27.075598086124405,1,4.4,4.4,14.5,,1.0,Google,,Google,,2,2
 #5493,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,219.0,0.0,219.0,4.599,214.401,135.76,0.0,0,6.32,6.32,14.5,,1.0,Google,,Yahoo,SEO,1,1
 #5494,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,449.0,0.0,449.0,9.429,439.571,317.83,0.0,0,12.65,12.65,14.5,,1.0,Google,,direct,,1,1
@@ -746,7 +746,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5505,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,350.65,0.0,350.65,7.36365,343.28634999999997,93.26949152542373,93.26949152542373,1,9.94,9.94,14.5,,1.0,,,,,2,2
 #5506,2026-03,mature,PAID,FULFILLED,CH,TWINT,web,261.0,0.0,261.0,5.481000000000001,255.519,150.25,0.0,0,3.393,0.0,14.5,,1.0,direct,,direct,,1,1
 #5507,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,199.0,0.0,199.0,4.179,194.821,137.14,0.0,0,5.77,5.77,14.5,,1.0,Google,,Google,,1,1
-#5508,2026-03,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,143.1,143.1,0.0,0.0,0.0,0.0,106.27761904761905,1,4.24,4.24,0.0,GSF-SPD-X58BISCWOS,1.0,direct,,Google,,1,1
+#5508,2026-03,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,143.1,143.1,0.0,0.0,0.0,0.0,0.0,1,4.24,4.24,0.0,GSF-SPD-X58BISCWOS,1.0,direct,,Google,,1,1
 #5509,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,229.0,0.0,229.0,4.809,224.191,155.00779904306222,155.00779904306222,1,6.6,6.6,14.5,,1.0,direct,,direct,,1,1
 #5510,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,129.0,0.0,129.0,2.709,126.291,173.2588038277512,87.3188038277512,1,3.85,3.85,14.5,,1.0,an unknown source,,an unknown source,,2,2
 #5511,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,139.0,0.0,139.0,2.919,136.081,90.71,0.0,0,4.12,4.12,14.5,,1.0,Google,SEO,direct,,1,1
@@ -788,10 +788,10 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5547,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,199.0,0.0,199.0,4.179,194.821,146.03,0.0,0,5.77,5.77,14.5,,5.0,direct,,Instagram,,1,1
 #5548,2026-03,mature,PAID,FULFILLED,CH,TWINT,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,142.24,0.0,0,2.327,0.0,14.5,,1.0,,,,,1,1
 #5549,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,241.0,0.0,241.0,5.061,235.939,122.39,0.0,0,6.93,6.93,14.5,,1.0,Google,SEO,Google,SEO,1,1
-#5550,2026-03,mature,PARTIALLY_REFUNDED,FULFILLED,CH,shopify_payments,web,229.0,229.0,0.0,0.0,0.0,74.21471428571431,146.38238095238097,1,13.52,13.52,14.5,,1.0,direct,,Google,,2,2
+#5550,2026-03,mature,PARTIALLY_REFUNDED,FULFILLED,CH,shopify_payments,web,229.0,229.0,0.0,0.0,0.0,74.21471428571431,43.9147142857143,1,13.52,13.52,14.5,,1.0,direct,,Google,,2,2
 #5551,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,221.0,0.0,221.0,4.641,216.359,146.03,0.0,0,6.38,6.38,14.5,,1.0,,,,,1,1
 #5552,2026-03,mature,PARTIALLY_REFUNDED,FULFILLED,CH,shopify_payments+shopify_store_credit,web,139.0,126.14,12.86,0.27006,12.589939999999999,95.79,0.0,0,4.12,4.12,14.5,,1.0,,,,,1,1
-#5553,2026-03,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,228.0,228.0,0.0,0.0,0.0,0.0,173.1188888888889,1,6.57,6.57,0.0,GSF-SPD-ZREGK2WIBY,1.0,Google,,direct,,1,1
+#5553,2026-03,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,228.0,228.0,0.0,0.0,0.0,0.0,0.0,1,6.57,6.57,0.0,GSF-SPD-ZREGK2WIBY,1.0,Google,,direct,,1,1
 #5554,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,129.0,0.0,129.0,2.709,126.291,100.38,0.0,0,3.85,3.85,14.5,,1.0,an unknown source,,Google,,1,1
 #5555,2026-03,mature,PAID,FULFILLED,CH,shopify_payments,web,309.0,0.0,309.0,6.489000000000001,302.511,208.84,0.0,0,8.8,8.8,14.5,,1.0,Google,,Google,,1,1
 #5556,2026-03,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,169.0,0.0,169.0,3.5490000000000004,165.451,104.49,0.0,0,5.069999999999999,0.0,14.5,,1.0,direct,,Google,SEO,1,1
@@ -840,7 +840,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5599,2026-04,mature,PAID,FULFILLED,CH,TWINT,web,199.0,0.0,199.0,4.179,194.821,174.01,0.0,0,2.5869999999999997,0.0,14.5,,1.0,,,,,1,1
 #5600,2026-04,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,388.0,0.0,388.0,8.148,379.852,274.65,0.0,0,11.639999999999999,0.0,14.5,,1.0,direct,,direct,,2,2
 #5601,2026-04,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,109.0,109.0,0.0,0.0,0.0,0.0,0.0,0,3.3,3.3,0.0,,1.0,Google,,Google,,1,1
-#5602,2026-04,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,129.0,129.0,0.0,0.0,0.0,0.0,87.3188038277512,1,1.6769999999999998,0.0,0.0,,1.0,,,,,1,1
+#5602,2026-04,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,129.0,129.0,0.0,0.0,0.0,0.0,0.0,1,1.6769999999999998,0.0,0.0,,1.0,,,,,1,1
 #5603,2026-04,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,381.0,0.0,381.0,8.001000000000001,372.999,275.04,0.0,0,11.43,0.0,14.5,,1.0,Google,,Google,,1,1
 #5604,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,279.0,0.0,279.0,5.859,273.141,260.0,0.0,0,7.97,7.97,14.5,,1.0,Google,SEO,Google,,1,1
 #5605,2026-04,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,119.0,0.0,119.0,2.499,116.501,75.49,0.0,0,3.57,0.0,14.5,,1.0,Google,,Google,,1,1
@@ -856,7 +856,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5615,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,139.0,0.0,139.0,2.919,136.081,109.26,0.0,0,4.12,4.12,14.5,,1.0,Google,,Google,,1,1
 #5616,2026-04,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,139.0,0.0,139.0,2.919,136.081,89.45,0.0,0,4.17,0.0,14.5,,1.0,Google,,Google,,1,1
 #5617,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,188.1,0.0,188.1,3.9501,184.1499,141.01,0.0,0,5.47,5.47,14.5,GSF-SPD-XINIZ9BKDO,2.0,direct,,an unknown source,,1,1
-#5618,2026-04,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,249.0,249.0,0.0,0.0,0.0,0.0,166.43476190476193,1,7.15,7.15,0.0,,1.0,direct,,direct,,1,1
+#5618,2026-04,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,249.0,249.0,0.0,0.0,0.0,0.0,0.0,1,7.15,7.15,0.0,,1.0,direct,,direct,,1,1
 #5619,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,369.0,0.0,369.0,7.7490000000000006,361.251,186.0,0.0,0,10.45,10.45,14.5,,1.0,Google,,Google,,1,1
 #5620,2026-04,mature,PAID,FULFILLED,CH,TWINT,web,159.0,0.0,159.0,3.3390000000000004,155.661,136.06,0.0,0,2.0669999999999997,0.0,14.5,,1.0,,,,,1,1
 #5621,2026-04,mature,PAID,FULFILLED,CH,TWINT,web,109.0,0.0,109.0,2.289,106.711,0.0,0.0,0,1.417,0.0,14.5,,1.0,Google,,Google,,1,1
@@ -944,7 +944,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5703,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,709.0,0.0,709.0,14.889000000000001,694.111,300.0,0.0,0,19.8,19.8,14.5,,1.0,Google,,Google,,1,1
 #5704,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,109.0,0.0,109.0,2.289,106.711,89.89,0.0,0,3.3,3.3,14.5,,1.0,Google,,Google,,1,1
 #5705,2026-04,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,139.0,0.0,139.0,2.919,136.081,95.81,0.0,0,4.17,0.0,14.5,,1.0,Google,,Google,,1,1
-#5706,2026-04,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,159.0,159.0,0.0,0.0,0.0,0.0,107.6255023923445,1,4.67,4.67,0.0,,1.0,Google,SEO,Google,SEO,1,1
+#5706,2026-04,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,159.0,159.0,0.0,0.0,0.0,0.0,0.0,1,4.67,4.67,0.0,,1.0,Google,SEO,Google,SEO,1,1
 #5707,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,114.0,0.0,0,5.22,5.22,14.5,,3.0,Google,SEO,Google,SEO,1,1
 #5708,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,147.61,0.0,0,5.22,5.22,14.5,,1.0,Google,SEO,direct,,1,1
 #5709,2026-04,mature,PAID,FULFILLED,CH,TWINT,web,170.1,0.0,170.1,3.5721000000000003,166.5279,118.08,0.0,0,2.2113,0.0,14.5,GSF-SPD-U71JPI8AVK,1.0,Google,,Google,,1,1
@@ -957,7 +957,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5716,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,199.0,0.0,199.0,4.179,194.821,146.96,0.0,0,5.77,5.77,14.5,,1.0,Yahoo,SEO,https://shopify.com/,,1,1
 #5717,2026-04,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,229.0,0.0,229.0,4.809,224.191,165.28,0.0,0,6.87,0.0,14.5,,1.0,,,,,1,1
 #5718,2026-04,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,129.0,0.0,129.0,2.709,126.291,114.68,0.0,0,3.8699999999999997,0.0,14.5,,1.0,,,,,1,1
-#5719,2026-04,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,219.0,219.0,0.0,0.0,0.0,0.0,146.38238095238097,1,6.32,6.32,0.0,,1.0,Yahoo,SEO,Yahoo,SEO,1,1
+#5719,2026-04,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,219.0,219.0,0.0,0.0,0.0,0.0,0.0,1,6.32,6.32,0.0,,1.0,Yahoo,SEO,Yahoo,SEO,1,1
 #5720,2026-04,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,209.0,0.0,209.0,4.389,204.611,135.57,0.0,0,6.27,0.0,14.5,,1.0,https://syndicatedsearch.goog/,,Google,SEO,1,1
 #5721,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,209.0,0.0,209.0,4.389,204.611,137.47,0.0,0,6.05,6.05,14.5,,1.0,direct,,direct,,1,1
 #5722,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,891.8,0.0,891.8,18.7278,873.0722,785.48,0.0,0,24.82,24.82,14.5,GSF-SPD-WIOQT4SVXI,1.0,Google,,Google,,1,1
@@ -993,7 +993,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5752,2026-04,mature,PAID,FULFILLED,CH,TWINT,web,199.0,0.0,199.0,4.179,194.821,263.28563172043016,134.75563172043013,1,2.5869999999999997,0.0,14.5,,1.0,,,,,2,2
 #5753,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,197.1,0.0,197.1,4.1391,192.96089999999998,193.9,0.0,0,5.72,5.72,14.5,GSF-SPD-QQ5OLEETE5,1.0,Google,,Google,,1,1
 #5754,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,181.0,0.0,181.0,3.801,177.199,137.12,0.0,0,5.64,5.64,14.5,,1.0,Google,,Google,,1,1
-#5755,2026-04,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,149.0,149.0,0.0,0.0,0.0,0.0,100.8566028708134,1,1.9369999999999998,0.0,0.0,,1.0,Google,,Google,,1,1
+#5755,2026-04,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,149.0,149.0,0.0,0.0,0.0,0.0,0.0,1,1.9369999999999998,0.0,0.0,,1.0,Google,,Google,,1,1
 #5756,2026-04,mature,PAID,FULFILLED,CH,TWINT,web,119.0,0.0,119.0,2.499,116.501,86.98,0.0,0,1.547,0.0,14.5,,1.0,Google,,direct,,1,1
 #5757,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,119.3,0.0,119.3,2.5053,116.79469999999999,81.91,0.0,0,3.58,3.58,14.5,GSF-SPD-I23UTWLGAQ,1.0,Google,,Google,,1,1
 #5758,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,219.0,0.0,219.0,4.599,214.401,161.01,0.0,0,6.32,6.32,14.5,,1.0,Google,,Google,,1,1
@@ -1006,7 +1006,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5765,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,129.0,0.0,129.0,2.709,126.291,121.3,0.0,0,3.85,3.85,14.5,,1.0,Google,,Google,,1,1
 #5766,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,188.1,0.0,188.1,3.9501,184.1499,156.27,0.0,0,5.47,5.47,14.5,GSF-SPD-Z9DOYJ2IBN,1.0,,,,,1,1
 #5767,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,149.0,0.0,149.0,3.129,145.871,144.96,0.0,0,4.7,4.7,14.5,,1.0,Google,,Google,,1,1
-#5768,2026-04,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,179.0,179.0,0.0,0.0,0.0,0.0,121.16330143540671,1,5.22,5.22,0.0,,1.0,Google,,Google,,1,1
+#5768,2026-04,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,179.0,179.0,0.0,0.0,0.0,0.0,0.0,1,5.22,5.22,0.0,,1.0,Google,,Google,,1,1
 #5769,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,209.0,0.0,209.0,4.389,204.611,140.99,0.0,0,6.05,6.05,14.5,,1.0,Google,SEO,Google,SEO,1,1
 #5770,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,168.2,0.0,168.2,3.5322,164.6678,115.21,0.0,0,4.93,4.93,14.5,GSF-SPD-F4CJFIYHEP,1.0,,,,,1,1
 #5771,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,219.0,0.0,219.0,4.599,214.401,179.42,0.0,0,6.32,6.32,14.5,,1.0,Google,SEO,Google,SEO,1,1
@@ -1021,11 +1021,11 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5780,2026-04,mature,PAID,FULFILLED,CH,paypal,web,260.1,0.0,260.1,5.4621,254.63790000000003,275.02,0.0,0,9.393400000000002,0.0,14.5,GSF-SPD-VZHP1RO29D,1.0,Google,SEO,Google,,1,1
 #5781,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,239.0,0.0,239.0,5.019,233.981,185.39,0.0,0,6.87,6.87,14.5,,1.0,,,,,1,1
 #5782,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,209.0,0.0,209.0,4.389,204.611,169.69,0.0,0,6.05,6.05,14.5,,1.0,Google,,Google,,1,1
-#5783,2026-04,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+paypal,web,209.0,209.0,0.0,0.0,0.0,0.0,141.47,1,7.656000000000001,0.0,0.0,,1.0,Google,,Google,,1,1
+#5783,2026-04,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+paypal,web,209.0,209.0,0.0,0.0,0.0,0.0,0.0,1,7.656000000000001,0.0,0.0,,1.0,Google,,Google,,1,1
 #5784,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,333.9,0.0,333.9,7.0119,326.88809999999995,279.0195017202034,279.0195017202034,1,9.48,9.48,14.5,GSF-SPD-JMOIU6LGIX,1.0,,,,,1,1
 #5785,2026-04,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_payments,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,123.44,0.0,0,5.22,5.22,14.5,,1.0,,,,,1,1
 #5786,2026-04,mature,PAID,FULFILLED,CH,paypal,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,104.22,0.0,0,6.636,0.0,14.5,,1.0,Google,SEO,Google,,1,1
-#5787,2026-04,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,558.0,558.0,0.0,0.0,0.0,0.0,377.70459330143547,2,7.254,0.0,0.0,,1.0,Google,SEO,direct,,2,2
+#5787,2026-04,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,558.0,558.0,0.0,0.0,0.0,0.0,0.0,2,7.254,0.0,0.0,,1.0,Google,SEO,direct,,2,2
 #5788,2026-04,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,188.1,0.0,188.1,3.9501,184.1499,153.38,0.0,0,5.643,0.0,14.5,GSF-SPD-U6ZM1SPN8J,1.0,Google,,Google,,1,1
 #5789,2026-04,mature,PAID,FULFILLED,CH,TWINT,web,109.0,0.0,109.0,2.289,106.711,0.0,0.0,0,1.417,0.0,14.5,,2.0,direct,,Google,SEO,1,1
 #5790,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,135.5,0.0,135.5,2.8455000000000004,132.6545,107.11,0.0,0,4.03,4.03,14.5,GSF-SPD-XFJPRH1ZAD,1.0,,,,,1,1
@@ -1044,7 +1044,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5803,2026-04,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,111.89,0.0,0,5.37,0.0,14.5,,1.0,Google,,direct,,1,1
 #5804,2026-04,mature,PAID,FULFILLED,CH,paypal,web,199.0,0.0,199.0,4.179,194.821,121.27,0.0,0,7.316000000000001,0.0,14.5,,1.0,Google,,Google,,1,1
 #5805,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,169.0,0.0,169.0,3.5490000000000004,165.451,117.24,0.0,0,4.95,4.95,14.5,,1.0,Google,,Google,,1,1
-#5806,2026-04,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,116.1,116.1,0.0,0.0,0.0,0.0,161.77669856459332,1,3.4829999999999997,0.0,0.0,GSF-SPD-DUDRFZQD0Q,1.0,Google,,Google,,1,1
+#5806,2026-04,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,116.1,116.1,0.0,0.0,0.0,0.0,0.0,1,3.4829999999999997,0.0,0.0,GSF-SPD-DUDRFZQD0Q,1.0,Google,,Google,,1,1
 #5807,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,269.0,0.0,269.0,5.649,263.351,221.23,0.0,0,7.7,7.7,14.5,,1.0,Google,,Google,,1,1
 #5808,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,229.0,0.0,229.0,4.809,224.191,180.44,0.0,0,6.6,6.6,14.5,,1.0,Google,,Google,,1,1
 #5809,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,209.0,0.0,209.0,4.389,204.611,0.0,0.0,0,6.05,6.05,14.5,,1.0,,,,,1,1
@@ -1060,7 +1060,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5819,2026-04,mature,PAID,FULFILLED,CH,TWINT,web,99.0,0.0,99.0,2.079,96.921,80.69,0.0,0,1.287,0.0,14.5,,1.0,Google,,Google,,1,1
 #5820,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,152.1,0.0,152.1,3.1941,148.9059,103.03,0.0,0,4.48,4.48,14.5,GSF-SPD-GMYWQW8FQA,1.0,Google,,Google,,1,1
 #5821,2026-04,mature,PAID,FULFILLED,CH,paypal,web,229.0,0.0,229.0,4.809,224.191,178.78,0.0,0,8.336,0.0,14.5,,1.0,direct,,direct,,1,1
-#5822,2026-04,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,179.0,179.0,0.0,0.0,0.0,0.0,121.16330143540671,1,5.22,5.22,0.0,,1.0,direct,,direct,,1,1
+#5822,2026-04,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,179.0,179.0,0.0,0.0,0.0,0.0,0.0,1,5.22,5.22,0.0,,1.0,direct,,direct,,1,1
 #5823,2026-04,mature,PAID,FULFILLED,CH,shopify_payments,web,431.4,0.0,431.4,9.0594,422.3406,360.75,0.0,0,12.16,12.16,14.5,GSF-SPD-VZADSZP51T,2.0,,,,,1,1
 #5824,2026-04,mature,PAID,FULFILLED,CH,TWINT+paypal,web,139.0,0.0,139.0,2.919,136.081,107.24,0.0,0,1.807,0.0,14.5,,1.0,,,,,1,1
 #5825,2026-04,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,369.0,0.0,369.0,7.7490000000000006,361.251,249.87350806451616,249.87350806451616,1,11.07,0.0,14.5,,3.0,Google,,Google,,1,1
@@ -1072,7 +1072,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5831,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,349.0,0.0,349.0,7.329000000000001,341.671,248.66,0.0,0,9.9,9.9,14.5,,1.0,direct,,direct,,1,1
 #5832,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,229.0,0.0,229.0,4.809,224.191,206.27,0.0,0,6.6,6.6,14.5,,1.0,direct,,Google,,1,1
 #5833,2026-05,mature,PAID,FULFILLED,CH,paypal,web,199.0,0.0,199.0,4.179,194.821,148.39,0.0,0,7.316000000000001,0.0,14.5,,1.0,Google,SEO,Google,SEO,1,1
-#5834,2026-05,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,337.4,337.4,0.0,0.0,0.0,0.0,279.0195017202034,1,9.58,9.58,0.0,GSF-SPD-QVJTJMBFLR,1.0,,,,,1,1
+#5834,2026-05,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,337.4,337.4,0.0,0.0,0.0,0.0,0.0,1,9.58,9.58,0.0,GSF-SPD-QVJTJMBFLR,1.0,,,,,1,1
 #5835,2026-05,mature,PAID,FULFILLED,CH,paypal,web,239.0,0.0,239.0,5.019,233.981,164.11,0.0,0,8.676000000000002,0.0,14.5,,1.0,direct,,direct,,1,1
 #5836,2026-05,mature,PAID,FULFILLED,CH,TWINT,web,157.1,0.0,157.1,3.2991,153.80089999999998,124.58,0.0,0,2.0423,0.0,14.5,GSF-SPD-FSYHPSIMZK,1.0,Google,,Google,,1,1
 #5837,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,109.0,0.0,109.0,2.289,106.711,66.56,0.0,0,3.3,3.3,14.5,,1.0,,,,,1,1
@@ -1100,7 +1100,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5859,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,272.4,0.0,272.4,5.7204,266.6796,0.0,0.0,0,7.79,7.79,14.5,,1.0,Yahoo,SEO,direct,,2,2
 #5860,2026-05,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,259.0,0.0,259.0,5.439,253.561,172.87,0.0,0,7.77,0.0,14.5,,1.0,direct,,an unknown source,,1,1
 #5861,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,159.0,0.0,159.0,3.3390000000000004,155.661,103.63,0.0,0,4.67,4.67,14.5,,1.0,direct,,direct,,1,1
-#5862,2026-05,mature,PARTIALLY_REFUNDED,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_store_credit,web,249.0,225.96,23.04,0.48384,22.55616,317.52476190476193,166.43476190476193,1,7.47,0.0,14.5,,1.0,,,,,2,2
+#5862,2026-05,mature,PARTIALLY_REFUNDED,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_store_credit,web,249.0,225.96,23.04,0.48384,22.55616,317.52476190476193,166.4347619047619,1,7.47,0.0,14.5,,1.0,,,,,2,2
 #5863,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,40.0,0.0,40.0,0.8400000000000001,39.16,141.95,0.0,0,1.4,1.4,14.5,5001retours,2.0,,,,,1,1
 #5864,2026-05,mature,PAID,FULFILLED,CH,TWINT,web,299.0,0.0,299.0,6.279000000000001,292.721,221.56,0.0,0,3.887,0.0,14.5,,1.0,Google,SEO,Google,SEO,1,1
 #5865,2026-05,mature,PARTIALLY_REFUNDED,FULFILLED,CH,shopify_payments+shopify_store_credit,web,219.0,198.74,20.26,0.42546000000000006,19.83454,138.93,0.0,0,6.32,6.32,14.5,,1.0,,,,,1,1
@@ -1118,7 +1118,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5877,2026-05,mature,PAID,FULFILLED,CH,TWINT,web,428.0,0.0,428.0,8.988000000000001,419.012,210.48,0.0,0,5.564,0.0,14.5,,3.0,,,,,2,2
 #5878,2026-05,mature,PAID,FULFILLED,FR,paypal,web,152.86,0.0,152.86,3.2100600000000004,149.64994000000002,143.92,0.0,0,5.747240000000001,0.0,14.5,,1.0,Google,,Google,,1,1
 #5879,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,129.0,0.0,129.0,2.709,126.291,88.29,0.0,0,3.85,3.85,14.5,,1.0,Google,,Google,,1,1
-#5880,2026-05,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,215.2,215.2,0.0,0.0,0.0,0.0,177.98179914742778,1,2.7975999999999996,0.0,0.0,GSF-SPD-5EH1IJ5HMU,1.0,direct,,direct,,1,1
+#5880,2026-05,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,215.2,215.2,0.0,0.0,0.0,0.0,0.0,1,2.7975999999999996,0.0,0.0,GSF-SPD-5EH1IJ5HMU,1.0,direct,,direct,,1,1
 #5881,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,169.0,0.0,169.0,3.5490000000000004,165.451,111.11,0.0,0,4.95,4.95,14.5,,1.0,Google,,Google,,1,1
 #5882,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,189.0,0.0,189.0,3.9690000000000003,185.031,131.61,0.0,0,5.88,5.88,14.5,,1.0,Google,,direct,,1,1
 #5883,2026-05,mature,PAID,FULFILLED,CH,TWINT,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,100.06,0.0,0,2.327,0.0,14.5,,1.0,,,,,1,1
@@ -1185,7 +1185,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #5944,2026-05,mature,PAID,FULFILLED,CH,TWINT,web,116.1,0.0,116.1,2.4381,113.66189999999999,97.02,0.0,0,1.5092999999999999,0.0,14.5,GSF-SPD-L350QI0URN,1.0,Google,,Google,,1,1
 #5945,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,999.0,0.0,999.0,20.979000000000003,978.021,723.9130434782609,723.9130434782609,1,27.77,27.77,14.5,,1.0,Google,,Google,,1,1
 #5946,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,99.0,0.0,99.0,2.079,96.921,65.01904109589042,65.01904109589042,1,3.02,3.02,14.5,,1.0,Google,,Google,,1,1
-#5947,2026-05,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,999.0,999.0,0.0,0.0,0.0,0.0,723.9130434782609,1,29.97,0.0,0.0,,1.0,Google,,Google,SEO,1,1
+#5947,2026-05,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,999.0,999.0,0.0,0.0,0.0,0.0,0.0,1,29.97,0.0,0.0,,1.0,Google,,Google,SEO,1,1
 #5948,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,219.0,0.0,219.0,4.599,214.401,146.4,0.0,0,6.32,6.32,14.5,,1.0,Google,,direct,,1,1
 #5949,2026-05,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,219.0,0.0,219.0,4.599,214.401,147.36,0.0,0,6.569999999999999,0.0,14.5,,1.0,Google,,Google,,1,1
 #5950,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,169.0,0.0,169.0,3.5490000000000004,165.451,101.63,0.0,0,4.95,4.95,14.5,,1.0,Google,SEO,Google,SEO,1,1
@@ -1293,7 +1293,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6052,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,519.0,0.0,519.0,10.899000000000001,508.101,434.18,0.0,0,14.57,14.57,14.5,,1.0,an unknown source,,an unknown source,,1,1
 #6053,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,129.0,0.0,129.0,2.709,126.291,60.4,0.0,0,3.85,3.85,14.5,,1.0,Google,,Google,,1,1
 #6054,2026-05,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,689.0,0.0,689.0,14.469000000000001,674.531,628.93,0.0,0,20.669999999999998,0.0,14.5,,1.0,Google,,Google,,1,1
-#6055,2026-05,mature,PAID,PARTIALLY_FULFILLED,CH,TWINT,web,578.0,0.0,578.0,12.138,565.862,391.21190476190475,226.59190476190477,1,7.513999999999999,0.0,14.5,,1.0,Google,,Google,,2,2
+#6055,2026-05,mature,PAID,PARTIALLY_FULFILLED,CH,TWINT,web,578.0,0.0,578.0,12.138,565.862,391.21190476190475,226.5919047619048,1,7.513999999999999,0.0,14.5,,1.0,Google,,Google,,2,2
 #6056,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,558.0,0.0,558.0,11.718,546.282,363.59000000000003,0.0,0,15.65,15.65,14.5,,1.0,Google,,Google,,2,2
 #6057,2026-05,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,229.0,0.0,229.0,4.809,224.191,156.27,0.0,0,6.87,0.0,14.5,,1.0,Google,,direct,,1,1
 #6058,2026-05,mature,PAID,FULFILLED,CH,manual,shopify_draft_order,150.0,0.0,150.0,3.1500000000000004,146.85,148.4,0.0,0,0.0,0.0,14.5,,1.0,,,,,1,1
@@ -1306,7 +1306,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6065,2026-05,mature,PAID,FULFILLED,CH,TWINT,web,239.0,0.0,239.0,5.019,233.981,167.21,0.0,0,3.1069999999999998,0.0,14.5,,1.0,Google,,Google,SEO,1,1
 #6066,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,239.0,0.0,239.0,5.019,233.981,148.96,0.0,0,6.87,6.87,14.5,,1.0,an unknown source,,an unknown source,,1,1
 #6067,2026-05,mature,PAID,FULFILLED,CH,TWINT,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,105.33,0.0,0,2.327,0.0,14.5,,1.0,Google,SEO,Google,SEO,1,1
-#6068,2026-05,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,199.0,199.0,0.0,0.0,0.0,0.0,134.75563172043013,1,5.77,5.77,0.0,,1.0,Google,,Google,,1,1
+#6068,2026-05,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,199.0,199.0,0.0,0.0,0.0,0.0,0.0,1,5.77,5.77,0.0,,1.0,Google,,Google,,1,1
 #6069,2026-05,mature,PAID,FULFILLED,CH,TWINT,web,249.0,0.0,249.0,5.229,243.771,187.71,0.0,0,3.2369999999999997,0.0,14.5,,2.0,Google,SEO,Google,SEO,1,1
 #6070,2026-05,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,169.0,0.0,169.0,3.5490000000000004,165.451,98.04,0.0,0,5.069999999999999,0.0,14.5,,1.0,Google,,Google,,1,1
 #6071,2026-05,mature,PAID,FULFILLED,CH,shopify_payments,web,221.0,0.0,221.0,4.641,216.359,147.52,0.0,0,6.38,6.38,14.5,,1.0,an unknown source,,an unknown source,,1,1
@@ -1346,7 +1346,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6105,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,199.0,0.0,199.0,4.179,194.821,122.99,0.0,0,5.77,5.77,14.5,,1.0,an unknown source,,an unknown source,,1,1
 #6106,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,3890849,169.0,0.0,169.0,3.5490000000000004,165.451,84.0,0.0,0,4.95,4.95,14.5,,1.0,,,,,1,1
 #6107,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,191.0,0.0,191.0,4.011,186.989,135.0,0.0,0,2.483,0.0,14.5,,1.0,,,,,1,1
-#6108,2026-06,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,179.0,179.0,0.0,0.0,0.0,0.0,118.51592050209204,1,5.22,5.22,0.0,,1.0,Google,,Google,,1,1
+#6108,2026-06,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,179.0,179.0,0.0,0.0,0.0,0.0,0.0,1,5.22,5.22,0.0,,1.0,Google,,Google,,1,1
 #6109,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,161.1,0.0,161.1,3.3831,157.71689999999998,116.13,0.0,0,4.73,4.73,14.5,GSF-SPD-L0KFRPTWBK,1.0,Google,,Google,,1,1
 #6110,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,289.0,0.0,289.0,6.069,282.931,195.62119617224883,195.62119617224883,1,3.7569999999999997,0.0,14.5,,1.0,Google,,Google,,1,1
 #6111,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,199.0,0.0,199.0,4.179,194.821,148.67,0.0,0,5.77,5.77,14.5,,1.0,Google,,Google,,1,1
@@ -1360,7 +1360,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6119,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,189.0,0.0,189.0,3.9690000000000003,185.031,129.41,0.0,0,5.5,5.5,14.5,,1.0,Google,,Google,,1,1
 #6120,2026-06,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,299.0,299.0,0.0,0.0,0.0,0.0,0.0,0,8.52,8.52,0.0,,1.0,Google,,direct,,1,1
 #6121,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,369.0,0.0,369.0,7.7490000000000006,361.251,298.59,0.0,0,4.797,0.0,14.5,,1.0,Google,,Google,,1,1
-#6122,2026-06,mature,REFUNDED,FULFILLED,CH,TWINT,web,200.0,200.0,0.0,0.0,0.0,0.0,131.35159817351598,1,2.6,0.0,0.0,,1.0,an unknown source,,an unknown source,,1,1
+#6122,2026-06,mature,REFUNDED,FULFILLED,CH,TWINT,web,200.0,200.0,0.0,0.0,0.0,0.0,0.0,1,2.6,0.0,0.0,,1.0,an unknown source,,an unknown source,,1,1
 #6123,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,299.0,0.0,299.0,6.279000000000001,292.721,211.77,0.0,0,8.52,8.52,14.5,,1.0,Google,,Google,,1,1
 #6124,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,149.0,0.0,149.0,3.129,145.871,145.96,0.0,0,4.4,4.4,14.5,,1.0,Google,,Google,,1,1
 #6125,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,199.0,0.0,199.0,4.179,194.821,143.28,0.0,0,6.17,6.17,14.5,,1.0,,,,,1,1
@@ -1380,7 +1380,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6139,2026-06,mature,PAID,FULFILLED,CH,paypal,web,161.1,0.0,161.1,3.3831,157.71689999999998,111.55,0.0,0,6.0274,0.0,14.5,GSF-SPD-RAHA0QYDJC,1.0,Google,,Google,,1,1
 #6140,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,199.0,0.0,199.0,4.179,194.821,124.86,0.0,0,2.5869999999999997,0.0,14.5,,1.0,Google,,Google,,1,1
 #6141,2026-06,mature,PARTIALLY_REFUNDED,FULFILLED,CH,TWINT+shopify_store_credit,web,189.0,171.51,17.49,0.36729,17.122709999999998,120.18,0.0,0,2.457,0.0,14.5,,1.0,direct,,direct,,1,1
-#6142,2026-06,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,429.0,429.0,0.0,0.0,0.0,0.0,290.3857894736842,1,12.87,0.0,0.0,,1.0,Google,,Google,,1,1
+#6142,2026-06,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,429.0,429.0,0.0,0.0,0.0,0.0,0.0,1,12.87,0.0,0.0,,1.0,Google,,Google,,1,1
 #6143,2026-06,mature,PAID,FULFILLED,CH,paypal,web,378.0,0.0,378.0,7.938000000000001,370.062,256.73,0.0,0,13.402000000000001,0.0,14.5,,1.0,,,,,2,2
 #6144,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,131.4,0.0,0,5.58,5.58,14.5,,1.0,direct,,direct,,1,1
 #6145,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,215.1,0.0,215.1,4.5171,210.5829,197.11,0.0,0,6.22,6.22,14.5,GSF-SPD-S7GBS6TPSI,1.0,,,,,1,1
@@ -1391,7 +1391,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6150,2026-06,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,209.0,0.0,209.0,4.389,204.611,162.81,0.0,0,6.27,0.0,14.5,,1.0,direct,,direct,,1,1
 #6151,2026-06,mature,PAID,PARTIALLY_FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,438.0,0.0,438.0,9.198,428.802,293.1206349206349,159.75063492063492,1,13.139999999999999,0.0,14.5,,1.0,Google,,Google,,2,2
 #6152,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,239.0,0.0,239.0,5.019,233.981,191.94,0.0,0,6.87,6.87,14.5,,1.0,Google,,Google,,1,1
-#6153,2026-06,mature,REFUNDED,UNFULFILLED,CH,paypal,web,197.3,197.3,0.0,0.0,0.0,0.0,202.39009569377993,1,7.2582,0.0,0.0,GSF-SPD-ETVOVCJWNG,1.0,Google,,Google,,1,1
+#6153,2026-06,mature,REFUNDED,UNFULFILLED,CH,paypal,web,197.3,197.3,0.0,0.0,0.0,0.0,0.0,1,7.2582,0.0,0.0,GSF-SPD-ETVOVCJWNG,1.0,Google,,Google,,1,1
 #6154,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,199.0,0.0,199.0,4.179,194.821,127.45,0.0,0,5.77,5.77,14.5,,1.0,,,,,1,1
 #6155,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,169.0,0.0,169.0,3.5490000000000004,165.451,128.04,0.0,0,2.197,0.0,14.5,,1.0,Google,,Google,SEO,1,1
 #6156,2026-06,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,329.0,0.0,329.0,6.909000000000001,322.091,243.86,0.0,0,9.87,0.0,14.5,,2.0,,,,,1,1
@@ -1402,7 +1402,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6161,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,133.6,0.0,0,5.22,5.22,14.5,,2.0,Google,,Google,,1,1
 #6162,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,1499.0,0.0,1499.0,31.479000000000003,1467.521,1174.26,0.0,0,41.52,41.52,14.5,,1.0,Google,,Google,,1,1
 #6163,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,269.0,0.0,269.0,5.649,263.351,196.9,0.0,0,7.7,7.7,14.5,,1.0,Google,,Google,,1,1
-#6164,2026-06,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,159.0,159.0,0.0,0.0,0.0,0.0,104.4245205479452,1,2.0669999999999997,0.0,0.0,,1.0,direct,,Google,,1,1
+#6164,2026-06,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,159.0,159.0,0.0,0.0,0.0,0.0,0.0,1,2.0669999999999997,0.0,0.0,,1.0,direct,,Google,,1,1
 #6165,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,118.0,0.0,118.0,2.478,115.522,40.0,0.0,0,1.534,0.0,14.5,,1.0,direct,,direct,,2,2
 #6166,2026-06,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,139.0,139.0,0.0,0.0,0.0,0.0,0.0,0,4.12,4.12,0.0,,1.0,Google,SEO,Google,SEO,1,1
 #6167,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,249.0,0.0,249.0,5.229,243.771,207.37,0.0,0,7.15,7.15,14.5,,2.0,,,,,1,1
@@ -1414,16 +1414,16 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6173,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,149.0,0.0,149.0,3.129,145.871,118.05,0.0,0,1.9369999999999998,0.0,14.5,,1.0,,,,,1,1
 #6174,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,229.0,0.0,229.0,4.809,224.191,154.17,0.0,0,2.977,0.0,14.5,,2.0,Google,SEO,Google,SEO,1,1
 #6175,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,170.1,0.0,170.1,3.5721000000000003,166.5279,132.78,0.0,0,2.2113,0.0,14.5,GSF-SPD-QROFRA7DZ8,1.0,Google,,Google,,1,1
-#6176,2026-06,mature,REFUNDED,FULFILLED,FR,shopify_payments,web,976.82,976.82,0.0,0.0,0.0,0.0,659.3410225806452,2,50.11,50.11,0.0,,1.0,direct,,direct,,2,2
+#6176,2026-06,mature,REFUNDED,FULFILLED,FR,shopify_payments,web,976.82,976.82,0.0,0.0,0.0,0.0,0.0,2,50.11,50.11,0.0,,1.0,direct,,direct,,2,2
 #6177,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,189.0,0.0,189.0,3.9690000000000003,185.031,161.31,0.0,0,5.5,5.5,14.5,,1.0,,,,,1,1
-#6178,2026-06,mature,REFUNDED,FULFILLED,CH,shopify_payments,web,1109.0,1109.0,0.0,0.0,0.0,0.0,740.232911392405,3,30.8,30.8,0.0,,1.0,an unknown source,,an unknown source,,3,3
+#6178,2026-06,mature,REFUNDED,FULFILLED,CH,shopify_payments,web,1109.0,1109.0,0.0,0.0,0.0,0.0,0.0,3,30.8,30.8,0.0,,1.0,an unknown source,,an unknown source,,3,3
 #6179,2026-06,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,331.0,0.0,331.0,6.9510000000000005,324.049,236.71,0.0,0,9.93,0.0,14.5,,1.0,ChatGPT,,direct,,1,1
 #6180,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,119.0,0.0,119.0,2.499,116.501,99.88,0.0,0,1.547,0.0,14.5,,1.0,Google,,Google,,1,1
 #6181,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,89.1,0.0,89.1,1.8711,87.2289,65.01904109589042,65.01904109589042,1,2.75,2.75,14.5,,1.0,Google,,Google,,1,1
 #6182,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,53.1,0.0,53.1,1.1151000000000002,51.9849,26.0,0.0,0,1.76,1.76,14.5,,1.0,,,,,1,1
 #6183,2026-06,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,224.1,0.0,224.1,4.7061,219.3939,227.0,0.0,0,6.723,0.0,14.5,,1.0,Google,,Google,,1,1
 #6184,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,233.1,0.0,233.1,4.8951,228.20489999999998,183.69,0.0,0,6.71,6.71,14.5,,1.0,direct,,direct,,1,1
-#6185,2026-06,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,260.1,260.1,0.0,0.0,0.0,0.0,195.70038978494625,1,7.45,7.45,0.0,,1.0,https://store-localization.shopifyapps.com/,,direct,,1,1
+#6185,2026-06,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,260.1,260.1,0.0,0.0,0.0,0.0,0.0,1,7.45,7.45,0.0,,1.0,https://store-localization.shopifyapps.com/,,direct,,1,1
 #6186,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,161.1,0.0,161.1,3.3831,157.71689999999998,116.38,0.0,0,2.0943,0.0,14.5,,1.0,Google,,Google,,1,1
 #6187,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,260.1,0.0,260.1,5.4621,254.63790000000003,200.58,0.0,0,7.45,7.45,14.5,,2.0,https://shopify.com/,,Google,SEO,1,1
 #6188,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,161.1,0.0,161.1,3.3831,157.71689999999998,106.77,0.0,0,4.73,4.73,14.5,,1.0,Google,,Google,,1,1
@@ -1478,11 +1478,11 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6237,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,399.0,0.0,399.0,8.379000000000001,390.621,286.98,0.0,0,11.27,11.27,14.5,,2.0,Google,,Google,,1,1
 #6238,2026-06,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,109.0,0.0,109.0,2.289,106.711,89.0,0.0,0,3.27,0.0,14.5,first10,1.0,direct,,direct,,1,1
 #6239,2026-06,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,59.0,0.0,59.0,1.239,57.761,26.0,0.0,0,1.77,0.0,14.5,,1.0,,,,,1,1
-#6240,2026-06,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,70.0,70.0,0.0,0.0,0.0,0.0,54.15119617224881,1,2.23,2.23,0.0,first10,1.0,direct,,direct,,1,1
+#6240,2026-06,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,70.0,70.0,0.0,0.0,0.0,0.0,0.0,1,2.23,2.23,0.0,first10,1.0,direct,,direct,,1,1
 #6241,2026-06,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,136.31,0.0,0,5.37,0.0,14.5,,1.0,Google,,Google,,1,1
 #6242,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,729.0,0.0,729.0,15.309000000000001,713.691,595.33,0.0,0,20.35,20.35,14.5,,1.0,Google,,direct,,1,1
 #6243,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,69.0,0.0,69.0,1.449,67.551,40.0,0.0,0,0.8969999999999999,0.0,14.5,first10,1.0,direct,,direct,,1,1
-#6244,2026-06,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,163.9,163.9,0.0,0.0,0.0,32.28765071770336,107.6255023923445,1,2.1307,0.0,14.5,,1.0,direct,,direct,,2,2
+#6244,2026-06,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,163.9,163.9,0.0,0.0,0.0,32.28765071770336,32.28765071770336,1,2.1307,0.0,14.5,,1.0,direct,,direct,,2,2
 #6245,2026-06,mature,PAID,FULFILLED,CH,shopify_payments,web,53.9,0.0,53.9,1.1319000000000001,52.7681,26.0,0.0,0,1.78,1.78,14.5,first10,1.0,,,,,2,2
 #6246,2026-06,mature,PAID,FULFILLED,CH,TWINT,web,59.0,0.0,59.0,1.239,57.761,26.0,0.0,0,0.767,0.0,14.5,,1.0,direct,,direct,,1,1
 #6247,2026-06,mature,PAID,FULFILLED,CH,paypal,web,209.0,0.0,209.0,4.389,204.611,169.97,0.0,0,7.656000000000001,0.0,14.5,,1.0,,,,,1,1
@@ -1517,7 +1517,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6276,2026-07,mature,PARTIALLY_REFUNDED,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,327.0,118.0,209.0,4.389,204.611,200.78,0.0,0,9.81,0.0,14.5,,1.0,direct,,direct,,3,3
 #6277,2026-07,mature,PAID,FULFILLED,CH,TWINT,web,239.0,0.0,239.0,5.019,233.981,154.35,0.0,0,3.1069999999999998,0.0,14.5,,1.0,Google,,Google,,1,1
 #6278,2026-07,mature,PAID,FULFILLED,CH,TWINT,web,219.0,0.0,219.0,4.599,214.401,149.24,0.0,0,2.847,0.0,14.5,first10,1.0,,,,,1,1
-#6279,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,78.9,0.0,78.9,1.6569000000000003,77.2431,39.3014126984127,13.3014126984127,1,2.47,2.47,14.5,,1.0,Google,,direct,,2,2
+#6279,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,78.9,0.0,78.9,1.6569000000000003,77.2431,39.3014126984127,13.301412698412697,1,2.47,2.47,14.5,,1.0,Google,,direct,,2,2
 #6280,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,79.0,0.0,79.0,1.659,77.341,30.0,0.0,0,2.47,2.47,14.5,,1.0,Google,,Google,,1,1
 #6281,2026-07,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+TWINT,web,372.9,0.0,372.9,7.8309,365.0691,267.0,0.0,0,4.8477,0.0,14.5,first10,1.0,direct,,direct,,2,2
 #6282,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,879.0,0.0,879.0,18.459,860.541,798.42,0.0,0,24.47,24.47,14.5,,1.0,an unknown source,,an unknown source,,1,1
@@ -1563,7 +1563,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6322,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,59.0,0.0,59.0,1.239,57.761,26.0,0.0,0,1.92,1.92,14.5,,1.0,direct,,Instagram,,1,1
 #6323,2026-07,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,209.0,0.0,209.0,4.389,204.611,114.0,0.0,0,6.27,0.0,14.5,,1.0,Google,SEO,Google,SEO,1,1
 #6324,2026-07,mature,PAID,PARTIALLY_FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+TWINT,web,463.9,0.0,463.9,9.7419,454.1581,294.27,0.0,0,6.0306999999999995,0.0,14.5,,1.0,,,,,2,2
-#6325,2026-07,mature,PARTIALLY_REFUNDED,FULFILLED,CH,shopify_payments+shopify_store_credit,web,199.0,179.1,19.9,0.4179,19.4821,143.78141269841268,13.3014126984127,1,6.76,6.76,14.5,,1.0,,,,,2,2
+#6325,2026-07,mature,PARTIALLY_REFUNDED,FULFILLED,CH,shopify_payments+shopify_store_credit,web,199.0,179.1,19.9,0.4179,19.4821,143.78141269841268,13.301412698412697,1,6.76,6.76,14.5,,1.0,,,,,2,2
 #6326,2026-07,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,167.0,0.0,167.0,3.507,163.493,78.0,0.0,0,5.01,0.0,14.5,first10,1.0,Google,,Google,SEO,3,3
 #6327,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,169.0,0.0,169.0,3.5490000000000004,165.451,121.68,0.0,0,4.95,4.95,14.5,first10,1.0,Google,,direct,,1,1
 #6328,2026-07,mature,PAID,FULFILLED,CH,paypal,web,503.9,0.0,503.9,10.581900000000001,493.31809999999996,349.0,0.0,0,17.6826,0.0,14.5,,1.0,Google,,Google,,2,2
@@ -1580,7 +1580,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6339,2026-07,mature,PAID,FULFILLED,CH,TWINT,web,161.1,0.0,161.1,3.3831,157.71689999999998,110.43,0.0,0,2.0943,0.0,14.5,GSF-SPD-7PNRBAF7LR,1.0,Google,,Google,,1,1
 #6340,2026-07,mature,PAID,UNFULFILLED,CH,shopify_payments,web,183.9,0.0,183.9,3.8619000000000003,180.03810000000001,105.25,0.0,0,5.73,5.73,14.5,,1.0,Google,,Google,,2,2
 #6341,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,89.0,0.0,89.0,1.8690000000000002,87.131,0.0,0.0,0,2.75,2.75,14.5,first10,1.0,Google,,an unknown source,,1,1
-#6342,2026-07,mature,REFUNDED,UNFULFILLED,CH,shopify_store_credit,web,93.9,93.9,0.0,0.0,0.0,17.84661904761905,59.488730158730164,1,0.0,0.0,14.5,,2.0,,,,,2,2
+#6342,2026-07,mature,REFUNDED,UNFULFILLED,CH,shopify_store_credit,web,93.9,93.9,0.0,0.0,0.0,17.84661904761905,17.84661904761905,1,0.0,0.0,14.5,,2.0,,,,,2,2
 #6343,2026-07,mature,PAID,FULFILLED,CH,TWINT,web,289.0,0.0,289.0,6.069,282.931,208.9,0.0,0,3.7569999999999997,0.0,14.5,first10,1.0,Google,,Google,,1,1
 #6344,2026-07,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,209.0,0.0,209.0,4.389,204.611,185.54,0.0,0,6.27,0.0,14.5,,1.0,,,,,1,1
 #6345,2026-07,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,199.0,0.0,199.0,4.179,194.821,129.46,0.0,0,5.97,0.0,14.5,,2.0,,,,,1,1
@@ -1612,14 +1612,14 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6371,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,59.0,0.0,59.0,1.239,57.761,26.0,0.0,0,1.92,1.92,14.5,,2.0,Google,,Google,,1,1
 #6372,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,59.0,0.0,59.0,1.239,57.761,26.0,0.0,0,1.92,1.92,14.5,,1.0,Google,SEO,Google,SEO,1,1
 #6373,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,56.0,0.0,56.0,1.1760000000000002,54.824,26.0,0.0,0,1.84,1.84,14.5,first10,2.0,Google,SEO,Google,SEO,1,1
-#6374,2026-07,mature,REFUNDED,UNFULFILLED,CH,paypal,web,72.0,72.0,0.0,0.0,0.0,0.0,53.473015873015875,1,2.998,0.0,0.0,GSF-SPD-BN7GKRFBV3,1.0,Google,,Google,,1,1
+#6374,2026-07,mature,REFUNDED,UNFULFILLED,CH,paypal,web,72.0,72.0,0.0,0.0,0.0,0.0,0.0,1,2.998,0.0,0.0,GSF-SPD-BN7GKRFBV3,1.0,Google,,Google,,1,1
 #6375,2026-07,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,118.0,0.0,118.0,2.478,115.522,52.0,0.0,0,3.54,0.0,14.5,,1.0,an unknown source,,https://shop.app/,,2,2
 #6376,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,169.0,0.0,169.0,3.5490000000000004,165.451,98.65,0.0,0,4.95,4.95,14.5,,1.0,,,,,1,1
 #6377,2026-07,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,209.0,0.0,209.0,4.389,204.611,128.47,0.0,0,6.27,0.0,14.5,,1.0,direct,,direct,,1,1
 #6378,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,56.0,0.0,56.0,1.1760000000000002,54.824,26.0,0.0,0,1.84,1.84,14.5,first10,1.0,Google,,direct,,1,1
 #6379,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,53.9,0.0,53.9,1.1319000000000001,52.7681,26.0,0.0,0,1.78,1.78,14.5,first10,1.0,Google,,Google,,2,2
 #6380,2026-07,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,489.0,0.0,489.0,10.269,478.731,350.0,0.0,0,14.67,0.0,14.5,first10,1.0,Bing,SEO,Bing,SEO,1,1
-#6381,2026-07,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,1193.9,1193.9,0.0,0.0,0.0,241.54439112903233,805.1479704301076,1,33.13,33.13,14.5,,1.0,Google,,Google,,2,2
+#6381,2026-07,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,1193.9,1193.9,0.0,0.0,0.0,241.54439112903233,241.54439112903233,1,33.13,33.13,14.5,,1.0,Google,,Google,,2,2
 #6382,2026-07,mature,PAID,FULFILLED,CH,TWINT,web,69.0,0.0,69.0,1.449,67.551,30.0,0.0,0,0.8969999999999999,0.0,14.5,,1.0,direct,,direct,,1,1
 #6383,2026-07,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,189.0,189.0,0.0,0.0,0.0,38.49900000000001,0.0,0,5.5,5.5,14.5,,1.0,,,,,1,1
 #6385,2026-07,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,199.0,0.0,199.0,4.179,194.821,155.57,0.0,0,5.97,0.0,14.5,,1.0,,,,,1,1
@@ -1734,7 +1734,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6494,2026-07,mature,PAID,FULFILLED,CH,TWINT,web,59.0,0.0,59.0,1.239,57.761,26.0,0.0,0,0.767,0.0,14.5,,2.0,direct,,direct,,1,1
 #6495,2026-07,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+TWINT,web,154.0,0.0,154.0,3.234,150.766,136.0,0.0,0,2.002,0.0,14.5,resellavis-2PKPEYW,2.0,an unknown source,,email,LOYALTY,1,1
 #6496,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,59.0,0.0,59.0,1.239,57.761,26.0,0.0,0,1.92,1.92,14.5,,1.0,Google,,direct,,1,1
-#6497,2026-07,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,438.0,438.0,0.0,0.0,0.0,0.0,155.00779904306222,1,13.139999999999999,0.0,0.0,,1.0,Google,,Google,,2,2
+#6497,2026-07,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,438.0,438.0,0.0,0.0,0.0,0.0,0.0,1,13.139999999999999,0.0,0.0,,1.0,Google,,Google,,2,2
 #6498,2026-07,mature,PAID,FULFILLED,,manual,shopify_draft_order,369.0,0.0,369.0,7.7490000000000006,361.251,225.0,0.0,0,0.0,0.0,14.5,,3.0,,,,,3,3
 #6499,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,239.0,0.0,239.0,5.019,233.981,157.88,0.0,0,6.87,6.87,14.5,,1.0,Google,SEO,Google,SEO,1,1
 #6500,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,53.1,0.0,53.1,1.1151000000000002,51.9849,26.0,0.0,0,1.76,1.76,14.5,GSF-SPD-VXMAZSMO5V,1.0,Google,,Google,,1,1
@@ -1755,7 +1755,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6515,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,56.64,0.0,56.64,1.18944,55.45056,26.0,0.0,0,1.86,1.86,14.5,,2.0,,,,,1,1
 #6516,2026-07,mature,PAID,FULFILLED,CH,TWINT,web,53.9,0.0,53.9,1.1319000000000001,52.7681,26.0,0.0,0,0.7007,0.0,14.5,first10,1.0,Google,,Google,SEO,2,2
 #6517,2026-07,mature,PAID,FULFILLED,CH,TWINT,web,209.0,0.0,209.0,4.389,204.611,142.0,0.0,0,2.717,0.0,14.5,first10,1.0,,,,,1,1
-#6518,2026-07,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,199.0,199.0,0.0,0.0,0.0,0.0,134.7011004784689,1,5.77,5.77,0.0,,1.0,,,,,2,2
+#6518,2026-07,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,199.0,199.0,0.0,0.0,0.0,0.0,0.0,1,5.77,5.77,0.0,,1.0,,,,,2,2
 #6519,2026-07,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),3890849,79.0,0.0,79.0,1.659,77.341,0.0,0.0,0,2.37,0.0,14.5,,2.0,,,,,1,1
 #6520,2026-07,mature,PAID,FULFILLED,CH,shopify_payments,web,239.0,0.0,239.0,5.019,233.981,156.0,0.0,0,6.87,6.87,14.5,,1.0,Google,,Google,,1,1
 #6521,2026-08,mature,PAID,FULFILLED,CH,paypal,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,123.0,0.0,0,6.636,0.0,14.5,,1.0,,,,,1,1
@@ -1798,7 +1798,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6558,2026-08,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,219.0,0.0,219.0,4.599,214.401,191.37,0.0,0,6.569999999999999,0.0,14.5,first10,1.0,Google,,Google,,1,1
 #6559,2026-08,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,69.0,0.0,69.0,1.449,67.551,35.0,0.0,0,2.07,0.0,14.5,,2.0,Google,SEO,direct,,1,1
 #6560,2026-08,mature,PAID,FULFILLED,CH,TWINT,web,254.1,0.0,254.1,5.3361,248.7639,201.04,0.0,0,3.3032999999999997,0.0,14.5,GSF-SPD-EKLGG116FG,1.0,Google,,Google,,1,1
-#6561,2026-08,mature,REFUNDED,FULFILLED,CH,TWINT,web,64.46,59.0,5.46,0.11466000000000001,5.34534,0.0,36.85292129406085,1,0.767,0.0,0.0,,1.0,direct,,direct,,1,1
+#6561,2026-08,mature,REFUNDED,FULFILLED,CH,TWINT,web,64.46,59.0,5.46,0.11466000000000001,5.34534,0.0,0.0,1,0.767,0.0,0.0,,1.0,direct,,direct,,1,1
 #6562,2026-08,mature,PAID,PARTIALLY_FULFILLED,CH,shopify_payments,web,213.9,0.0,213.9,4.4919,209.40810000000002,133.29,0.0,0,6.18,6.18,14.5,,2.0,,,,,2,2
 #6563,2026-08,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+TWINT,web,73.9,0.0,73.9,1.5519000000000003,72.3481,40.0,0.0,0,0.9607,0.0,14.5,first10,1.0,,,,,2,2
 #6564,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,55.1,0.0,55.1,1.1571,53.9429,26.0,0.0,0,1.82,1.82,14.5,GSF-SPD-TAOIFUUR7B,1.0,,,,,1,1
@@ -1808,7 +1808,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6568,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,56.0,0.0,56.0,1.1760000000000002,54.824,26.0,0.0,0,1.84,1.84,14.5,first10,1.0,Google,,Google,,1,1
 #6569,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,shopify_draft_order,220.0,0.0,220.0,4.62,215.38,180.0,0.0,0,6.35,6.35,14.5,Réduction personnalisée,2.0,android-app://com.google.android.gm/,,android-app://com.google.android.gm/,,1,1
 #6570,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,59.0,0.0,59.0,1.239,57.761,26.0,0.0,0,1.92,1.92,14.5,,1.0,,,,,1,1
-#6571,2026-08,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,53.1,53.1,0.0,0.0,0.0,0.0,26.0,1,1.76,1.76,0.0,GSF-SPD-8EEFOXA9YS,1.0,Google,,Google,,1,1
+#6571,2026-08,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,53.1,53.1,0.0,0.0,0.0,0.0,0.0,1,1.76,1.76,0.0,GSF-SPD-8EEFOXA9YS,1.0,Google,,Google,,1,1
 #6572,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,199.0,0.0,199.0,4.179,194.821,127.19,0.0,0,5.77,5.77,14.5,first10,1.0,Google,,Google,,1,1
 #6573,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,53.1,0.0,53.1,1.1151000000000002,51.9849,26.0,0.0,0,1.76,1.76,14.5,GSF-SPD-J1B6BX40LK,1.0,Google,,Google,,1,1
 #6574,2026-08,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,299.0,0.0,299.0,6.279000000000001,292.721,183.86,0.0,0,8.969999999999999,0.0,14.5,,1.0,an unknown source,,an unknown source,,1,1
@@ -1904,7 +1904,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6664,2026-08,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,449.0,0.0,449.0,9.429,439.571,350.0,0.0,0,13.469999999999999,0.0,14.5,,1.0,Google,,Google,,1,1
 #6665,2026-08,mature,PAID,FULFILLED,CH,TWINT,web,169.0,0.0,169.0,3.5490000000000004,165.451,123.0,0.0,0,2.197,0.0,14.5,first10,1.0,,,,,1,1
 #6666,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,239.0,0.0,239.0,5.019,233.981,159.0,0.0,0,7.35,7.35,14.5,,1.0,,,,,1,1
-#6667,2026-08,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,359.0,359.0,0.0,0.0,0.0,0.0,239.96015873015875,1,10.77,0.0,0.0,,1.0,Google,,Google,,1,1
+#6667,2026-08,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,359.0,359.0,0.0,0.0,0.0,0.0,0.0,1,10.77,0.0,0.0,,1.0,Google,,Google,,1,1
 #6668,2026-08,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,199.0,0.0,199.0,4.179,194.821,145.29,0.0,0,5.97,0.0,14.5,first10,1.0,,,,,1,1
 #6669,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,159.0,0.0,159.0,3.3390000000000004,155.661,102.48,0.0,0,4.67,4.67,14.5,,2.0,an unknown source,,direct,,1,1
 #6670,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,169.0,0.0,169.0,3.5490000000000004,165.451,105.0,0.0,0,4.95,4.95,14.5,,1.0,,,,,1,1
@@ -1987,7 +1987,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6747,2026-08,mature,PAID,UNFULFILLED,DE,shopify_payments,web,189.67,0.0,189.67,3.98307,185.68693,121.42,0.0,0,9.82,9.82,14.5,,1.0,Google,,Google,,1,1
 #6748,2026-08,mature,PAID,FULFILLED,CH,TWINT,web,199.0,0.0,199.0,4.179,194.821,127.31,0.0,0,2.5869999999999997,0.0,14.5,,1.0,Google,,Google,,1,1
 #6749,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,259.0,0.0,259.0,5.439,253.561,178.98,0.0,0,7.42,7.42,14.5,,1.0,Google,,Google,,1,1
-#6750,2026-08,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,289.0,289.0,0.0,0.0,0.0,0.0,182.90244565217392,1,8.67,0.0,0.0,,1.0,an unknown source,,Google,,1,1
+#6750,2026-08,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,289.0,289.0,0.0,0.0,0.0,0.0,0.0,1,8.67,0.0,0.0,,1.0,an unknown source,,Google,,1,1
 #6751,2026-08,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,59.0,0.0,59.0,1.239,57.761,0.0,0.0,0,1.77,0.0,14.5,,1.0,Google,,direct,,1,1
 #6752,2026-08,mature,REFUNDED,FULFILLED,CH,TWINT,web,169.0,169.0,0.0,0.0,0.0,31.083000000000006,0.0,0,2.197,0.0,14.5,,1.0,Google,,Google,,1,1
 #6753,2026-08,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+TWINT,web,279.0,0.0,279.0,5.859,273.141,196.01,0.0,0,3.627,0.0,14.5,,1.0,Google,,Google,,1,1
@@ -2019,7 +2019,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6779,2026-08,mature,PAID,FULFILLED,CH,paypal,web,279.0,0.0,279.0,5.859,273.141,181.66,0.0,0,10.036000000000001,0.0,14.5,,1.0,Google,,Google,,1,1
 #6780,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,121.79,0.0,0,5.22,5.22,14.5,,1.0,,,,,1,1
 #6781,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,3890849,229.0,0.0,229.0,4.809,224.191,148.22,0.0,0,6.6,6.6,14.5,,1.0,,,,,1,1
-#6782,2026-08,mature,PAID,PARTIALLY_FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,368.0,0.0,368.0,7.728000000000001,360.272,221.70000000000002,126.33000000000001,1,11.04,0.0,14.5,,1.0,Google,,Google,,2,2
+#6782,2026-08,mature,PAID,PARTIALLY_FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,368.0,0.0,368.0,7.728000000000001,360.272,221.70000000000002,126.33,1,11.04,0.0,14.5,,1.0,Google,,Google,,2,2
 #6783,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,89.0,0.0,89.0,1.8690000000000002,87.131,44.0,0.0,0,2.75,2.75,14.5,first10,1.0,Google,,Google,,1,1
 #6784,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,129.0,0.0,129.0,2.709,126.291,0.0,0.0,0,3.85,3.85,14.5,,1.0,direct,,direct,,1,1
 #6785,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,219.0,0.0,219.0,4.599,214.401,145.23,0.0,0,6.32,6.32,14.5,,1.0,Google,,direct,,1,1
@@ -2099,7 +2099,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6859,2026-08,mature,PARTIALLY_REFUNDED,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_store_credit,web,199.0,180.59,18.41,0.38661,18.02339,162.79,0.0,0,5.97,0.0,14.5,,1.0,Google,,Google,,1,1
 #6860,2026-08,mature,PAID,FULFILLED,CH,paypal,web,119.0,0.0,119.0,2.499,116.501,0.0,0.0,0,4.596,0.0,14.5,first10,1.0,android-app://com.google.android.googlequicksearchbox/,,android-app://com.google.android.googlequicksearchbox/,,1,1
 #6861,2026-08,mature,REFUNDED,UNFULFILLED,CH,paypal,web,56.0,56.0,0.0,0.0,0.0,6.000000000000001,0.0,0,2.454,0.0,14.5,,1.0,,,,,1,1
-#6862,2026-08,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,279.0,279.0,0.0,0.0,0.0,0.0,195.29999999999998,1,7.97,7.97,0.0,,1.0,,,,,1,1
+#6862,2026-08,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,279.0,279.0,0.0,0.0,0.0,0.0,0.0,1,7.97,7.97,0.0,,1.0,,,,,1,1
 #6863,2026-08,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,79.0,0.0,79.0,1.659,77.341,0.0,0.0,0,2.37,0.0,14.5,,1.0,Google,,Google,,1,1
 #6864,2026-08,mature,PAID,FULFILLED,CH,TWINT,web,59.0,0.0,59.0,1.239,57.761,0.0,0.0,0,0.767,0.0,14.5,,1.0,Google,,Google,,1,1
 #6865,2026-08,mature,PAID,PARTIALLY_FULFILLED,CH,shopify_payments,web,233.9,0.0,233.9,4.9119,228.9881,163.59,0.0,0,6.73,6.73,14.5,,1.0,Google,,Google,,2,2
@@ -2156,7 +2156,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6916,2026-08,mature,PAID,FULFILLED,CH,paypal,web,259.0,0.0,259.0,5.439,253.561,206.3,0.0,0,9.356000000000002,0.0,14.5,,1.0,Google,,Google,,1,1
 #6917,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,54.0,0.0,54.0,1.1340000000000001,52.866,26.4,0.0,0,1.79,1.79,14.5,GSF-SPD-4YEEVD2XCJ,1.0,Google,,Google,,1,1
 #6918,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,169.0,0.0,169.0,3.5490000000000004,165.451,109.72294909800802,109.72294909800802,1,4.95,4.95,14.5,,1.0,direct,,direct,,1,1
-#6919,2026-08,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,279.0,279.0,0.0,0.0,0.0,0.0,188.8522966507177,1,3.627,0.0,0.0,,1.0,Google,,Google,,1,1
+#6919,2026-08,mature,REFUNDED,UNFULFILLED,CH,TWINT,web,279.0,279.0,0.0,0.0,0.0,0.0,0.0,1,3.627,0.0,0.0,,1.0,Google,,Google,,1,1
 #6920,2026-08,mature,PAID,FULFILLED,CH,shopify_payments,web,209.0,0.0,209.0,4.389,204.611,108.7,0.0,0,6.05,6.05,14.5,,1.0,Google,,Google,,1,1
 #6921,2026-08,mature,PAID,FULFILLED,CH,TWINT,web,269.0,0.0,269.0,5.649,263.351,204.48,0.0,0,3.497,0.0,14.5,,1.0,Google,,Google,,1,1
 #6922,2026-08,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,219.0,0.0,219.0,4.599,214.401,155.35,0.0,0,6.569999999999999,0.0,14.5,first10,1.0,direct,,direct,,1,1
@@ -2218,7 +2218,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #6978,2026-09,mature,PAID,FULFILLED,CH,TWINT+shopify_store_credit,web,59.0,0.0,59.0,1.239,57.761,26.0,0.0,0,0.18902,0.0,14.5,,2.0,Yahoo,SEO,Yahoo,SEO,1,1
 #6979,2026-09,mature,PAID,FULFILLED,CH,TWINT,web,169.0,0.0,169.0,3.5490000000000004,165.451,110.29,0.0,0,2.197,0.0,14.5,,1.0,,,,,1,1
 #6980,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,279.0,0.0,279.0,5.859,273.141,225.36,0.0,0,8.37,0.0,14.5,,2.0,direct,,Google,SEO,1,1
-#6981,2026-09,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,229.0,229.0,0.0,0.0,0.0,0.0,153.06650793650795,1,6.6,6.6,0.0,,1.0,Google,SEO,Google,SEO,1,1
+#6981,2026-09,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,229.0,229.0,0.0,0.0,0.0,0.0,0.0,1,6.6,6.6,0.0,,1.0,Google,SEO,Google,SEO,1,1
 #6982,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,189.0,0.0,189.0,3.9690000000000003,185.031,121.65,0.0,0,5.5,5.5,14.5,,1.0,Google,,Google,,1,1
 #6983,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,79.0,0.0,79.0,1.659,77.341,0.0,0.0,0,2.47,2.47,14.5,first10,1.0,Google,SEO,direct,,1,1
 #6984,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,169.0,0.0,169.0,3.5490000000000004,165.451,0.0,0.0,0,4.95,4.95,14.5,first10,1.0,Google,,an unknown source,,1,1
@@ -2246,9 +2246,9 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7006,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,159.0,0.0,159.0,3.3390000000000004,155.661,98.07,0.0,0,4.67,4.67,14.5,first10,1.0,Google,,Google,,1,1
 #7007,2026-09,mature,PAID,FULFILLED,CH,TWINT,web,209.0,0.0,209.0,4.389,204.611,194.69,0.0,0,2.717,0.0,14.5,,1.0,Google,,Google,,1,1
 #7008,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,219.0,0.0,219.0,4.599,214.401,142.52,0.0,0,6.569999999999999,0.0,14.5,,1.0,Google,,Google,,1,1
-#7009,2026-09,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,289.0,289.0,0.0,0.0,0.0,0.0,195.62119617224883,1,8.67,0.0,0.0,,1.0,,,,,1,1
+#7009,2026-09,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,289.0,289.0,0.0,0.0,0.0,0.0,0.0,1,8.67,0.0,0.0,,1.0,,,,,1,1
 #7010,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,189.0,0.0,189.0,3.9690000000000003,185.031,126.33000000000001,126.33000000000001,1,5.67,0.0,14.5,,1.0,Google,,Google,,1,1
-#7011,2026-09,mature,PARTIALLY_REFUNDED,UNFULFILLED,CH,shopify_payments,web,224.1,224.1,0.0,0.0,0.0,0.0,164.86292851966994,1,7.15,7.15,0.0,,2.0,,,,,1,1
+#7011,2026-09,mature,PARTIALLY_REFUNDED,UNFULFILLED,CH,shopify_payments,web,224.1,224.1,0.0,0.0,0.0,0.0,0.0,1,7.15,7.15,0.0,,2.0,,,,,1,1
 #7012,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,189.0,0.0,189.0,3.9690000000000003,185.031,177.82,0.0,0,5.5,5.5,14.5,first10,1.0,Google,,Google,,1,1
 #7013,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,273.9,0.0,273.9,5.7519,268.1481,235.72,0.0,0,8.216999999999999,0.0,14.5,,1.0,direct,,Google,,2,2
 #7014,2026-09,mature,PAID,UNFULFILLED,,Pay by Invoice / Pay Later (with PowerPay)+shopify_payments,web,229.0,0.0,229.0,4.809,224.191,160.27,0.0,0,6.6,6.6,14.5,,2.0,Google,,direct,,1,1
@@ -2256,7 +2256,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7016,2026-09,mature,PAID,FULFILLED,CH,TWINT,web,299.0,0.0,299.0,6.279000000000001,292.721,205.07,0.0,0,3.887,0.0,14.5,,1.0,Google,,direct,,1,1
 #7017,2026-09,mature,PAID,FULFILLED,CH,TWINT+shopify_payments,web,209.0,0.0,209.0,4.389,204.611,148.0,0.0,0,2.717,0.0,14.5,,1.0,Google,,Google,,1,1
 #7018,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,189.0,0.0,189.0,3.9690000000000003,185.031,143.0,0.0,0,5.5,5.5,14.5,,2.0,direct,,Google,SEO,1,1
-#7019,2026-09,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,260.1,260.1,0.0,0.0,0.0,0.0,193.17126984126986,1,7.45,7.45,0.0,GSF-SPD-MJATO2WSSL,2.0,Google,,Google,,1,1
+#7019,2026-09,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,260.1,260.1,0.0,0.0,0.0,0.0,0.0,1,7.45,7.45,0.0,GSF-SPD-MJATO2WSSL,2.0,Google,,Google,,1,1
 #7020,2026-09,mature,PAID,FULFILLED,CH,paypal,web,209.0,0.0,209.0,4.389,204.611,198.0,0.0,0,7.656000000000001,0.0,14.5,,1.0,Google,,Google,,1,1
 #7021,2026-09,mature,PAID,FULFILLED,CH,shopify_payments+shopify_store_credit,web,239.0,0.0,239.0,5.019,233.981,174.0,0.0,0,1.91,1.91,14.5,,2.0,Google,SEO,Google,SEO,1,1
 #7022,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,279.0,0.0,279.0,5.859,273.141,170.0,0.0,0,7.97,7.97,14.5,,1.0,Google,,Google,,1,1
@@ -2272,7 +2272,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7032,2026-09,mature,PARTIALLY_REFUNDED,UNFULFILLED,CH,shopify_payments,web,50.4,50.4,0.0,0.0,0.0,6.000000000000001,0.0,0,1.84,1.84,14.5,,1.0,Google,,Google,,1,1
 #7033,2026-09,mature,PAID,FULFILLED,CH,TWINT,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,118.42,0.0,0,2.327,0.0,14.5,,1.0,direct,,direct,,1,1
 #7034,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,209.0,0.0,209.0,4.389,204.611,138.0,0.0,0,6.47,6.47,14.5,,1.0,,,,,1,1
-#7035,2026-09,mature,REFUNDED,UNFULFILLED,CH,paypal,web,239.0,239.0,0.0,0.0,0.0,0.0,168.54559808612441,1,8.676000000000002,0.0,0.0,first10,1.0,Google,,Google,,1,1
+#7035,2026-09,mature,REFUNDED,UNFULFILLED,CH,paypal,web,239.0,239.0,0.0,0.0,0.0,0.0,0.0,1,8.676000000000002,0.0,0.0,first10,1.0,Google,,Google,,1,1
 #7036,2026-09,mature,PAID,FULFILLED,CH,TWINT,web,323.9,0.0,323.9,6.8019,317.0981,213.22365079365082,213.22365079365082,1,4.210699999999999,0.0,14.5,,1.0,Google,,Google,,2,2
 #7037,2026-09,mature,PAID,FULFILLED,CH,TWINT,web,249.0,0.0,249.0,5.229,243.771,173.1188888888889,173.1188888888889,1,3.2369999999999997,0.0,14.5,first10,2.0,Google,,Google,,1,1
 #7038,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,96.04,0.0,0,5.22,5.22,14.5,,1.0,Google,,Google,,1,1
@@ -2287,7 +2287,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7047,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,1234.05,0.0,1234.05,25.91505,1208.13495,925.0,0.0,0,37.021499999999996,0.0,14.5,VIPSCIOLI5,8.0,direct,,direct,,1,1
 #7048,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,249.0,0.0,249.0,5.229,243.771,167.0,0.0,0,7.15,7.15,14.5,,1.0,,,,,1,1
 #7049,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,210.6,0.0,210.6,4.4226,206.1774,150.65,0.0,0,6.318,0.0,14.5,GSF-SPD-SMUONLTMJS,1.0,Google,,Google,,1,1
-#7050,2026-09,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,170.1,170.1,0.0,0.0,0.0,0.0,127.9322009569378,1,4.98,4.98,0.0,ADBET,1.0,,,,,1,1
+#7050,2026-09,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,170.1,170.1,0.0,0.0,0.0,0.0,0.0,1,4.98,4.98,0.0,ADBET,1.0,,,,,1,1
 #7051,2026-09,mature,PAID,FULFILLED,CH,TWINT,web,179.0,0.0,179.0,3.7590000000000003,175.24099999999999,97.0,0.0,0,2.327,0.0,14.5,,1.0,Google,,Google,,1,1
 #7052,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,778.0,0.0,778.0,16.338,761.662,565.66,0.0,0,23.34,0.0,14.5,,1.0,Google,,https://shopify.com/,,1,1
 #7053,2026-09,mature,PAID,FULFILLED,CH,TWINT,web,229.0,0.0,229.0,4.809,224.191,92.0,0.0,0,2.977,0.0,14.5,,1.0,,,,,1,1
@@ -2318,14 +2318,14 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7078,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,79.0,0.0,79.0,1.659,77.341,0.0,0.0,0,2.37,0.0,14.5,first10,1.0,Google,SEO,direct,,1,1
 #7079,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,189.0,0.0,189.0,3.9690000000000003,185.031,66.0,0.0,0,5.88,5.88,14.5,,1.0,Google,,an unknown source,,1,1
 #7080,2026-09,mature,PARTIALLY_REFUNDED,FULFILLED,CH,shopify_payments+shopify_store_credit,web,229.0,207.81,21.19,0.44499000000000005,20.74501,147.6,0.0,0,6.6,6.6,14.5,,1.0,,,,,1,1
-#7081,2026-09,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,219.0,219.0,0.0,0.0,0.0,0.0,153.06650793650795,1,6.569999999999999,0.0,0.0,first10,1.0,direct,,direct,,1,1
+#7081,2026-09,mature,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,219.0,219.0,0.0,0.0,0.0,0.0,0.0,1,6.569999999999999,0.0,0.0,first10,1.0,direct,,direct,,1,1
 #7082,2026-09,mature,PARTIALLY_REFUNDED,UNFULFILLED,CH,shopify_payments,web,80.2,80.2,0.0,0.0,0.0,13.200000000000003,0.0,0,2.75,2.75,14.5,GSF-SPD-RQMPFXZ8KW,1.0,an unknown source,,an unknown source,,1,1
-#7083,2026-09,mature,PARTIALLY_REFUNDED,UNFULFILLED,CH,shopify_payments,web,152.1,152.1,0.0,0.0,0.0,0.0,114.39440191387561,1,4.95,4.95,0.0,,1.0,Google,,Google,,1,1
+#7083,2026-09,mature,PARTIALLY_REFUNDED,UNFULFILLED,CH,shopify_payments,web,152.1,152.1,0.0,0.0,0.0,0.0,0.0,1,4.95,4.95,0.0,,1.0,Google,,Google,,1,1
 #7084,2026-09,mature,PAID,FULFILLED,CH,TWINT,web,203.9,0.0,203.9,4.2819,199.6181,134.7011004784689,134.7011004784689,1,2.6507,0.0,14.5,,1.0,,,,,2,2
 #7085,2026-09,mature,PAID,FULFILLED,CH,TWINT,web,249.0,0.0,249.0,5.229,243.771,187.16,0.0,0,3.2369999999999997,0.0,14.5,first10,1.0,,,,,1,1
 #7086,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,249.0,0.0,249.0,5.229,243.771,157.95,0.0,0,7.47,0.0,14.5,,1.0,Google,,Google,,1,1
 #7087,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_payments,web,239.0,0.0,239.0,5.019,233.981,185.06,0.0,0,7.17,0.0,14.5,,1.0,Google,,Google,,1,1
-#7088,2026-09,mature,PARTIALLY_REFUNDED,UNFULFILLED,CH,shopify_payments,web,269.1,269.1,0.0,0.0,0.0,0.0,202.39009569377993,1,8.52,8.52,0.0,,1.0,ChatGPT,,ChatGPT,,1,1
+#7088,2026-09,mature,PARTIALLY_REFUNDED,UNFULFILLED,CH,shopify_payments,web,269.1,269.1,0.0,0.0,0.0,0.0,0.0,1,8.52,8.52,0.0,,1.0,ChatGPT,,ChatGPT,,1,1
 #7089,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,349.0,0.0,349.0,7.329000000000001,341.671,215.74,0.0,0,9.9,9.9,14.5,,1.0,Google,,Google,,1,1
 #7090,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,169.0,0.0,169.0,3.5490000000000004,165.451,105.56,0.0,0,4.95,4.95,14.5,,1.0,Google,SEO,Google,SEO,1,1
 #7091,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+TWINT,web,79.0,0.0,79.0,1.659,77.341,0.0,0.0,0,1.027,0.0,14.5,first10,1.0,,,,,1,1
@@ -2342,7 +2342,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7102,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,239.0,0.0,239.0,5.019,233.981,141.9,0.0,0,7.17,0.0,14.5,,1.0,Google,SEO,Google,SEO,1,1
 #7103,2026-09,mature,PAID,FULFILLED,CH,shopify_payments,web,389.0,0.0,389.0,8.169,380.831,246.2,0.0,0,11.78,11.78,14.5,,1.0,,,,,1,1
 #7104,2026-09,mature,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,89.0,0.0,89.0,1.8690000000000002,87.131,0.0,0.0,0,2.67,0.0,14.5,,1.0,Google,SEO,Google,SEO,1,1
-#7105,2026-09,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,279.0,279.0,0.0,0.0,0.0,0.0,186.48714285714286,1,7.97,7.97,0.0,,1.0,Google,SEO,Google,SEO,1,1
+#7105,2026-09,mature,REFUNDED,UNFULFILLED,CH,shopify_payments,web,279.0,279.0,0.0,0.0,0.0,0.0,0.0,1,7.97,7.97,0.0,,1.0,Google,SEO,Google,SEO,1,1
 #7106,2026-09,mature,PAID,FULFILLED,CH,TWINT,web,177.0,0.0,177.0,3.717,173.283,63.2,0.0,0,2.3009999999999997,0.0,14.5,,1.0,Google,,Google,,2,2
 #7107,2026-09,mature,PAID,FULFILLED,CH,TWINT,web,299.0,0.0,299.0,6.279000000000001,292.721,174.82,0.0,0,3.887,0.0,14.5,,1.0,an unknown source,,an unknown source,,1,1
 #7108,2026-09,mature,PARTIALLY_REFUNDED,FULFILLED,CH,TWINT+shopify_store_credit,web,219.0,198.74,20.26,0.42546000000000006,19.83454,238.15,0.0,0,2.847,0.0,14.5,first10,1.0,Google,,Google,,1,1
@@ -2415,8 +2415,8 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7175,2026-09,recente,PAID,FULFILLED,CH,shopify_payments,web,159.0,0.0,159.0,3.3390000000000004,155.661,122.31,0.0,0,4.67,4.67,14.5,,1.0,Google,SEO,Google,SEO,1,1
 #7176,2026-09,recente,PAID,FULFILLED,CH,shopify_payments,web,339.0,0.0,339.0,7.119000000000001,331.881,209.0,0.0,0,9.62,9.62,14.5,,1.0,Google,,Google,,1,1
 #7177,2026-09,recente,PAID,PARTIALLY_FULFILLED,CH,TWINT,web,83.9,0.0,83.9,1.7619000000000002,82.13810000000001,0.0,0.0,0,1.0907,0.0,14.5,,1.0,Google,,Google,,2,2
-#7178,2026-09,recente,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_payments,web,318.0,318.0,0.0,0.0,0.0,56.9748097826087,163.91603260869564,1,9.05,9.05,14.5,,1.0,Google,SEO,Google,,2,2
-#7179,2026-09,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,189.0,189.0,0.0,0.0,0.0,0.0,132.29999999999998,1,5.5,5.5,0.0,,1.0,direct,,https://shopify.com/,,1,1
+#7178,2026-09,recente,REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_payments,web,318.0,318.0,0.0,0.0,0.0,56.9748097826087,49.1748097826087,1,9.05,9.05,14.5,,1.0,Google,SEO,Google,,2,2
+#7179,2026-09,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,189.0,189.0,0.0,0.0,0.0,0.0,0.0,1,5.5,5.5,0.0,,1.0,direct,,https://shopify.com/,,1,1
 #7180,2026-09,recente,PAID,FULFILLED,CH,shopify_payments,web,209.0,0.0,209.0,4.389,204.611,108.87,0.0,0,6.05,6.05,14.5,,1.0,Google,,Google,,1,1
 #7181,2026-09,recente,REFUNDED,UNFULFILLED,CH,paypal,web,118.0,118.0,0.0,0.0,0.0,15.600000000000001,0.0,0,4.562,0.0,14.5,,1.0,direct,,direct,,2,2
 #7182,2026-09,recente,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,349.0,0.0,349.0,7.329000000000001,341.671,216.92,0.0,0,10.469999999999999,0.0,14.5,,1.0,an unknown source,,an unknown source,,1,1
@@ -2425,7 +2425,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7185,2026-09,recente,PAID,UNFULFILLED,CH,shopify_payments,web,89.0,0.0,89.0,1.8690000000000002,87.131,35.0,0.0,0,2.75,2.75,14.5,,1.0,Google,,Google,,1,1
 #7186,2026-09,recente,PAID,FULFILLED,CH,shopify_payments,web,119.0,0.0,119.0,2.499,116.501,0.0,0.0,0,3.57,3.57,14.5,first10,1.0,direct,,Google,SEO,1,1
 #7187,2026-09,recente,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay)+shopify_payments,web,89.0,0.0,89.0,1.8690000000000002,87.131,40.0,0.0,0,2.75,2.75,14.5,first10,1.0,ChatGPT,,Google,SEO,1,1
-#7188,2026-09,recente,REFUNDED,UNFULFILLED,CH,TWINT,web,1018.0,1018.0,0.0,0.0,0.0,211.89000000000001,706.3,1,13.234,0.0,14.5,first10,1.0,Google,SEO,Google,SEO,2,2
+#7188,2026-09,recente,REFUNDED,UNFULFILLED,CH,TWINT,web,1018.0,1018.0,0.0,0.0,0.0,211.89000000000001,211.89000000000001,1,13.234,0.0,14.5,first10,1.0,Google,SEO,Google,SEO,2,2
 #7189,2026-09,recente,PAID,FULFILLED,CH,TWINT,web,129.0,0.0,129.0,2.709,126.291,0.0,0.0,0,1.6769999999999998,0.0,14.5,,1.0,,,,,1,1
 #7190,2026-09,recente,REFUNDED,UNFULFILLED,CH,TWINT,web,56.0,56.0,0.0,0.0,0.0,7.800000000000001,0.0,0,0.728,0.0,14.5,first10,1.0,Google,,Google,,1,1
 #7191,2026-09,recente,PAID,FULFILLED,CH,shopify_payments,3890849,369.0,0.0,369.0,7.7490000000000006,361.251,236.06,0.0,0,10.45,10.45,14.5,,1.0,,,,,1,1
@@ -2451,7 +2451,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7211,2026-09,recente,PAID,UNFULFILLED,CH,shopify_payments,web,50.0,0.0,50.0,1.05,48.95,26.0,0.0,0,1.68,1.68,14.5,,1.0,,,,,1,1
 #7212,2026-09,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,79.0,79.0,0.0,0.0,0.0,0.0,0.0,0,2.47,2.47,14.5,first10,1.0,Google,,Google,,1,1
 #7213,2026-09,recente,PAID,FULFILLED,CH,TWINT,web,259.0,0.0,259.0,5.439,253.561,124.91,0.0,0,3.367,0.0,14.5,,1.0,direct,,direct,,1,1
-#7214,2026-09,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,239.5,239.5,0.0,0.0,0.0,14.608474576271188,48.69491525423729,1,6.89,6.89,14.5,,1.0,direct,,direct,,2,2
+#7214,2026-09,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,239.5,239.5,0.0,0.0,0.0,14.608474576271188,14.608474576271188,1,6.89,6.89,14.5,,1.0,direct,,direct,,2,2
 #7215,2026-09,recente,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,3401.9,0.0,3401.9,71.43990000000001,3330.4601000000002,2298.8103122317384,1652.8003122317384,2,102.057,0.0,14.5,,3.0,Google,SEO,direct,,4,4
 #7216,2026-09,recente,PAID,FULFILLED,CH,shopify_payments,web,189.0,0.0,189.0,3.9690000000000003,185.031,148.79,0.0,0,5.5,5.5,14.5,first10,1.0,,,,,1,1
 #7217,2026-09,recente,PAID,FULFILLED,CH,shopify_payments,web,166.0,0.0,166.0,3.486,162.514,133.97,0.0,0,4.87,4.87,14.5,,1.0,Google,,Google,,1,1
@@ -2517,7 +2517,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7278,2026-09,recente,PAID,FULFILLED,CH,shopify_payments,web,56.0,0.0,56.0,1.1760000000000002,54.824,20.0,0.0,0,1.84,1.84,14.5,,1.0,Google,,Google,,1,1
 #7279,2026-09,recente,PAID,FULFILLED,CH,shopify_payments,web,160.0,0.0,160.0,3.3600000000000003,156.64,85.0,0.0,0,4.7,4.7,14.5,,1.0,Google,,Google,,1,1
 #7280,2026-09,recente,PAID,UNFULFILLED,AT,shopify_payments,web,649.86,0.0,649.86,13.647060000000002,636.21294,481.0,0.0,0,34.04,34.04,14.5,first10,1.0,,,,,1,1
-#7281,2026-09,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,165.0,165.0,0.0,0.0,0.0,0.0,111.73205645161292,1,4.84,4.84,0.0,,2.0,,,,,1,1
+#7281,2026-09,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,165.0,165.0,0.0,0.0,0.0,0.0,0.0,1,4.84,4.84,0.0,,2.0,,,,,1,1
 #7282,2026-09,recente,PAID,FULFILLED,CH,CembraPay - Kauf auf Rechnung,web,211.0,0.0,211.0,4.431,206.569,142.82377990430624,142.82377990430624,1,6.33,0.0,14.5,,1.0,Google,,Google,,1,1
 #7283,2026-09,recente,PAID,FULFILLED,CH,paypal,web,230.0,0.0,230.0,4.83,225.17,135.0,0.0,0,8.370000000000001,0.0,14.5,,1.0,,,,,1,1
 #7284,2026-09,recente,PAID,FULFILLED,CH,shopify_payments,web,240.0,0.0,240.0,5.04,234.96,144.0,0.0,0,7.38,7.38,14.5,,1.0,direct,,direct,,1,1
@@ -2542,17 +2542,17 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7303,2026-10,recente,PAID,FULFILLED,CH,TWINT,web,89.0,0.0,89.0,1.8690000000000002,87.131,40.0,0.0,0,1.157,0.0,14.5,,1.0,Google,,Google,,1,1
 #7304,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,182.0,0.0,182.0,3.822,178.178,105.0,0.0,0,5.31,5.31,14.5,,1.0,Google,,Google,,1,1
 #7305,2026-10,recente,PAID,FULFILLED,CH,CembraPay - Kauf auf Rechnung,web,206.0,0.0,206.0,4.3260000000000005,201.674,133.0,0.0,0,6.18,0.0,14.5,,1.0,android-app://com.google.android.googlequicksearchbox/,,android-app://com.google.android.googlequicksearchbox/,,1,1
-#7306,2026-10,recente,PARTIALLY_REFUNDED,UNFULFILLED,CH,TWINT,web,279.0,279.0,0.0,0.0,0.0,0.0,196.37063926940638,1,3.7569999999999997,0.0,0.0,first10,1.0,Google,,Google,,1,1
+#7306,2026-10,recente,PARTIALLY_REFUNDED,UNFULFILLED,CH,TWINT,web,279.0,279.0,0.0,0.0,0.0,0.0,0.0,1,3.7569999999999997,0.0,0.0,first10,1.0,Google,,Google,,1,1
 #7307,2026-10,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,123.9,123.9,0.0,0.0,0.0,12.600000000000001,0.0,0,3.71,3.71,14.5,first10,1.0,Google,SEO,direct,,2,2
 #7308,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,129.0,0.0,129.0,2.709,126.291,66.0,0.0,0,3.85,3.85,14.5,,1.0,,,,,1,1
 #7309,2026-10,recente,PARTIALLY_REFUNDED,PARTIALLY_FULFILLED,CH,TWINT+shopify_store_credit,web,230.91000000000003,129.9,101.01,2.12121,98.88879,243.31553968253968,146.31553968253968,2,2.1047,0.0,14.5,first10|CREDIT STORE|COREECTION RABAIS SUR DIFF DE PRIX ,1.0,,,,,3,3
 #7310,2026-10,recente,PAID,FULFILLED,CH,TWINT,web,169.0,0.0,169.0,3.5490000000000004,165.451,92.0,0.0,0,2.197,0.0,14.5,,1.0,,,,,1,1
 #7311,2026-10,recente,PAID,PARTIALLY_FULFILLED,CH,shopify_payments,web,182.9,0.0,182.9,3.8409000000000004,179.0591,70.4,35.2,1,5.33,5.33,14.5,,1.0,direct,,direct,,3,3
-#7312,2026-10,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,479.9,479.9,0.0,0.0,0.0,95.24880952380954,317.49603174603175,1,13.5,13.5,14.5,,1.0,Google,,Google,,2,2
+#7312,2026-10,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,479.9,479.9,0.0,0.0,0.0,95.24880952380954,95.24880952380954,1,13.5,13.5,14.5,,1.0,Google,,Google,,2,2
 #7313,2026-10,recente,REFUNDED,UNFULFILLED,CH,CembraPay - Kauf auf Rechnung,web,118.0,118.0,0.0,0.0,0.0,15.600000000000001,0.0,0,3.54,0.0,14.5,,1.0,,,,,2,2
 #7314,2026-10,recente,PAID,FULFILLED,CH,shopify_store_credit,web,163.0,0.0,163.0,3.423,159.577,88.0,0.0,0,0.0,0.0,14.5,,2.0,Google,,Google,SEO,1,1
 #7315,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,113.0,0.0,113.0,2.373,110.627,97.0,0.0,0,3.41,3.41,14.5,,1.0,Google,,direct,,1,1
-#7316,2026-10,recente,REFUNDED,UNFULFILLED,CH,paypal,web,141.0,141.0,0.0,0.0,0.0,0.0,95.44148325358853,1,5.344,0.0,0.0,,1.0,Google,,Google,,1,1
+#7316,2026-10,recente,REFUNDED,UNFULFILLED,CH,paypal,web,141.0,141.0,0.0,0.0,0.0,0.0,0.0,1,5.344,0.0,0.0,,1.0,Google,,Google,,1,1
 #7317,2026-10,recente,REFUNDED,UNFULFILLED,CH,TWINT,web,53.1,53.1,0.0,0.0,0.0,7.800000000000001,0.0,0,0.6903,0.0,14.5,GSF-SPD-9PURKSLVZV,1.0,Google,SEO,Google,,1,1
 #7318,2026-10,recente,PAID,FULFILLED,CH,paypal,web,181.0,0.0,181.0,3.801,177.199,111.0,0.0,0,6.704000000000001,0.0,14.5,first10,1.0,Google,,Google,,1,1
 #7319,2026-10,recente,PAID,FULFILLED,CH,paypal,web,142.0,0.0,142.0,2.982,139.018,83.0,0.0,0,5.378,0.0,14.5,first10,1.0,,,,,1,1
@@ -2624,7 +2624,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7385,2026-10,recente,PAID,FULFILLED,CH,TWINT,web,233.0,0.0,233.0,4.893000000000001,228.107,178.0,0.0,0,3.029,0.0,14.5,first10,1.0,Google,,Google,,1,1
 #7386,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,145.0,0.0,145.0,3.0450000000000004,141.955,99.8,0.0,0,4.29,4.29,14.5,,1.0,Google,,Google,,1,1
 #7387,2026-10,recente,PAID,FULFILLED,CH,TWINT,web,182.0,0.0,182.0,3.822,178.178,178.5,0.0,0,2.366,0.0,14.5,,1.0,Google,SEO,Google,SEO,1,1
-#7388,2026-10,recente,REFUNDED,UNFULFILLED,CH,shopify_payments+shopify_store_credit,web,377.0,377.0,0.0,0.0,0.0,0.0,255.1875119617225,1,4.95,4.95,0.0,,2.0,,,,,1,1
+#7388,2026-10,recente,REFUNDED,UNFULFILLED,CH,shopify_payments+shopify_store_credit,web,377.0,377.0,0.0,0.0,0.0,0.0,0.0,1,4.95,4.95,0.0,,2.0,,,,,1,1
 #7389,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,178.0,0.0,178.0,3.7380000000000004,174.262,137.31,0.0,0,5.2,5.2,14.5,first10,1.0,an unknown source,,an unknown source,,1,1
 #7390,2026-10,recente,PAID,FULFILLED,CH,shopify_store_credit,web,431.0,0.0,431.0,9.051,421.949,331.74,0.0,0,0.0,0.0,14.5,,2.0,Google,,Google,SEO,1,1
 #7391,2026-10,recente,PAID,FULFILLED,CH,CembraPay - Kauf auf Rechnung,web,202.0,0.0,202.0,4.242,197.758,134.51,0.0,0,6.06,0.0,14.5,,1.0,Google,,Google,,1,1
@@ -2644,7 +2644,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7405,2026-10,recente,PAID,FULFILLED,CH,CembraPay - Kauf auf Rechnung,web,218.4,0.0,218.4,4.5864,213.8136,187.38,0.0,0,6.552,0.0,14.5,GSF-SPD-CPQUHQIE8D,1.0,Google,SEO,Google,,1,1
 #7406,2026-10,recente,PAID,FULFILLED,CH,CembraPay - Kauf auf Rechnung,web,189.0,0.0,189.0,3.9690000000000003,185.031,156.73,0.0,0,5.67,0.0,14.5,,1.0,,,,,1,1
 #7407,2026-10,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,53.1,53.1,0.0,0.0,0.0,7.800000000000001,0.0,0,1.76,1.76,14.5,GSF-SPD-VU38F6AYUC,1.0,Google,,Google,,1,1
-#7408,2026-10,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,694.3,685.3,9.0,0.189,8.811,44.724406779661024,149.0813559322034,2,19.15,19.15,14.5,,1.0,,,,,4,4
+#7408,2026-10,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,694.3,685.3,9.0,0.189,8.811,44.724406779661024,44.724406779661024,2,19.15,19.15,14.5,,1.0,,,,,4,4
 #7409,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,163.0,0.0,163.0,3.423,159.577,125.69,0.0,0,4.78,4.78,14.5,first10,1.0,,,,,1,1
 #7410,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,199.0,0.0,199.0,4.179,194.821,116.53,0.0,0,5.77,5.77,14.5,,1.0,,,,,1,1
 #7411,2026-10,recente,PAID,FULFILLED,CH,TWINT,web,186.0,0.0,186.0,3.906,182.094,124.88,0.0,0,2.4179999999999997,0.0,14.5,,1.0,Google,,Google,,1,1
@@ -2660,7 +2660,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7421,2026-10,recente,PAID,FULFILLED,CH,CembraPay - Kauf auf Rechnung,web,206.0,0.0,206.0,4.3260000000000005,201.674,111.0,0.0,0,6.18,0.0,14.5,,1.0,Google,,Google,,1,1
 #7422,2026-10,recente,PAID,FULFILLED,CH,paypal,web,176.0,0.0,176.0,3.696,172.304,157.57,0.0,0,6.534,0.0,14.5,first10,1.0,,,,,1,1
 #7423,2026-10,recente,PAID,UNFULFILLED,CH,shopify_payments,web,169.0,0.0,169.0,3.5490000000000004,165.451,120.36,0.0,0,4.95,4.95,14.5,,1.0,Google,,Google,,1,1
-#7424,2026-10,recente,REFUNDED,UNFULFILLED,CH,paypal,web,126.0,126.0,0.0,0.0,0.0,0.0,84.22,1,4.8340000000000005,0.0,0.0,,1.0,Google,,an unknown source,,1,1
+#7424,2026-10,recente,REFUNDED,UNFULFILLED,CH,paypal,web,126.0,126.0,0.0,0.0,0.0,0.0,0.0,1,4.8340000000000005,0.0,0.0,,1.0,Google,,an unknown source,,1,1
 #7425,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,188.0,0.0,188.0,3.9480000000000004,184.052,141.11,0.0,0,5.47,5.47,14.5,,1.0,Google,,Google,,1,1
 #7426,2026-10,recente,REFUNDED,UNFULFILLED,CH,TWINT,web,59.0,59.0,0.0,0.0,0.0,7.800000000000001,0.0,0,0.767,0.0,14.5,,1.0,Google,,direct,,1,1
 #7427,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,304.0,0.0,304.0,6.384,297.616,180.31,0.0,0,8.66,8.66,14.5,,1.0,direct,,Google,SEO,1,1
@@ -2748,7 +2748,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7509,2026-10,recente,PAID,UNFULFILLED,CH,shopify_payments,web,204.0,0.0,204.0,4.284000000000001,199.716,120.0,0.0,0,5.91,5.91,14.5,,1.0,Google,,Google,,1,1
 #7510,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,251.0,0.0,251.0,5.271,245.729,157.0,0.0,0,7.2,7.2,14.5,,1.0,direct,,direct,,1,1
 #7511,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,353.0,0.0,353.0,7.413,345.587,227.0,0.0,0,10.01,10.01,14.5,,1.0,Google,,Google,,1,1
-#7512,2026-10,recente,REFUNDED,UNFULFILLED,CH,CembraPay - Kauf auf Rechnung,web,247.0,247.0,0.0,0.0,0.0,0.0,168.78680365296805,1,7.41,0.0,0.0,first10,1.0,direct,,direct,,1,1
+#7512,2026-10,recente,REFUNDED,UNFULFILLED,CH,CembraPay - Kauf auf Rechnung,web,247.0,247.0,0.0,0.0,0.0,0.0,0.0,1,7.41,0.0,0.0,first10,1.0,direct,,direct,,1,1
 #7513,2026-10,recente,PAID,UNFULFILLED,CH,shopify_payments,web,129.0,0.0,129.0,2.709,126.291,56.847457627118644,56.847457627118644,1,3.85,3.85,14.5,,1.0,direct,,direct,,1,1
 #7514,2026-10,recente,PAID,FULFILLED,CH,CembraPay - Kauf auf Rechnung+shopify_payments,web,242.0,0.0,242.0,5.082000000000001,236.918,130.0,0.0,0,7.26,0.0,14.5,,1.0,Google,,Google,,1,1
 #7515,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,152.1,0.0,152.1,3.1941,148.9059,82.0,0.0,0,4.79,4.79,14.5,GSF-SPD-QVCC49ZI9T,1.0,,,,,1,1
@@ -2781,10 +2781,10 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7542,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,281.0,0.0,281.0,5.901000000000001,275.099,179.1,0.0,0,8.03,8.03,14.5,,1.0,Instagram,,Instagram,,1,1
 #7543,2026-10,recente,PAID,UNFULFILLED,CH,shopify_payments,web,840.0,0.0,840.0,17.64,822.36,561.4666666666667,561.4666666666667,1,23.4,23.4,14.5,,1.0,Google,,an unknown source,,1,1
 #7544,2026-10,recente,PAID,UNFULFILLED,CH,TWINT,web,241.9,0.0,241.9,5.0799,236.8201,141.47,0.0,0,3.1447,0.0,14.5,,1.0,Google,SEO,Google,SEO,2,2
-#7545,2026-10,recente,PARTIALLY_REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,252.9,252.9,0.0,0.0,0.0,0.0,187.82396825396827,1,8.43,0.0,0.0,,1.0,Google,,Google,,1,1
+#7545,2026-10,recente,PARTIALLY_REFUNDED,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,252.9,252.9,0.0,0.0,0.0,0.0,0.0,1,8.43,0.0,0.0,,1.0,Google,,Google,,1,1
 #7546,2026-10,recente,PAID,FULFILLED,CH,shopify_payments,web,232.2,0.0,232.2,4.8762,227.32379999999998,159.75,0.0,0,6.69,6.69,14.5,GSF-SPD-WGIDIZC6WL,1.0,Google,,Google,,1,1
 #7547,2026-10,recente,PAID,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,498.0,0.0,498.0,10.458,487.542,319.0,0.0,0,14.94,0.0,14.5,,1.0,ChatGPT,,ChatGPT,,1,1
-#7548,2026-10,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,129.0,129.0,0.0,0.0,0.0,0.0,56.847457627118644,1,3.85,3.85,0.0,,2.0,Google,SEO,Google,SEO,1,1
+#7548,2026-10,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,129.0,129.0,0.0,0.0,0.0,0.0,0.0,1,3.85,3.85,0.0,,2.0,Google,SEO,Google,SEO,1,1
 #7549,2026-10,recente,REFUNDED,UNFULFILLED,CH,shopify_payments,web,88.0,88.0,0.0,0.0,0.0,12.000000000000002,0.0,0,2.72,2.72,14.5,first10,1.0,Google,,Google,SEO,2,2
 #7550,2026-10,recente,PAID,FULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,305.0,0.0,305.0,6.405,298.595,205.96,0.0,0,9.15,0.0,14.5,first10,1.0,ChatGPT,,ChatGPT,,1,1
 #7551,2026-10,recente,PAID,UNFULFILLED,CH,TWINT,web,233.0,0.0,233.0,4.893000000000001,228.107,119.97,0.0,0,3.029,0.0,14.5,,1.0,Google,,Google,,1,1
@@ -2813,7 +2813,7 @@ name,mois,cohorte,fin,ful,ship_cc,gateways,source,ventes_brutes_ttc,refunded,rev
 #7574,2026-10,recente,PAID,UNFULFILLED,CH,CembraPay - Kauf auf Rechnung+Pay by Invoice / Pay Later (with PowerPay),web,774.0,0.0,774.0,16.254,757.746,519.577619047619,316.82761904761907,1,23.22,0.0,14.5,,3.0,https://shopify.com/,,https://shopify.com/,,2,2
 #7575,2026-10,recente,PAID,UNFULFILLED,CH,TWINT,web,245.0,0.0,245.0,5.1450000000000005,239.855,119.0,0.0,0,3.185,0.0,14.5,,1.0,direct,,direct,,1,1
 #7576,2026-10,recente,PAID,UNFULFILLED,CH,CembraPay - Kauf auf Rechnung+Pay by Invoice / Pay Later (with PowerPay),web,207.0,0.0,207.0,4.347,202.653,89.0,0.0,0,6.21,0.0,14.5,,1.0,,,,,1,1
-#7577,2026-10,recente,PAID,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,354.0,0.0,354.0,7.434,346.566,377.7125358851675,199.68253588516748,1,10.62,0.0,14.5,,1.0,Google,,Google,,2,2
+#7577,2026-10,recente,PAID,UNFULFILLED,CH,Pay by Invoice / Pay Later (with PowerPay),web,354.0,0.0,354.0,7.434,346.566,377.7125358851675,199.6825358851675,1,10.62,0.0,14.5,,1.0,Google,,Google,,2,2
 #7578,2026-10,recente,PAID,FULFILLED,CH,TWINT,web,173.0,0.0,173.0,3.633,169.367,112.03,0.0,0,2.249,0.0,14.5,,1.0,,,,,1,1
 #7579,2026-10,recente,PAID,UNFULFILLED,CH,shopify_payments,web,376.0,0.0,376.0,7.896000000000001,368.104,224.0,0.0,0,10.64,10.64,14.5,first10,1.0,an unknown source,,an unknown source,,1,1
 #7581,2026-10,recente,PAID,FULFILLED,CH,TWINT,web,262.0,0.0,262.0,5.502000000000001,256.498,142.55,0.0,0,3.4059999999999997,0.0,14.5,,1.0,,,,,1,1

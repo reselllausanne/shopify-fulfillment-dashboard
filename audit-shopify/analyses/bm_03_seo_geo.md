@@ -119,7 +119,7 @@ Classement par niveau de preuve.
 |---|---|---|
 | **Documenté (interne)** | Commandes de première visite par ChatGPT : 1,3 % ; commandes tagées « IA » par mois : 8 (2026-08), 10 (2026-09), 9 (2026-10) ≈ 1,9 % à 3,0 % des commandes (8/431, 10/333, 9/346) — cumul historique ≈ 31 + 6 commandes de première visite ChatGPT | [I] `bm_data_01_mix.py`, `tableaux/bm_mix_*.csv` ; attribution par référent, non auditée |
 | **Documenté (public)** | Le site publie `/llms.txt`, `/agents.md`, `/.well-known/ucp` (UCP 2026-08-25, MCP) : fichiers générés par Shopify pour agents d'achat | [W] 2026-11-02 |
-| **Reproductible mais fragile** | Test « où acheter sneakers authentiques Suisse Jordan 4 » → SN Zürich recommandé en premier, deux pages Resell Lausanne citées ; « StockX alternative Switzerland » → YLB Concept en premier, Resell Lausanne décrit avec « 48-hour delivery » ; « Resell Lausanne avis » → la page « 589+ avis / 4,9 » du site, Trustpilot et Gridinsoft (79/100) | [W] WebSearch 2026-11-02, une exécution chacun, **non reproductible** (réponses variables) |
+| **Reproductible mais fragile** (3 sorties de l'outil WebSearch, 1 exécution chacune : ce ne sont pas des réponses d'assistants IA mesurés) | Test « où acheter sneakers authentiques Suisse Jordan 4 » → SN Zürich recommandé en premier, deux pages Resell Lausanne citées ; « StockX alternative Switzerland » → YLB Concept en premier, Resell Lausanne décrit avec « 48-hour delivery » ; « Resell Lausanne avis » → la page « 589+ avis / 4,9 » du site, Trustpilot et Gridinsoft (79/100) | [W] WebSearch 2026-11-02, une exécution chacun, **non reproductible** (réponses variables) |
 | **Hypothèse** | Les réponses d'IA reprennent la promesse « 48 h » / « 4,9 » du site ; une promesse inexacte sera donc amplifiée (réclamations) ; être cité n'implique pas être acheté | [H] |
 
 **Interprétation** : la visibilité IA existe mais elle est secondaire en volume (~2–3 % des commandes). Elle dépend en partie des affirmations du site (A4, A6, avis 4,9 vs 4,66) : corriger l'exactitude améliore le GEO sans coût. Changer de nom ferait repartir de zéro les citations de marque (réponse « Resell Lausanne avis »).
@@ -138,7 +138,7 @@ Rappel du mandat : ceci n'est ni un avis juridique ni une recommandation de reno
 | Description | Garder « Resell Lausanne » et resell-lausanne.ch ; corriger les anomalies A1–A9 | Changer nom/logo/textes ; garder l'URL resell-lausanne.ch (le nom ne figure plus que dans l'URL et la raison sociale) | Nouveau domaine ; redirections 301 serveur de toutes les URL (3 langues) ; Change of Address ; migration progressive possible | Garder .ch pour la Suisse ; créer une marque/domaine séparé (p. ex. Europe ou segment premium/collectibles) |
 | Signal SEO perdu | Aucun | Requête de marque (17,9 % du top-40) à reconstruire ; incohérence marque/URL | Marque + toutes les positions durant la transition ; liens externes à transférer | Limité au nouveau site (part d'audience neuve) ; risque de cannibalisation/duplication |
 | Risque technique | Faible | Moyen : titres, schéma, contenus, avis | **Élevé** : ≈ 294 000 URL produit + collections + pages dans 3 langues ; capacité de crawl ; mapping et redirections ; protection anti-bot qui bloque les outils de contrôle | Moyen : doublon de contenu entre sites, hreflang inter-domaines |
-| Avis / confiance | Intacts (≈ 410 avis Judge.me + Trustpilot attachés au nom) | Risque de rupture de reconnaissance ; avis rattachés à l'ancienne marque | Rupture maximale côté marque et avis | Nouveau site = avis à zéro ; l'ancien reste |
+| Avis / confiance | Intacts (≈ 410 avis Judge.me attachés au nom (Trustpilot non lu : 403)) | Risque de rupture de reconnaissance ; avis rattachés à l'ancienne marque | Rupture maximale côté marque et avis | Nouveau site = avis à zéro ; l'ancien reste |
 | Merchant Center / Google Ads | Inchangé | Mise à jour des données de marque, noms, politiques | Nouveau compte ou nouvelle URL ; reconstruction des historiques/convertis ; risque de suspension | Nouveau site à valider séparément |
 | Coût | Quelques heures de correction | Travail de contenu + graphisme + juridique (nom/marque) ; budget **non estimé sans devis** | Idem + migration technique + période de double exploitation ; budget **non estimé sans devis** | Le plus cher : deux marques à animer |
 | Réversibilité | n/a | Moyenne | **Faible** (redirections ≥ 1 an) | Bonne (arrêt du second site) |
@@ -170,7 +170,7 @@ Sources : Google Search Central, « Site moves with URL changes » (lien ci-dess
 
 ### 5.3 Ordre de grandeur de la perte potentielle (hypothèses de baisse — **pas** des prévisions)
 
-Base : 49 commandes taguées SEO en 2026-10 ; panier moyen TTC 252,8 CHF ; contribution avant publicité 28,8 CHF/commande (fin_00) **[I]**. Les pourcentages et durées sont **[H]** choisis pour borner, non sourcés. Script : `bm_seo_03_ahrefs.py` ; `tableaux/bm_seo_migration_risque_ordre_grandeur.csv`.
+Base : 49 commandes taguées SEO en 2026-10 ; panier moyen TTC 252,8 CHF ; contribution avant publicité 40,3 CHF/commande (fin_00, base corrigée TDFN ; ancienne : 28,8) **[I]**. Les pourcentages et durées sont **[H]** choisis pour borner, non sourcés. Script : `bm_seo_03_ahrefs.py` ; `tableaux/bm_seo_migration_risque_ordre_grandeur.csv`.
 
 | Hypothèse | Baisse SEO | Durée | Commandes perdues | CA TTC perdu (CHF) | Contribution perdue (CHF) |
 |---|---|---|---|---|---|
@@ -178,7 +178,7 @@ Base : 49 commandes taguées SEO en 2026-10 ; panier moyen TTC 252,8 CHF ; contr
 | Médiane | −40 % | 6 mois | ≈ 118 | ≈ 29 700 | ≈ 3 400 |
 | Sévère | −60 % | 12 mois | ≈ 353 | ≈ 89 200 | ≈ 10 200 |
 
-**Fait** : le SEO aujourd'hui ≈ 14–20 % des commandes. **Interprétation** : en valeur de contribution, la perte SEO est faible face à la contribution avant publicité de 28,8 CHF/commande ; l'enjeu majeur d'un renommage serait la confiance/les avis/la publicité, hors de ce tableau. **Limite** : si le trafic SEO estimé croît réellement (Ahrefs : ×4 puis ×2), la base de commandes SEO pourrait augmenter ; refaire le calcul à ce moment. **Confiance** : faible (base = un mois, baisse hypothétique).
+**Fait** : le SEO aujourd'hui ≈ 14–20 % des commandes. **Interprétation** : en valeur de contribution, la perte SEO est faible face à la contribution avant publicité de 40,3 CHF/commande ; l'enjeu majeur d'un renommage serait la confiance/les avis/la publicité, hors de ce tableau. **Limite** : si le trafic SEO estimé croît réellement (Ahrefs : ×4 puis ×2), la base de commandes SEO pourrait augmenter ; refaire le calcul à ce moment. **Confiance** : faible (base = un mois, baisse hypothétique).
 
 ### 5.4 Recommandation SEO (hors décision de marque)
 

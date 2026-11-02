@@ -13,19 +13,21 @@ Source : `donnees_brutes/05_galaxus_*.csv`, `05_galaxus_costs_returns.csv`. Les 
 | Poste | CHF | Niveau |
 |---|---|---|
 | CA propre HT (617 k − NER 196 k) | 420,8 k | F |
-| Marge sur lignes StockX appariées (323,0 k de CA, coût 225,2 k) | +97,8 k (30,3 %) | F |
-| Marge sur lignes sourcées hors StockX (REI, BWZ, WEL…, ≈ 39 k de CA, coût ≈ 23,6 k) | ≈ +15,7 k | F |
+| Marge sur lignes StockX appariées (323,0 k de CA, coût 225,2 k) | +97,8 k (30,3 %) | F pour le calcul ; **I** pour le niveau : `stockxAmount` n'est pas prouvé « rendu » (voir risque ci-dessous) |
+| Marge sur lignes sourcées hors StockX (REI, BWZ, WEL…, ≈ 39 k de CA, coût ≈ 23,6 k) | ≈ +15,7 k | I |
 | Marge NER (10 % du CA NER) | +19,6 k | D |
-| = **contribution prouvable ou déclarée (plancher)** | **≈ 133 k** | |
+| = **contribution avant frais, TVA et lignes non appariées** | **≈ 133 k** | I/D |
 | Lignes StockX sans coût (48 k de CA) à 30,3 % | +14,6 k | H |
 | − frais DELR (packing 5,8 k + expédition 8,6 k, févr→nov.) | −14,4 k | F |
 | − TVA TDFN ≈ 2,1 % × 1,081 × 420,8 k | −9,6 k | D |
 | − TVA/impôt sur marge NER (≈ 8,1 % de 19,6 k, hypothèse haute) | −1,6 k | H |
 | − retours/avoirs Galaxus | **non mesurable** (aucune table de retours Galaxus) | manquant |
-| = **contribution Galaxus centrale** | **≈ 122-137 k** (≈ 15-17 k/mois) | I |
-| Plancher (sans lignes non appariées, TVA haute) | ≈ 107 k (≈ 13 k/mois) | I |
+| = **contribution Galaxus centrale** | **≈ 122 k** (≈ 15 k/mois) | I/D/H |
+| Plancher (sans lignes non appariées, TVA haute) | ≈ 107 k (≈ 13 k/mois) | I/D |
 
+**Correction (relecture indépendante)** : la borne haute « 137 k » de la version précédente n'était pas dérivable de ce tableau ; la fourchette lisible est **107-122 k sur 8 mois**, niveau **I/D/H** (NER et TDFN déclarés, 14,6 k de lignes non appariées à 30,3 % en hypothèse, retours Galaxus non mesurables, périodes mélangées : CA propre mars→oct, NER/STX tirés d'une table mars→2 nov). Ce n'est **pas** du cash disponible : aucun impôt sur le revenu, AVS ni provision n'est déduit (raison individuelle : le bénéfice est le revenu du dirigeant).
 **I** : Galaxus génère environ 10 fois la contribution mensuelle de Shopify avant rémunération (+1,2 k/mois). Le résultat du dirigeant dépend donc surtout de Galaxus, pas de Shopify. Les volumes ont fortement monté (août-octobre : 1 308 lignes en septembre) : le risque de concentration est élevé (une seule contrepartie, délais de paiement inconnus, politique de pénalités inconnue).
+**Risques non chiffrés Galaxus** : (1) *Coût `stockxAmount`* : sur 18 unités comparables à l'historique StockX, 10 ont un montant réglé = enchère seule et 8 = enchère + ≈ 28 CHF (rendu) ; si le coût Galaxus est souvent l'enchère seule, la marge de 30,3 % est surestimée de jusqu'à ≈ 28 CHF × ≈ 1 700 lignes × part « enchère seule » (≈ 56 % sur l'échantillon, n = 18) ≈ **−27 k** (**H**, échantillon minuscule : à vérifier avant tout usage). (2) *NER* : l'exposition fiscale porte sur 196 k de CA si c'est l'entreprise qui facture/encaisse (TDFN 2,1 % ≈ 4,5 k ; à 8,1 % ≈ 15,9 k, plus impôt/AVS) et pas seulement sur 19,6 k de marge : **à qualifier avec la fiduciaire avant de « garder »**. (3) *Tendance* : août-octobre ≈ 75 % du CA Galaxus ; octobre ≈ −22 % vs septembre ; « 13-15 k/mois » est une moyenne mars-octobre, pas une tendance. (4) Decathlon (421 commandes, 92 k, avril-septembre) non analysé.
 Cash libre généré par Galaxus : **non calculable** sans délais de paiement Galaxus, relevés bancaires et pénalités. Conversion contribution→cash exige : délai de règlement Galaxus, achats StockX payés (5 jours), retours.
 Synergies : stock/avoirs/retours Shopify et Galaxus passent par la même chaîne StockX ; soldes = retours revendus. Aucune preuve que Galaxus et Shopify se concurrencent sur les mêmes références (non testé, ne pas présumer).
 Coût d'opportunité : le temps de support/expédition Shopify (≈ 11 jours de délai moyen, 180 commandes à contrôler) pèse sur un dirigeant seul ; chaque heure Galaxus rapporte beaucoup plus qu'une heure Shopify à la marge (**I**).
@@ -54,12 +56,14 @@ Résultats Shopify seul, 12 mois nov. 2026 → oct. 2027 (`fin_10_scenarios.csv`
 |---|---|---|---|---|
 | Prudent (volume ×0,85, pub 42/cmd) | 3 368 | −56,1 k | −128,1 k | −33,0 k |
 | Central (pub 35/cmd) | 3 962 | **+16,9 k** | −55,1 k | −4,3 k |
-| Favorable | 4 556 | +29,3 k | −42,7 k | −1,2 k |
-| Redressement (pub 18/cmd, volume ×0,85, remb. 6,5 %) | 3 368 | +87,6 k | **+15,6 k** | +0,6 k |
+| Favorable (volume ×1,15, coût 70 % du net, pub 30) | 4 556 | +63,8 k | −8,2 k | −0,05 k |
+| Redressement (pub 18/cmd, volume ×0,85 + 4 leviers non étayés) | 3 368 | +87,6 k | +15,6 k | +0,6 k |
+
+**Décomposition du Redressement** (`fin_10_redressement_decomposition.csv`) : volume ×0,85 + pub 18 CHF/commande seuls donnent **−0,9 k après rémunération** ; les +16,6 k restants viennent de quatre leviers non étayés (panier +3 %, remboursements 6,5 %, litiges ÷2, expédition 13 CHF). Avec ces leviers, le point mort après rémunération est à volume ×0,70 ; à ×0,65 : −5,9 k. L'élasticité implicite (pub −56 % pour −15 % de commandes) est ≈ 0,27 contre ≈ 0,6 observé en nov-déc 2025, sans test d'incrémentalité : **enveloppe non prouvée, pas une prévision**. Le Favorable a été corrigé (coût ≤ Central) ; avant : coût 73,5 % > Central 70,8 %, illogique.
 
 Stress (Central, `fin_10_stress.csv`) : CPC +25 % → −34,7 k ; remboursements +4 pts et litiges ×2 → −16,6 k ; pic manqué (−35 % sur nov-janv) → −2,8 k ; réserve Shopify Payments 14 jours → trésorerie minimale 13 semaines −42,9 k ; combiné → −47,3 k.
-**I** : le besoin de fonds de roulement de Shopify est faible (encaissement ≈ 4 jours, achat StockX payé à J+5 : cycle de trésorerie proche de zéro). Le vrai risque est la perte de contribution (pub, remboursements) et les réserves de paiement, pas l'achat de stock. Décomptes TDFN semestriels : ≈ 6,1 k + nov-déc modélisés (≈ 18 k sur 12 mois, central).
-Le scénario Redressement est un test de leviers (pub ÷2, remboursements −2 pts, litiges ÷2) et non une prévision.
+**I** : le besoin de fonds de roulement de Shopify est faible **pour Shopify Payments seul** (encaissement ≈ 4 jours, achat StockX payé à J+5) ; il n'est pas observable pour TWINT/PayPal/PowerPay/Cembra (≈ 50 % des commandes) et le stress « réserve Shopify Payments 14 jours » donne un point bas de −42,9 k : le risque de BFR est réel si Shopify Payments retient des fonds. Le vrai risque est la perte de contribution (pub, remboursements) et les réserves de paiement, pas l'achat de stock. Décomptes TDFN semestriels : ≈ 6,1 k + nov-déc modélisés (≈ 18 k sur 12 mois, central).
+Limites du classeur : formules sans valeurs en cache (calcul à l'ouverture dans Excel ; LibreOffice absent), onglets `Comparatif`/`Stress` figés depuis Python, ouverture = 0, charges fixes réelles = 0 (voir `donnees_manquantes` : ordre de grandeur **H** 0,5-1,5 k/mois, soit 5-15 k sur 10 mois, du même ordre que le résultat de 11,9 k), TDFN du S1-2026 (≈ 7,1 k, échéance fin août 2026) hors modèle, saisonnalité nov ×1,6 / déc ×2,5 calée sur 2025 où la pub avait aussi été poussée.
 
 ## 5. Financement (S18) — aucune démarche, aucun contact
 Besoin chiffré : **non démontré**. Shopify n'a pas de fonds de roulement structurel à financer ; l'argent manquant n'est pas connu faute de relevés. Le seul besoin plausible est un coussin de sécurité (3 mois de charges ≈ 15-25 k CHF avec rémunération) et un éventuel stock pilote ≤ 4 k CHF.

@@ -15,7 +15,7 @@ Convention : **Fait** (source, périmètre) · **Interprétation** · **Hypothè
 5. Trafic 82 % mobile ; conversion mobile 0,19 % des sessions (pixel) ; le goulot visible est **la sélection de taille** (10 % des visiteurs de fiche choisissent une taille) puis **le checkout** (18 % de finalisation des sessions mobiles qui y entrent).
 6. Checkout : erreurs réelles mais **petit enjeu financier** (ordre de grandeur CHF 1-6k/an) ; à corriger car peu coûteux (validation des localités suisses).
 7. Le site ne sert que la Suisse (99 % des commandes ; 29 commandes UE en 2026) : l'UE est un non-sujet pour le parcours aujourd'hui.
-8. Priorités (§6) : (a) vérité du délai unique + date calculée sur mesures glissantes ; (b) traiter les 97 commandes bloquées avant tout levier d'acquisition ; (c) corriger la validation d'adresse ; (d) simplifier le choix de taille/mode ; (e) mesurer la contribution totale, pas la conversion seule.
+8. Priorités (§6) : (a) vérité du délai unique + date calculée sur mesures glissantes ; (b) traiter les 97 commandes [réconciliées depuis : 93 payées non expédiées ≥ 14 j, dont 76 prioritaires ; voir fin_00 §8] bloquées avant tout levier d'acquisition ; (c) corriger la validation d'adresse ; (d) simplifier le choix de taille/mode ; (e) mesurer la contribution totale, pas la conversion seule.
 
 ---
 
@@ -122,7 +122,7 @@ Langue du navigateur des sessions : EN 19 281 sessions → 14 finalisations (0,0
 
 ### 4.1 Volumes
 
-2026 (janv.-oct.) : 2 884 commandes non annulées, CHF 698k brut TTC, CHF 57,8k remboursés (8,3 %). Contribution avant pub par commande (pilote, `fin_05_orders_pnl.csv`) : **≈ CHF 30,6** en moyenne (28 pour la 1ʳᵉ commande, 47 pour les récurrentes) ; **après pub Google : −CHF 17,9k** sur 10 mois (`fin_05_pnl_mensuel.csv`). Annualisé : ≈ 3 450 commandes.
+2026 (janv.-oct.) : 2 882 commandes hors test (CHF 685k brut TTC ; la base 2 884 / 698k de ce fichier utilisait `total_orig`, non réconciliée), CHF 57,8k remboursés (8,4 %). Contribution avant pub par commande (base corrigée TDFN, `fin_05_orders_pnl.csv`) : **≈ CHF 40,3** en moyenne (40 pour la 1ʳᵉ commande, 62 pour les récurrentes) ; **après pub Google : +CHF 15,2k** sur 10 mois (`fin_05_pnl_mensuel.csv`), résultat fragile. Annualisé : ≈ 3 450 commandes.
 
 ### 4.2 Puissance d'un A/B de conversion
 
@@ -130,11 +130,11 @@ Taux de base 0,29 %. Pour détecter −10 % relatif (0,29 % → 0,26 %) avec 80 
 
 ### 4.3 Table de sensibilité (contribution avant pub, hors effets d'échelle sur l'acquisition)
 
-| Variation relative des commandes | Commandes/an | Δ contribution annuelle (CHF 30,6/commande) |
+| Variation relative des commandes | Commandes/an | Δ contribution annuelle (CHF 40,3/commande, base corrigée TDFN ; ancienne : 30,6) |
 |---|---|---|
-| −5 % | −172 | **−5,3k** |
-| −10 % | −345 | **−10,6k** |
-| +5 % | +172 | +5,3k |
+| −5 % | −172 | **−6,9k** |
+| −10 % | −345 | **−13,9k** |
+| +5 % | +172 | +6,9k |
 
 À mettre en regard des **gains de coût** liés à un délai vrai (mêmes ordres de grandeur, périmètre 2026) :
 - litiges « produit non reçu » : 8 sur 12 mois, CHF 1 538 (6 perdus) ;

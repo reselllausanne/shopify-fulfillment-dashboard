@@ -216,7 +216,7 @@ Sources : `orders_api.ndjson` (clients identifiés pour 99,6 % des commandes) ; 
 - 2026 : commandes de rang ≥ 2 = 323 (11,4 %), CA brut 14,2 % ; **seulement 144 commandes (5,1 %) viennent de clients acquis avant 2026**.
 - Panier brut TTC moyen/médian 2026 : rang 1 : 231,7 / 189 ; rang 2 : 268,9 / 208,7 ; rang ≥ 3 : 382,7 / 229.
 - Taux de remboursement (remboursé/brut) 2026 : rang 1 : 6,3 % ; rang ≥ 2 : 2,4 %.
-- Contribution avant pub par commande (pilote) : rang 1 **CHF 28** ; rang ≥ 2 **CHF 47** ; médiane CHF 27,6 / 35,2.
+- Contribution avant pub par commande (base corrigée TDFN, fin_07) : rang 1 **CHF 40** ; rang ≥ 2 **CHF 62** (ancienne base du fichier : 28 / 47).
 - Concentration : 9 clients ≥ 4 commandes en 2026 = 47 commandes, CHF 23,1k brut (3,3 % du brut 2026) → présence probable de **revendeurs / clients B2B** ; un client a 165 commandes en 2023-2026.
 - Mensuel : 85-92 % des commandes sont des 1ʳᵉ commandes (2024-2026).
 
@@ -224,7 +224,7 @@ Sources : `orders_api.ndjson` (clients identifiés pour 99,6 % des commandes) ; 
 
 - Le réachat est **faible et lent** ; la clientèle est **majoritairement ponctuelle** (modèle « chasse à la paire »). La médiane de 51 j. rend un flow « J+30 » prématuré ; une relance à J+45-60 est plus cohérente.
 - La contribution plus élevée des commandes récurrentes (47 vs 28) n'est **pas incrémentale** : les clients qui reviennent sont plus engagés et achètent des paniers plus importants (biais de sélection).
-- **Sensibilité** (≈ 3 000 nouveaux clients par an) : +2 points de réachat à 12 mois ≈ 60 commandes ≈ CHF 2,8k de contribution avant pub ; +8 points ≈ 240 commandes ≈ CHF 11,3k (au taux de contribution rang ≥ 2 de CHF 47). À comparer à la **perte annuelle après pub Google de −CHF 17,9k sur 10 mois** : **la fidélisation seule ne corrige pas le résultat** ; elle ne suffit pas, mais ne coûte pas d'acquisition.
+- **Sensibilité** (≈ 3 000 nouveaux clients par an) : +2 points de réachat à 12 mois ≈ 60 commandes ≈ CHF 3,7k de contribution avant pub ; +8 points ≈ 240 commandes ≈ CHF 14,9k (au taux de contribution rang ≥ 2 de CHF 62, base corrigée). À comparer à la **contribution après pub Google de ≈ +15,2k sur 10 mois** : **la fidélisation seule ne finance pas un salaire** mais ne coûte pas d'acquisition ; hypothèse non testée.
 - Coût de fidélisation : outils + temps (non connus) + remises ; une remise de 10 % sur un panier de ≈ CHF 270 coûte ≈ CHF 27, soit plus de la moitié de la contribution de CHF 47 → l'effet net devient faible : **préférer les avantages non monétaires** (accès anticipé, alerte de taille, livraison prioritaire).
 
 **Confiance : moyenne** — corrélations, pas d'incrémentalité ; revendeurs non exclus ; contribution = moyenne pilote.

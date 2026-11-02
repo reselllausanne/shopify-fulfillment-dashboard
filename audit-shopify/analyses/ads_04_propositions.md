@@ -11,7 +11,7 @@ Base économique : compte de contribution du pilote (`fin_00_base_financiere.md`
 
 | Mesure | Janv→oct 2026 | Août→oct 2026 | Octobre |
 |---|---:|---:|---:|
-| Contribution avant pub par commande (pilote, après litiges) | **28,8** | 34,1 | 49,6 (dont 12,8 k de coût estimé : fragile) |
+| Contribution avant pub par commande (pilote, après litiges) | **40,3** (base corrigée TDFN ; ancienne base du fichier : 28,8) | 34,1 | 49,6 (dont ≈ 12,8 k de coût estimé : fragile) |
 | Contribution avant pub / revenu conservé TTC | 13,2 % | 16,0 % | 19,8 % |
 | Coût Google Ads | 100 855 | 42 010 | 15 306 |
 | **CAC global** = coût / toutes les commandes | 35,0 | 37,4 | 44,0 |
@@ -26,17 +26,17 @@ Détail : la contribution avant pub des commandes dernier-clic Google Ads (1 337
 Par canal de dernier clic : Google Ads 25,8 CHF/commande (12,4 % du revenu conservé), Google non cpc 35,8, direct/autre 34,5. Nouveaux clients Google Ads 24,7 vs récurrents 45,0. Rachat observé : cohorte janvier 2026 = 1,13 commande/client sur 10 mois ⇒ au plus **+6 CHF de contribution par client** (0,13 × 47) ; aucune LTV supérieure n'est démontrée.
 Par panier brut (contribution/commande ; ROAS d'équilibre sur valeur brute avant remboursements) : < 100 : 14,1 (20,4 % ; 4,9) ; 100–150 : 26,1 (19,9 % ; 5,0) ; 150–200 : 19,8 (11,1 % ; 9,0) ; 200–250 : 27,3 (12,2 % ; 8,2) ; 250–300 : 40,0 (14,6 % ; 6,8) ; 300–400 : 37,8 (11,0 % ; 9,1) ; > 400 : 75,4 (10,6 % ; 9,5).
 
-**Sensibilités du pilote** (`fin_06_sensibilites.csv`, base −21,2 k avant rémunération) : TVA d'importation récupérable **+32,6 k** (+11,3 CHF/commande ⇒ contribution ≈ 40,1) *hypothèse à prouver (documents douane)* ; expédition+préparation 10 CHF : +12,6 k ; 20 CHF : −15,4 k ; coût estimé ±20 % : ±11,6 k.
+**Sensibilités du pilote** (`fin_06_sensibilites.csv`, base corrigée +11,9 k avant rémunération) : méthode effective avec TVA d'import déductible +11,4 k (≈ TDFN) ; expédition+préparation 10 CHF : +24,5 k ; 20 CHF : −3,4 k ; coût estimé ±20 % : +19,6 k / +4,3 k. (Texte antérieur sur base −21,2 k remplacé.)
 
 ### 1.1 Plafonds dérivés
 
-Les deux scénarios (a) *prudent* : contribution 28,8 CHF/commande ; (b) *TVA d'importation récupérable* : 40,1.
+Les deux scénarios historiques du fichier : (a) *prudent* : 28,8 CHF/commande (TVA 8,1 % sans déduction, écarté) ; (b) *TVA d'importation récupérable* : 40,1 ≈ base corrigée TDFN (40,3). **Lire (b).**
 
 **Plafond de coût publicitaire par commande (CAC global) selon l'objectif** (frais fixes réalisés janv-oct : logiciels 325/mois, rémunération hypothèse pilote 0/3 000/6 000) :
 
 | Objectif (après publicité) | Plafond/commande (a) | Plafond/commande (b) | Dépense mensuelle max à 374 commandes/mois (a) | (b) |
 |---|---:|---:|---:|---:|
-| Contribution ≥ 0, sans frais fixes | 28,8 | 40,1 | 10,8 k | 15,0 k |
+| Contribution ≥ 0, sans frais fixes | 28,8 (écarté) | **40,1 ≈ 40,3 (retenu)** | 10,8 k | 15,0 k |
 | Couvrir logiciels (1,1/cmd) | 27,7 | 39,0 | 10,4 k | 14,6 k |
 | Couvrir logiciels + rémunération 3 000/mois (≈ 11,5/cmd) | 17,3 | 28,6 | 6,5 k | 10,7 k |
 | Couvrir logiciels + rémunération 6 000/mois (≈ 22,0/cmd) | 6,9 | 18,2 | 2,6 k | 6,8 k |
@@ -45,7 +45,7 @@ Dépense actuelle : 14,0 k/mois (août-oct), 15,3 k en octobre. Hypothèse impli
 
 **Plafond de CPA par conversion revendiquée selon la part réellement incrémentale `i`** (contribution × i) :
 
-| `i` | (a) 28,8–34,1 | (b) 40,1–45 |
+| `i` | (a) 28,8–34,1 (écarté) | (b) 40,1–45 (**retenu**) |
 |---|---:|---:|
 | 100 % | 29–34 | 40–45 |
 | 70 % | 20–24 | 28–32 |
@@ -55,9 +55,9 @@ CPA revendiqué actuel : 51–54 (octobre 75) : **supérieur au plafond dans tou
 
 **tROAS d'équilibre sur valeur Google** (valeur moyenne par conversion 228,6 CHF ; = valeur / (contribution × i)) :
 
-| `i` | (a) 28,8–34,1 | (b) 40,1–45 |
+| `i` | (a) 28,8–34,1 (écarté) | (b) 40,1–45 (**retenu**) |
 |---|---:|---:|
-| 100 % | 6,7–7,9 | 5,1–5,7 |
+| 100 % | 6,7–7,9 (écarté) | 5,1–5,7 (**retenu** ; ≈ 5,4 observé global) |
 | 70 % | 9,6–11,3 | 7,3–8,2 |
 | 50 % | 13,4–15,9 | 10,2–11,4 |
 
@@ -92,7 +92,7 @@ Format : état actuel → cible → problème → mécanisme → effet économiq
 - **Mesure** : commandes Shopify non annulées par jour (toutes et dernier-clic Google Ads), coût réel, contribution par commande, vs 8 semaines précédentes ajustées du même jour de semaine. Bruit : écart-type journalier 5,4 commandes (moyenne 12,2) ⇒ sur 14 jours, détection fiable seulement d'une baisse ≥ 2,9 commandes/jour (−24 %) : **le test ne peut pas démontrer une perte modérée**, il sert à plafonner la perte maximale.
 - **Critère d'arrêt** : moyenne sur 14 jours ≤ référence − 3,8 commandes/jour (≈ −31 %, perte > 115 commandes/mois-équivalent) ou contribution perdue estimée > économie ; ou ROAS marginal revendiqué des 14 derniers jours > 5 (signal que les dépenses coupées étaient rentables).
 - **Retour arrière** : rétablir les budgets antérieurs (documentés dans le journal) ; pas de changement de tROAS ; retard de reprise attendu 1–2 semaines.
-- **Classification** : Fait (coûts, dépense par campagne, courbe), Interprétation (le rendement marginal est inférieur au coût), Hypothèse (contribution 28,8–34,1 stable ; confusion de la courbe observationnelle). **Confiance** : moyenne.
+- **Classification** : Fait (coûts, dépense par campagne, courbe), Interprétation (le rendement marginal est inférieur au coût), Hypothèse (contribution 40,3 sur base corrigée, stable ; confusion de la courbe observationnelle). **Confiance** : moyenne.
 
 ### P2 — Mettre en pause UGG PM Feed Only
 - **État actuel** : 1 714 CHF depuis le 13-sept, 7,8 conversions Google, ROAS Google 0,99 ; part d'impression 10 % (85 % de perte au rang) ; tROAS 5,0 depuis le 23-oct ; budget 85 CHF/j.
@@ -152,12 +152,12 @@ Format : état actuel → cible → problème → mécanisme → effet économiq
 | P6 flux | +0,1 à +0,4 k (point 2) | indépendant |
 | **Total prudent (a)** | **≈ +1,1 à +4,1 k/mois** (P1 + P6.2) ; (b) : −0,2 à +3,7 k | |
 
-Ordre de grandeur de contexte : contribution avant pub ≈ 12,9 k/mois (août-oct), pub 14,0 k/mois ⇒ contribution après pub ≈ −1,1 k/mois ; logiciels 0,3 k/mois ; rémunération 6 k/mois (hypothèse pilote). Les propositions ramèneraient la contribution après pub vers 0 à +3 k/mois ; **elles ne rendent pas à elles seules l'activité rentable** (pilote : −21,2 k sur 10 mois avant rémunération, −81,2 k après). Le levier principal est la contribution par commande (TVA d'importation, coûts d'expédition/préparation, remboursements) et non le seul pilotage de campagne.
+Ordre de grandeur de contexte : contribution avant pub ≈ 12,9 k/mois (août-oct, ancienne base ; ≈ +3,7 k/mois de plus avec la base corrigée), pub 14,0 k/mois ⇒ contribution après pub ≈ +2,6 k/mois sur base corrigée ; logiciels 0,3 k/mois ; rémunération 6 k/mois (hypothèse pilote). Les propositions améliorent la marge ; **elles ne rendent pas à elles seules l'activité capable de payer une rémunération de 6 k** (pilote : ≈ +11,9 k sur 10 mois avant rémunération, ≈ −48 k après). Le levier principal est la contribution par commande (coûts d'expédition/préparation, remboursements, délais) et non le seul pilotage de campagne.
 
 ## 4. Ce qui n'est pas proposé (et pourquoi)
 
 - Augmenter les budgets : IS perdu au budget 0 %, coût marginal > contribution ; pas d'argument d'exposition.
-- Baisser ou monter le tROAS « au feeling » : rien ne prouve un meilleur résultat qu'un tROAS stable ; le tROAS d'équilibre (≥ 6,7 à 7,9, ou 5,1–5,7 si TVA récupérable) est hors de la portée de la dépense actuelle.
+- Baisser ou monter le tROAS « au feeling » : rien ne prouve un meilleur résultat qu'un tROAS stable ; le tROAS d'équilibre global (≈ 5,4 sur la base corrigée) est proche de la dépense actuelle (6,2) : peu de marge, mais pas hors de portée.
 - Supprimer Explorer ou la longue traîne : les tests sont sous-dimensionnés (aucun verdict possible), pas échoués.
 - Utiliser une LTV : non démontrée (+6 CHF au plus sur la cohorte de janvier).
 - Dépendre du ROAS Google comme preuve de profit : il ignore marge, TVA, remboursements et incrémentalité.
