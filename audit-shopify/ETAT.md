@@ -85,3 +85,4 @@
 | 22:40 | `ban_02_tva_et_liquidites.md` ; opening cash du modèle = 2 969 ; `fin_10` relancé | Central 13 sem. min −1,3 k (Shopify seul) |
 | 22:50 | Compta provisoire fiduciaire S1-2026 (P&L bénéfice 44 787 ; bilan 30.06) reçue ; `PLAN_ACTION_14J.md` réécrit en 8 décisions chiffrées | Prélèvements fixes, pots TVA/impôt, coupe pub −30 %, BF sans stock, règle d'achat Galaxus, Decathlon à rapprocher |
 | 23:00 | Correction dirigeant : Amex à +17,2 k (créditeur), pas une dette | Liquidités totales 43,3 k ; net après TVA et impôt estimé ≈ +12 k ; ouverture modèle = 37 369 ; plan ajusté (prélèvement 5 k) |
+| 23:20 | Retour dirigeant : Decathlon = retours (D), Oct −22 % = retrait non-sneakers (D, mais données : −3 k sur −43 k), TVA Galaxus S1 non corrigée (décision dirigeant) ; part NER/STX calculée en DB + banque | NER 197,3 k / StockX 378,9 k / autres 59,4 k ; NER payé 95,3 k au 30.09 vs dû 139,3 k ; plan : compte NER séparé |

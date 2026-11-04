@@ -30,7 +30,7 @@ CA déclaré vs CA Shopify TTC net des remboursements (API Shopify, non test, fu
 | S1-2026 | 335 894 | 336 054 | **−160** |
 
 F : le CA déclaré du S1-2026 est identique au CA Shopify à 0,05 % près. Galaxus (mars-juin : ≈ 104 k HT toutes lignes confondues) et Decathlon (avril-juin : ≈ 71 k) n'apparaissent pas dans le chiffre d'affaires.
-H (à confirmer avec la fiduciaire : décompte rattrapé ailleurs, traitement en commission, ou omission) : TDFN potentiellement non déclarée sur S1-2026 ≈ **3 k** (Galaxus STX ≈ 68 k HT × 1,081 × 2,1 % ≈ 1,5 k ; Decathlon ≈ 71 k × 2,1 % ≈ 1,5 k ; NER : TDFN sur la marge 10 % seulement, ≈ 0,1 k, déclaré par le dirigeant). Pour l'année 2026 entière, l'échelle est ≈ 10 k (Galaxus STX ≈ 401 k TTC × 2,1 % ≈ 8,4 k ; Decathlon ≈ 1,9 k). **À régulariser avant l'échéance du S2-2026 (28.02.2027) : correction du décompte S1-2026 si confirmé.**
+H (à confirmer avec la fiduciaire : décompte rattrapé ailleurs, traitement en commission, ou omission) : TDFN potentiellement non déclarée sur S1-2026 ≈ **1,7 k après correction** (voir § 9 ; l'estimation initiale de 3 k incluait Decathlon brut, qui est en réalité surtout des retours (D) ; NER : TDFN sur la marge 10 % seulement, ≈ 0,1 k, déclaré par le dirigeant). Pour l'année 2026 entière, l'échelle est ≈ 10 k (Galaxus STX ≈ 401 k TTC × 2,1 % ≈ 8,4 k ; Decathlon ≈ 1,9 k). **À régulariser avant l'échéance du S2-2026 (28.02.2027) : correction du décompte S1-2026 si confirmé.**
 La part STX/NER du CA Galaxus est estimée au prorata annuel (65 % / 35 %) : **H**.
 
 ## 4. À provisionner pour le S2-2026 (I/H)
@@ -75,3 +75,18 @@ Le point bas 13 semaines du Central reste positif (+33 k) grâce à l'ouverture 
 1. Fiduciaire : (a) Galaxus/Decathlon dans la TVA S1-2026, (b) intérêts moratoires et accord de paiement AFC, (c) qualification des 20 k.
 2. Relevé confirmant les 4 soldes et la nature des « mises de côté » (14 000 pro).
 3. Confirmer que le solde créditeur de l'Amex (17,2 k) est remboursable sur compte.
+
+## 9. Part NER / StockX du CA Galaxus (F, base de données + banque ; remplace le prorata 65/35)
+`tableaux/gal_01_ca_par_fournisseur_et_ner.csv` (CA HT, commandes non annulées, par préfixe `providerKey`) :
+
+| | CHF HT (mars → 04.11) | Part |
+|---|---|---|
+| StockX (propre) | 378,9 k | 60 % |
+| NER (compte de tiers, 10 % de marge) | 197,3 k | 31 % |
+| Autres (Reichelt, Baby Walz, Exlibris, GOAT, divers non sneakers) | 59,4 k | 9 % |
+| **Total** | **635,6 k** | |
+
+- **Octobre −22 % vs septembre** (150,8 k vs 193,7 k) : les autres produits ne baissent que de ≈ 3 k ; StockX −18,6 k (−17 %), NER −21,1 k (−35 %).
+- **NER payé** (banque) : 83,05 k en virements directs (juillet 21,3 k, août 15,0 k, septembre 46,7 k) + 12,28 k dans des ordres groupés (6 mai 2,07 k, 3 juin 10,21 k ; identique au poste « Parts reversées » de la fiduciaire) = **95,3 k au 30.09**. Dû à 90 % de la part NER : 139,3 k au 30.09 → **43,9 k restent à payer fin septembre**, ≈ 82 k au 04.11 avant paiements d'octobre (relevé pro d'octobre manquant). Délai habituel ≈ 1 mois (quinzaine facturée).
+- Conséquence pour les liquidités : l'argent NER encaissé de Galaxus et pas encore reversé n'est pas à toi. Les 43 k de liquidités peuvent en contenir ; la créance Galaxus d'environ 126 k au 30.09 contient aussi la part NER (≈ 150 k HT mars-sept). Sans relevé d'octobre, le net exact est inconnu (H : neutre si Galaxus et NER sont payés au même rythme).
+- **TDFN Galaxus** recalculée : part propre (StockX + autres) mars-juin 74,6 k HT → ≈ 1,7 k au S1-2026 ; 2026 entier 438 k HT × 1,081 × 2,1 % ≈ 10,0 k ; NER : 2,1 % sur la marge de 10 % seulement ≈ 0,5 k. Decathlon retiré du calcul (écart d'encaissement attribué aux retours, D).
