@@ -44,12 +44,14 @@ Shopify jul.-oct. 291 k TTC × 2,1 % ≈ 6,1 k ; Galaxus STX jul.-oct. ≈ 336 k
 | Compte professionnel | 340 |
 | Mise de côté professionnelle | 14 000 |
 | **Liquidités brutes** | **26 125** |
-| Amex (solde dû, H : interprété comme dette) | −17 200 |
-| **Liquidités nettes de l'Amex** | **≈ +8 925** |
-| Solde TDFN restant S1-2026 + anciens (mesuré § 2) | ≈ −4 000 (−5 956 si seul le S1-2026 est compté) |
-| **Net ≈** | **≈ +3 k à +5 k** |
+| Amex, solde **créditeur** (D, corrigé par le dirigeant ; utilisable pour des achats par carte, remboursable sur demande à Swisscard : H) | +17 200 |
+| **Liquidités totales** | **43 325** |
+| Solde TDFN restant (mesuré § 2) | ≈ −4 000 |
+| TDFN S2-2026 attendue (§ 4) | ≈ −15 000 |
+| Impôt + AVS sur le bénéfice S1 (H, 25-30 % de 44,8 k) | ≈ −12 000 |
+| **Net ≈ avant impôt / après impôt** | **≈ +24 k / ≈ +12 k** (comptes seuls : ≈ +7 k / ≈ −5 k) |
 
-Ma note précédente « cash ≈ 2 k » ignorait les 17 k de « côté » : **corrigée**. Créances Galaxus ≈ 126 k au 30.09 (H) non incluses.
+Ma note précédente « cash ≈ 2 k » ignorait les 17 k de « côté » ; une seconde version traitait l'Amex comme une dette de 17,2 k : **erreur corrigée le 04.11 (le solde est créditeur)**. Créances Galaxus ≈ 126 k au 30.09 (H) non incluses.
 
 ## 6. Apport familial et retard Decathlon (D, courriel du 19.10 ; F pour les crédits Amex)
 - Deux crédits de **10 000** sur l'Amex (16.03 et 08.04.2026) provenant d'une épargne personnelle (versements de la mère du dirigeant, selon le courriel). Cohérent avec l'écart de ≈ 22 k entre les crédits Amex et les virements UBS vers Swisscard (F).
@@ -58,18 +60,18 @@ Ma note précédente « cash ≈ 2 k » ignorait les 17 k de « côté » : **co
 - Paiements Mastercard Platinum (3 448,63 sur 3 ordres) = achats StockX : cette carte est mixte.
 
 ## 7. Effet sur le modèle de trésorerie
-`calculs/fin_10_modele_tresorerie.py` : trésorerie d'ouverture = 26 125 − 17 200 (Amex) − 5 956 (S1-2026) = **2 969** (au lieu de 0). Résultats 12 mois (Shopify seul, avant/après rémunération 6 000) :
+`calculs/fin_10_modele_tresorerie.py` : trésorerie d'ouverture = 26 125 + 17 200 (Amex créditrice) − 5 956 (S1-2026) = **37 369** (au lieu de 0). Résultats 12 mois (Shopify seul, avant/après rémunération 6 000) :
 
 | Scénario | Résultat avant rém. | Après rém. | Min. 13 sem. |
 |---|---|---|---|
-| Prudent | −56,1 k | −128,1 k | −30,0 k |
-| Central | +16,9 k | −55,1 k | −1,3 k |
-| Favorable | +63,8 k | −8,2 k | +2,9 k |
-| Redressement | +87,6 k | +15,6 k | +3,6 k |
+| Prudent | −56,1 k | −128,1 k | +4,4 k |
+| Central | +16,9 k | −55,1 k | +33,1 k |
+| Favorable | +63,8 k | −8,2 k | +37,3 k |
+| Redressement | +87,6 k | +15,6 k | +38,0 k |
 
-Le point bas 13 semaines du Central (−1,3 k) est **sans** Galaxus : c'est Galaxus (contribution ≈ 13 k/mois, créances 126 k) qui finance la rémunération et le fonds de roulement. Un décalage des paiements Galaxus de 4 semaines suffit à épuiser les liquidités nettes.
+Le point bas 13 semaines du Central reste positif (+33 k) grâce à l'ouverture de 37 k, mais sur 12 mois le Shopify seul perd 55 k après rémunération de 6 k/mois : **c'est Galaxus** (contribution ≈ 13 k/mois) qui finance la rémunération. Si Galaxus s'arrête, les liquidités actuelles tiennent ≈ 6 à 8 mois au rythme du scénario central (point bas mensuel −17,9 k à 12 mois).
 
 ## 8. Reste à confirmer
 1. Fiduciaire : (a) Galaxus/Decathlon dans la TVA S1-2026, (b) intérêts moratoires et accord de paiement AFC, (c) qualification des 20 k.
 2. Relevé confirmant les 4 soldes et la nature des « mises de côté » (14 000 pro).
-3. Montant exact de l'Amex (dette ou limite disponible).
+3. Confirmer que le solde créditeur de l'Amex (17,2 k) est remboursable sur compte.

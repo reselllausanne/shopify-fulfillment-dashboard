@@ -38,8 +38,8 @@ m_ = pd.read_csv(T / "fin_05_pnl_mensuel.csv"); m_ = m_[m_.mois.between("2026-07
 VAT_JUL_OCT = float(m_.tva.sum())  # TDFN 2,1 % déclaré par le dirigeant ; jul-oct 2026 faisant partie du semestre S2 (jul-déc), décompte dû ~28 fév 2027
 VAT_Q3_2026 = 0.0  # plus de paiement TVA trimestriel dans les 13 semaines (TDFN : décomptes semestriels)
 VAT_OCT_2026 = VAT_JUL_OCT
-# Ouverture au 2026-11-04 (D, fournie par le dirigeant) : perso 8 734,47 + 3 051 de côté + pro 340 + 14 000 de côté = 26 125,47 ; Amex due 17 200 (H : montant dû) ; solde TVA S1-2026 restant ≈ 5 956 (décompte 7 021,30 − 1 065 payés ; intérêts moratoires non inclus)
-OPENING_CASH = 26125.47 - 17200.0 - 5956.0
+# Ouverture au 2026-11-04 (D, fournie par le dirigeant) : perso 8 734,47 + 3 051 de côté + pro 340 + 14 000 de côté = 26 125,47 ; Amex créditrice +17 200 (D, corrigé par le dirigeant : solde positif, pas une dette) ; solde TVA S1-2026 restant ≈ 5 956 (décompte 7 021,30 − 1 065 payés ; intérêts moratoires non inclus)
+OPENING_CASH = 26125.47 + 17200.0 - 5956.0
 
 def engine(P, seas=SEAS, opening=OPENING_CASH, galaxus_support=0.0):
     rows = []

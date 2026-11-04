@@ -81,7 +81,7 @@ Virements vers Swisscard 122 k et Cornèrcard 121 k sur l'année (mensuel 15 à 
 | Rémunération | 6 k (H) | **5,7 à 9,1 k/mois observé** |
 | TVA | 2,1 % déclaré | **2,1 % confirmé par les décomptes AFC** ; échelonné, solde ≈ 4 k ; Galaxus/Decathlon hors CA déclaré S1-2026 (H) : voir `ban_02` |
 | Galaxus cash | contribution I | **≈ 126 k à encaisser** ; pas encore du cash |
-| Financement | « pas aujourd'hui, besoin non démontré » | **inchangé en direction**, mais fonds de roulement Galaxus **démontré** (liquidités brutes 26 k (D) / ≈ 9 k nettes de l'Amex face à ≈ 126 k de créances Galaxus et à une TVA 2026 non provisionnée) |
+| Financement | « pas aujourd'hui, besoin non démontré » | **inchangé en direction**, mais fonds de roulement Galaxus **démontré** (liquidités totales 43 k (D) dont Amex créditrice 17 k ; net ≈ +12 k après TVA S2 et impôt estimé ; ≈ 126 k de créances Galaxus) |
 
 ## 4. Reste à fournir (court)
 1. Extrait de compte AFC + décomptes TVA S2-2025, S1-2026.
