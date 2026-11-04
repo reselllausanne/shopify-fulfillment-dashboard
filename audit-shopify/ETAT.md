@@ -74,3 +74,10 @@
 | — | Relecture indépendante (`a1e1f171…`) | En cours → `analyses/relecture_independante.md` |
 | 00:30 | Relecture indépendante [Relecture indépendante audit Shopify](a1e1f171-92f5-4ca0-a42e-6bd3eafbead4) terminée : 35 chiffres recalculés, mécanique OK, 3 bloquants (B1 résultat sur-affirmé, B2 anciens chiffres/G1 Meta, B3 coût estimé 57,9 k faux) + 16 importants | Corrections appliquées : `fin_05` (coût estimé effectif ≈ 38,3 k ; cohortes avec pub au prorata : mûre +5,3 k / récente +6,3 k), `fin_06` (±20 % : +19,6 k / +4,3 k), Favorable ≤ Central (modèle régénéré), décomposition du Redressement (`fin_13`), pub oct. 15 306 / ×5,5 / marginal ≈ 75, 97/93/180/76 réconciliés (`commandes_prioritaires_14j_180j.csv`), 84 % = retours seulement, seuils de preuve harmonisés (≥ 7 CHF après pub ≡ ROAS ≥ 6,5 ; CAC alerte > 35), Galaxus requalifié I/D/H (107-122 k, risque `stockxAmount`, NER 196 k), corps de `bm_02/04/05`, `ads_04`, `cx_01/04` purgés des anciens chiffres, `SOURCES.md` recalé, `donnees_manquantes` 21 lignes, `strat_01` enveloppe + dates de revue + tableau par horizon |
 | 00:30 | Non fait / limites : valeurs en cache du classeur (LibreOffice absent), `bm_05` Europe non recalculé, benchmark de prix concurrents, BFCM non audité, test `stockxAmount` sur 18 unités seulement | Documenté dans `COUVERTURE.md` (Vérification finale) |
+
+## Journal (2026-11-04)
+| Heure | Action | Résultat |
+|---|---|---|
+| 21:35 | Dirigeant fournit relevés UBS (pro, perso), ordres 2025, Swisscard, Cornèrcard | 3 204 mouvements 2026 dédupliqués (`ban_01_parse_ubs.py`), 700 ordres 2025 ; données brutes en local hors git (`donnees_banque_local/`) |
+| 22:30 | Rapprochement banque/modèle (`ban_02..04`) | Revenu Shopify −3,6 %, coûts −2,6 %, pub au franc ; cash net 2026 ≈ +9 k ; TVA : 40×300 CHF, pas de forfaitaire ; Galaxus ≈ 126 k en attente |
+| 22:45 | `analyses/ban_01_tresorerie_reelle.md`, `PLAN_ACTION_14J.md`, RAPPORT_FINAL, donnees_manquantes, COUVERTURE mis à jour | Fait |

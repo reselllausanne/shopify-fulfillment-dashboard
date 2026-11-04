@@ -58,7 +58,7 @@ Chaque point = contexte dirigeant à vérifier (actualité, période, définitio
 ## S4 — Base financière et rentabilité réelle
 | ID | Exigence | Statut | Preuve | Blocage |
 |---|---|---|---|---|
-| 4.1 | Rapprochement commandes, lignes, paiements, achats StockX/autres, change, transport, import, livraison, remboursements, avoirs, incidents | PARTIEL | analyses/fin_00_base_financiere.md | banque, payouts hors Shopify Payments |
+| 4.1 | Rapprochement commandes, lignes, paiements, achats StockX/autres, change, transport, import, livraison, remboursements, avoirs, incidents | PARTIEL | analyses/fin_00_base_financiere.md, analyses/ban_01_tresorerie_reelle.md | revenu/coût/pub rapprochés à la banque ; 14 ordres groupés 98,7 k et octobre manquants |
 | 4.2 | Achats remplacés, annulations, multi-colis, remboursements fournisseurs attendus, retours | PARTIEL | analyses/fin_00_base_financiere.md, analyses/cx_02 | multi-colis, achats remplacés, remboursements fournisseurs non mesurés |
 | 4.3 | Revenu conservé après remises/annulations/remboursements | RÉALISÉ | analyses/fin_00_base_financiere.md §1 |  |
 | 4.4 | Achat complet rendu en Suisse sans double compte | RÉALISÉ | analyses/fin_00_base_financiere.md §2 (coût = enchère + ≈ 28) | TVA/douane d'import non séparées |
@@ -67,8 +67,8 @@ Chaque point = contexte dirigeant à vérifier (actualité, période, définitio
 | 4.7 | Expédition, préparation, emballage, coûts variables | PARTIEL | analyses/fin_00_base_financiere.md | forfaits 6,5 + 8,0, factures Poste manquantes |
 | 4.8 | Retours, échanges, incidents, remplacement vendeur, gestes, SAV | PARTIEL | analyses/cx_02 | boîte SAV inaccessible |
 | 4.9 | Publicité et autres coûts d'acquisition | RÉALISÉ | analyses/fin_00_base_financiere.md §4, analyses/ads_01 |  |
-| 4.10 | Logiciels, salaires, locaux, assurances, fixes, rémunération réaliste du dirigeant | PARTIEL | analyses/donnees_manquantes.md | charges fixes et rémunération manquantes |
-| 4.11 | 6 niveaux : marge affichée / contribution réalisée avant pub / après acquisition / résultat après fixes / résultat économique / variation de trésorerie + besoins | PARTIEL | analyses/fin_00_base_financiere.md §1 | variation de trésorerie réelle impossible sans banque |
+| 4.10 | Logiciels, salaires, locaux, assurances, fixes, rémunération réaliste du dirigeant | PARTIEL | analyses/ban_01_tresorerie_reelle.md §2.4-2.5 | rémunération observée 5,7-9,1 k/mois ; charges fixes partiellement observées (logiciels 12,5 k, freelances 17,8 k, logistique 35,4 k) |
+| 4.11 | 6 niveaux : marge affichée / contribution réalisée avant pub / après acquisition / résultat après fixes / résultat économique / variation de trésorerie + besoins | PARTIEL | analyses/fin_00_base_financiere.md §1, analyses/ban_01_tresorerie_reelle.md §2.4 | variation de trésorerie ≈ +9 k observée ; octobre et soldes à confirmer |
 | 4.12 | Coûts propres Shopify, allocation explicite des communs, coût d'autonomie ; pas d'allocation arbitraire | NON TRAITÉ |  | coûts communs Galaxus/Shopify non alloués faute de données |
 | 4.13 | Séparer commandes récentes vs cohortes mûres ; pas de marge acquise sans achat/livraison | RÉALISÉ | analyses/fin_00_base_financiere.md §1 (cohortes mûre/récente), tableaux/fin_05_pnl_cohortes.csv (pub répartie au prorata) |  |
 | 4.14 | Découpes : marque, famille, taille, tranche prix, sourcing, stock/commande, dispo, canal, nouveau/récurrent, pays | PARTIEL | analyses/fin_00_base_financiere.md §5, tableaux/bm_mix_*.csv, ads_12_*.csv | famille/disponibilité non traitées |
@@ -96,7 +96,7 @@ Chaque point = contexte dirigeant à vérifier (actualité, période, définitio
 | 6.5 | Rendement sur capital, délai retour cash, scénario défavorable | PARTIEL | analyses/fin_01_galaxus_stock_financement.md §3 | rotation hypothétique |
 | 6.6 | Dépôt-vente, stock partenaire, délais, achats groupés | NON TRAITÉ |  | aucune donnée de dépôt-vente/stock partenaire |
 | 6.7 | Distinguer retours/liquidation, stock courant, stock de campagne | PARTIEL | analyses/fin_00_base_financiere.md §1 | 36 lots seulement |
-| 6.8 | Galaxus : résultat, cash libre réel, réserves, dettes, taxes, BFR propre | BLOQUÉ | analyses/donnees_manquantes.md | paiements Galaxus, réserves, dettes, relevés |
+| 6.8 | Galaxus : résultat, cash libre réel, réserves, dettes, taxes, BFR propre | PARTIEL | analyses/ban_01_tresorerie_reelle.md §2.7 | 377,3 k encaissés, ≈ 126 k en attente (H) ; réserves, pénalités, avoirs inconnus |
 | 6.9 | Coût pour Galaxus (continuité, croissance) ; comparer financer Shopify / réinvestir Galaxus / réserve | PARTIEL | analyses/fin_01_galaxus_stock_financement.md §2, §5 |  |
 | 6.10 | Enveloppe, durée, conditions d'arrêt, suivi séparé ; transfert interne = financement, pas revenu | PARTIEL | analyses/fin_01_galaxus_stock_financement.md §3, §5 | enveloppe indicative |
 | 6.11 | Pilote de stock : budget, critères de réussite, sortie ; aucun achat pendant l'audit | RÉALISÉ | analyses/fin_01_galaxus_stock_financement.md §3 | aucun achat effectué |
@@ -279,10 +279,10 @@ Départ audit = 2026-11-02 (Europe/Zurich). Échéances : ~2026-11-16 · ~2027-0
 
 ## Vérification finale (S22.5)
 Dernière vérification : 2026-11-03 00:30 (Europe/Zurich), après relecture indépendante (`analyses/relecture_independante.md`).
-Total 177 exigences : RÉALISÉ 88 · PARTIEL 79 · NON TRAITÉ 3 · BLOQUÉ 1 · PERMANENT 6.
+Total 177 exigences : RÉALISÉ 88 · PARTIEL 80 · NON TRAITÉ 3 · BLOQUÉ 0 · PERMANENT 6.
 
 **NON TRAITÉ (limite)** : 4.12, 5.3, 6.6. 5.3 benchmark de prix concurrents par référence exacte (aucun rapprochement GTIN/SKU ni scraping réalisé) ; 6.6 dépôt-vente/stock partenaire (aucune donnée) ; 4.12 allocation des coûts communs (données absentes).
-**BLOQUÉ (donnée exacte attendue)** : 6.8. 6.8 cash libre Galaxus : relevés bancaires UBS 24 mois, paiements/avoirs/pénalités Galaxus, convention NER.
-**PARTIEL (limite explicite dans la colonne Blocage)** : 1.4, 2.1, 2.3, 2.4, 2.5, 2.7, 2.14, 3.1, 3.3, 3.10, 4.1, 4.2, 4.5, 4.6, 4.7, 4.8, 4.10, 4.11, 4.14, 4.17, 5.1, 5.5, 5.6, 6.2, 6.3, 6.4, 6.5, 6.7, 6.9, 6.10, 7.4, 7.6, 7.7, 7.13, 8.1, 8.2, 9.1, 9.4, 9.6, 9.7, 9.8, 9.9, 10.4, 10.6, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 12.3, 12.4, 13.3, 13.4, 14.1, 15.1, 15.2, 16.1, 16.2, 16.3, 16.4, 16.5, 17.1, 17.2, 17.3, 17.8, 17.9, 17.11, 18.2, 18.3, 18.4, 18.5, 19.1, 19.3, L3, L4, L7, L10, L14.
+**BLOQUÉ (donnée exacte attendue)** : . 6.8 cash libre Galaxus : relevés bancaires UBS 24 mois, paiements/avoirs/pénalités Galaxus, convention NER.
+**PARTIEL (limite explicite dans la colonne Blocage)** : 1.4, 2.1, 2.3, 2.4, 2.5, 2.7, 2.14, 3.1, 3.3, 3.10, 4.1, 4.2, 4.5, 4.6, 4.7, 4.8, 4.10, 4.11, 4.14, 4.17, 5.1, 5.5, 5.6, 6.2, 6.3, 6.4, 6.5, 6.7, 6.8, 6.9, 6.10, 7.4, 7.6, 7.7, 7.13, 8.1, 8.2, 9.1, 9.4, 9.6, 9.7, 9.8, 9.9, 10.4, 10.6, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 12.3, 12.4, 13.3, 13.4, 14.1, 15.1, 15.2, 16.1, 16.2, 16.3, 16.4, 16.5, 17.1, 17.2, 17.3, 17.8, 17.9, 17.11, 18.2, 18.3, 18.4, 18.5, 19.1, 19.3, L3, L4, L7, L10, L14.
 Les données réellement manquantes sont regroupées et classées par décision bloquée dans `analyses/donnees_manquantes.md` (21 lignes).
 Cohérence : les chiffres de référence sont ceux de `analyses/fin_00_base_financiere.md` et `RAPPORT_FINAL.md` (TDFN 2,1 %, 40,3 CHF/commande avant pub, ROAS d'équilibre 5,4, résultat avant rémunération ≈ 0 à +12 k non démontré). Les analyses des sous-agents ont été corrigées dans leur corps et portent un bandeau d'erratum.
