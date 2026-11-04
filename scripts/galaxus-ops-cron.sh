@@ -360,9 +360,9 @@ run_master_specs_copy_push() {
   log "DONE master-specs COPY dump + SFTP"
 }
 
-# Skip snap rebuild when meta is fresh (default 36h). Nightly still rebuilds when stale.
+# Skip snap rebuild when meta is fresh (default 20h → nightly 04:00 always rebuilds; 36h skipped every other night).
 master_specs_snapshot_is_fresh() {
-  local max_hours="${GALAXUS_MASTER_SPECS_SKIP_REBUILD_IF_FRESH_HOURS:-36}"
+  local max_hours="${GALAXUS_MASTER_SPECS_SKIP_REBUILD_IF_FRESH_HOURS:-20}"
   docker compose exec -T web node -e "
 const {PrismaClient}=require('@prisma/client');
 const p=new PrismaClient();
@@ -405,7 +405,7 @@ case "$ACTION" in
     # Nightly durable: rebuild snap (if stale) → Postgres COPY CSVs → SFTP oneshot.
     # Never use feed-worker Prisma stream for 7M specs (hangs / heap blowup).
     if master_specs_snapshot_is_fresh; then
-      log "SKIP master/specs snapshot rebuild — meta fresh (<${GALAXUS_MASTER_SPECS_SKIP_REBUILD_IF_FRESH_HOURS:-36}h)"
+      log "SKIP master/specs snapshot rebuild — meta fresh (<${GALAXUS_MASTER_SPECS_SKIP_REBUILD_IF_FRESH_HOURS:-20}h)"
     elif ! run_master_specs_snapshot_rebuild; then
       log "ERROR: push-master-specs aborted — snapshot rebuild failed (no live fallback)"
       exit 1
