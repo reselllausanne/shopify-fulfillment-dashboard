@@ -1,4 +1,4 @@
-# TVA (décomptes AFC), liquidités et apport familial (S4.5, S11, S17)
+# TVA (décomptes AFC), liquidités et apport personnel (S4.5, S11, S17)
 
 Dernière mise à jour : 2026-11-04 22:30 (Europe/Zurich). Sources fournies le 04.11 : décomptes TVA AFC S1-2025, S2-2025, S1-2026 (PDF) ; courriel du 19.10.2026 à la fiduciaire (PDF) ; export Cornèrcard (CSV) ; soldes annoncés par le dirigeant. Niveaux : F fait observé, D déclaré, I interprétation, H hypothèse. Montants CHF.
 
@@ -53,10 +53,10 @@ Shopify jul.-oct. 291 k TTC × 2,1 % ≈ 6,1 k ; Galaxus STX jul.-oct. ≈ 336 k
 
 Ma note précédente « cash ≈ 2 k » ignorait les 17 k de « côté » ; une seconde version traitait l'Amex comme une dette de 17,2 k : **erreur corrigée le 04.11 (le solde est créditeur)**. Créances Galaxus ≈ 126 k au 30.09 (H) non incluses.
 
-## 6. Apport familial et retard Decathlon (D, courriel du 19.10 ; F pour les crédits Amex)
-- Deux crédits de **10 000** sur l'Amex (16.03 et 08.04.2026) provenant d'une épargne personnelle (versements de la mère du dirigeant, selon le courriel). Cohérent avec l'écart de ≈ 22 k entre les crédits Amex et les virements UBS vers Swisscard (F).
+## 6. Apport personnel et retard Decathlon (D, courriel du 19.10 ; F pour les crédits Amex)
+- Deux crédits de **10 000** sur l'Amex (16.03 et 08.04.2026) provenant de l'épargne personnelle du dirigeant (compte BCV ouvert par ses parents ; le courriel du 19.10 l'attribue à la mère, le dirigeant précise le 04.11 que c'est **son propre argent**, sans remboursement). Cohérent avec l'écart de ≈ 22 k entre les crédits Amex et les virements UBS vers Swisscard (F).
 - Motif donné : manque de trésorerie dû aux retards de paiement Decathlon début 2026 (D). Les encaissements Lemonway le confirment (avril 9,1 k ; Decathlon 421 commandes / 92 k, 49 k encaissés).
-- Hors apport, la variation de trésorerie 2026 est ≈ **−11 k**. À qualifier avec la fiduciaire : apport en capital (raison individuelle : compte privé) ou prêt familial à rembourser (passif non inscrit au bilan ?). Le compte d'attente 1090 mentionné au 30.06.2026 contient ces mouvements.
+- Hors apport, la variation de trésorerie 2026 est ≈ **−11 k**. Aucune dette : à inscrire en **apport de l'exploitant** (compte 2851) par la fiduciaire (le courriel parle de compte d'attente 1090 au 30.06.2026). Le dirigeant peut retirer ces 20 k à tout moment ; ce n'est qu'une question de liquidités.
 - Paiements Mastercard Platinum (3 448,63 sur 3 ordres) = achats StockX : cette carte est mixte.
 
 ## 7. Effet sur le modèle de trésorerie
@@ -72,7 +72,7 @@ Ma note précédente « cash ≈ 2 k » ignorait les 17 k de « côté » ; une 
 Le point bas 13 semaines du Central reste positif (+33 k) grâce à l'ouverture de 37 k, mais sur 12 mois le Shopify seul perd 55 k après rémunération de 6 k/mois : **c'est Galaxus** (contribution ≈ 13 k/mois) qui finance la rémunération. Si Galaxus s'arrête, les liquidités actuelles tiennent ≈ 6 à 8 mois au rythme du scénario central (point bas mensuel −17,9 k à 12 mois).
 
 ## 8. Reste à confirmer
-1. Fiduciaire : (a) Galaxus/Decathlon dans la TVA S1-2026, (b) intérêts moratoires et accord de paiement AFC, (c) qualification des 20 k.
+1. Fiduciaire : (a) Galaxus/Decathlon dans la TVA S1-2026, (b) intérêts moratoires et accord de paiement AFC, (c) inscription des 20 k en apport de l'exploitant.
 2. Relevé confirmant les 4 soldes et la nature des « mises de côté » (14 000 pro).
 3. Confirmer que le solde créditeur de l'Amex (17,2 k) est remboursable sur compte.
 

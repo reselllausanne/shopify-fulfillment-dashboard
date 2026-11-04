@@ -54,7 +54,7 @@ Google Ads débité sur Cornèrcard (`ban_04_recon_pub.csv`) : janv. 9 646 / fé
 | | | Assurances, État, Viseca, Revolut, divers privés | −52,1 k |
 | | | Transferts propriétaire (net) | −9,3 k |
 
-Variation de trésorerie nette ≈ +9 k (pro +1,5 k ; personnel +7,8 k) **dont 20 k d'apport familial** (2 × 10 000 versés sur l'Amex les 16.03 et 08.04.2026, depuis une épargne personnelle ; D, courriel du 19.10) : **hors apport ≈ −11 k**. L'écart Amex versements reçus (≈ 592 k) − virements UBS (570 k) ≈ 22 k confirme ces 20 k (F). L'activité n'a pas accumulé de trésorerie en 2026 : tout est réinjecté en stock et pub, et un retard de paiement Decathlon début 2026 (D) a nécessité l'apport.
+Variation de trésorerie nette ≈ +9 k (pro +1,5 k ; personnel +7,8 k) **dont 20 k d'apport personnel (épargne du dirigeant)** (2 × 10 000 versés sur l'Amex les 16.03 et 08.04.2026, depuis l'épargne personnelle du dirigeant, sans remboursement ; D) : **hors apport ≈ −11 k**. L'écart Amex versements reçus (≈ 592 k) − virements UBS (570 k) ≈ 22 k confirme ces 20 k (F). L'activité n'a pas accumulé de trésorerie en 2026 : tout est réinjecté en stock et pub, et un retard de paiement Decathlon début 2026 (D) a nécessité l'apport.
 
 ### 2.5 Rémunération réelle du dirigeant (I)
 Dépenses privées payées depuis le compte personnel ≈ 52 k (assurances 9,8 k, divers 33,4 k, État 2,2 k, Viseca 3,7 k, Revolut 3,0 k) en 9,2 mois, soit **≈ 5,7 k/mois**, plus la carte *6466 (32 k, usage mixte) : fourchette **5,7 à 9,1 k/mois**. L'hypothèse de 6 000/mois du modèle (H) est donc plausible (borne basse). Avec cette rémunération, le résultat avant rémunération du P&L (≈ 0 à +12 k Shopify) ne la finance pas ; Galaxus la finance.
