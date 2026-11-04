@@ -10,8 +10,8 @@ Niveaux : F = fait observé dans un relevé ; I = interprétation ; H = hypothè
 |---|---|---|
 | UBS compte professionnel (CH06) | 30.01 → 30.09.2026 ; premier mouvement mars ; solde final 1 492,92 (F) | octobre absent ; février vide ; export détaillé sans soldes (500 mouvements max) |
 | UBS compte personnel (CH50) | 01.01 → 06.10.2026 ; reçoit les paiements Shopify ; paie aussi les dépenses privées | mélange pro/privé ; solde final à confirmer (≈ 6,6 k d'après mon extraction, **non vérifié**) |
-| Swisscard Platinum *3674 | 4 008 lignes, janv. → sept. 2026 | octobre absent |
-| Swisscard *6466 | 1 125 lignes, janv. → sept. 2026 (usage privé probable, 32 k) | — |
+| Swisscard **Amex** (n° 37…*3674) | 4 008 lignes, janv. → sept. 2026 ; carte d'achat principale (StockX/GOAT) | octobre absent |
+| Swisscard **Mastercard Platinum** *6466 | 1 125 lignes, janv. → sept. 2026 ; usage mixte (≈ 8 k StockX/PayPal confirmés, reste Migros, voyages, divers) | — |
 | Cornèrcard **0427 | 3 exports qui se recouvrent, janv. → août + 2 k en octobre (dédupliqués) | septembre absent |
 | Listes de paiements UBS 2025 | 700 ordres exécutés, compte personnel | **sortants seulement** : pas d'encaissements, pas de compte pro, pas de cartes 2025 |
 | PayPal / TWINT | pas d'extrait propre : visibles via les versements sur UBS | frais déduits avant versement |
@@ -34,7 +34,7 @@ Encaissements UBS janv. → sept. 2026 par canal vs CA TTC conservé du modèle 
 I : le revenu conservé du P&L est fiable au pourcent près ; le trou de 19,5 k = frais de passerelle (≈ 13-15 k, cohérent avec le modèle) + PowerPay (≈ 6-12 k). Aucune preuve de chiffre d'affaires fantôme.
 
 ### 2.2 Les coûts d'achat du modèle sont confirmés par la carte
-Achats nets (débits − remboursements) Swisscard *3674 vs coût du modèle (COGS Shopify + coût StockX Galaxus), janv. → sept. (`ban_04_recon_couts_carte.csv`) : **575,0 k carte vs 590,4 k modèle (−2,6 %)**. Écart mensuel jusqu'à ±20 % (décalage achat/vente). Cornèrcard ajoute ≈ 7,6 k de débits PayPal*StockX.
+Achats nets (débits − remboursements) Amex *3674 vs coût du modèle (COGS Shopify + coût StockX Galaxus), janv. → sept. (`ban_04_recon_couts_carte.csv`) : **575,0 k carte vs 590,4 k modèle (−2,6 %)**. Écart mensuel jusqu'à ±20 % (décalage achat/vente). Cornèrcard ajoute ≈ 7,6 k de débits PayPal*StockX.
 I : le risque « coût Galaxus = enchère seule, sous-estimé de jusqu'à ≈ 27 k » (fin_01) **n'apparaît pas** dans le cash : si le modèle sous-estimait de 27 k, la carte dépasserait le modèle. La carte reste ≤ modèle. Réserve : une constitution de stock (achats non vendus) compenserait une sous-estimation ; le stock physique suivi est faible (36 lots), donc le risque est réduit mais pas annulé (H).
 
 ### 2.3 La publicité est confirmée au franc près
@@ -54,20 +54,18 @@ Google Ads débité sur Cornèrcard (`ban_04_recon_pub.csv`) : janv. 9 646 / fé
 | | | Assurances, État, Viseca, Revolut, divers privés | −52,1 k |
 | | | Transferts propriétaire (net) | −9,3 k |
 
-Variation de trésorerie nette ≈ +9 k (pro +1,5 k ; personnel +7,8 k, **à confirmer**). **L'activité n'a pas accumulé de trésorerie en 2026** : tout l'encaissement est réinjecté en stock et en publicité.
+Variation de trésorerie nette ≈ +9 k (pro +1,5 k ; personnel +7,8 k) **dont 20 k d'apport familial** (2 × 10 000 versés sur l'Amex les 16.03 et 08.04.2026, depuis une épargne personnelle ; D, courriel du 19.10) : **hors apport ≈ −11 k**. L'écart Amex versements reçus (≈ 592 k) − virements UBS (570 k) ≈ 22 k confirme ces 20 k (F). L'activité n'a pas accumulé de trésorerie en 2026 : tout est réinjecté en stock et pub, et un retard de paiement Decathlon début 2026 (D) a nécessité l'apport.
 
 ### 2.5 Rémunération réelle du dirigeant (I)
 Dépenses privées payées depuis le compte personnel ≈ 52 k (assurances 9,8 k, divers 33,4 k, État 2,2 k, Viseca 3,7 k, Revolut 3,0 k) en 9,2 mois, soit **≈ 5,7 k/mois**, plus la carte *6466 (32 k, usage mixte) : fourchette **5,7 à 9,1 k/mois**. L'hypothèse de 6 000/mois du modèle (H) est donc plausible (borne basse). Avec cette rémunération, le résultat avant rémunération du P&L (≈ 0 à +12 k Shopify) ne la finance pas ; Galaxus la finance.
 
-### 2.6 TVA et AFC : point d'alerte (F + I)
-- F : **40 paiements « Administration fédérale des contributions »** en 2026, ordre permanent hebdomadaire de **300 CHF** (somme 9 881) sur la référence d'une facture datée du 05.01.2026 ; **16 paiements** en 2025 (3 366). **Aucun versement forfaitaire** visible en février ni en août 2026, dans aucun des deux comptes.
-- I : TDFN 2,1 % sur le CA TTC conservé Shopify = ≈ 7,1 k pour le S1-2026 (échéance 31.08.2026) et ≈ 13,2 k pour janv. → oct. ; Galaxus et NER en plus. Les 9,9 k payés ressemblent à un **plan d'échelonnement** d'une créance existante (facture du 05.01.2026), pas au règlement des décomptes 2026 ; le S1-2026 n'apparaît pas payé.
-- H : la TVA 2026 pourrait être payée depuis un compte non fourni, ou ne l'est pas encore (**passif latent ≈ 7 à 23 k + intérêts moratoires**). **Action : extrait de compte AFC (ePortal), décomptes S2-2025 et S1-2026, convention d'échelonnement.**
-- 2025 : 11 paiements à « Etat de Vaud / Dossier » (2 200) et Caisse cantonale de compensation (812) : autres échéances échelonnées visibles ; 2026 : 2,2 k de paiements État/préfectures/sécurité.
+### 2.6 TVA et AFC (F, avec décomptes AFC reçus le 04.11 ; voir `ban_02_tva_et_liquidites.md`)
+Les 40 virements hebdomadaires de 300 CHF (9,9 k en 2026) soldent des **décomptes TDFN réels** : S2-2025 (6 281,56, réf. RF82K8SM0022025…) puis S1-2026 (7 021,30, réf. RF35K8SM0012026…, 213 CHF/semaine depuis le 04.09). Le plan « d'alerte » initial (passif 7-23 k) est donc **remplacé** par un solde mesuré : voir `ban_02`.
 
 ### 2.7 Galaxus, NER, Decathlon
 - Galaxus : 377,3 k encaissés mars → sept. (premier versement 8,6 k en mars, cohérent avec le démarrage). CA Galaxus facturé (HT, mars → sept.) 465,6 k ≈ 503 k TTC : **≈ 126 k pas encore encaissés au 30.09** (≈ 25 % ; délai d'encaissement de l'ordre de 4 à 8 semaines, **H** car dates de facture/paiement non appariées ligne par ligne). Conséquence : la croissance août-septembre a été payée par la carte avant l'encaissement ; **le besoin en fonds de roulement Galaxus existe** (stock acheté ≈ 78 k en septembre).
-- NER : 83,1 k versés à Jordan Nerny (compte pro, mars → sept.) + 1,7 k reçus ; CA NER déclaré 196 k HT sur l'année : le reversement observé est **inférieur** au CA NER déclaré à ce stade (décalage d'encaissement). Les 98,7 k de « paiements groupés e-banking » n'ont pas de bénéficiaires dans l'export : **à détailler** (peuvent contenir NER, fournisseurs, rémunération).
+- NER : 83,1 k versés à Jordan Nerny en virements directs (compte pro, mars → sept.), plus ≥ 12,3 k dans les ordres groupés (2 070 le 06.05 et 10 210 le 03.06 : paiement par quinzaine des ventes Galaxus NER, selon le courriel à la fiduciaire) ; 1,7 k reçus. Total ≥ 95 k contre CA NER déclaré 196 k HT sur l'année (décalage d'encaissement).
+- Les 98,7 k de « paiements groupés e-banking » sont **partiellement expliqués** par le courriel du 19.10 à la fiduciaire (6 ordres, 46,7 k) : paiements Amex (≈ 30,2 k), Mastercard Platinum (3,4 k, achats StockX) et Jordan Nerny. Reste ≈ 52 k (juil.-sept. surtout) non détaillé.
 - Decathlon : 49,3 k reçus via Lemonway (avr. 9,1 → sept. 2,1 : flux éteint) pour 421 commandes / 92 k CHF en base (DB) : 53 %, écart de 43 k **non expliqué** (commission, retours, cible de mesure ; **hors périmètre**, signalé).
 
 ### 2.8 2025 (ordres de paiement du compte personnel, 700 lignes, `ban_03_paiements_2025.py`)
@@ -81,9 +79,9 @@ Virements vers Swisscard 122 k et Cornèrcard 121 k sur l'année (mensuel 15 à 
 | Coûts d'achat | 6 % estimés, risque −27 k | **confirmé à ±3 %** ; risque −27 k réduit (H résiduelle stock) |
 | Trésorerie libre 2026 | non calculable | **≈ 0** (+9 k) ; tout réinjecté |
 | Rémunération | 6 k (H) | **5,7 à 9,1 k/mois observé** |
-| TVA | 2,1 % déclaré | **paiements forfaitaires non observés** : alerte |
+| TVA | 2,1 % déclaré | **2,1 % confirmé par les décomptes AFC** ; échelonné, solde ≈ 4 k ; Galaxus/Decathlon hors CA déclaré S1-2026 (H) : voir `ban_02` |
 | Galaxus cash | contribution I | **≈ 126 k à encaisser** ; pas encore du cash |
-| Financement | « pas aujourd'hui, besoin non démontré » | **inchangé en direction**, mais fonds de roulement Galaxus **démontré** (cash 2 k au 6 oct. face à ≈ 126 k de créances Galaxus et à une TVA 2026 non provisionnée) |
+| Financement | « pas aujourd'hui, besoin non démontré » | **inchangé en direction**, mais fonds de roulement Galaxus **démontré** (liquidités brutes 26 k (D) / ≈ 9 k nettes de l'Amex face à ≈ 126 k de créances Galaxus et à une TVA 2026 non provisionnée) |
 
 ## 4. Reste à fournir (court)
 1. Extrait de compte AFC + décomptes TVA S2-2025, S1-2026.

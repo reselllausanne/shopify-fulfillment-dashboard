@@ -81,3 +81,5 @@
 | 21:35 | Dirigeant fournit relevés UBS (pro, perso), ordres 2025, Swisscard, Cornèrcard | 3 204 mouvements 2026 dédupliqués (`ban_01_parse_ubs.py`), 700 ordres 2025 ; données brutes en local hors git (`donnees_banque_local/`) |
 | 22:30 | Rapprochement banque/modèle (`ban_02..04`) | Revenu Shopify −3,6 %, coûts −2,6 %, pub au franc ; cash net 2026 ≈ +9 k ; TVA : 40×300 CHF, pas de forfaitaire ; Galaxus ≈ 126 k en attente |
 | 22:45 | `analyses/ban_01_tresorerie_reelle.md`, `PLAN_ACTION_14J.md`, RAPPORT_FINAL, donnees_manquantes, COUVERTURE mis à jour | Fait |
+| 22:10 | Dirigeant fournit décomptes TVA AFC (S1-2025, S2-2025, S1-2026), courriel fiduciaire, Cornèrcard (janv.-juil.), soldes (perso 8 734,47 + 3 051 ; pro 340 + 14 000 ; Amex 17 200) | TDFN 2,1 % confirmée ; solde AFC ≈ 4 k ; CA déclaré S1-2026 = CA Shopify seul (Galaxus/Decathlon absents, H ≈ 3 k) ; apport familial 20 k ; ordres groupés partiellement expliqués |
+| 22:40 | `ban_02_tva_et_liquidites.md` ; opening cash du modèle = 2 969 ; `fin_10` relancé | Central 13 sem. min −1,3 k (Shopify seul) |

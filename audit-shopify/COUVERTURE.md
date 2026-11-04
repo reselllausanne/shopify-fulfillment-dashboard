@@ -62,7 +62,7 @@ Chaque point = contexte dirigeant à vérifier (actualité, période, définitio
 | 4.2 | Achats remplacés, annulations, multi-colis, remboursements fournisseurs attendus, retours | PARTIEL | analyses/fin_00_base_financiere.md, analyses/cx_02 | multi-colis, achats remplacés, remboursements fournisseurs non mesurés |
 | 4.3 | Revenu conservé après remises/annulations/remboursements | RÉALISÉ | analyses/fin_00_base_financiere.md §1 |  |
 | 4.4 | Achat complet rendu en Suisse sans double compte | RÉALISÉ | analyses/fin_00_base_financiere.md §2 (coût = enchère + ≈ 28) | TVA/douane d'import non séparées |
-| 4.5 | Régime fiscal / TVA effectif | PARTIEL | analyses/fin_00_base_financiere.md (TDFN 2,1 % déclaré) | décomptes AFC manquants |
+| 4.5 | Régime fiscal / TVA effectif | PARTIEL | analyses/fin_00_base_financiere.md, analyses/ban_02_tva_et_liquidites.md | TDFN 2,1 % confirmée (décomptes AFC S1-2025 à S1-2026) ; Galaxus/Decathlon absents du CA S1-2026 à confirmer |
 | 4.6 | Frais paiement, rétrofacturations, fraude | PARTIEL | tableaux/fin_01_payments_*.csv | frais hors Shopify Payments estimés |
 | 4.7 | Expédition, préparation, emballage, coûts variables | PARTIEL | analyses/fin_00_base_financiere.md | forfaits 6,5 + 8,0, factures Poste manquantes |
 | 4.8 | Retours, échanges, incidents, remplacement vendeur, gestes, SAV | PARTIEL | analyses/cx_02 | boîte SAV inaccessible |
