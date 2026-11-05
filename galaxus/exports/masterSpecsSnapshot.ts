@@ -21,6 +21,7 @@ import {
   buildSpecsRowsFromCandidates,
 } from "@/galaxus/exports/masterSpecsFeed";
 import { loadStxFeedGateProviderKeys } from "@/galaxus/exports/stxFeedGate";
+import { withTransientDbRetry } from "@/galaxus/exports/transientDbRetry";
 import { loadWelCardOmitProviderKeys } from "@/galaxus/exports/welFeedOmit";
 import { skipGalaxusFeedValidationForTrigger } from "@/galaxus/feedExecutor";
 import { attachAvailableStock } from "@/inventory/availableStock";
@@ -142,7 +143,10 @@ async function insertMasterSnapshotRows(
       })
       .filter((v): v is NonNullable<typeof v> => v !== null);
     if (data.length === 0) continue;
-    await prismaAny.galaxusFeedMasterSnapshot.createMany({ data, skipDuplicates: true });
+    // skipDuplicates => safe to retry a chunk after a dropped connection.
+    await withTransientDbRetry("insert-master-snapshot-chunk", () =>
+      prismaAny.galaxusFeedMasterSnapshot.createMany({ data, skipDuplicates: true })
+    );
     inserted += data.length;
   }
   return inserted;
@@ -174,7 +178,9 @@ async function insertSpecsSnapshotRows(
       })
       .filter((v): v is NonNullable<typeof v> => v !== null);
     if (data.length === 0) continue;
-    await prismaAny.galaxusFeedSpecsSnapshot.createMany({ data, skipDuplicates: true });
+    await withTransientDbRetry("insert-specs-snapshot-chunk", () =>
+      prismaAny.galaxusFeedSpecsSnapshot.createMany({ data, skipDuplicates: true })
+    );
     inserted += data.length;
   }
   return inserted;
@@ -211,7 +217,9 @@ export async function rebuildMasterSpecsSnapshot(params?: {
   });
 
   const welPokemonKeys = await loadWelCardOmitProviderKeys();
-  const stxGateKeys = await loadStxFeedGateProviderKeys();
+  const stxGateKeys = await withTransientDbRetry("stx-feed-gate-keys", () =>
+    loadStxFeedGateProviderKeys()
+  );
   const blocked = new Set<string>([
     ...Array.from(welPokemonKeys),
     ...Array.from(stxGateKeys),
@@ -274,15 +282,19 @@ export async function rebuildMasterSpecsSnapshot(params?: {
 
     await hydrateExportCandidateKickdbRawJson(masterCandidates, specsCandidates);
 
-    const stockBySupplierVariantId = await attachAvailableStock(
-      masterCandidates.map((candidate) => candidate.variant).filter(Boolean)
+    const stockBySupplierVariantId = await withTransientDbRetry("attach-available-stock", () =>
+      attachAvailableStock(
+        masterCandidates.map((candidate) => candidate.variant).filter(Boolean)
+      )
     );
     let physicalByGtin: PhysicalStockMap = new Map();
     if (mergePhysical) {
       const gtins = masterCandidates
         .map((candidate) => String(candidate?.mapping?.gtin ?? candidate.gtin ?? "").trim())
         .filter((g) => g.length > 0);
-      physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
+      physicalByGtin = await withTransientDbRetry("physical-mirror-stock", () =>
+        loadPhysicalMirrorStockByGtin(gtins)
+      );
     }
 
     let masterRows = buildMasterRowsFromCandidates(
@@ -386,7 +398,8 @@ export async function rebuildMasterSpecsSnapshot(params?: {
   }
 
   const finishedAt = new Date();
-  await prismaAny.galaxusFeedSnapshotMeta.upsert({
+  await withTransientDbRetry("master-specs-meta-publish", () =>
+    prismaAny.galaxusFeedSnapshotMeta.upsert({
     where: { id: SNAPSHOT_META_ID },
     create: {
       id: SNAPSHOT_META_ID,
@@ -407,7 +420,8 @@ export async function rebuildMasterSpecsSnapshot(params?: {
       specsRebuiltAt: finishedAt,
       updatedAt: finishedAt,
     },
-  });
+    })
+  );
 
   logHeap("rebuilt-done", { masterRowCount, specsRowCount });
   console.info("[GALAXUS][FEED][SNAPSHOT][MASTER_SPECS] rebuilt", {

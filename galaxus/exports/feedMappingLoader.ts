@@ -1,4 +1,5 @@
 import { prismaDirect } from "@/app/lib/prisma";
+import { withTransientDbRetry } from "@/galaxus/exports/transientDbRetry";
 import { buildFeedMappingsWhere } from "@/galaxus/exports/trmExport";
 import {
   accumulateBestCandidates,
@@ -436,12 +437,14 @@ export async function scanSlimMasterSpecsWinners(params: {
           }
         : baseWhere;
 
-    const mappings = await prismaAny.variantMapping.findMany({
-      where: whereClause,
-      select: FEED_MAPPING_SLIM_SELECT,
-      orderBy: [{ id: "desc" }],
-      take: pageSize,
-    });
+    const mappings: any[] = await withTransientDbRetry("slim-scan-page", () =>
+      prismaAny.variantMapping.findMany({
+        where: whereClause,
+        select: FEED_MAPPING_SLIM_SELECT,
+        orderBy: [{ id: "desc" }],
+        take: pageSize,
+      })
+    );
 
     lastBatch = mappings.length;
     pages += 1;
@@ -490,10 +493,12 @@ export async function scanSlimMasterSpecsWinners(params: {
 export async function loadMappingsByIdsForExport(mappingIds: string[]): Promise<any[]> {
   if (mappingIds.length === 0) return [];
   const prismaAny = prismaDirect as any;
-  return prismaAny.variantMapping.findMany({
-    where: { id: { in: mappingIds } },
-    include: FEED_MAPPING_INCLUDE,
-  });
+  return withTransientDbRetry("load-mappings-by-ids", () =>
+    prismaAny.variantMapping.findMany({
+      where: { id: { in: mappingIds } },
+      include: FEED_MAPPING_INCLUDE,
+    })
+  );
 }
 
 const RAW_JSON_HYDRATE_CHUNK = 2000;
@@ -523,10 +528,12 @@ export async function hydrateExportCandidateKickdbRawJson(
   for (let offset = 0; offset < productIds.length; offset += RAW_JSON_HYDRATE_CHUNK) {
     const chunk = productIds.slice(offset, offset + RAW_JSON_HYDRATE_CHUNK);
     chunks += 1;
-    const rows = await prismaAny.kickDBProduct.findMany({
-      where: { id: { in: chunk } },
-      select: { id: true, rawJson: true },
-    });
+    const rows: Array<{ id?: string; rawJson?: unknown }> = await withTransientDbRetry("hydrate-kickdb-rawjson", () =>
+      prismaAny.kickDBProduct.findMany({
+        where: { id: { in: chunk } },
+        select: { id: true, rawJson: true },
+      })
+    );
     for (const row of rows ?? []) {
       const id = String(row?.id ?? "").trim();
       if (!id) continue;

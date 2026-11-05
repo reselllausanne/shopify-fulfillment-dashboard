@@ -6,6 +6,7 @@
  * and again in `runFeedUpload` so a stale snapshot cannot reintroduce rows.
  */
 import { prisma } from "@/app/lib/prisma";
+import { withTransientDbRetry } from "@/galaxus/exports/transientDbRetry";
 
 const POKEMON_RE = /pok[eé]mon/;
 
@@ -39,16 +40,24 @@ export function shouldOmitWelPokemonFromGalaxusFeed(input: {
 }
 
 export async function loadWelCardOmitProviderKeys(): Promise<Set<string>> {
-  const rows = await prisma.$queryRawUnsafe<
-    Array<{ providerKey: string | null; supplierProductName: string | null; supplierBrand: string | null }>
-  >(
-    `SELECT "providerKey", "supplierProductName", "supplierBrand"
-     FROM "SupplierVariant"
-     WHERE "providerKey" ILIKE 'WEL\\_%'
-       AND (
-         COALESCE("supplierProductName",'') ~* 'pok.?mon'
-         OR COALESCE("supplierBrand",'') ~* 'pok.?mon'
-       )`
+  // Full scan over SupplierVariant (no index serves the ILIKE); under nightly load
+  // the default statement_timeout killed master/specs rebuilds (Nov 4). Scope a
+  // longer timeout to this query only and retry transient failures.
+  const rows = await withTransientDbRetry("wel-card-omit-keys", () =>
+    prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '600s'`);
+      return tx.$queryRawUnsafe<
+        Array<{ providerKey: string | null; supplierProductName: string | null; supplierBrand: string | null }>
+      >(
+        `SELECT "providerKey", "supplierProductName", "supplierBrand"
+         FROM "SupplierVariant"
+         WHERE "providerKey" ILIKE 'WEL\\_%'
+           AND (
+             COALESCE("supplierProductName",'') ~* 'pok.?mon'
+             OR COALESCE("supplierBrand",'') ~* 'pok.?mon'
+           )`
+      );
+    })
   );
   const out = new Set<string>();
   for (const row of rows) {
