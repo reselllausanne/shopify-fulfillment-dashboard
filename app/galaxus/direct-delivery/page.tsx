@@ -10,6 +10,7 @@ import GalaxusExternalBuyPanel, {
   isExternalBuyLine,
 } from "@/app/galaxus/_components/GalaxusExternalBuyPanel";
 import { runPurgeGalaxusOrderFromDbUi } from "@/galaxus/_lib/purgeGalaxusOrderClient";
+import { orderMatchesDirectDeliveryTab } from "@/app/galaxus/direct-delivery/orderListTab";
 import {
   orderListCardClass,
   orderListFullyLinked,
@@ -145,6 +146,8 @@ export default function GalaxusDirectDeliveryPage() {
   const [selectedPairs, setSelectedPairs] = useState<Record<string, number>>({});
   const [shipping, setShipping] = useState(false);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
+  const leftTabRef = useRef(leftTab);
+  leftTabRef.current = leftTab;
   const [orderSearch, setOrderSearch] = useState("");
   const [debouncedOrderSearch, setDebouncedOrderSearch] = useState("");
   /** null = no search; array = filtered hits (may be local preview then server). */
@@ -319,17 +322,14 @@ export default function GalaxusDirectDeliveryPage() {
         if (seq !== searchSeq.current) return;
         if (!res.ok || !data.ok) throw new Error(data.error ?? "Search failed");
         const pageItems: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
-        setSearchHits(dedupeById(pageItems));
-        if (pageItems.length === 0) {
-          setSelectedOrderId(null);
-          return;
-        }
-        const firstId = pageItems[0]?.id;
-        if (firstId) {
-          const current = selectedOrderIdRef.current;
-          const stillVisible = current ? pageItems.some((o) => o.id === current) : false;
-          if (!current || !stillVisible) setSelectedOrderId(firstId);
-        }
+        const hits = dedupeById(pageItems);
+        setSearchHits(hits);
+        const visible = hits.filter((order) =>
+          orderMatchesDirectDeliveryTab(order, leftTabRef.current),
+        );
+        const current = selectedOrderIdRef.current;
+        const stillVisible = current ? visible.some((order) => order.id === current) : false;
+        if (!stillVisible) setSelectedOrderId(visible[0]?.id ?? null);
       } catch (err: any) {
         if (seq !== searchSeq.current) return;
         setError(err?.message ?? "Search failed");
@@ -525,17 +525,20 @@ export default function GalaxusDirectDeliveryPage() {
     return [...fresh, ...rest];
   }, [orders, searchHits, newOrderIds]);
 
-  const ordersByTab = useMemo(() => {
-    // Search: show hits across both tabs (fulfilled order must not vanish).
-    if (searchHits !== null) return orderedList;
-    return orderedList.filter((order) => {
-      const state = order.fulfillmentState ?? "to_process";
-      if (leftTab === "fulfilled") return state === "fulfilled";
-      // "shipped" is the fallback when open-line coverage fails. Keep those
-      // visible in À traiter so a tracked-but-unbought order cannot vanish.
-      return state === "to_process" || state === "shipped";
-    });
-  }, [orderedList, leftTab, searchHits]);
+  const ordersByTab = useMemo(
+    () => orderedList.filter((order) => orderMatchesDirectDeliveryTab(order, leftTab)),
+    [orderedList, leftTab],
+  );
+
+  // Search keeps both tabs in memory. Switching À traiter / Fulfilled refilters
+  // without a new request. Move the detail pane onto a row that is actually listed.
+  useEffect(() => {
+    if (searchHits === null) return;
+    const current = selectedOrderIdRef.current;
+    const stillVisible = current != null && ordersByTab.some((order) => order.id === current);
+    if (stillVisible) return;
+    setSelectedOrderId(ordersByTab[0]?.id ?? null);
+  }, [searchHits, ordersByTab]);
 
   const runBulkStockxSyncVisible = async () => {
     const targets = ordersByTab;
@@ -1118,7 +1121,13 @@ export default function GalaxusDirectDeliveryPage() {
                   ? "0 matches"
                   : `${ordersByTab.length} match${ordersByTab.length === 1 ? "" : "es"}${
                       searchLoading ? "…" : ""
-                    } (all tabs)`}
+                    } · ${leftTab === "fulfilled" ? "Fulfilled" : "À traiter"}${
+                      searchHits && searchHits.length > ordersByTab.length
+                        ? ` · ${searchHits.length - ordersByTab.length} on ${
+                            leftTab === "fulfilled" ? "À traiter" : "Fulfilled"
+                          }`
+                        : ""
+                    }`}
             </div>
           ) : null}
           <div className="mb-2 grid grid-cols-2 gap-1 text-xs">
@@ -1194,7 +1203,13 @@ export default function GalaxusDirectDeliveryPage() {
             })}
             {ordersByTab.length === 0 && !loadingOrders && !searchLoading ? (
               <div className="text-xs text-gray-500">
-                {searchHits !== null ? "No matching orders." : "No orders in this tab."}
+                {searchHits !== null
+                  ? searchHits.length > 0
+                    ? `No matches in this tab. ${searchHits.length} on ${
+                        leftTab === "fulfilled" ? "À traiter" : "Fulfilled"
+                      }.`
+                    : "No matching orders."
+                  : "No orders in this tab."}
               </div>
             ) : null}
             {loadingMoreOrders ? (
