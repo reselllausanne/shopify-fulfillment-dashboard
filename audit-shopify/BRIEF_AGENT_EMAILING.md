@@ -1,6 +1,6 @@
 # Brief pour l'agent : emailing automatique parfait (Resell Lausanne)
 
-Mandat : construire, tester et mettre en service (après feu vert écrit) le système complet d'e-mails automatiques de Resell Lausanne : transactionnels, après-achat, réachat, paniers, retours/avoirs, relances. Objectif chiffré : **réduire les annulations et litiges, relever le réachat de 5 % à ≥ 10 % à 90 jours, gagner ≈ +2,5 k/mois sans publicité** (hypothèse à vérifier par groupe témoin). Langue du brief : français. Code, commits, e-mails : selon la langue du client.
+Mandat : construire, tester et mettre en service (après feu vert écrit) le système complet d'e-mails automatiques de Resell Lausanne : transactionnels, après-achat, réachat, paniers, retours/avoirs, relances. Objectif chiffré : **réduire les annulations et litiges, relever le réachat de 5 % à ≥ 10 % à 90 jours, gagner ≈ +2 à 3 k/mois sans publicité** (hypothèse à vérifier par groupe témoin). Langue du brief : français. Code, commits, e-mails : selon la langue du client.
 
 ## 0. Règles non négociables
 1. **Aucun envoi réel sans feu vert écrit du dirigeant.** Tout se construit en brouillon, aperçu, envoi de test à une adresse interne.
@@ -71,8 +71,8 @@ Règles de contenu : une idée par e-mail, objet < 45 caractères, pas de majusc
 
 ## 6. Résultats attendus (ordre de grandeur, hypothèses)
 - Flows 1-4 : moins d'annulations (22,8 k remboursés en 10 mois : 20 % de moins ≈ 4,5 k de ventes conservées ≈ +2 k de marge) et moins de litiges.
-- Flows 6-7 : réachat de 5 % à 10 % à 90 j. sur ≈ 290 nouveaux clients par mois ≈ +14 commandes/mois × 62 CHF ≈ +0,9 k/mois ; avoirs dépensés : jusqu'à 13 k de ventes à marge normale sans publicité.
-- Cible pour tout le système : ≈ +2,5 k/mois de contribution après 3 mois. Inférieur au rendement e-mail de 2025 (3 commandes sur 3 521 envois) : **le gain vient de la qualité du service, pas du volume d'envois**.
+- Flows 6-7 : réachat de 5 % à 10 % à 90 j. sur ≈ 255 nouveaux clients par mois ≈ +13 commandes/mois × 62 CHF ≈ +0,8 k/mois ; avoirs dépensés : jusqu'à 13 k de ventes à marge normale sans publicité.
+- Cible pour tout le système : ≈ +2 à 3 k/mois de contribution après 3 mois. Inférieur au rendement e-mail de 2025 (3 commandes sur 3 521 envois) : **le gain vient de la qualité du service, pas du volume d'envois**.
 
 ## 7. Risques
 Base consentie petite (1 016) ; réponse client insuffisante (le SAV doit suivre) ; données SAV absentes ; délais de livraison qui ne s'améliorent pas : aucun e-mail ne compense un colis en retard. Les flows 1-2 ne fonctionnent que si les dates d'expédition réelles sont fiables.

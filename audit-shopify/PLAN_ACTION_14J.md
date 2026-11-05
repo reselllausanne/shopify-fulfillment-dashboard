@@ -40,3 +40,10 @@ Lever des fonds ; ouvrir l'Europe ; Meta/TikTok ; UGC/contenu payant ; renommer 
 
 ## Ce qui reste incertain et ne bloque pas
 Montants à ± quelques milliers (coûts non appariés, intérêts moratoires, frais de paiement) : sans effet sur ces décisions. Decathlon : écart d'encaissement dû aux retours (D), classé. À surveiller seulement : impôt/AVS (fiduciaire), solde NER réel (relevé d'octobre), solde réel de l'Amex (créditeur 17,2 k, D).
+
+## Croissance Shopify (ajouté le 05.11)
+- Test de prix +3 % : **abandonné** (décision du dirigeant : marge déjà élevée).
+- E-mails : `BRIEF_AGENT_EMAILING.md` (flows transactionnels DE/FR/EN, après-livraison, avoir non utilisé, réachat, panier ; groupe témoin ; aucun envoi sans feu vert).
+- Remboursements 57,8 k : annulations avant expédition 22,8 k (40 %), retours 19,7 k (34 %, dont 84 % en crédit magasin), « sans retour ni annulation » 15,1 k (26 %, nature à documenter commande par commande).
+- Fuites de marge : codes promo (25 % des commandes ; contribution 15,7-19,9 contre 34,7 sans code) ; 40 % des remboursements viennent de retards d'expédition.
+- Pub : ROAS 12,4 (2025) → 3-5 (2026), valeurs brutes envoyées à Google, commande marginale à 42-75 CHF, tROAS modifié 15 fois en 23 jours (`analyses/ads_01`, `ads_02`).
