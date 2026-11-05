@@ -51,8 +51,8 @@ De mai à octobre : +6,7 k de pub, +1,5 k de valeur de conversion déclarée (RO
 
 ## 5. Recommandations (R, décision dirigeant)
 
-1. Geler les nouveaux batchs Explorer (`ADS_EXPLORER_PAUSE_NEW_BATCHES=1`) : coût 0, gain 0.
-2. Remettre les budgets au niveau de mai/juin (Nike ≈ 100, Adidas ≈ 100, vêtements ≈ 70, `all` ≈ 50 CHF/j) avant toute autre action. Gain estimé 2,5 à 5 k/mois (H).
+1. (Révisé, voir §7) Explorer ne nettoie pas ce qui coûte : il ne traite que des produits à 0 impression. Ne pas le geler par principe, mais ne pas attendre de gain de lui.
+2. Remettre les budgets au niveau des semaines où le ROAS était bon (voir §7 : Nike ≈ 150, Adidas ≈ 100, vêtements ≈ 75 CHF/j).
 3. Vérifier l'historique des modifications Google Ads (qui a monté budgets et tROAS le 08-27.08 ; recommandations appliquées automatiquement).
 4. Fixer le tROAS en fonction du seuil réel (≈ 5,4 de rentabilité sur Shopify, plus haut car les valeurs envoyées sont gonflées) ; ne pas descendre sous 5 en valeur déclarée.
 5. Si Explorer est conservé : seuil « découvert » = 1 conversion, pas 3 clics.
@@ -77,3 +77,29 @@ from m left join lateral (select sum(impressions) imps, sum(clicks) clk, sum(cos
 select to_char(date,'YYYY-MM') m, count(distinct shopify_product_id) models, sum(cost_micros)/1e6 cost, sum(conversion_value) val
 from ads_product_daily where date>='2026-05-01' group by 1 order by 1;
 ```
+
+## 7. Compléments et corrections (05.11, suite)
+
+CPC max des batchs (F, `ads_explorer_batches` + code) : 0,20 = défaut `explorerPlan` (marques hors Nike/Adidas/Jordan : Asics, New Balance, Hoka, On, Salomon…) ; 0,45 = lancement manuel du 05-06.09 (Nike, Adidas, Jordan) ; 0,70 = défaut `explorerBrandCycle` (Nike, Adidas, Jordan) depuis le 09.10. Correction : le plafond CPC n'explique pas à lui seul le manque d'impressions. Impressions par modèle sur 10 j : Asics 23, New Balance 17, Hoka 37, On 44 (CPC 0,20) ; Nike 7, Adidas 6, Jordan 5 (CPC 0,70). Les marques fortes sont dans des enchères plus disputées.
+
+Règles de sortie pour les impressions seules (`rules.ts`) : ≥ 50 impressions et 0 clic = exclu 60 j ; < 50 impressions après 10 j = retour en principal.
+
+Dépense par produit, août-octobre 2026 (F, `ads_product_daily`) :
+
+| Segment | Produits | Dépense CHF | Valeur CHF |
+|---|---|---|---|
+| ≥ 1 conversion | 697 | 9 798 | 137 536 |
+| ≥ 20 clics, 0 conversion | 412 | 6 091 | 4 |
+| 5-19 clics, 0 conversion | 3 034 | 10 547 | 6 |
+| 1-4 clics, 0 conversion | 13 367 | 9 861 | 4 |
+| Impressions seules | 29 098 | 3 | 0 |
+
+77 % des conversions (504 sur 655) et 79 % de la valeur viennent de produits qui n'avaient jamais converti avant août (595 produits). Un tri « produits déjà vendeurs » aurait gardé 21 % des ventes. À 1 % de conversion, 20 clics sans vente (0,2 vente attendue) ne prouvent rien sur un produit.
+
+Explorer, résultat de valeur (F) : 2 modèles « convertis » 3,2 CHF pour 526 CHF ; 257 modèles « découverts » 345 CHF pour 299 CHF (ROAS 0,87).
+
+Nike PM Feed Only par semaine (F, `ads_campaign_daily`) : semaine du 17.08 : 1 009 CHF, 30 conversions, ROAS 6,5, conversion 1,16 % ; semaine du 31.08 (budget 100 → 170-190 CHF/j entre le 19 et le 25.08) : 1 822 CHF, 28 conversions, ROAS 3,9, conversion 0,66 %. Adidas : semaine du 10.08 960 CHF, 19 conversions, ROAS 5,4 ; semaine du 31.08 861 CHF, 14 conversions, ROAS 3,5. Les 12 modifications de l'arbre de listing sont mêlées aux hausses de budget : aucune preuve que l'arbre seul cause la baisse. Retirée comme cause.
+
+Produits avec impressions en octobre (39 859) : 8 676 en avaient déjà en mai. Premières impressions : juillet 4 954, août 10 649, septembre 9 437, octobre 5 105 produits (≈ 8,5 k CHF de la dépense d'octobre, ROAS ≈ 3,1).
+
+UGG (Ahrefs, recherches « ugg » en Suisse par mois) : 2025 mai 1 365, oct. 12 821, nov. 20 119, déc. 17 104 ; 2026 mai 6 560, août 7 666, sept. 10 170, oct. 12 728. Saisonnier, pic nov.-déc.
