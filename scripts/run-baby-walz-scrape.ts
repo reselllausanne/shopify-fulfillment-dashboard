@@ -26,4 +26,7 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect().catch(() => undefined);
+    // Background image sync / feed re-push may still run; a leaked handle must not keep the
+    // detached container alive (weekly cron skips while it exists).
+    setTimeout(() => process.exit(process.exitCode ?? 0), 30 * 60_000).unref();
   });

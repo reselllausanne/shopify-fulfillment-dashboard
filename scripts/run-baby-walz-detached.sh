@@ -14,6 +14,10 @@ if docker ps --format '{{.Names}}' | grep -qx resell-bwz-scrape; then
   exit 0
 fi
 docker rm -f resell-bwz-scrape 2>/dev/null || true
+for _ in $(seq 1 30); do
+  docker ps -a --format '{{.Names}}' | grep -qx resell-bwz-scrape || break
+  sleep 2
+done
 
 echo "[$(date -Is)] starting detached bwz scrape -> $LOG" | tee -a "$LOG"
 nohup docker compose run --name resell-bwz-scrape --rm \
