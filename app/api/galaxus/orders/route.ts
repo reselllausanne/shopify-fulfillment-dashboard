@@ -14,6 +14,7 @@ import {
   buildOrderListSearchOrClauses,
   shouldResolveCatalogSku,
 } from "@/galaxus/orders/orderListSearch";
+import { listOpenDirectDeliveryOrderIds } from "@/galaxus/orders/openDirectDeliveryIds";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,6 +41,7 @@ export async function GET(request: Request) {
     const q = String(searchParams.get("q") ?? "").trim();
     const warehouseOpen = searchParams.get("warehouseOpen") === "1";
     const supplierScope = String(searchParams.get("supplierScope") ?? "").trim().toLowerCase();
+    const bucket = String(searchParams.get("bucket") ?? "").trim().toLowerCase();
 
     let baseWhere: Record<string, unknown> = {};
     if (view === "history") {
@@ -70,6 +72,32 @@ export async function GET(request: Request) {
           ],
         },
       };
+    }
+
+    // bucket=open: still-unshipped direct delivery only (one SQL, then this page).
+    // bucket=fulfilled: the rest of active direct delivery. Search (`q`) stays global.
+    let listSkip = offset;
+    let listTotal: number | null = null;
+    let slicedOpen = false;
+    if (bucket === "open" || bucket === "fulfilled") {
+      const openIds = await listOpenDirectDeliveryOrderIds();
+      if (bucket === "open") {
+        listTotal = openIds.length;
+        const pageIds = openIds.slice(offset, offset + limit);
+        slicedOpen = true;
+        if (pageIds.length === 0) {
+          return NextResponse.json({
+            ok: true,
+            items: [],
+            nextOffset: null,
+            total: listTotal,
+          });
+        }
+        (baseWhere as Prisma.GalaxusOrderWhereInput).id = { in: pageIds };
+        listSkip = 0;
+      } else if (openIds.length > 0) {
+        (baseWhere as Prisma.GalaxusOrderWhereInput).id = { notIn: openIds };
+      }
     }
 
     // Catalog style SKU (GOOBAY 23235, MW 3A03GS, Asics 1130) lives on
@@ -117,7 +145,7 @@ export async function GET(request: Request) {
       where,
       orderBy,
       take: limit,
-      skip: offset,
+      skip: listSkip,
       select: {
         id: true,
         galaxusOrderId: true,
@@ -287,9 +315,12 @@ export async function GET(request: Request) {
     // Direct delivery supports partial (per-pair) shipments: an order is only "fulfilled"
     // once every line has shipped. Without this, one DELR flipped the whole order to
     // Fulfilled and the remaining pairs vanished from "À traiter".
-    const directOrderIds = orders
-      .filter((order) => String(order.deliveryType ?? "").toLowerCase() === "direct_delivery")
-      .map((order) => order.id);
+    const directOrderIds =
+      bucket === "open" || bucket === "fulfilled"
+        ? []
+        : orders
+            .filter((order) => String(order.deliveryType ?? "").toLowerCase() === "direct_delivery")
+            .map((order) => order.id);
     let directOpenLineCountByOrderId: Map<string, number> | null = null;
     if (directOrderIds.length > 0) {
       try {
@@ -318,7 +349,12 @@ export async function GET(request: Request) {
           ? (warehouseOpenLineCountByOrderId.get(order.id) ?? 0)
           : null;
       const directOpenLines = isDirect ? directOpenLineCountByOrderId?.get(order.id) ?? null : null;
-      const fulfillmentState = isDirect
+      const fulfillmentState =
+        bucket === "open"
+          ? "to_process"
+          : bucket === "fulfilled"
+            ? "fulfilled"
+            : isDirect
         ? // Direct: fully shipped only when no line has remaining qty. Partial stays
           // "to_process" so the unshipped pairs remain visible/actionable.
           directOpenLines != null
@@ -355,7 +391,14 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ok: true,
       items: dedupeById(items),
-      nextOffset: orders.length === limit ? offset + limit : null,
+      nextOffset: slicedOpen
+        ? listTotal != null && offset + limit < listTotal
+          ? offset + limit
+          : null
+        : orders.length === limit
+          ? offset + limit
+          : null,
+      total: listTotal,
     });
   } catch (error: any) {
     console.error("[GALAXUS][ORDERS] List failed:", error);
