@@ -90,7 +90,7 @@ export async function processShopifyCustomerMailsFromOpsAlerts(
       try {
         mail = await sendCustomerDelayMail({
           orderMatchId: a.refKey,
-          kind: "SUPPLIER_CHANGE_DELAY",
+          kind: a.alertType === "DELAYED" ? "SUPPLIER_CHANGE_DELAY" : "ORDER_CANCELED",
           dryRun,
         });
       } catch (err: any) {

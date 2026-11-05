@@ -163,51 +163,78 @@ export function buildCustomerNarrative(
   const shippingLabel = c.rebuyLane === "EXPRESS" ? chrome.express : chrome.standard;
   const rebuyEtaRange = `${formatMailDate(c.rebuyEtaStart, language)} – ${formatMailDate(c.rebuyEtaEnd, language)}`;
 
-  if (kind === "SUPPLIER_CHANGE_DELAY") {
-    const copy =
-      language === "de"
+  if (kind === "SUPPLIER_CHANGE_DELAY" || kind === "ORDER_CANCELED") {
+    const canceled = kind === "ORDER_CANCELED";
+    const copy = canceled
+      ? language === "de"
         ? {
-            subject: `Bestellung ${c.shopifyOrderName} — Lieferung verzögert`,
-            headline: "Lieferung verzögert",
-            statusLine: "Das geplante Datum gilt nicht mehr.",
+            subject: `Bestellung ${c.shopifyOrderName} — Verkäufer hat nicht verschickt`,
+            headline: "Verkäufer hat nicht verschickt",
+            statusLine: "Wir suchen einen anderen Verkäufer für denselben Artikel.",
+            eta: "Neues Datum folgt",
             body: [
-              "Der Verkäufer hat den Artikel nicht rechtzeitig verschickt. Deine Lieferung verzögert sich.",
-              "Du musst nichts tun. Wir schreiben dir, sobald das neue Datum feststeht.",
+              "Der Verkäufer hat nicht rechtzeitig verschickt. Dieser Kauf ist annulliert.",
+              "Wir suchen einen anderen Verkäufer, gleiches Modell, gleiche Grösse. Finden wir einen, schicken wir das neue Datum. Sonst erstatten wir auf dein Zahlungsmittel.",
             ],
-            next: [
-              "Du musst nichts unternehmen.",
-              "Die nächste E-Mail nennt das neue Lieferdatum.",
-              "Bei Fragen antworte auf diese E-Mail mit deiner Bestellnummer.",
-            ],
+            next: ["Du musst nichts tun.", "Die nächste E-Mail bringt das neue Datum oder die Rückerstattung."],
           }
         : language === "en"
           ? {
-              subject: `Order ${c.shopifyOrderName} — delivery delayed`,
-              headline: "Delivery delayed",
-              statusLine: "The planned date no longer stands.",
+              subject: `Order ${c.shopifyOrderName} — the seller did not ship`,
+              headline: "The seller could not ship",
+              statusLine: "We're looking for another seller for the same item.",
+              eta: "New date to follow",
               body: [
-                "The seller did not ship the item on time. Your delivery is delayed.",
-                "You don't need to do anything. We'll email you once the new date is set.",
+                "The seller did not ship your order in time. That purchase is canceled.",
+                "We're looking for another seller, same item, same size. If we find one, we'll email the new date. If we can't, you get a refund to your original payment method.",
               ],
-              next: [
-                "Nothing to do on your side.",
-                "The next email will give the new delivery date.",
-                "If you have a question, reply to this email with your order number.",
-              ],
+              next: ["You don't need to do anything.", "The next email brings either the new date or the refund."],
             }
           : {
-              subject: `Commande ${c.shopifyOrderName} — livraison retardée`,
-              headline: "Livraison retardée",
-              statusLine: "La date prévue n'est plus valable.",
+              subject: `Commande ${c.shopifyOrderName} — le vendeur n'a pas expédié`,
+              headline: "Le vendeur n'a pas pu expédier",
+              statusLine: "On cherche un autre vendeur pour le même article.",
+              eta: "Nouvelle date à venir",
               body: [
-                "Le vendeur n'a pas expédié l'article dans le délai prévu. Ta livraison prend du retard.",
-                "Tu n'as rien à faire. On t'écrit dès que la nouvelle date est connue.",
+                "Le vendeur n'a pas expédié ta commande dans le délai. Cet achat est annulé.",
+                "On cherche un autre vendeur, même article, même taille. Si on le trouve, on t'écrit avec la nouvelle date. Sinon, tu es remboursé sur ton moyen de paiement.",
               ],
-              next: [
-                "Tu n'as rien à faire.",
-                "Le prochain e-mail donne la nouvelle date de livraison.",
-                "Pour une question, réponds à cet e-mail avec ton numéro de commande.",
+              next: ["Tu n'as rien à faire.", "Le prochain e-mail donne la nouvelle date, ou le remboursement."],
+            }
+      : language === "de"
+        ? {
+            subject: `Bestellung ${c.shopifyOrderName} — dauert länger als geplant`,
+            headline: "Dauert länger als geplant",
+            statusLine: "Der Verkäufer hat deinen Artikel noch nicht verschickt.",
+            eta: "Kann sich ändern",
+            body: [
+              "Deine Bestellung dauert länger als geplant. Wir bleiben dran und schreiben dir, wenn sich das Lieferdatum ändert.",
+              "Du musst gerade nichts tun.",
+            ],
+            next: ["Du musst nichts tun.", "Wir schreiben, wenn sich das Datum ändert."],
+          }
+        : language === "en"
+          ? {
+              subject: `Order ${c.shopifyOrderName} — taking longer than expected`,
+              headline: "Taking longer than expected",
+              statusLine: "The seller has not shipped your item yet.",
+              eta: "May change",
+              body: [
+                "Your order is taking longer than expected. We're on it and we'll email you if the delivery date changes.",
+                "You don't need to do anything right now.",
               ],
+              next: ["You don't need to do anything.", "We'll email you if the date changes."],
+            }
+          : {
+              subject: `Commande ${c.shopifyOrderName} — ça prend plus de temps que prévu`,
+              headline: "Ça prend plus de temps que prévu",
+              statusLine: "Le vendeur n'a pas encore expédié ton article.",
+              eta: "Peut changer",
+              body: [
+                "Ta commande prend plus de temps que prévu. On suit le dossier et on t'écrit si la date de livraison change.",
+                "Tu n'as rien à faire pour l'instant.",
+              ],
+              next: ["Tu n'as rien à faire.", "On t'écrit si la date change."],
             };
     return {
       kind,
@@ -219,9 +246,9 @@ export function buildCustomerNarrative(
       greeting: hello,
       bodyParagraphs: copy.body,
       nextLines: copy.next,
-      activeStepLabel: chrome.steps[1],
+      activeStepLabel: chrome.steps[0],
       etaLabel: chrome.etaLabel,
-      etaLine: chrome.dateToConfirm,
+      etaLine: copy.eta,
       shippingLabel,
     };
   }
