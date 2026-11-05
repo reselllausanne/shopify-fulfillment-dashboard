@@ -40,25 +40,28 @@ export function shouldOmitWelPokemonFromGalaxusFeed(input: {
 }
 
 export async function loadWelCardOmitProviderKeys(): Promise<Set<string>> {
-  // Full scan over SupplierVariant (no index serves the ILIKE); under nightly load
-  // the default statement_timeout killed master/specs rebuilds (Nov 4). Scope a
-  // longer timeout to this query only and retry transient failures.
-  const rows = await withTransientDbRetry("wel-card-omit-keys", () =>
-    prisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '600s'`);
-      return tx.$queryRawUnsafe<
-        Array<{ providerKey: string | null; supplierProductName: string | null; supplierBrand: string | null }>
-      >(
-        `SELECT "providerKey", "supplierProductName", "supplierBrand"
-         FROM "SupplierVariant"
-         WHERE "providerKey" ILIKE 'WEL\\_%'
-           AND (
-             COALESCE("supplierProductName",'') ~* 'pok.?mon'
-             OR COALESCE("supplierBrand",'') ~* 'pok.?mon'
-           )`
-      );
-    })
-  );
+  // Full scan over SupplierVariant (no index serves the ILIKE).
+  // - Under nightly load the default statement_timeout killed master/specs rebuilds (Nov 4).
+  // - Prisma interactive transaction has a 5s default timeout which also killed it (Nov 5).
+  // Fix: use a plain connection with SET statement_timeout via a raw session-level command.
+  // $executeRawUnsafe is session-scoped (not transaction), so the subsequent query inherits it.
+  const rows = await withTransientDbRetry("wel-card-omit-keys", async () => {
+    await prisma.$executeRawUnsafe(`SET statement_timeout = '600s'`);
+    const result = await prisma.$queryRawUnsafe<
+      Array<{ providerKey: string | null; supplierProductName: string | null; supplierBrand: string | null }>
+    >(
+      `SELECT "providerKey", "supplierProductName", "supplierBrand"
+       FROM "SupplierVariant"
+       WHERE "providerKey" ILIKE 'WEL\\_%'
+         AND (
+           COALESCE("supplierProductName",'') ~* 'pok.?mon'
+           OR COALESCE("supplierBrand",'') ~* 'pok.?mon'
+         )`
+    );
+    // Reset timeout so the connection is clean when returned to the pool.
+    await prisma.$executeRawUnsafe(`RESET statement_timeout`).catch(() => {});
+    return result;
+  });
   const out = new Set<string>();
   for (const row of rows) {
     const key = String(row.providerKey ?? "").trim();
