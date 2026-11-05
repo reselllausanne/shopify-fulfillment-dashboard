@@ -204,7 +204,7 @@ export function findGalaxusAssortmentException(
 
 const GATE_LABEL: Record<GalaxusGateId, string> = {
   fashion_only: "fashion-only (non-Mode blocked)",
-  supplier_disabled: "supplier disabled (BWZ default off)",
+  supplier_disabled: "supplier disabled (BWZ, REI, EXL default off)",
   price_cap_300: "absolute price cap (GALAXUS_MAX_RETAIL_CHF, default 300)",
   category_block: "category cleanup blocklist (galaxusCategoryBlocklist.json)",
 };

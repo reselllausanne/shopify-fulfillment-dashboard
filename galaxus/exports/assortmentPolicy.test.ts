@@ -161,6 +161,17 @@ describe("galaxusAssortmentBlockReason", () => {
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
   });
 
+  it("delists every Ex Libris row by default", () => {
+    delete process.env.GALAXUS_DISABLED_SUPPLIERS;
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "EXL_1", title: "Krimi Taschenbuch", brand: "Diogenes" })
+    ).toBe("supplier_disabled");
+    expect(
+      galaxusAssortmentBlockReason({ supplierVariantId: "exl_7612345678901", title: "Brettspiel" })
+    ).toBe("supplier_disabled");
+    expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
+  });
+
   it("delists every REI row by default except the Jetson", () => {
     delete process.env.GALAXUS_DISABLED_SUPPLIERS;
     delete process.env.GALAXUS_REI_ALLOWLIST;

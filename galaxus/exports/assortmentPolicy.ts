@@ -528,7 +528,8 @@ function isShoeCapInScope(input: GalaxusAssortmentInput): boolean {
 export function galaxusDisabledSuppliers(): Set<string> {
   const raw = process.env.GALAXUS_DISABLED_SUPPLIERS;
   // rei: whole catalog off (2026-11-02). Jetson Orin Nano stays via assortment exception.
-  const list = raw === undefined ? "bwz,rei" : raw;
+  // exl: Ex Libris off (2026-11-05). Stock feed emits 0 for keys already live.
+  const list = raw === undefined ? "bwz,rei,exl" : raw;
   return new Set(
     list
       .split(",")
