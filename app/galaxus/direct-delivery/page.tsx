@@ -123,15 +123,22 @@ export default function GalaxusDirectDeliveryPage() {
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [loadingMoreOrders, setLoadingMoreOrders] = useState(false);
+  const [listTotal, setListTotal] = useState<number | null>(null);
   const [loadingOrder, setLoadingOrder] = useState(false);
   const [opsLog, setOpsLog] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
   const knownOrderIds = useRef<Set<string>>(readKnownOrderIds());
-  const ordersListCacheRef = useRef<{ at: number; items: OrderListItem[] } | null>(null);
+  const ordersListCacheRef = useRef<{
+    at: number;
+    bucket: "open" | "fulfilled";
+    items: OrderListItem[];
+    total: number | null;
+  } | null>(null);
   const orderDetailCacheRef = useRef<Map<string, { at: number; order: any }>>(new Map());
   const selectedOrderIdRef = useRef<string | null>(null);
   const ordersLoadInFlightRef = useRef(false);
+  const listBucketRef = useRef<"open" | "fulfilled">("open");
   const detailLoadSeq = useRef(0);
   const ordersLoadSeq = useRef(0);
   const searchSeq = useRef(0);
@@ -174,18 +181,32 @@ export default function GalaxusDirectDeliveryPage() {
     force?: boolean;
     /** Background poll — never abort an in-flight multi-page load. */
     soft?: boolean;
+    bucket?: "open" | "fulfilled";
   }) => {
-    // Soft refresh used force:true every 30s and bumped ordersLoadSeq, which
-    // killed pages 2+ mid-flight. UI then stuck on newest 500 (~Oct 5 cutoff)
-    // while older open orders (Aug+) never appeared in À traiter.
+    // À traiter = still-unshipped only (server bucket=open). Fulfilled is a
+    // separate short page. Loading every active order hid the older open ones
+    // and made the list slow.
+    const bucket: "open" | "fulfilled" =
+      opts?.bucket ?? (leftTabRef.current === "fulfilled" ? "fulfilled" : "open");
     if (opts?.soft && ordersLoadInFlightRef.current) return;
 
     const force = Boolean(opts?.force) && !opts?.soft;
 
+    if (listBucketRef.current !== bucket) {
+      setOrders([]);
+      listBucketRef.current = bucket;
+    }
+
     const cached = ordersListCacheRef.current;
-    if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
+    if (
+      !force &&
+      cached &&
+      cached.bucket === bucket &&
+      Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS
+    ) {
       const items = dedupeById(cached.items);
       setOrders(items);
+      setListTotal(cached.total);
       const current = selectedOrderIdRef.current;
       if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
         setSelectedOrderId(items[0].id);
@@ -195,21 +216,17 @@ export default function GalaxusDirectDeliveryPage() {
       return;
     }
 
-    // Bump seq only when starting a real network load (not soft cache / soft skip).
     const seq = ++ordersLoadSeq.current;
     ordersLoadInFlightRef.current = true;
     setLoadingOrders(true);
     setLoadingMoreOrders(false);
     setError(null);
     try {
-      // Active direct-delivery set is >500 (2042 on 2026-10-27). A single page
-      // hid everything older than ~5 Oct, including unlinked/unbought orders.
-      // Server sort is orderDate desc + id desc, so OFFSET pages stay unique.
-      // dedupeById still guards a row that shifts while pages are in flight.
-      const PAGE_SIZE = 500;
-      const MAX_PAGES = 20;
+      const PAGE_SIZE = bucket === "fulfilled" ? 100 : 250;
+      const MAX_PAGES = 8;
       const collected: OrderListItem[] = [];
       let offset = 0;
+      let total: number | null = null;
       const prevKnown = knownOrderIds.current;
       for (let page = 0; page < MAX_PAGES; page += 1) {
         if (page > 0) setLoadingMoreOrders(true);
@@ -221,6 +238,7 @@ export default function GalaxusDirectDeliveryPage() {
           deliveryType: "direct_delivery",
           includeInvoice: "0",
           includeWarehouse: "0",
+          bucket,
         });
         const res = await fetch(`/api/galaxus/orders?${params.toString()}`, {
           cache: "no-store",
@@ -228,6 +246,10 @@ export default function GalaxusDirectDeliveryPage() {
         const data = await res.json();
         if (seq !== ordersLoadSeq.current) return;
         if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
+        if (typeof data.total === "number") {
+          total = data.total;
+          setListTotal(data.total);
+        }
         const pageItems: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
         collected.push(...pageItems);
         const items = dedupeById(collected);
@@ -238,8 +260,6 @@ export default function GalaxusDirectDeliveryPage() {
           if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
             setSelectedOrderId(items[0].id);
           }
-          // Only the newest page can be "just arrived". Older pages are the
-          // backlog the 500 cap used to drop — not new orders.
           const fresh = new Set<string>();
           for (const item of pageItems) {
             if (!prevKnown.has(item.id)) fresh.add(item.id);
@@ -265,7 +285,7 @@ export default function GalaxusDirectDeliveryPage() {
       const nextKnown = new Set([...prevKnown, ...items.map((item) => item.id)]);
       knownOrderIds.current = nextKnown;
       writeKnownOrderIds(nextKnown);
-      ordersListCacheRef.current = { at: Date.now(), items };
+      ordersListCacheRef.current = { at: Date.now(), bucket, items, total };
     } catch (err: any) {
       if (seq !== ordersLoadSeq.current) return;
       setError(err.message);
@@ -410,8 +430,11 @@ export default function GalaxusDirectDeliveryPage() {
   };
 
   useEffect(() => {
-    void loadOrders({ selectFirstIfEmpty: true });
-  }, [loadOrders]);
+    void loadOrders({
+      selectFirstIfEmpty: true,
+      bucket: leftTab === "fulfilled" ? "fulfilled" : "open",
+    });
+  }, [loadOrders, leftTab]);
 
   const softRefreshLinked = useCallback(async () => {
     // soft: respects cache + never aborts multi-page backlog load.
@@ -1154,6 +1177,14 @@ export default function GalaxusDirectDeliveryPage() {
               Fulfilled
             </button>
           </div>
+          {debouncedOrderSearch.trim().length < 2 ? (
+            <div className="text-[11px] text-gray-500 mb-2">
+              {leftTab === "fulfilled"
+                ? `${ordersByTab.length} fulfilled`
+                : `${listTotal ?? ordersByTab.length} open`}
+              {loadingMoreOrders ? " · loading older…" : ""}
+            </div>
+          ) : null}
           <div className="space-y-2 max-h-[70vh] overflow-auto">
             {ordersByTab.map((order) => {
               const selected = selectedOrderId === order.id;
