@@ -108,12 +108,12 @@ export const GALAXUS_BUYER_VAT_ID = "CHE-109.049.266 MWST";
 export const GALAXUS_SSCC_RECIPIENT_NAME =
   process.env.GALAXUS_SSCC_RECIPIENT_NAME ?? "Digitec Galaxus AG";
 export const GALAXUS_SSCC_RECIPIENT_LINE2 =
-  process.env.GALAXUS_SSCC_RECIPIENT_LINE2 ?? "Receiving Wohlen";
+  process.env.GALAXUS_SSCC_RECIPIENT_LINE2 ?? "c/o Fiege Logistik Schweiz AG";
 export const GALAXUS_SSCC_RECIPIENT_STREET =
-  process.env.GALAXUS_SSCC_RECIPIENT_STREET ?? "Ferroring 23";
+  process.env.GALAXUS_SSCC_RECIPIENT_STREET ?? "Schützenmattstrasse 133/137";
 export const GALAXUS_SSCC_RECIPIENT_POSTAL_CODE =
-  process.env.GALAXUS_SSCC_RECIPIENT_POSTAL_CODE ?? "CH-5612";
+  process.env.GALAXUS_SSCC_RECIPIENT_POSTAL_CODE ?? "CH-8180";
 export const GALAXUS_SSCC_RECIPIENT_CITY =
-  process.env.GALAXUS_SSCC_RECIPIENT_CITY ?? "Villmergen";
+  process.env.GALAXUS_SSCC_RECIPIENT_CITY ?? "Bülach";
 export const GALAXUS_SSCC_RECIPIENT_COUNTRY =
   process.env.GALAXUS_SSCC_RECIPIENT_COUNTRY ?? "Schweiz";
