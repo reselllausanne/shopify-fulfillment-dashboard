@@ -110,7 +110,7 @@ Types de campagne (F, `ads_campaign_daily`) : Nike, Adidas, Jordan, `all`, vête
 
 Part d'impressions, 02.08 → 01.11 (F, `ads_06_is.csv`, API Google Ads) : part d'impressions de recherche Nike 79 %, Adidas 83 %, Jordan 79 %, `all` 85 %. Part perdue pour budget : 0 %. Part perdue pour classement : 17-21 %. UGG : part 10 %, perdue pour classement 85 %. Vêtements : part 16 %, perdue pour classement 81 %. Conclusion (F) : le budget ne limite pas Nike/Adidas/Jordan ; monter le budget n'ajoute pas d'impressions disponibles.
 
-Réseaux (F, `ads_06_network.csv`) : 98 % de la dépense PMax est en Search (SEARCH 97,9 %) ; Display, YouTube, Discover, Gmail ≈ 1,6 %. Requêtes (F, `ads_06_terms_brand_summary.csv`) : 372 110 requêtes distinctes ; recherche de marque « resell » 4 % de la dépense (ROAS 17,3) ; hors marque 96 % (ROAS 3,6). Par thème hors marque : Nike 3,9 ; Adidas 3,3 ; Asics 1,7 ; UGG 1,2 ; Supreme/Essentials 2,9 ; sneakers génériques 4,8 ; « prix/achat » 5,6.
+Réseaux (F, `ads_06_network.csv`) : 98 % de la dépense PMax est en Search (SEARCH 97,9 %) ; Display, YouTube, Discover, Gmail, partenaires ≈ 2,1 %. Requêtes (F, `ads_06_terms_brand_summary.csv`) : 372 110 requêtes distinctes ; recherche de marque « resell » 4 % de la dépense (ROAS 17,3) ; hors marque 96 % (ROAS 3,6). Par thème hors marque : Nike 3,9 ; Adidas 3,3 ; Asics 1,7 ; UGG 1,2 ; Supreme/Essentials 2,9 ; sneakers génériques 4,8 ; « prix/achat » 5,6.
 
 Produits sans vente par seuil de dépense, août-octobre (F, `ads_product_daily`) :
 
