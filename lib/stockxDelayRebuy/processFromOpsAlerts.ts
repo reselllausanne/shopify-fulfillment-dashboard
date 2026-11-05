@@ -40,8 +40,8 @@ export type ProcessFromOpsAlertsResult = {
 
 /**
  * After opsAlerts finds FRESH Shopify DELAYED / CANCELLED rows:
- * - DELAYED → customer delay mail (deduped StockXStatusEvent)
- * - CANCELLED → optional auto-rebuy; cancel-rebuy mail fires on successful relink
+ * - DELAYED / CANCELLED / REFUNDED → customer delay warning immediately (no new purchase claimed)
+ * - CANCELLED → optional auto-rebuy; the "item replaced" mail fires only after a new buy is linked
  *
  * Only fresh alerts (not already in StockxOrderAlert) — no backlog flood.
  * Gated by STOCKX_CUSTOMER_DELAY_MAIL.
@@ -71,7 +71,9 @@ export async function processShopifyCustomerMailsFromOpsAlerts(
   const shopifyFresh = fresh.filter(
     (a) =>
       a.scope === "shopify" &&
-      (a.alertType === "DELAYED" || a.alertType === "CANCELLED")
+      (a.alertType === "DELAYED" ||
+        a.alertType === "CANCELLED" ||
+        a.alertType === "REFUNDED")
   );
 
   for (const a of shopifyFresh) {
@@ -79,8 +81,12 @@ export async function processShopifyCustomerMailsFromOpsAlerts(
     out.processed += 1;
     const orderRef = a.orderRef ?? null;
 
-    if (a.alertType === "DELAYED") {
-      let mail: SendCustomerDelayResult;
+    if (
+      a.alertType === "DELAYED" ||
+      a.alertType === "CANCELLED" ||
+      a.alertType === "REFUNDED"
+    ) {
+      let mail: SendCustomerDelayResult | undefined;
       try {
         mail = await sendCustomerDelayMail({
           orderMatchId: a.refKey,
@@ -96,23 +102,25 @@ export async function processShopifyCustomerMailsFromOpsAlerts(
           ok: false,
           reason: String(err?.message ?? err).slice(0, 200),
         });
-        continue;
+        if (a.alertType !== "CANCELLED") continue;
       }
-      if (mail.sent) out.delaySent += 1;
-      else out.delaySkipped += 1;
-      if (!mail.ok) out.errors += 1;
-      out.details.push({
-        alertType: a.alertType,
-        orderRef,
-        action: "delay_mail",
-        ok: mail.ok,
-        reason: mail.reason || (mail.sent ? "sent" : mail.error),
-        to: mail.to,
-      });
-      continue;
+      if (mail) {
+        if (mail.sent) out.delaySent += 1;
+        else out.delaySkipped += 1;
+        if (!mail.ok) out.errors += 1;
+        out.details.push({
+          alertType: a.alertType,
+          orderRef,
+          action: "delay_mail",
+          ok: mail.ok,
+          reason: mail.reason || (mail.sent ? "sent" : mail.error),
+          to: mail.to,
+        });
+      }
+      if (a.alertType !== "CANCELLED") continue;
     }
 
-    // CANCELLED → auto-rebuy (flag) ; customer mail on relink via linkAfterBuy
+    // CANCELLED → optional auto-rebuy. Replacement mail only after the new buy is linked.
     out.cancelRebuyAttempted += 1;
     let rebuy: AttemptCancelRebuyResult;
     try {

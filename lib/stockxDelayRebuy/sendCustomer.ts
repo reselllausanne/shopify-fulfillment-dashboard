@@ -1,5 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { getMailer } from "@/app/lib/mailer";
+import { mailLanguageFromLocale } from "@/app/lib/mailer/language";
+import { fetchShopifyCustomerLocale } from "@/app/lib/mailer/orderLocale";
 import { buildDelayRebuyCase } from "@/lib/stockxDelayRebuy/buildCase";
 import {
   buildClientPreviewHtml,
@@ -62,7 +64,12 @@ export async function sendCustomerDelayMail(
 ): Promise<SendCustomerDelayResult> {
   const milestoneKey = CUSTOMER_DELAY_MILESTONE_KEYS[opts.kind];
   const c = await buildDelayRebuyCase(opts.orderMatchId);
-  const narrative = buildCustomerNarrative(c, opts.kind);
+  const locale = await fetchShopifyCustomerLocale(c.shopifyOrderId);
+  const narrative = buildCustomerNarrative(
+    c,
+    opts.kind,
+    mailLanguageFromLocale(locale) ?? "fr"
+  );
 
   const event = await prisma.stockXStatusEvent.upsert({
     where: {
@@ -151,7 +158,7 @@ export async function sendCustomerDelayMail(
     subject,
     textBody: text,
     htmlBody: html,
-    ignoreOverride: Boolean(override) || testMode,
+    ignoreOverride: true,
   });
 
   if (process.env.STOCKX_DELAY_MAIL_LOG_TEXT === "1") {

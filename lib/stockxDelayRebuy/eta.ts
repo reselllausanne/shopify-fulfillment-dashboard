@@ -25,7 +25,12 @@ export function rebuyEtaWindow(
 }
 
 export function formatFrDate(d: Date): string {
-  return d.toLocaleDateString("fr-CH", {
+  return formatMailDate(d, "fr");
+}
+
+export function formatMailDate(d: Date, language: "fr" | "en" | "de" = "fr"): string {
+  const locale = language === "de" ? "de-CH" : language === "en" ? "en-CH" : "fr-CH";
+  return d.toLocaleDateString(locale, {
     day: "numeric",
     month: "long",
     year: "numeric",
