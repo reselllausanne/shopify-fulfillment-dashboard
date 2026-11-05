@@ -47,17 +47,26 @@ function baseCase(over: Partial<DelayRebuyCase> = {}): DelayRebuyCase {
 }
 
 describe("buildCustomerNarrative", () => {
-  it("delay mentions apology + ETA, never StockX", () => {
+  it("delay warns without claiming a new purchase or a fake ETA", () => {
     const n = buildCustomerNarrative(baseCase(), "SUPPLIER_CHANGE_DELAY");
     expect(n.subject).toContain("#9999");
     expect(n.greeting).toBe("Bonjour Alex,");
+    expect(n.headline).toBe("Livraison retardée");
+    expect(n.etaLine).toBe("Date à confirmer");
     expect(n.statusLine.length).toBeLessThan(80);
-    expect(n.statusLine).not.toMatch(/Désolé/i);
-    expect(n.bodyParagraphs.join(" ")).toMatch(/désolés/i);
+    expect(n.bodyParagraphs.join(" ")).toMatch(/retard/i);
     expect(n.bodyParagraphs.join(" ").toLowerCase()).not.toContain("stockx");
-    expect(n.headline.toLowerCase()).not.toContain("stockx");
-    expect(n.etaLine.length).toBeGreaterThan(5);
+    expect(n.bodyParagraphs.join(" ")).not.toMatch(/autre vendeur|passé la commande|commandé/i);
     expect(n.shippingLabel).toBe("Standard");
+  });
+
+  it("german delay mail uses the checkout language", () => {
+    const n = buildCustomerNarrative(baseCase(), "SUPPLIER_CHANGE_DELAY", "de");
+    expect(n.language).toBe("de");
+    expect(n.headline).toBe("Lieferung verzögert");
+    expect(n.greeting).toBe("Hallo Alex,");
+    expect(n.bodyParagraphs.join(" ").toLowerCase()).not.toContain("stockx");
+    expect(n.chrome.faqUrl).toContain("/de/pages/faq");
   });
 
   it("cancel-rebuy uses rebuy ETA window", () => {
@@ -85,9 +94,9 @@ describe("delay mail HTML placement", () => {
     const n = buildCustomerNarrative(c, "SUPPLIER_CHANGE_DELAY");
     const html = buildClientPreviewHtml(c, n);
     const greetingAt = html.indexOf("Bonjour Alex,");
-    const etaAt = html.indexOf("Arrivée estimée");
+    const etaAt = html.indexOf("Livraison");
     const imgAt = html.indexOf('width="200"');
-    const bodyAt = html.indexOf("Nous sommes désolés");
+    const bodyAt = html.indexOf("prend du retard");
     expect(greetingAt).toBeGreaterThan(0);
     expect(etaAt).toBeGreaterThan(greetingAt);
     expect(imgAt).toBeGreaterThan(etaAt);

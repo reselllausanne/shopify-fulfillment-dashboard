@@ -15,13 +15,6 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-const STEPS = [
-  "Commande confirmée",
-  "Authentification en cours",
-  "Préparation expédition",
-  "Expédiée via La Poste",
-];
-
 const STEP_ICONS = [
   "https://stockx-assets.imgix.net/emails/transactional/buyer-icons/b051ordered-icon2.png?dpr=2&w=100&fill=solid&fill-color=COLOR&fit=fill&border=1%2CCOLOR&border-radius=50%2C50%2C50%2C50&border-radius-inner=50%2C50%2C50%2C50",
   "https://stockx-assets.imgix.net/emails/transactional/buyer-icons/b052shippedToStockX-icon2.png?dpr=2&w=100&fill=solid&fill-color=COLOR&fit=fill&border=1%2CCOLOR&border-radius=50%2C50%2C50%2C50&border-radius-inner=50%2C50%2C50%2C50",
@@ -29,8 +22,8 @@ const STEP_ICONS = [
   "https://stockx-assets.imgix.net/emails/transactional/buyer-icons/b053shippedToBuyer3.png?dpr=2&w=100&fill=solid&fill-color=COLOR&fit=fill&border=1%2CCOLOR&border-radius=50%2C50%2C50%2C50&border-radius-inner=50%2C50%2C50%2C50",
 ];
 
-export function activeStepIndexFromLabel(label: string): 1 | 2 | 3 | 4 {
-  const idx = STEPS.indexOf(label);
+export function activeStepIndexFromLabel(label: string, steps: readonly string[] = []): 1 | 2 | 3 | 4 {
+  const idx = steps.indexOf(label);
   if (idx < 0) return 1;
   return (idx + 1) as 1 | 2 | 3 | 4;
 }
@@ -61,7 +54,8 @@ export function buildClientPreviewHtml(
   c: DelayRebuyCase,
   narrative: CustomerNarrative
 ): string {
-  const activeIdx = activeStepIndexFromLabel(narrative.activeStepLabel);
+  const chrome = narrative.chrome;
+  const activeIdx = activeStepIndexFromLabel(narrative.activeStepLabel, chrome.steps);
   const title = esc(c.productTitle.replace(/\s*[-–]\s*(EU\s*)?\d+(?:[.,]\d+)?$/i, "").trim());
   const imgSrc = (c.imageUrl || "").trim();
   const img = imgSrc
@@ -70,7 +64,7 @@ export function buildClientPreviewHtml(
       </td>`
     : "";
 
-  const steps = STEPS.map((label, i) => {
+  const steps = chrome.steps.map((label, i) => {
     const on = i + 1 === activeIdx;
     const color = on ? "#3ea8f4" : "#a0a0a0";
     const weight = on ? 700 : 400;
@@ -90,11 +84,17 @@ export function buildClientPreviewHtml(
   const year = String(new Date().getFullYear());
   const support = (process.env.SUPPORT_EMAIL || process.env.POSTMARK_FROM_EMAIL || "").trim();
   const helpLine = support
-    ? `<br/>Besoin d'aide ? <a href="mailto:${esc(support)}" style="color:#3ea8f4;text-decoration:underline;font-weight:700;">${esc(support)}</a>`
+    ? `<br/>${esc(chrome.help)} <a href="mailto:${esc(support)}" style="color:#3ea8f4;text-decoration:underline;font-weight:700;">${esc(support)}</a>`
     : "";
+  const next = narrative.nextLines
+    .map(
+      (line) =>
+        `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:#111111;">${esc(line)}</div>`
+    )
+    .join("");
 
   return `<!doctype html>
-<html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<html lang="${chrome.lang}"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>${esc(narrative.subject)}</title>
 <style type="text/css">
   html,body{margin:0!important;padding:0!important}
@@ -115,7 +115,7 @@ export function buildClientPreviewHtml(
       <table role="presentation" class="container" width="640" cellspacing="0" cellpadding="0" border="0" style="width:640px;max-width:640px;">
         <tr>
           <td class="px" style="padding:0 24px 10px 24px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:16px;color:#7b7b7b;">
-            Mise à jour de ta commande.
+            ${esc(chrome.topNote)}
           </td>
         </tr>
         <tr>
@@ -127,7 +127,7 @@ export function buildClientPreviewHtml(
                 </td>
                 <td align="right" style="vertical-align:middle;">
                   <span style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:18px;color:#6b7280;">
-                    Commande <strong style="color:#111111;">${esc(c.shopifyOrderName)}</strong>
+                    ${esc(chrome.orderWord)} <strong style="color:#111111;">${esc(c.shopifyOrderName)}</strong>
                   </span>
                 </td>
               </tr>
@@ -148,7 +148,7 @@ export function buildClientPreviewHtml(
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f6f6f8;border-radius:12px;">
               <tr>
                 <td style="padding:16px 18px;">
-                  <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:14px;letter-spacing:.4px;text-transform:uppercase;color:#6b7280;font-weight:700;">Arrivée estimée</div>
+                  <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:14px;letter-spacing:.4px;text-transform:uppercase;color:#6b7280;font-weight:700;">${esc(narrative.etaLabel)}</div>
                   <div style="height:6px;line-height:6px;font-size:6px;">&nbsp;</div>
                   <div style="font-family:Arial,Helvetica,sans-serif;font-size:18px;line-height:24px;color:#111111;font-weight:700;">${esc(narrative.etaLine)}</div>
                 </td>
@@ -171,11 +171,11 @@ export function buildClientPreviewHtml(
                     <td class="stack" style="vertical-align:top;">
                       <div style="font-family:Arial,Helvetica,sans-serif;font-size:18px;line-height:24px;color:#111111;font-weight:700;padding-bottom:8px;">${title}</div>
                       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                        ${summaryRow("ID de style", c.sku || "—")}
-                        ${summaryRow("Taille", c.sizeEU || "—")}
-                        ${summaryRow("Numéro de commande", c.shopifyOrderName)}
-                        ${summaryRow("Livraison", narrative.shippingLabel)}
-                        ${summaryRow("Prix", `CHF ${c.saleChf.toFixed(2)}`, true)}
+                        ${summaryRow(chrome.styleId, c.sku || "—")}
+                        ${summaryRow(chrome.size, c.sizeEU || "—")}
+                        ${summaryRow(chrome.orderNumber, c.shopifyOrderName)}
+                        ${summaryRow(chrome.shipping, narrative.shippingLabel)}
+                        ${summaryRow(chrome.price, `CHF ${c.saleChf.toFixed(2)}`, true)}
                       </table>
                     </td>
                   </tr>
@@ -196,23 +196,21 @@ export function buildClientPreviewHtml(
         </tr>
         <tr>
           <td style="background:#ffffff;padding:16px 28px 8px 28px;">
-            <div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:22px;color:#111111;font-weight:700;padding-bottom:8px;">Et ensuite</div>
-            <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:#111111;">Un e-mail automatique part à chaque étape.</div>
-            <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:#111111;">La date de livraison estimée figure ci-dessus.</div>
-            <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:22px;color:#111111;">Si rien n'est livré 48 h après cette date, contacte-nous avec ton numéro de commande.</div>
+            <div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:22px;color:#111111;font-weight:700;padding-bottom:8px;">${esc(chrome.nextTitle)}</div>
+            ${next}
           </td>
         </tr>
         <tr>
           <td style="background:#ffffff;padding:14px 28px 8px 28px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:20px;color:#6b7280;">
-            FAQ, délais et retours :
-            <a href="https://www.resell-lausanne.ch/fr-fr/pages/faq" style="color:#3ea8f4;text-decoration:underline;font-weight:700;">Voir la page d'aide</a>
+            ${esc(chrome.faqIntro)}
+            <a href="${esc(chrome.faqUrl)}" style="color:#3ea8f4;text-decoration:underline;font-weight:700;">${esc(chrome.faqLink)}</a>
           </td>
         </tr>
         <tr>
           <td style="background:#ffffff;border-radius:0 0 18px 18px;padding:8px 28px 22px 28px;">
             <div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;color:#6b7280;">
-              © ${year} Resell Lausanne. Tous droits réservés.<br/>
-              Expéditeur : Resell Lausanne, Chemin de Bas de Plan 6, 1030 Bussigny, Suisse.${helpLine}
+              © ${year} Resell Lausanne. ${esc(chrome.rights)}<br/>
+              ${esc(chrome.sender)}${helpLine}
             </div>
           </td>
         </tr>
@@ -235,17 +233,17 @@ export function buildClientPreviewText(
     narrative.headline,
     narrative.statusLine,
     "",
-    `Arrivée estimée : ${narrative.etaLine}`,
+    `${narrative.etaLabel} : ${narrative.etaLine}`,
     "",
     ...narrative.bodyParagraphs,
     "",
-    `Produit : ${c.productTitle}`,
-    `ID de style : ${c.sku || "—"}`,
-    `Taille : ${c.sizeEU || "—"}`,
-    `Commande : ${c.shopifyOrderName}`,
-    `Livraison : ${narrative.shippingLabel}`,
-    `Prix : ${c.saleChf.toFixed(2)} CHF`,
-    `Statut : ${narrative.activeStepLabel}`,
+    `${narrative.chrome.product} : ${c.productTitle}`,
+    `${narrative.chrome.styleId} : ${c.sku || "—"}`,
+    `${narrative.chrome.size} : ${c.sizeEU || "—"}`,
+    `${narrative.chrome.orderWord} : ${c.shopifyOrderName}`,
+    `${narrative.chrome.shipping} : ${narrative.shippingLabel}`,
+    `${narrative.chrome.price} : ${c.saleChf.toFixed(2)} CHF`,
+    `${narrative.chrome.status} : ${narrative.activeStepLabel}`,
     "",
     opts?.forCustomer
       ? "— Resell Lausanne"
