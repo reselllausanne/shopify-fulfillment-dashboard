@@ -6,6 +6,7 @@ import {
 } from "@/app/lib/stockxStatus";
 import { StockXState } from "@/app/lib/stockxTracking";
 import { getMailer } from "@/app/lib/mailer";
+import { fetchShopifyCustomerLocale } from "@/app/lib/mailer/orderLocale";
 
 type SendOptions = {
   matchId: string;
@@ -224,8 +225,10 @@ export async function sendMilestoneEmailForMatch({
       matchId,
     };
   }
+  const customerLocale = await fetchShopifyCustomerLocale(match.shopifyOrderId);
   const sendRes = await mailer.sendStockXMilestoneEmail({
     to,
+    customerLocale,
     stockxStates: states,
     match: {
       id: match.id,

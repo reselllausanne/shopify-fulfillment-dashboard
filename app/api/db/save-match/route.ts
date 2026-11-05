@@ -5,6 +5,7 @@ import { hashStockXStates, StockXState } from "@/app/lib/stockxTracking";
 import { detectMilestone, isStockxInboundDeliveryMilestone } from "@/app/lib/stockxStatus";
 import { decideMilestoneEmail } from "@/app/lib/notifications/milestoneEmailGate";
 import { getMailer } from "@/app/lib/mailer";
+import { fetchShopifyCustomerLocale } from "@/app/lib/mailer/orderLocale";
 import { tryApplyResellFromReturnedStock } from "@/shopify/returns/resellFromReturnedStock";
 import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
 import {
@@ -60,6 +61,7 @@ async function syncSupplierMetafieldsForMatch(match: {
 
 type EmailMatch = {
   id: string;
+  shopifyOrderId: string;
   customerTrackingToken: string | null;
   shopifyOrderName: string;
   shopifyProductTitle: string;
@@ -106,6 +108,7 @@ function pickEmailMatch(m: any): EmailMatch {
 
   return {
     id: m.id,
+    shopifyOrderId: String(m.shopifyOrderId ?? ""),
     customerTrackingToken: m.customerTrackingToken ?? null,
     shopifyOrderName: m.shopifyOrderName,
     shopifyProductTitle: m.shopifyProductTitle,
@@ -194,8 +197,10 @@ async function upsertMilestoneEventAndMaybeEmail(opts: {
     console.log("[EMAIL] Missing customer email; skipping delivery");
     return;
   }
+  const customerLocale = await fetchShopifyCustomerLocale(opts.match.shopifyOrderId);
   const sendRes = await mailer.sendStockXMilestoneEmail({
     to,
+    customerLocale,
     stockxStates: opts.states,
     match: opts.match,
     milestone: {

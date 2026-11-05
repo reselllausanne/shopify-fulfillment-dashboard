@@ -22,7 +22,9 @@ export type StockXMilestoneTemplateOverrides = {
 export type StockXMilestoneEmailInput = {
   to: string;
   stockxStates?: any[] | null;
-  language?: "fr" | "en";
+  language?: "fr" | "en" | "de";
+  /** Shopify order customerLocale (de-CH, fr-CH, en). Wins over the email-domain guess. */
+  customerLocale?: string | null;
   /** TEST / forced recipient — do not redirect via POSTMARK_OVERRIDE_TO. */
   ignoreOverride?: boolean;
   /** Delay / cancel-rebuy copy + ETA on the same Postmark ship templates. */
