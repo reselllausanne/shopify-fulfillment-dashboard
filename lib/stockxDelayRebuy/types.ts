@@ -3,9 +3,11 @@ import type { StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
 
 /** Why we email the customer about a delay / rebuy. */
 export type DelayNarrativeKind =
-  /** Seller / supplier did not ship; StockX seeking another (or ETA slipped). */
+  /** ETA passed, buy still open. Seller has not shipped yet. */
   | "SUPPLIER_CHANGE_DELAY"
-  /** STX buy cancelled / failed legit; we can rebuy — tell client we reordered. */
+  /** Supplier buy cancelled or refunded. Customer not refunded yet. */
+  | "ORDER_CANCELED"
+  /** New buy linked after a cancel — tell the client the item was replaced. */
   | "CANCEL_REBUY_LEGIT"
   /** Cancelled and NOT rebuyable (OOS / margin) — ops only for now. */
   | "CANCEL_NO_REBUY";
