@@ -103,3 +103,27 @@ Nike PM Feed Only par semaine (F, `ads_campaign_daily`) : semaine du 17.08 : 1 0
 Produits avec impressions en octobre (39 859) : 8 676 en avaient déjà en mai. Premières impressions : juillet 4 954, août 10 649, septembre 9 437, octobre 5 105 produits (≈ 8,5 k CHF de la dépense d'octobre, ROAS ≈ 3,1).
 
 UGG (Ahrefs, recherches « ugg » en Suisse par mois) : 2025 mai 1 365, oct. 12 821, nov. 20 119, déc. 17 104 ; 2026 mai 6 560, août 7 666, sept. 10 170, oct. 12 728. Saisonnier, pic nov.-déc.
+
+## 8. Structure de campagnes, part de marché publicitaire, produits « méchants » (05.11, suite)
+
+Types de campagne (F, `ads_campaign_daily`) : Nike, Adidas, Jordan, `all`, vêtements, UGG = Performance Max (tROAS). `Explorer | *` et `Long Tail | All | CH` = Shopping standard (CPC manuel, pas de tROAS). Août-novembre : Long Tail 572 CHF (ROAS 0,8), Explorer 704 CHF.
+
+Part d'impressions, 02.08 → 01.11 (F, `ads_06_is.csv`, API Google Ads) : part d'impressions de recherche Nike 79 %, Adidas 83 %, Jordan 79 %, `all` 85 %. Part perdue pour budget : 0 %. Part perdue pour classement : 17-21 %. UGG : part 10 %, perdue pour classement 85 %. Vêtements : part 16 %, perdue pour classement 81 %. Conclusion (F) : le budget ne limite pas Nike/Adidas/Jordan ; monter le budget n'ajoute pas d'impressions disponibles.
+
+Réseaux (F, `ads_06_network.csv`) : 98 % de la dépense PMax est en Search (SEARCH 97,9 %) ; Display, YouTube, Discover, Gmail ≈ 1,6 %. Requêtes (F, `ads_06_terms_brand_summary.csv`) : 372 110 requêtes distinctes ; recherche de marque « resell » 4 % de la dépense (ROAS 17,3) ; hors marque 96 % (ROAS 3,6). Par thème hors marque : Nike 3,9 ; Adidas 3,3 ; Asics 1,7 ; UGG 1,2 ; Supreme/Essentials 2,9 ; sneakers génériques 4,8 ; « prix/achat » 5,6.
+
+Produits sans vente par seuil de dépense, août-octobre (F, `ads_product_daily`) :
+
+| Dépense du produit | Produits | Dont 0 vente | Dépense des 0 vente (CHF) |
+|---|---|---|---|
+| ≥ 60 | 35 | 8 | 642 |
+| 40-60 | 36 | 16 | 767 |
+| 25-40 | 75 | 38 | 1 157 |
+| 10-25 | 429 | 295 | 4 128 |
+| < 10 | 46 033 | 45 554 | 19 810 |
+
+Lecture (I) : règle « dépense ≥ 25 CHF et 0 vente en 90 j » = 62 produits, 2,6 k CHF sur 3 mois (≈ 0,9 k/mois). L'essentiel de la dépense (22 k sur 36 k) est sur des produits sous 10 CHF chacun : diffus, non filtrable produit par produit.
+
+Documentation Google (consultée 05.11) : pour une campagne établie, changer budget ou cible n'ouvre pas de phase d'apprentissage ; la performance converge en 1 à 2 cycles de conversion (support.google.com/google-ads/answer/13020501). Retire l'argument « le budget a relancé l'apprentissage ». 84 % de nos conversions arrivent sous 1 jour (`ads_02`) : deux semaines suffisent pour lire un changement.
+
+UGG, ventes Shopify (lignes `lines_with_match.csv`) : oct. 2024 12, nov. 2024 54, déc. 2024 110, janv. 2025 41 ; oct. 2025 4, nov. 2025 44, déc. 2025 90, janv. 2026 52 ; sept. 2026 6, oct. 2026 9. Recherches « ugg » Suisse (Ahrefs) nov. 2025 vs nov. 2024 : −17 % ; déc. : −16 %. Nos ventes : −19 % et −18 %. Publicité UGG : janv. 2026 925 CHF, ROAS 6,8, conversion 3,2 % ; sept.-oct. 2026 conversion 0,1-0,25 %.
