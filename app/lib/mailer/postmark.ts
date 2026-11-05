@@ -4,6 +4,7 @@ import type {
   RawEmailInput,
   StockXMilestoneEmailInput,
 } from "@/app/lib/mailer/types";
+import { resolveMailLanguage, type MailLanguage } from "@/app/lib/mailer/language";
 import type { StockXState } from "@/app/lib/stockxTracking";
 import { resolveSwissPostCustomerTracking } from "@/app/lib/swissPostCustomerTracking";
 
@@ -12,8 +13,6 @@ type PostmarkSendResponse = {
   ErrorCode?: number;
   Message?: string;
 };
-
-type MailLanguage = "fr" | "en";
 
 function normalizePublicBaseUrl(raw: string | null | undefined): string | null {
   const value = String(raw || "").trim();
@@ -47,7 +46,7 @@ function isCustomerTrackingEnabled(): boolean {
 function toLocalizedDate(d: Date | null, language: MailLanguage): string | null {
   if (!d) return null;
   try {
-    const locale = language === "fr" ? "fr-CH" : "en-CH";
+    const locale = language === "fr" ? "fr-CH" : language === "de" ? "de-CH" : "en-CH";
     return d.toLocaleDateString(locale, { year: "numeric", month: "2-digit", day: "2-digit" });
   } catch {
     return null;
@@ -83,25 +82,22 @@ const isExpressFlow = (
 };
 
 function detectLanguage(input: StockXMilestoneEmailInput): MailLanguage {
-  const override = (process.env.POSTMARK_LANGUAGE_OVERRIDE || "").trim().toLowerCase();
-  if (override === "fr" || override === "en") return override;
-  if (input.language === "fr" || input.language === "en") return input.language;
-
-  const emailDomain = input.to.split("@")[1]?.toLowerCase() || "";
+  let domainMap: Record<string, string> | null = null;
   const mapRaw = (process.env.POSTMARK_LANGUAGE_DOMAIN_MAP || "").trim();
   if (mapRaw) {
     try {
-      const parsed = JSON.parse(mapRaw) as Record<string, string>;
-      const mapped = (parsed[emailDomain] || "").toLowerCase();
-      if (mapped === "fr" || mapped === "en") return mapped;
+      domainMap = JSON.parse(mapRaw) as Record<string, string>;
     } catch {
-      // Ignore invalid env map; continue with heuristic.
+      domainMap = null;
     }
   }
-
-  if (/\.(fr|be|ch|qc)$/i.test(emailDomain)) return "fr";
-  if (/\.(uk|us|com|net|org)$/i.test(emailDomain)) return "en";
-  return "fr";
+  return resolveMailLanguage({
+    override: process.env.POSTMARK_LANGUAGE_OVERRIDE,
+    explicit: input.language,
+    customerLocale: input.customerLocale,
+    email: input.to,
+    domainMap,
+  });
 }
 
 const COPY: Record<
@@ -239,6 +235,60 @@ const COPY: Record<
     laPosteTrackingNumberLabel: "Swiss Post tracking number",
     trackingLabelLaPoste: "Swiss Post tracking",
   },
+  de: {
+    stepLabelsStandard: [
+      "Bestellung bestätigt",
+      "Authentifizierung läuft",
+      "Versand wird vorbereitet",
+      "Unterwegs mit der Schweizerischen Post",
+    ],
+    stepLabelsExpress: [
+      "Bestellung bestätigt",
+      "Authentifizierung läuft",
+      "Versand wird vorbereitet",
+      "Unterwegs mit der Schweizerischen Post",
+    ],
+    trackingCta: "Vollständiges Tracking öffnen",
+    trackingPending: "Lokales Tracking erscheint nach der Übernahme durch den Transporteur",
+    labelOrder: "Bestellung",
+    labelEta: "Voraussichtliche Ankunft",
+    labelTracking: "Tracking",
+    labelStatus: "Status",
+    labelStyleId: "Style-ID",
+    labelSize: "Grösse",
+    labelOrderNumber: "Bestellnummer",
+    labelSalePrice: "Verkaufspreis",
+    faqIntro: "FAQ, Fristen und Retouren:",
+    faqLinkText: "Hilfe-Seite öffnen",
+    footerRights: "Alle Rechte vorbehalten.",
+    footerSender:
+      "Absender: Resell Lausanne, Chemin de Bas de Plan 6, 1030 Bussigny, Schweiz.",
+    footerHelp: "Brauchst du Hilfe?",
+    topNote: "Automatisches Update zu deiner Bestellung.",
+    subjectPrefix: "Bestellupdate",
+    statusNoteStandard:
+      "Gute Nachricht. Dein Artikel ist in unserem Prüfzentrum. Nach der Prüfung versenden wir ihn und schicken dir die Lieferinfos.",
+    statusNoteExpress:
+      "Gute Nachricht. Deine Prioritätsbestellung läuft schneller. Nach der Prüfung versenden wir das Paket und schicken dir die Lieferinfos.",
+    statusNoteShipped:
+      "Gute Nachricht. Dein Paket ist unterwegs mit der Schweizerischen Post. Verfolge die Lieferung über den Button unten.",
+    nextStepsTitle: "Bevor du den Support kontaktierst:",
+    nextStepStandard1: "Du erhältst bei jedem Schritt eine automatische E-Mail.",
+    nextStepStandard2: "Warte bitte bis zum geschätzten Lieferdatum oben.",
+    nextStepStandard3:
+      "Kommt 48 Stunden danach nichts an, schreib uns mit deiner Bestellnummer.",
+    nextStepExpress1: "Du erhältst bei jedem Schritt eine automatische E-Mail.",
+    nextStepExpress2: "Warte bitte bis zum geschätzten Lieferdatum oben.",
+    nextStepExpress3:
+      "Kommt 48 Stunden danach nichts an, schreib uns mit deiner Bestellnummer.",
+    closing1: "Die meisten Antworten stehen auf unserer Hilfe-Seite.",
+    closing2: "Prioritäts-Support, wenn die Lieferung 48 Stunden über dem geschätzten Datum liegt.",
+    laPosteReady: "Dein Paket wurde der Schweizerischen Post übergeben.",
+    laPostePending: "Das Post-Tracking folgt, sobald die Post das Paket übernommen hat.",
+    laPosteCta: "Sendung verfolgen",
+    laPosteTrackingNumberLabel: "Sendungsnummer Schweizerische Post",
+    trackingLabelLaPoste: "Tracking Schweizerische Post",
+  },
 };
 
 function buildTemplateModel(input: StockXMilestoneEmailInput) {
@@ -295,10 +345,11 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
 
   const supportEmail = process.env.SUPPORT_EMAIL || process.env.POSTMARK_FROM_EMAIL || "";
   const faqUrl =
-    process.env.FAQ_URL ||
-    (language === "fr"
-      ? "https://www.resell-lausanne.ch/fr-fr/pages/faq"
-      : "https://www.resell-lausanne.ch/en/pages/faq");
+    language === "fr"
+      ? "https://www.resell-lausanne.ch/pages/faq"
+      : language === "de"
+        ? "https://www.resell-lausanne.ch/de/pages/faq"
+        : "https://www.resell-lausanne.ch/en/pages/faq";
 
   const purchasePriceChf =
     typeof input.match.shopifyTotalPriceChf === "number" && Number.isFinite(input.match.shopifyTotalPriceChf)
@@ -417,6 +468,7 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
     language,
     is_fr: language === "fr",
     is_en: language === "en",
+    is_de: language === "de",
     status_note: (ov?.statusNote || "").trim() || statusNote,
 
     // Status

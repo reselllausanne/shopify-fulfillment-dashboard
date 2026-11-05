@@ -1,5 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { getMailer } from "@/app/lib/mailer";
+import { fetchShopifyCustomerLocale } from "@/app/lib/mailer/orderLocale";
 import { CUSTOMER_SHIPPED_LA_POSTE_KEY } from "@/app/lib/stockxStatus";
 import {
   resolveSwissPostCustomerTracking,
@@ -124,8 +125,12 @@ export async function notifyCustomerShippedViaLaPoste(input: NotifyInput): Promi
       continue;
     }
 
+    const customerLocale = await fetchShopifyCustomerLocale(
+      input.shopifyOrderId
+    );
     const sendRes = await mailer.sendStockXMilestoneEmail({
       to,
+      customerLocale,
       stockxStates: states,
       match: {
         id: match.id,
