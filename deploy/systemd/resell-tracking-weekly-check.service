@@ -5,6 +5,7 @@ After=network.target docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/resell
-ExecStart=/usr/bin/env bash -lc 'bash scripts/tracking-weekly-check.sh'
+# Host has no Node/npx — run inside web container (same pattern as secondary-upload / shadow-report).
+ExecStart=/usr/bin/env bash -lc 'docker compose exec -T web bash scripts/tracking-weekly-check.sh'
 StandardOutput=journal
 StandardError=journal
