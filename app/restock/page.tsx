@@ -568,13 +568,7 @@ export default function RestockScanPage() {
   function handleAttentionItem(entry: InFlightEntry) {
     setInFlight((prev) => prev.filter((e) => e.id !== entry.id));
     resetAll();
-    setGtin(entry.gtin);
-    if (entry.result) {
-      // Restore directly from cached POST result — no extra network request
-      setApplyResult(entry.result);
-    } else {
-      void runLookup(entry.gtin);
-    }
+    void runLookup(entry.gtin);
   }
 
   const doneOk = applyResult?.ok === true;
