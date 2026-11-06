@@ -89,6 +89,14 @@ describe("galaxusAssortmentBlockReason", () => {
     expect(
       galaxusAssortmentBlockReason({ providerKey: "stx_4560157584359", title: "Takashi Murakami Flower Plush 30CM" })
     ).toBe("manual_block");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_0888977784846",
+        title: "Supreme Hanes Boxer Briefs (4 Pack) White",
+        sizeRaw: "XXL",
+        supplierKey: "stx",
+      })
+    ).toBe("manual_block");
   });
 
   it("blocks soft toys / Jellycat plush (Tali 2026-10-27)", () => {
