@@ -130,6 +130,18 @@ type HistoryEntry = {
   compareAt?: number | null;
 };
 
+/** In-flight entry for non-blocking auto-mode concurrent scans */
+type InFlightEntry = {
+  id: string;
+  gtin: string;
+  at: number;
+  status: "processing" | "done" | "error" | "attention";
+  title?: string | null;
+  errorMsg?: string | null;
+  /** POST result kept for "attention" items so we can restore state */
+  result?: ApplyResult | null;
+};
+
 function isAwaitingManualAction(
   lookup: LookupResult | null,
   applyResult: ApplyResult | null,
@@ -167,6 +179,7 @@ export default function RestockScanPage() {
   const [locationId, setLocationId] = useState<string>("");
   const [autoMode, setAutoMode] = useState<boolean>(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [inFlight, setInFlight] = useState<InFlightEntry[]>([]);
   const [manualSizeEu, setManualSizeEu] = useState("");
   const [manualSellPrice, setManualSellPrice] = useState("");
   const [manualCompareAt, setManualCompareAt] = useState("");
@@ -308,8 +321,8 @@ export default function RestockScanPage() {
     setManualId("");
   }
 
-  async function runLookup() {
-    const cleaned = gtin.trim();
+  async function runLookup(forceGtin?: string) {
+    const cleaned = (forceGtin ?? gtin).trim();
     if (!cleaned || lookupBusyRef.current || busy) return;
 
     if (awaitingManual) {
@@ -318,6 +331,7 @@ export default function RestockScanPage() {
       return;
     }
 
+    if (forceGtin) setGtin(cleaned); // sync state when called programmatically
     lookupBusyRef.current = true;
     resetAll();
     setBusy("Recherche…");
@@ -457,6 +471,97 @@ export default function RestockScanPage() {
     } finally {
       setBusy(null);
     }
+  }
+
+  /**
+   * Non-blocking auto-scan: fires POST immediately, clears input for next scan.
+   * History / in-flight list updates async when response arrives.
+   * Used in auto-mode only — manual mode keeps the existing blocking GET→POST flow.
+   */
+  function fireAutoRestock(scannedGtin: string) {
+    const id = Math.random().toString(36).slice(2);
+    const sell = parsedFixedPrice();
+    const compare = sell != null ? parsedFixedCompareAt(sell) : null;
+    const qty = quantity;
+    const locId = locationId;
+    const locName = currentLocationName ?? "?";
+
+    setInFlight((prev) => [
+      { id, gtin: scannedGtin, at: Date.now(), status: "processing" },
+      ...prev.slice(0, 99),
+    ]);
+
+    fetch("/api/restock/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        gtin: scannedGtin,
+        quantity: qty,
+        locationId: locId,
+        ...(sell != null ? { salePrice: sell } : {}),
+        ...(compare != null ? { compareAtPrice: compare } : {}),
+      }),
+    })
+      .then((r) => r.json())
+      .then((data: ApplyResult) => {
+        if (data.ok && (data.status === "restocked" || data.status === "created-restocked")) {
+          const title = data.shopify?.restock?.variant?.productTitle ?? null;
+          pushHistory({
+            gtin: scannedGtin,
+            status: data.status as HistoryEntry["status"],
+            ok: true,
+            title,
+            quantity: qty,
+            location: locName,
+            warning: data.warnings?.[0],
+            price: sell,
+            compareAt: compare,
+          });
+          setInFlight((prev) => prev.filter((e) => e.id !== id));
+        } else if (
+          data.status === "size-confirmation-required" ||
+          data.status === "gtin-confirmation-required" ||
+          data.status === "manual-price-required" ||
+          (!data.ok && (data.error ?? "").includes("fournir un identifiant"))
+        ) {
+          // Needs human attention — park in in-flight panel with "attention" badge
+          setInFlight((prev) =>
+            prev.map((e) => (e.id === id ? { ...e, status: "attention", result: data } : e))
+          );
+        } else {
+          const errMsg = data.error ?? "Échec";
+          setInFlight((prev) =>
+            prev.map((e) => (e.id === id ? { ...e, status: "error", errorMsg: errMsg } : e))
+          );
+          pushHistory({
+            gtin: scannedGtin,
+            status: "error",
+            ok: false,
+            title: null,
+            quantity: qty,
+            location: locName,
+            warning: errMsg,
+            price: sell,
+            compareAt: compare,
+          });
+          // Auto-dismiss error from in-flight after 4 s (already in history)
+          setTimeout(() => setInFlight((prev) => prev.filter((e) => e.id !== id)), 4000);
+        }
+      })
+      .catch((err: any) => {
+        const errMsg = err?.message ?? "Erreur réseau";
+        setInFlight((prev) =>
+          prev.map((e) => (e.id === id ? { ...e, status: "error", errorMsg: errMsg } : e))
+        );
+        setTimeout(() => setInFlight((prev) => prev.filter((e) => e.id !== id)), 4000);
+      });
+  }
+
+  /** Restore an in-flight "attention" item into the blocking manual flow. */
+  function handleAttentionItem(entry: InFlightEntry) {
+    setInFlight((prev) => prev.filter((e) => e.id !== entry.id));
+    resetAll();
+    void runLookup(entry.gtin);
   }
 
   const doneOk = applyResult?.ok === true;
@@ -657,6 +762,19 @@ export default function RestockScanPage() {
                 setError("Choisir une action ci-dessous (ou Annuler) avant le prochain scan");
                 return;
               }
+              const cleaned = gtin.trim();
+              if (!cleaned) return;
+              // Auto-mode: fire POST immediately, clear input for next scan
+              if (autoMode && locationId) {
+                if (fixedPriceMode && parsedFixedPrice() == null) {
+                  setError("Prix fixe activé — saisir un prix valide (CHF) ou décocher");
+                  return;
+                }
+                setGtin("");
+                fireAutoRestock(cleaned);
+                focusScanInput();
+                return;
+              }
               void runLookup();
             }
           }}
@@ -685,7 +803,21 @@ export default function RestockScanPage() {
         />
         <button
           type="button"
-          onClick={() => void runLookup()}
+          onClick={() => {
+            const cleaned = gtin.trim();
+            if (!cleaned || awaitingManual) return;
+            if (autoMode && locationId) {
+              if (fixedPriceMode && parsedFixedPrice() == null) {
+                setError("Prix fixe activé — saisir un prix valide ou décocher");
+                return;
+              }
+              setGtin("");
+              fireAutoRestock(cleaned);
+              focusScanInput();
+              return;
+            }
+            void runLookup();
+          }}
           disabled={!!busy || !gtin.trim() || awaitingManual}
           className="rounded-sm bg-black px-5 py-2 font-medium text-white disabled:opacity-40"
         >
@@ -1096,6 +1228,64 @@ export default function RestockScanPage() {
           >
             Créer EU {applyResult.matchedSizeEu ?? "?"} + stock {currentLocationName ?? "…"}
           </button>
+        </div>
+      )}
+
+      {/* In-flight concurrent scan queue (auto-mode) */}
+      {autoMode && inFlight.length > 0 && (
+        <div className="mt-6 rounded-sm border border-blue-200 bg-blue-50">
+          <div className="border-b border-blue-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-blue-700 flex items-center gap-3">
+            <span>
+              En cours: {inFlight.filter((e) => e.status === "processing").length} traitement
+              {inFlight.filter((e) => e.status === "attention").length > 0 && (
+                <span className="ml-2 font-bold text-amber-700">
+                  · {inFlight.filter((e) => e.status === "attention").length} action requise
+                </span>
+              )}
+            </span>
+          </div>
+          <ul className="divide-y divide-blue-100 text-sm max-h-52 overflow-y-auto">
+            {inFlight.map((e) => (
+              <li
+                key={e.id}
+                className={`flex items-center gap-2 px-4 py-2 ${
+                  e.status === "error"
+                    ? "bg-red-50"
+                    : e.status === "attention"
+                      ? "bg-amber-50"
+                      : ""
+                }`}
+              >
+                <span className={`text-sm ${e.status === "processing" ? "animate-pulse" : ""}`}>
+                  {e.status === "processing" && "⏳"}
+                  {e.status === "done" && "✓"}
+                  {e.status === "error" && "✗"}
+                  {e.status === "attention" && "⚠"}
+                </span>
+                <span className="font-mono text-xs text-gray-600">{e.gtin}</span>
+                {e.status === "error" && (
+                  <span className="text-xs text-red-700 truncate">{e.errorMsg}</span>
+                )}
+                {e.status === "attention" && (
+                  <>
+                    <span className="text-xs text-amber-800 flex-1 truncate">
+                      {e.result?.status === "size-confirmation-required" && "Choisir taille"}
+                      {e.result?.status === "gtin-confirmation-required" && "Choisir produit"}
+                      {e.result?.status === "manual-price-required" && "Saisir prix"}
+                      {e.result?.error?.includes("fournir un identifiant") && "GTIN inconnu — identifier requis"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleAttentionItem(e)}
+                      className="ml-auto text-xs rounded-sm border border-amber-600 bg-white px-2 py-0.5 hover:border-black"
+                    >
+                      Traiter
+                    </button>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
