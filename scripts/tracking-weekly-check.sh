@@ -44,7 +44,8 @@ npx tsx scripts/tracking-shadow-report.ts --days=7 --json >"$SHADOW_JSON"
   ' "$SHADOW_JSON"
   echo
   echo "--- funnel 7d (head) ---"
-  npx tsx scripts/funnel-report.ts --days=7 2>&1 | head -40
+  # head closes early → SIGPIPE; don't fail the digeste under pipefail
+  npx tsx scripts/funnel-report.ts --days=7 2>&1 | head -40 || true
   echo
   echo "=== checklist ==="
   echo "[ ] coverage ≥ 90% ?"
