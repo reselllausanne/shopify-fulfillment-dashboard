@@ -186,7 +186,13 @@ export default function RestockScanPage() {
   const [fixedPriceMode, setFixedPriceMode] = useState(false);
   const [fixedPrice, setFixedPrice] = useState("");
   const [fixedCompareAt, setFixedCompareAt] = useState("");
+  // Product search (not-found flow)
+  const [productQuery, setProductQuery] = useState("");
+  const [productResults, setProductResults] = useState<Array<{ slug: string; title: string; brand: string | null; sku: string | null }>>([]);
+  const [productSearchOpen, setProductSearchOpen] = useState(false);
+  const [productSearchLoading, setProductSearchLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const productSearchRef = useRef<HTMLInputElement>(null);
   const lookupBusyRef = useRef(false);
 
   function focusScanInput() {
@@ -204,6 +210,9 @@ export default function RestockScanPage() {
     setManualCompareAt("");
     setManualId("");
     setError(null);
+    setProductQuery("");
+    setProductResults([]);
+    setProductSearchOpen(false);
     focusScanInput();
   }
 
@@ -319,6 +328,9 @@ export default function RestockScanPage() {
     setPendingIdentifier(null);
     setError(null);
     setManualId("");
+    setProductQuery("");
+    setProductResults([]);
+    setProductSearchOpen(false);
   }
 
   async function runLookup(forceGtin?: string) {
@@ -658,6 +670,40 @@ export default function RestockScanPage() {
     if (!sizeConfirmMatchedEu) return;
     setManualSizeEu((prev) => prev || sizeConfirmMatchedEu);
   }, [sizeConfirmMatchedEu, gtin]);
+
+  // Debounced product search for not-found flow
+  useEffect(() => {
+    if (productQuery.length < 2) {
+      setProductResults([]);
+      setProductSearchOpen(false);
+      return;
+    }
+    setProductSearchLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/restock/search?q=${encodeURIComponent(productQuery)}`);
+        const data = await res.json();
+        if (data.ok) {
+          setProductResults(data.results ?? []);
+          setProductSearchOpen((data.results ?? []).length > 0);
+        }
+      } catch {
+        // silent
+      } finally {
+        setProductSearchLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [productQuery]);
+
+  // Auto-scroll + focus product search when GTIN is not found
+  useEffect(() => {
+    if (lookup?.status !== "not-found") return;
+    requestAnimationFrame(() => {
+      productSearchRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      productSearchRef.current?.focus();
+    });
+  }, [lookup?.status]);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
@@ -1022,29 +1068,93 @@ export default function RestockScanPage() {
         </div>
       )}
 
-      {/* Lookup: not found -> manual input */}
+      {/* Lookup: not found -> product search + manual fallback */}
       {lookup?.status === "not-found" && !applyResult && (
         <div className="mt-6 rounded-sm border border-amber-300 bg-amber-50 p-4">
           <div className="text-sm font-semibold text-amber-900">{lookup.message}</div>
-          <div className="mt-3 flex gap-2">
+          <div className="mt-1 text-xs text-amber-700">
+            GTIN <span className="font-mono">{lookup.gtin}</span> absent du catalogue StockX.
+            Rechercher le produit par nom ou SKU pour lier et restock.
+          </div>
+
+          {/* Product search input */}
+          <div className="relative mt-3">
             <input
-              value={manualId}
-              onChange={(e) => setManualId(e.target.value)}
+              ref={productSearchRef}
+              value={productQuery}
+              onChange={(e) => setProductQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && manualId.trim()) {
-                  runApply({ identifier: manualId.trim() }, "Création + restock…");
+                if (e.key === "Escape") {
+                  setProductSearchOpen(false);
                 }
               }}
-              placeholder="SKU boîte ou slug StockX"
-              className="flex-1 rounded-sm border border-gray-300 px-3 py-2 focus:border-black focus:outline-none"
+              placeholder="Rechercher un produit (nom, SKU, marque)…"
+              autoComplete="off"
+              className="w-full rounded-sm border border-amber-600 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none"
             />
-            <button
-              onClick={() => runApply({ identifier: manualId.trim() }, "Création + restock…")}
-              disabled={!!busy || !manualId.trim() || !locationReady}
-              className="rounded-sm bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
-            >
-              Créer + restock
-            </button>
+            {productSearchLoading && (
+              <span className="absolute right-3 top-2.5 text-xs text-gray-400 animate-pulse select-none">
+                …
+              </span>
+            )}
+            {productSearchOpen && productResults.length > 0 && (
+              <div className="absolute z-20 mt-1 w-full rounded-sm border border-gray-200 bg-white shadow-lg max-h-56 overflow-y-auto">
+                {productResults.map((r) => (
+                  <button
+                    key={r.slug}
+                    type="button"
+                    onMouseDown={(e) => {
+                      // prevent blur before click
+                      e.preventDefault();
+                    }}
+                    onClick={() => {
+                      setManualId(r.slug);
+                      setProductQuery(r.title);
+                      setProductSearchOpen(false);
+                      runApply({ identifier: r.slug }, "Création + restock…");
+                    }}
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-amber-50 border-b border-gray-100 last:border-0 transition-colors"
+                  >
+                    <div className="font-medium text-gray-900 truncate">{r.title}</div>
+                    <div className="text-xs text-gray-500 truncate">
+                      {[r.brand, r.sku, r.slug].filter(Boolean).join(" · ")}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {productQuery.length >= 2 && !productSearchLoading && productResults.length === 0 && (
+              <div className="mt-1 text-xs text-amber-700">
+                Aucun produit trouvé — coller le slug StockX directement ci-dessous.
+              </div>
+            )}
+          </div>
+
+          {/* Fallback: direct slug paste */}
+          <div className="mt-3 border-t border-amber-200 pt-3">
+            <div className="text-xs font-medium text-amber-900 mb-1.5">
+              Slug StockX direct (fallback)
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={manualId}
+                onChange={(e) => setManualId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && manualId.trim()) {
+                    runApply({ identifier: manualId.trim() }, "Création + restock…");
+                  }
+                }}
+                placeholder="ex. adidas-forum-low-white-black"
+                className="flex-1 rounded-sm border border-gray-300 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none"
+              />
+              <button
+                onClick={() => runApply({ identifier: manualId.trim() }, "Création + restock…")}
+                disabled={!!busy || !manualId.trim() || !locationReady}
+                className="rounded-sm bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+              >
+                Créer + restock
+              </button>
+            </div>
           </div>
         </div>
       )}
