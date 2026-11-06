@@ -118,15 +118,21 @@ async function ensureStxSupplierForGtin(
     return { ok: true, importedVariantsCount: 0 };
   }
   try {
+    // Use gtinCandidates (all padding variants) so that a SupplierVariant stored
+    // with a different zero-padding form (e.g. GTIN-14 vs EAN-13) is still found.
+    // IMPORTANT: for EAN-13 starting with non-zero digits (e.g. Adidas '4065…'
+    // EU barcodes) gtinCandidates does NOT produce a 12-digit form — that would
+    // be an unrelated number.  It only adds the zero-padded GTIN-14 sibling.
+    const gtinCands = gtinCandidates(gtin);
     const existing = await prisma.supplierVariant.findFirst({
-      where: { gtin, ...STX_SUPPLIER_VARIANT_WHERE },
+      where: { gtin: { in: gtinCands }, ...STX_SUPPLIER_VARIANT_WHERE },
       select: { id: true },
     });
     if (existing) return { ok: true, importedVariantsCount: 0 };
 
     // Detect NER-only GTIN before hitting KickDB.
     const nerOnly = await prisma.supplierVariant.findFirst({
-      where: { gtin },
+      where: { gtin: { in: gtinCands } },
       select: { supplierVariantId: true },
     });
 
