@@ -1204,6 +1204,47 @@ export async function lookupScan(rawGtin: string): Promise<ScanLookupResult> {
     });
   }
 
+  // 3.9. ShopifyVariantLocationStock (SVLS) barcode fallback.
+  //
+  // After all catalog sources fail, check the local inventory mirror for a
+  // historical GTIN→variant mapping. This catches physical products that were
+  // previously restocked (barcode written on the variant during that session)
+  // but are not yet indexed in KickDB or SupplierVariant — e.g., non-StockX
+  // brands manually added to Shopify.
+  //
+  // SVLS.gtin is populated whenever restockShopifyVariantByGtin runs, so any
+  // product that has been through the scan flow at least once is covered here.
+  try {
+    const cands = gtinCandidates(gtin);
+    const svls = await prisma.shopifyVariantLocationStock.findFirst({
+      where: { gtin: { in: cands } },
+      select: { shopifyVariantId: true, sku: true },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (svls?.shopifyVariantId) {
+      const detail = await getShopifyVariantDetail(svls.shopifyVariantId).catch(() => null);
+      if (detail) {
+        console.log("[RESTOCK][SCAN] SVLS barcode fallback hit", {
+          gtin,
+          shopifyVariantId: svls.shopifyVariantId,
+          sku: svls.sku,
+          barcodeOnVariant: detail.barcode,
+        });
+        return {
+          status: "on-shopify",
+          gtin,
+          variant: detail,
+          ambiguous: false,
+        };
+      }
+    }
+  } catch (error) {
+    console.warn("[RESTOCK][SCAN] SVLS barcode fallback failed", {
+      gtin,
+      error: error instanceof Error ? error.message : error,
+    });
+  }
+
   // 4. Manual input required (box always has the style SKU printed on it)
   return {
     status: "not-found",
