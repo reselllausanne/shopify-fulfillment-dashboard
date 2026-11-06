@@ -1116,6 +1116,94 @@ export async function lookupScan(rawGtin: string): Promise<ScanLookupResult> {
     });
   }
 
+  // 3.5. Live StockX fallback via any SupplierVariant (including NER partner rows).
+  //
+  // When the GTIN exists in a partner catalog (NER, REI, Golden Sneakers, …) but
+  // has no StockX DB row yet, we have a supplier SKU we can pivot on.
+  //
+  // Strategy:
+  //   a) Find any SupplierVariant with this GTIN (NER included).
+  //   b) Build 1–2 search terms from the supplierSku (style+colour, style-only).
+  //   c) For each term: call searchStockxProducts → check the top results.
+  //   d) For each candidate slug: call inspectKickdbSlugForGtin to verify the
+  //      scanned GTIN matches a real KickDB variant barcode.
+  //   e) First confirmed hit → finalizeCatalogLookup (same as step 2 success).
+  //
+  // This handles e.g. EAN-13 Adidas/Nike products whose UPC differs from the EAN,
+  // so a text search on the raw GTIN returns nothing.
+  try {
+    const anyVariant = await (prisma as any).supplierVariant.findFirst({
+      where: { gtin: { in: gtinCandidates(gtin) } },
+      select: {
+        supplierSku: true,
+        supplierProductName: true,
+        supplierBrand: true,
+        sourceImageUrl: true,
+        sizeNormalized: true,
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+
+    if (anyVariant?.supplierSku) {
+      const rawSku = String(anyVariant.supplierSku).trim().toUpperCase();
+      // Build search terms: "STYLE-COLOUR" (first two hyphen segments) and "STYLE".
+      const parts = rawSku.split("-").filter(Boolean);
+      const styleColour = parts.slice(0, 2).join("-"); // e.g. "HQ2157-110"
+      const styleOnly = parts[0] ?? ""; // e.g. "HQ2157"
+      const searchTerms = [...new Set([styleColour, styleOnly].filter(Boolean))];
+
+      console.log("[RESTOCK][SCAN] Live StockX fallback via SupplierVariant SKU", {
+        gtin,
+        supplierSku: rawSku,
+        searchTerms,
+      });
+
+      for (const term of searchTerms) {
+        try {
+          const liveSearch = await searchStockxProducts(term);
+          const hits = (liveSearch?.data ?? []).slice(0, 6);
+          for (const hit of hits) {
+            const candidateSlug = pickStr(
+              (hit as any)?.slug,
+              (hit as any)?.url_key,
+              (hit as any)?.urlKey
+            );
+            if (!candidateSlug) continue;
+            const confirm = await inspectKickdbSlugForGtin(candidateSlug, gtin);
+            if (confirm.gtinConfirmed) {
+              console.log("[RESTOCK][SCAN] Live StockX fallback confirmed", {
+                gtin,
+                slug: candidateSlug,
+                term,
+              });
+              return finalizeCatalogLookup(gtin, {
+                slug: candidateSlug,
+                title: pickStr((hit as any)?.title, (hit as any)?.name, anyVariant.supplierProductName),
+                brand: pickStr((hit as any)?.brand, anyVariant.supplierBrand),
+                styleSku: pickStr((hit as any)?.sku, (hit as any)?.style_id),
+                image: pickStr((hit as any)?.image, (hit as any)?.image_url, anyVariant.sourceImageUrl),
+                gtinConfirmed: true,
+                matchedSizeEu: confirm.matchedSizeEu,
+                matchedSizeUs: confirm.matchedSizeUs,
+              });
+            }
+          }
+        } catch (termErr: any) {
+          console.warn("[RESTOCK][SCAN] Live StockX fallback search failed", {
+            gtin,
+            term,
+            error: termErr?.message ?? termErr,
+          });
+        }
+      }
+    }
+  } catch (error) {
+    console.error("[RESTOCK][SCAN] Live StockX fallback lookup failed", {
+      gtin,
+      error: error instanceof Error ? error.message : error,
+    });
+  }
+
   // 4. Manual input required (box always has the style SKU printed on it)
   return {
     status: "not-found",
