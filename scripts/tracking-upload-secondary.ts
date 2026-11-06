@@ -24,6 +24,7 @@ import {
   validateSecondaryAction,
 } from "../tracking/adapters/googleAdsSecondary";
 import { destinationGate, isProductionId } from "../tracking/guards";
+import { loadOrderPiiForUploads } from "../tracking/shopifyOrderPii";
 
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a === `--${name}` || a.startsWith(`--${name}=`));
@@ -40,9 +41,13 @@ type CandidateRow = {
   gbraid: string | null;
   wbraid: string | null;
   consent_marketing: boolean | null;
+  country_code: string | null;
 };
 
-function toPurchase(row: CandidateRow): ShadowPurchase {
+function toPurchase(
+  row: CandidateRow,
+  pii?: { email: string | null; phone: string | null; country: string | null },
+): ShadowPurchase {
   return {
     orderId: row.order_id,
     orderName: null,
@@ -64,9 +69,9 @@ function toPurchase(row: CandidateRow): ShadowPurchase {
       marketing: row.consent_marketing,
       saleOfData: null,
     },
-    email: null,
-    phone: null,
-    country: null,
+    email: pii?.email ?? null,
+    phone: pii?.phone ?? null,
+    country: pii?.country ?? row.country_code ?? null,
     ip: null,
     userAgent: null,
     pageUrl: null,
@@ -97,6 +102,7 @@ async function main() {
   if (problems.length) throw new Error(`Secondary action rejected: ${problems.join("; ")}`);
 
   // Prefer click ids from any funnel event on the same session; fall back to completion row.
+  // Email/phone never in funnel_events — loaded separately (OrderMatch / Shopify Admin).
   const rows = await prisma.$queryRaw<CandidateRow[]>`
     WITH completions AS (
       SELECT DISTINCT ON (COALESCE(order_id, props->>'orderId'))
@@ -107,6 +113,7 @@ async function main() {
              session_id,
              client_id,
              consent_marketing,
+             country_code,
              gclid,
              gbraid,
              wbraid
@@ -132,26 +139,36 @@ async function main() {
            COALESCE(k.gclid, c.gclid) AS gclid,
            COALESCE(k.gbraid, c.gbraid) AS gbraid,
            COALESCE(k.wbraid, c.wbraid) AS wbraid,
-           COALESCE(k.consent_marketing, c.consent_marketing) AS consent_marketing
+           COALESCE(k.consent_marketing, c.consent_marketing) AS consent_marketing,
+           c.country_code
     FROM completions c
     LEFT JOIN click k ON k.order_id = c.order_id
     ORDER BY c.occurred_at
   `;
 
+  const piiByOrder = await loadOrderPiiForUploads(rows.map((r) => r.order_id));
+
   let built = 0;
   let skipped = 0;
   let sent = 0;
+  let withEc = 0;
+  let emailOnly = 0;
   const sample: unknown[] = [];
 
   for (const row of rows) {
-    const purchase = toPurchase(row);
+    const purchase = toPurchase(row, piiByOrder.get(row.order_id));
     const body = buildSecondaryClickConversion(purchase, ads.customerId, actionId, purchase.revenue);
     if (!body) {
       skipped += 1;
       continue;
     }
     built += 1;
-    if (sample.length < 5) sample.push(body);
+    if (body.userIdentifiers?.length) withEc += 1;
+    if (!body.gclid && !body.gbraid && !body.wbraid && body.userIdentifiers?.length) emailOnly += 1;
+    if (sample.length < 5) {
+      // Never log raw PII — body only has hashes.
+      sample.push(body);
+    }
 
     if (!live && !validateOnly) continue;
 
@@ -176,6 +193,8 @@ async function main() {
         built,
         skipped,
         sent,
+        withEnhancedConversions: withEc,
+        emailPhoneOnlyNoClick: emailOnly,
         sample,
       },
       null,
