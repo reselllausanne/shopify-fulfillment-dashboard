@@ -11,8 +11,8 @@ const DRY_RUN = process.argv.includes("--dry-run");
 const PHYSICAL_LOC_IDS = LOCATIONS.filter((l) => l.sourceType === "physical").map((l) => l.id);
 
 const SET_QUANTITIES = /* GraphQL */ `
-mutation ResetPhysQty($input: InventorySetQuantitiesInput!) {
-  inventorySetQuantities(input: $input) {
+mutation ResetPhysQty($input: InventorySetQuantitiesInput!, $key: String!) {
+  inventorySetQuantities(input: $input) @idempotent(key: $key) {
     userErrors { field message }
   }
 }`;
@@ -73,7 +73,9 @@ async function main() {
   console.log("\n[1/3] Zeroing inventory...");
   let zeroed = 0;
   const zeroErrors: string[] = [];
-  for (const batch of chunk(rows, 100)) {
+  for (let i = 0; i < chunk(rows, 100).length; i++) {
+    const batch = chunk(rows, 100)[i];
+    const idempotencyKey = `reset-physical-${Date.now()}-${i}`;
     const { data, errors } = await shopifyGraphQL<{
       inventorySetQuantities: { userErrors: Array<{ message: string }> };
     }>(SET_QUANTITIES, {
@@ -84,13 +86,15 @@ async function main() {
           inventoryItemId: r.inventoryItemId,
           locationId: r.locationId,
           quantity: 0,
-          changeFromQuantity: r.available, // required by Shopify API
+          changeFromQuantity: r.available,
         })),
       },
+      key: idempotencyKey,
     });
-    if (errors?.length) zeroErrors.push(...errors.map((e) => e.message));
+    const gqlErr = errors?.length ? errors.map((e) => e.message) : [];
     const ue = data?.inventorySetQuantities?.userErrors ?? [];
-    if (ue.length) zeroErrors.push(...ue.map((e) => e.message));
+    const batchErrors = [...gqlErr, ...ue.map((e) => e.message)];
+    if (batchErrors.length) zeroErrors.push(...batchErrors);
     else zeroed += batch.length;
     process.stdout.write(`\r  zeroed ${zeroed}/${rows.length}`);
   }
