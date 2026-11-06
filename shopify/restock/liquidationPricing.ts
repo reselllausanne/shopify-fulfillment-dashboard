@@ -116,7 +116,14 @@ export async function applyLiquidationSaleDisplay(input: {
     sizeEu: input.sizeEu ?? null,
   });
   const reference = pricing.compareAt;
-  const salePrice = pricing.sellPrice;
+
+  // Sale price: 50 % of the normal reference price → shows "-50 %" badge on site.
+  // compareAt stays as the full normal price (calcShopifySellPrice).
+  // Falls back to cost-based formula if STX price unavailable.
+  const salePrice =
+    reference != null && reference > 0
+      ? Math.floor(reference * 0.5 * 2) / 2 // round down to nearest 0.50 CHF
+      : pricing.sellPrice;
 
   if (!reference || reference <= 0 || !salePrice || salePrice <= 0) {
     warnings.push(
