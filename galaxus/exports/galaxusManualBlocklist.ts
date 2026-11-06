@@ -9,6 +9,8 @@ const GALAXUS_MANUAL_BLOCKLIST = new Set<string>([
   "STX_670983164428", // Bashful Bunny 'Snow Suit' Plush
   "STX_670983109511", // Amuseables Cloud Plush
   "WEL_196744024119", // TeeTurtle Plushieverse Spongebob blind box
+  // Supreme Hanes Boxer Briefs (4 Pack) White XXL — no physical stock (2026-11-06)
+  "STX_0888977784846",
 ]);
 
 /**
