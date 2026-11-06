@@ -9,7 +9,14 @@ import {
   type Env,
 } from "../guards";
 import { eventIdFor, feedItemId, orderGid, type ShadowPurchase } from "../contract";
-import { hashedEmail, normalizeEmail, normalizePhoneE164, sha256Hex } from "../hash";
+import {
+  hashedEmail,
+  hashedEmailForGoogleAds,
+  normalizeEmail,
+  normalizeEmailForGoogleAds,
+  normalizePhoneE164,
+  sha256Hex,
+} from "../hash";
 import { computeOrderProfit, profitAssumptionsFromEnv, secondaryProfitConversionValue } from "../profit";
 import { buildGa4TestPurchase, sendGa4Test } from "../adapters/ga4Test";
 import {
@@ -139,6 +146,9 @@ describe("hash", () => {
     expect(normalizePhoneE164("12", "CH")).toBeNull();
     expect(hashedEmail("Test@Example.com")).toBe(sha256Hex("test@example.com"));
     expect(sha256Hex("test@example.com")).toMatch(/^[0-9a-f]{64}$/);
+    expect(normalizeEmailForGoogleAds("J.Doe+shop@gmail.com")).toBe("jdoe@gmail.com");
+    expect(hashedEmailForGoogleAds("J.Doe+shop@gmail.com")).toBe(sha256Hex("jdoe@gmail.com"));
+    expect(normalizeEmail("J.Doe+shop@gmail.com")).toBe("j.doe+shop@gmail.com");
   });
 });
 
@@ -177,17 +187,27 @@ describe("disabled adapters — payload contract", () => {
     expect((body.events[0].params.items as any[])[0].item_id).toBe("shopify_CH_1_2");
   });
 
-  it("Google Ads secondary: consent + click id required, prod action refused", () => {
+  it("Google Ads secondary: consent + click/EC required, prod action refused", () => {
     expect(() => buildSecondaryClickConversion(purchase(), "123", "6622228228", 10)).toThrow();
     expect(
       buildSecondaryClickConversion(purchase({ consent: { analytics: true, marketing: false, saleOfData: true } }), "123", "999", 10),
     ).toBeNull();
-    expect(buildSecondaryClickConversion(purchase({ clickIds: {} }), "123", "999", 10)).toBeNull();
+    expect(
+      buildSecondaryClickConversion(purchase({ clickIds: {}, email: null, phone: null }), "123", "999", 10),
+    ).toBeNull();
     const body = buildSecondaryClickConversion(purchase(), "123", "999", -5)!;
     expect(body.gclid).toBe("Cj0KCQjw-abc");
     expect(body.conversionValue).toBe(0);
     expect(body.orderId).toBe("13697584726402");
     expect(body.conversionDateTime).toBe("2026-10-14 12:00:00+02:00");
+    expect(body.userIdentifiers?.[0]?.hashedEmail).toBe(hashedEmailForGoogleAds(" Test@Example.com "));
+    expect(body.userIdentifiers?.[1]?.hashedPhoneNumber).toBe(sha256Hex("+41791234567"));
+    expect(JSON.stringify(body)).not.toContain("example.com");
+
+    // Dead cookie: no click id, hashed email still uploads (enhanced conversions for leads).
+    const ecOnly = buildSecondaryClickConversion(purchase({ clickIds: {} }), "123", "999", 50)!;
+    expect(ecOnly.gclid).toBeUndefined();
+    expect(ecOnly.userIdentifiers?.[0]?.hashedEmail).toBeTruthy();
   });
 
   it("validates that an action is secondary before use", () => {

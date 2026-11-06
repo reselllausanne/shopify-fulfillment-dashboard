@@ -39,6 +39,29 @@ export function hashedEmail(raw: string | null | undefined): string | null {
   return e ? sha256Hex(e) : null;
 }
 
+/**
+ * Google Ads enhanced-conversions email rules (stricter than Meta):
+ * lowercase/trim, and for gmail.com / googlemail.com strip dots + `+tag` before hashing.
+ * @see https://developers.google.com/google-ads/api/docs/conversions/upload-offline
+ */
+export function normalizeEmailForGoogleAds(raw: string | null | undefined): string | null {
+  const e = normalizeEmail(raw);
+  if (!e) return null;
+  const at = e.lastIndexOf("@");
+  if (at < 1) return null;
+  let local = e.slice(0, at);
+  const domain = e.slice(at + 1);
+  if (domain === "gmail.com" || domain === "googlemail.com") {
+    local = local.split("+")[0]!.replace(/\./g, "");
+  }
+  return `${local}@${domain}`;
+}
+
+export function hashedEmailForGoogleAds(raw: string | null | undefined): string | null {
+  const e = normalizeEmailForGoogleAds(raw);
+  return e ? sha256Hex(e) : null;
+}
+
 /** Meta wants digits only (no "+"); Google/TikTok accept E.164 with "+". */
 export function hashedPhone(
   raw: string | null | undefined,

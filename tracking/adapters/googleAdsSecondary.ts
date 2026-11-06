@@ -14,6 +14,7 @@ import type { MutateResponse } from "@/adsanalytics/google/adsClient";
 import { uploadClickConversions } from "@/adsanalytics/google/conversionUploads";
 import { assertDestinationOpen, isProductionId, type Env } from "../guards";
 import type { ShadowPurchase } from "../contract";
+import { hashedEmailForGoogleAds, hashedPhone } from "../hash";
 
 export type ConversionActionCheck = {
   id: string;
@@ -36,6 +37,13 @@ export function validateSecondaryAction(row: ConversionActionCheck): string[] {
   return problems;
 }
 
+/** One hashed identifier per object (Ads API oneof). */
+export type AdsUserIdentifier = {
+  userIdentifierSource: "FIRST_PARTY";
+  hashedEmail?: string;
+  hashedPhoneNumber?: string;
+};
+
 export type ClickConversionBody = {
   conversionAction: string;
   gclid?: string;
@@ -46,7 +54,19 @@ export type ClickConversionBody = {
   currencyCode: string;
   orderId: string;
   consent: { adUserData: "GRANTED" };
+  /** Enhanced conversions for leads — hash only; never raw PII. */
+  userIdentifiers?: AdsUserIdentifier[];
 };
+
+/** Build up to 2 FIRST_PARTY identifiers (email + phone). Empty if none usable. */
+export function buildAdsUserIdentifiers(p: ShadowPurchase): AdsUserIdentifier[] {
+  const out: AdsUserIdentifier[] = [];
+  const em = hashedEmailForGoogleAds(p.email);
+  if (em) out.push({ userIdentifierSource: "FIRST_PARTY", hashedEmail: em });
+  const ph = hashedPhone(p.phone, p.country ?? "CH", "e164");
+  if (ph) out.push({ userIdentifierSource: "FIRST_PARTY", hashedPhoneNumber: ph });
+  return out;
+}
 
 /** "yyyy-mm-dd hh:mm:ss+|-hh:mm" in Europe/Zurich, as the Ads API requires. */
 export function adsDateTime(d: Date, timeZone = "Europe/Zurich"): string {
@@ -72,6 +92,12 @@ export function adsDateTime(d: Date, timeZone = "Europe/Zurich"): string {
 /**
  * @param value revenue (default) or, for the purchase_profit experiment, the clamped CM2 from
  *              secondaryProfitConversionValue(). Never mixed into the revenue action.
+ *
+ * Match keys (need ≥1 after marketing consent):
+ * - gclid / gbraid / wbraid (click), and/or
+ * - hashed email/phone (enhanced conversions for leads — recovers dead-cookie sales).
+ *
+ * Note: Ads ignores userIdentifiers when only gbraid/wbraid is set (no gclid). Prefer gclid.
  */
 export function buildSecondaryClickConversion(
   p: ShadowPurchase,
@@ -88,15 +114,18 @@ export function buildSecondaryClickConversion(
       : p.clickIds.wbraid
         ? { wbraid: p.clickIds.wbraid }
         : null;
-  if (!click) return null;
+  const userIdentifiers = buildAdsUserIdentifiers(p);
+  // gbraid/wbraid alone → Ads drops userIdentifiers; still need the click id to upload.
+  if (!click && userIdentifiers.length === 0) return null;
   return {
     conversionAction: `customers/${customerId}/conversionActions/${conversionActionId}`,
-    ...click,
+    ...(click ?? {}),
     conversionDateTime: adsDateTime(p.occurredAt),
     conversionValue: Math.max(0, Math.round(value * 100) / 100),
     currencyCode: p.currency,
     orderId: p.orderId,
     consent: { adUserData: "GRANTED" },
+    ...(userIdentifiers.length ? { userIdentifiers } : {}),
   };
 }
 
@@ -196,7 +225,7 @@ export async function sendGoogleAdsSecondary(args: SendSecondaryArgs): Promise<S
     value,
   );
   if (!body) {
-    return { status: "skipped", body: null, reason: "no_marketing_consent_or_click_id" };
+    return { status: "skipped", body: null, reason: "no_marketing_consent_or_match_key" };
   }
 
   const upload = args.uploadFn;
