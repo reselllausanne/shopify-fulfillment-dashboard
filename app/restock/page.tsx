@@ -525,8 +525,15 @@ export default function RestockScanPage() {
           (!data.ok && (data.error ?? "").includes("fournir un identifiant"))
         ) {
           // Needs human attention — park in in-flight panel with "attention" badge
+          const titleFromResult =
+            data.shopify?.restock?.variant?.productTitle ??
+            data.variantChoices?.[0]?.title ??
+            data.slug ??
+            null;
           setInFlight((prev) =>
-            prev.map((e) => (e.id === id ? { ...e, status: "attention", result: data } : e))
+            prev.map((e) =>
+              e.id === id ? { ...e, status: "attention", result: data, title: titleFromResult } : e
+            )
           );
         } else {
           const errMsg = data.error ?? "Échec";
@@ -561,7 +568,13 @@ export default function RestockScanPage() {
   function handleAttentionItem(entry: InFlightEntry) {
     setInFlight((prev) => prev.filter((e) => e.id !== entry.id));
     resetAll();
-    void runLookup(entry.gtin);
+    setGtin(entry.gtin);
+    if (entry.result) {
+      // Restore directly from cached POST result — no extra network request
+      setApplyResult(entry.result);
+    } else {
+      void runLookup(entry.gtin);
+    }
   }
 
   const doneOk = applyResult?.ok === true;
@@ -1262,17 +1275,26 @@ export default function RestockScanPage() {
                   {e.status === "error" && "✗"}
                   {e.status === "attention" && "⚠"}
                 </span>
-                <span className="font-mono text-xs text-gray-600">{e.gtin}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {e.title ? (
+                    <span className="font-medium text-gray-800">{e.title}</span>
+                  ) : (
+                    <span className="font-mono text-xs text-gray-500">{e.gtin}</span>
+                  )}
+                  {e.title && (
+                    <span className="ml-1 font-mono text-[10px] text-gray-400">{e.gtin}</span>
+                  )}
+                </span>
                 {e.status === "error" && (
                   <span className="text-xs text-red-700 truncate">{e.errorMsg}</span>
                 )}
                 {e.status === "attention" && (
                   <>
-                    <span className="text-xs text-amber-800 flex-1 truncate">
-                      {e.result?.status === "size-confirmation-required" && "Choisir taille"}
-                      {e.result?.status === "gtin-confirmation-required" && "Choisir produit"}
-                      {e.result?.status === "manual-price-required" && "Saisir prix"}
-                      {e.result?.error?.includes("fournir un identifiant") && "GTIN inconnu — identifier requis"}
+                    <span className="text-xs text-amber-800 shrink-0">
+                      {e.result?.status === "size-confirmation-required" && "Taille ?"}
+                      {e.result?.status === "gtin-confirmation-required" && "Produit ?"}
+                      {e.result?.status === "manual-price-required" && "Prix ?"}
+                      {e.result?.error?.includes("fournir un identifiant") && "GTIN inconnu"}
                     </span>
                     <button
                       type="button"
