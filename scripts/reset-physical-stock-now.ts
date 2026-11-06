@@ -84,6 +84,7 @@ async function main() {
           inventoryItemId: r.inventoryItemId,
           locationId: r.locationId,
           quantity: 0,
+          changeFromQuantity: r.available, // required by Shopify API
         })),
       },
     });
