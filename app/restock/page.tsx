@@ -30,7 +30,8 @@ type LookupResult =
   | {
       status: "resolved";
       gtin: string;
-      slug: string;
+      /** Real KickDB URL key; null when only a supplier SKU is known. */
+      slug: string | null;
       title: string | null;
       brand: string | null;
       styleSku: string | null;
@@ -42,7 +43,8 @@ type LookupResult =
   | {
       status: "shopify-exists-no-gtin";
       gtin: string;
-      slug: string;
+      /** Real KickDB URL key; null when only a supplier SKU matched. */
+      slug: string | null;
       title: string | null;
       brand: string | null;
       styleSku: string | null;

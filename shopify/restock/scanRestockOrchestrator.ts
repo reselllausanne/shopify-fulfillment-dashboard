@@ -282,7 +282,8 @@ export type ScanLookupResult =
   | {
       status: "resolved";
       gtin: string;
-      slug: string;
+      /** Real KickDB URL key; null when no KickDB handle is known (only supplier SKU). */
+      slug: string | null;
       title: string | null;
       brand: string | null;
       styleSku: string | null;
@@ -295,7 +296,8 @@ export type ScanLookupResult =
   | {
       status: "shopify-exists-no-gtin";
       gtin: string;
-      slug: string;
+      /** Real KickDB URL key; null when only a supplier SKU matched. */
+      slug: string | null;
       title: string | null;
       brand: string | null;
       styleSku: string | null;
@@ -547,7 +549,11 @@ async function resolveGtinFromLocalSources(gtin: string): Promise<LocalGtinHit |
 }
 
 type CatalogHit = {
-  slug: string;
+  /**
+   * Real KickDB URL key (e.g. "on-cloudrunner-2").
+   * null when only a supplier/model SKU is known — never use a bare SKU as a KickDB handle.
+   */
+  slug: string | null;
   title: string | null;
   brand: string | null;
   styleSku: string | null;
@@ -556,6 +562,26 @@ type CatalogHit = {
   matchedSizeEu: string | null;
   matchedSizeUs: string | null;
 };
+
+/**
+ * Returns true when the string looks like a real KickDB product handle
+ * (lowercase, hyphen-separated words, e.g. "on-cloudrunner-2").
+ *
+ * Returns false for raw supplier/model SKUs like "3WF10383879", "HQ2157-110",
+ * "FZ5765" — these must NOT be used as KickDB slugs because:
+ *   1. `inspectKickdbSlugForGtin` might spuriously confirm a GTIN via a
+ *      style-SKU lookup and set gtinConfirmed=true for the wrong reason.
+ *   2. `createProductFullFlow` / `syncFullCatalogAndResolveVariant` would
+ *      create a junk Shopify product with a handle like "3wf10383879".
+ */
+function isRealKickdbHandle(slug: string | null | undefined): boolean {
+  if (!slug) return false;
+  const s = slug.trim();
+  // Real handles are lowercase and contain at least one hyphen-separated word
+  // with 3+ letters (e.g. "on-cloudrunner-2", "air-jordan-1-retro").
+  // SKUs are all-caps or start with a digit, and contain no meaningful words.
+  return /^[a-z]/.test(s) && /[a-z]{3,}/.test(s) && s.includes("-");
+}
 
 function mapVariantChoices(
   variants: Awaited<ReturnType<typeof listProductVariants>>
@@ -901,28 +927,48 @@ async function buildSizeConfirmationResult(input: {
 /**
  * KickDB/local hit but GTIN missing on Shopify barcode — check if the product
  * already exists (style SKU / slug) before offering full create (duplicate risk).
+ *
+ * IMPORTANT: catalog.slug must be a real KickDB URL key (e.g. "on-cloudrunner-2").
+ * When only a supplier SKU is known (catalog.slug = null), we skip the live KickDB
+ * GTIN-confirmation step — inspectKickdbSlugForGtin must NOT be called with a bare
+ * supplier/model SKU (e.g. "3WF10383879"), because KickDB may resolve that SKU and
+ * spuriously set gtinConfirmed=true, leading to a false auto-restock.
  */
 async function finalizeCatalogLookup(
   gtin: string,
   catalog: CatalogHit
 ): Promise<ScanLookupResult> {
+  // Only pass a real KickDB handle to resolveMatchedSizesForGtin.
+  // Bare supplier SKUs must NOT be used as slugs here.
+  const realSlug = isRealKickdbHandle(catalog.slug) ? catalog.slug : null;
+
   const resolved = await resolveMatchedSizesForGtin({
     gtin,
-    slug: catalog.slug,
+    slug: realSlug,
     matchedSizeEu: catalog.matchedSizeEu,
     matchedSizeUs: catalog.matchedSizeUs,
     gtinConfirmed: catalog.gtinConfirmed,
   });
 
   const existing = await findExistingShopifyProductForCatalogIdentifier({
-    slug: catalog.slug,
+    slug: realSlug,
     styleSku: catalog.styleSku,
   });
   if (!existing) {
+    // When slug is null (only a supplier SKU known), signal not-found so the
+    // operator must supply a real StockX slug — do not send a bare SKU to the
+    // create pipeline (risk of junk Shopify product creation).
+    if (!realSlug) {
+      return {
+        status: "not-found",
+        gtin,
+        message: `GTIN trouvé en DB (${catalog.styleSku ? `SKU: ${catalog.styleSku}` : "source fournisseur"}) mais sans slug KickDB — entrer le slug StockX ou le SKU boîte pour créer`,
+      };
+    }
     return {
       status: "resolved",
       gtin,
-      slug: catalog.slug,
+      slug: realSlug,
       title: catalog.title,
       brand: catalog.brand,
       styleSku: catalog.styleSku,
@@ -943,7 +989,7 @@ async function finalizeCatalogLookup(
   return {
     status: "shopify-exists-no-gtin",
     gtin,
-    slug: catalog.slug,
+    slug: realSlug,
     title: catalog.title,
     brand: catalog.brand,
     styleSku: catalog.styleSku,
@@ -995,7 +1041,12 @@ async function requireSizeConfirmationForExistingProduct(input: {
     gtinConfirmed: input.gtinConfirmed,
   });
 
-  if (input.quantity != null && gtinConfirmed && isValidEuSizeForCreate(matchedSizeEu)) {
+  // Guard: only auto-restock when we have a confirmed GTIN AND a real KickDB handle.
+  // A bare supplier/model SKU (e.g. "3WF10383879") must NOT be used as a KickDB slug
+  // in the auto-restock path — it may have caused a false GTIN confirmation above and
+  // would trigger junk product creation or a false success without writing SVLS/stock.
+  const slugIsRealHandle = isRealKickdbHandle(input.slug);
+  if (input.quantity != null && gtinConfirmed && isValidEuSizeForCreate(matchedSizeEu) && slugIsRealHandle) {
     const auto = await tryKickdbAutoRestock({
       gtin: input.gtin,
       slug: input.slug,
@@ -1072,8 +1123,13 @@ export async function lookupScan(rawGtin: string): Promise<ScanLookupResult> {
         slug: local.slug,
         styleSku: local.styleSku,
       });
+      // IMPORTANT: use local.slug (real KickDB URL key) only — never fall back to
+      // local.styleSku as a slug. A supplier/model SKU like "3WF10383879" is NOT a
+      // KickDB product handle. Passing it as slug causes inspectKickdbSlugForGtin to
+      // spuriously confirm the GTIN (KickDB resolves many style SKUs), which then
+      // triggers the UI's auto-restock with a junk identifier (false-success bug).
       return finalizeCatalogLookup(gtin, {
-        slug: (local.slug ?? local.styleSku) as string,
+        slug: local.slug ?? null,
         title: local.title,
         brand: local.brand,
         styleSku: local.styleSku,
@@ -1707,6 +1763,12 @@ export async function applyScanRestock(input: {
     // (KickDB, SupplierVariant, etc.) before giving up. This mirrors lookupScan cascade
     // step 2 and handles the case where the product is on Shopify but the GTIN barcode
     // was never written (shopify-exists-no-gtin path).
+    //
+    // IMPORTANT: pass local.slug only (real KickDB URL key). Never pass local.styleSku
+    // as slug — a supplier/model SKU like "3WF10383879" is not a KickDB handle and
+    // must NOT flow into tryKickdbAutoRestock or createProductFullFlow (false-success
+    // bug: spurious GTIN confirmation + junk product creation). requireSizeConfirmation
+    // ForExistingProduct has an additional isRealKickdbHandle guard as belt-and-braces.
     try {
       const local = await resolveGtinFromLocalSources(gtin);
       if (local && (local.slug || local.styleSku)) {
@@ -1718,7 +1780,7 @@ export async function applyScanRestock(input: {
         });
         const catalogResult = await requireSizeConfirmationForExistingProduct({
           gtin,
-          slug: local.slug,
+          slug: local.slug,   // real KickDB URL key only; never local.styleSku
           styleSku: local.styleSku,
           matchedSizeEu: sanitizeEuSizeForCreate(local.sizeEu),
           matchedSizeUs: local.sizeUs,
