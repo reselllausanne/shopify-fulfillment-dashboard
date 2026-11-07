@@ -18,8 +18,10 @@ import {
   chooseLane,
   chooseLaneByCsAtMargin,
   chooseLaneByGalaxusExpressFirst,
+  chooseLaneByGalaxusNoLoss,
   classifyEmptyLaneReason,
   classifyLaneLabel,
+  isNoSellersPage,
   countDistinctShippingTierInText,
   extractCheckoutSubtotalChf,
   GALAXUS_CSAT_MIN_MARGIN,
@@ -424,9 +426,46 @@ async function clickBuyNow(page: Page) {
   return !!clicked;
 }
 
+const PLACE_ORDER_NAME =
+  /Passer la commande|Passer commande|Place Order|Pay now|Payer maintenant|Payer|Submit order|Confirm order|Commander/i;
+
+/** Pay button. "Passer la commande" is not matched by "Passer commande". Never Confirm Offer. */
+async function clickPlaceOrder(page: Page, opts?: { dry?: boolean }): Promise<boolean> {
+  const buttons = page.getByRole("button", { name: PLACE_ORDER_NAME });
+  const n = await buttons.count().catch(() => 0);
+  for (let i = 0; i < n; i += 1) {
+    const btn = buttons.nth(i);
+    const label = ((await btn.innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+    if (/confirm offer/i.test(label)) continue;
+    if (!(await btn.isVisible().catch(() => false))) continue;
+    if (opts?.dry) return true;
+    await btn.scrollIntoViewIfNeeded().catch(() => undefined);
+    await btn.click({ force: true });
+    console.warn(`[STOCKX-CHECKOUT] place order click label=${label.slice(0, 80)}`);
+    return true;
+  }
+  const clicked = await page.evaluate((dry) => {
+    const re =
+      /passer la commande|passer commande|place order|pay now|payer maintenant|\bpayer\b|submit order|confirm order|\bcommander\b/i;
+    const el = Array.from(document.querySelectorAll("button,a,[role='button']")).find((node) => {
+      const t = (node.textContent || "").replace(/\s+/g, " ").trim();
+      return re.test(t) && !/confirm offer/i.test(t);
+    });
+    if (!el) return "";
+    if (!dry) (el as HTMLElement).click();
+    return ((el.textContent || "").replace(/\s+/g, " ").trim() || "click").slice(0, 80);
+  }, Boolean(opts?.dry));
+  if (!clicked) return false;
+  console.warn(`[STOCKX-CHECKOUT] place order click label=${clicked}`);
+  return true;
+}
+
 async function clickReviewOrder(page: Page): Promise<boolean> {
   const byTestId = page.locator('[data-testid="checkout-confirm-button"]').first();
   if (await byTestId.isVisible({ timeout: 6000 }).catch(() => false)) {
+    const confirmLabel = ((await byTestId.innerText().catch(() => "")) || "").replace(/\s+/g, " ");
+    // Offer pages reuse this button. Review/Confirm Offer is a BID, never a purchase.
+    if (/offer|offre/i.test(confirmLabel)) return false;
     await byTestId.scrollIntoViewIfNeeded().catch(() => undefined);
     await byTestId.click({ force: true });
     return true;
@@ -636,6 +675,8 @@ export async function selectAndVerifyStockxLane(
     /** @deprecated Prefer galaxus_express_first (HARD RULE). */
     | { policy: "galaxus_csat"; sellChf: number; maxAllInChf?: number }
     | { policy: "galaxus_express_first"; maxAllInChf?: number }
+    /** Night buyer: Express if no loss, else Standard if loss <= 5 %. */
+    | { policy: "galaxus_noloss"; sellChf: number; maxAllInChf?: number }
 ): Promise<
   | { ok: true; lane: StockxLaneCard; lanes: StockxLaneCard[]; pickReason: string; subtotalChf: number }
   | { ok: false; reason: string; lanes: StockxLaneCard[]; detail?: string }
@@ -651,6 +692,7 @@ export async function selectAndVerifyStockxLane(
           const hasChf = /(?:CHF\\s*\\d)|(?:\\d+[.,]\\d{2}\\s*CHF)/i.test(t);
           const noAsk = /aucune demande|no asks?|make an offer|faire une offre/i.test(t);
           if (noAsk && !hasChf) return true;
+          if (/no sellers to buy from|there are no sellers|aucun vendeur/i.test(t) && !/Review Order|Place Order/i.test(t)) return true;
           if (!hasChf) return false;
           return (
             /\\b(Standard|Express|Xpress|Fastest|Expedited|Sous[- ]?total|Subtotal)\\b/i.test(t) ||
@@ -749,7 +791,21 @@ export async function selectAndVerifyStockxLane(
     return true;
   };
 
-  if (options.policy === "galaxus_express_first") {
+  if (options.policy === "galaxus_noloss") {
+    if (!lanes.length && isNoSellersPage(body)) {
+      return { ok: false, reason: "oos_no_ask", lanes, detail: "no sellers (offer-only page, not clicked)" };
+    }
+    const pick = chooseLaneByGalaxusNoLoss(options.sellChf, lanes, { maxAllInChf });
+    if (!pick.ok) {
+      // Never synthesize a lane on margin abort (would bypass the no-loss rule).
+      if (pick.reason === "margin_abort" || !trySynthSingleXpress()) {
+        return { ok: false, reason: pick.reason, lanes, detail: pick.detail };
+      }
+    } else {
+      picked = pick.lane;
+      pickReason = pick.reason;
+    }
+  } else if (options.policy === "galaxus_express_first") {
     const pick = chooseLaneByGalaxusExpressFirst(lanes, {
       maxAllInChf,
       shippingTierInText: tiersInText,
@@ -2009,6 +2065,10 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
   reuse?: { ctx: BrowserContext; page: Page };
   skipGoto?: boolean;
   minMargin?: number;
+  /** Express if margin >= 0, else Standard if loss <= 5 %. Ignores minMargin. */
+  noLoss?: boolean;
+  /** Which unit of a qty>1 line (0-based). Default 0. */
+  unitIndex?: number;
 }): Promise<GalaxusAutoCheckoutResult> {
   const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
   const dryRun = Boolean(options.dryRun);
@@ -2016,9 +2076,11 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
   const c = options.candidate;
 
   // Prebuy: already linked on this Galaxus line → never double-buy.
+  const unitIndex = Math.max(0, Number(options.unitIndex ?? 0) || 0);
   const existing = await (prisma as any).galaxusStockxMatch.findFirst({
     where: {
       galaxusOrderLineId: c.lineId,
+      unitIndex,
       stockxOrderNumber: { not: "" },
     },
     select: { stockxOrderNumber: true },
@@ -2035,6 +2097,7 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
   const sizeUS = convertEuToUs(c.sizeEU, {
     title: c.productName,
     brand: inferBrandFromTitle(c.productName),
+    slug: c.slug,
   });
   // Hard checkout deep-link — same path every time (lane pick + Place Order).
   const checkoutUrl = buildStockxCheckoutBuyUrl(c.slug, sizeUS || c.sizeEU);
@@ -2107,10 +2170,12 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
       /* keep going */
     }
 
-    const selected = await selectAndVerifyStockxLane(page, {
-      policy: "galaxus_express_first",
-      maxAllInChf,
-    });
+    const selected = await selectAndVerifyStockxLane(
+      page,
+      options.noLoss
+        ? { policy: "galaxus_noloss", sellChf: c.sellChf, maxAllInChf }
+        : { policy: "galaxus_express_first", maxAllInChf }
+    );
     if (!selected.ok) {
       return {
         kind: "needs_human",
@@ -2155,7 +2220,12 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
     }
 
     const m = laneMarginPct(c.sellChf, totalChf);
-    if (!(m > minMargin)) {
+    const marginFloor = options.noLoss
+      ? isExpressFamily(selected.lane.label)
+        ? 0
+        : -0.05
+      : minMargin;
+    if (options.noLoss ? m < marginFloor - 1e-9 : !(m > minMargin)) {
       return {
         kind: "needs_human",
         reason: "margin",
@@ -2166,8 +2236,7 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
       };
     }
 
-    const pay = page.getByRole("button", { name: /Passer commande|Place Order/i }).first();
-    if (!(await pay.isVisible({ timeout: 8000 }).catch(() => false))) {
+    if (!(await clickPlaceOrder(page, { dry: dryRun }))) {
       return {
         kind: "needs_human",
         reason: "bot_fail",
@@ -2188,7 +2257,6 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
       };
     }
 
-    await pay.click();
     await page.waitForTimeout(8000);
     const after = `${page.url()}\n${await page.locator("body").innerText().catch(() => "")}`;
     const orderMatch =
@@ -2248,6 +2316,7 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
       galaxusOrderDbId: c.galaxusOrderDbId,
       galaxusOrderId: c.galaxusOrderId,
       lineId: c.lineId,
+      unitIndex,
       productName: c.productName,
       gtin: c.gtin,
       sizeEU: c.sizeEU,

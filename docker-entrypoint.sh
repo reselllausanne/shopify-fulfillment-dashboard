@@ -21,6 +21,18 @@ if [ "${STOCKX_WARM_DAEMON:-1}" = "1" ] && [ "${PLAYWRIGHT_USE_XVFB:-1}" = "1" ]
   ) &
 fi
 
+# Galaxus night buyer: runs while /app/.data/night-buyer.on exists (kill switch = delete it).
+# Restarts after crash or redeploy. Halt file .data/night-buyer.halt pauses it.
+if [ -f /app/.data/night-buyer.on ]; then
+  (
+    sleep 40
+    while [ -f /app/.data/night-buyer.on ]; do
+      npx tsx scripts/galaxus-night-buyer.ts >>/app/.data/night-buyer.log 2>&1
+      sleep 20
+    done
+  ) &
+fi
+
 if [ $# -gt 0 ]; then
   exec "$@"
 else
