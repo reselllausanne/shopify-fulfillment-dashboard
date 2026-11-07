@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyCheckoutResult,
+  lockIsLive,
   missingUnitIndexes,
   shouldRotateSession,
   stateBlocks,
@@ -68,6 +69,9 @@ describe("classifyCheckoutResult", () => {
     ).toBe("paid_no_number");
     expect(classifyCheckoutResult({ kind: "needs_human", reason: "link_fail" }).kind).toBe("halt");
   });
+  it("size grid is a size problem, not Cloudflare", () => {
+    expect(classifyCheckoutResult({ kind: "needs_human", reason: "size_grid" })).toMatchObject({ status: "needs_review" });
+  });
   it("bought needs a number", () => {
     expect(classifyCheckoutResult({ kind: "easy_buy", stockxOrderNumber: "03-ABC", totalChf: 10 }).kind).toBe("bought");
     expect(classifyCheckoutResult({ kind: "easy_buy", stockxOrderNumber: null }).kind).toBe("paid_no_number");
@@ -90,5 +94,13 @@ describe("units + state + session", () => {
     expect(shouldRotateSession({ startedAt: now - 60_000, consecutiveFails: 1 }, now)).toBe(false);
     expect(shouldRotateSession({ startedAt: now - 60_000, consecutiveFails: 2 }, now)).toBe(true);
     expect(shouldRotateSession({ startedAt: now - 51 * 60_000, consecutiveFails: 0 }, now)).toBe(true);
+  });
+});
+
+describe("single instance lock", () => {
+  it("live lock blocks a second worker, stale lock does not", () => {
+    expect(lockIsLive(1_000_000 - 10_000, 1_000_000)).toBe(true);
+    expect(lockIsLive(1_000_000 - 60_000, 1_000_000)).toBe(false);
+    expect(lockIsLive(null, 1_000_000)).toBe(false);
   });
 });
