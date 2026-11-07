@@ -27,6 +27,8 @@ export type GalaxusBuyCandidate = {
   /** Hint from DB prices (live checkout still uses galaxus_express_first). */
   desiredLaneHint: StockxDesiredLane;
   supplierVariantId: string | null;
+  /** KickDB variant size label ("US W 8", "US M 7"). Exact StockX size token when present. */
+  sizeUsLabel?: string | null;
 };
 
 /** Galaxus GTIN may drop leading zeros (EAN-13 vs 12/14 digits). Try every padded form. */
@@ -156,17 +158,29 @@ export async function resolveGalaxusStxBuyCandidate(input: {
 
   let slug: string | null = null;
   let styleId: string | null = null;
+  let sizeUsLabel: string | null = null;
+  if (gtin) {
+    const kv = await prisma.kickDBVariant
+      .findFirst({
+        where: { gtin: { in: gtinLookupVariants(gtin) }, sizeUs: { not: null } },
+        select: { sizeUs: true },
+      })
+      .catch(() => null);
+    sizeUsLabel = kv?.sizeUs?.trim() || null;
+  }
   if (sv?.supplierVariantId) {
     const mapped = await prisma.variantMapping.findFirst({
       where: { supplierVariantId: sv.supplierVariantId },
       select: {
         kickdbVariant: {
           select: {
+            sizeUs: true,
             product: { select: { urlKey: true, styleId: true } },
           },
         },
       },
     });
+    if (!sizeUsLabel) sizeUsLabel = mapped?.kickdbVariant?.sizeUs?.trim() || null;
     slug = mapped?.kickdbVariant?.product?.urlKey?.trim() || null;
     styleId = mapped?.kickdbVariant?.product?.styleId?.trim() || null;
   }
@@ -225,6 +239,7 @@ export async function resolveGalaxusStxBuyCandidate(input: {
       standardBuyChf,
       desiredLaneHint,
       supplierVariantId: sv?.supplierVariantId ?? null,
+      sizeUsLabel,
     },
   };
 }

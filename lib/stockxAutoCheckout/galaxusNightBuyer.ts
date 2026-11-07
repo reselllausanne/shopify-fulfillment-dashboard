@@ -129,7 +129,7 @@ export function classifyCheckoutResult(r: GalaxusAutoCheckoutResult): Outcome {
   if (reason === "non_stockx") {
     return { kind: "verdict", status: "not_stockx", reason, detail };
   }
-  if (reason === "size_us_map" || reason === "slug") {
+  if (reason === "size_us_map" || reason === "slug" || reason === "size_grid") {
     return { kind: "verdict", status: "needs_review", reason, detail };
   }
   // proxy_blank, oos (unparsed), express_unparsed, price_moved, multi_price, bot_fail...
@@ -292,6 +292,37 @@ export async function writeReport(state: Record<string, PairState>): Promise<voi
     "",
   ];
   await fs.writeFile(REPORT_FILE, lines.join("\n"), "utf8");
+}
+
+const LOCK_FILE = path.join(DATA_DIR, "night-buyer.lock");
+const LOCK_STALE_MS = 45_000;
+let lockTimer: NodeJS.Timeout | null = null;
+
+/** Pure: is another worker alive? Lock file touched within the last 45 s. */
+export function lockIsLive(mtimeMs: number | null, now: number): boolean {
+  return mtimeMs != null && now - mtimeMs < LOCK_STALE_MS;
+}
+
+/** One worker only. Two workers = double buys. Returns false if another is alive. */
+export async function acquireSingleInstanceLock(): Promise<boolean> {
+  const st = await fs.stat(LOCK_FILE).catch(() => null);
+  if (lockIsLive(st ? st.mtimeMs : null, Date.now())) return false;
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  const token = `${process.pid}:${Date.now()}`;
+  await fs.writeFile(LOCK_FILE, token, "utf8");
+  // Re-read: if two start at once, only the last writer keeps the lock.
+  await new Promise((r) => setTimeout(r, 400));
+  if ((await fs.readFile(LOCK_FILE, "utf8").catch(() => "")) !== token) return false;
+  lockTimer = setInterval(() => {
+    fs.writeFile(LOCK_FILE, token, "utf8").catch(() => undefined);
+  }, 10_000);
+  return true;
+}
+
+export async function releaseLock(): Promise<void> {
+  if (lockTimer) clearInterval(lockTimer);
+  lockTimer = null;
+  await fs.rm(LOCK_FILE, { force: true });
 }
 
 export async function halt(reason: string): Promise<void> {
