@@ -112,6 +112,8 @@ const LOCATION_STORAGE_KEY = "restock.locationId";
 
 const AUTO_MODE_STORAGE_KEY = "restock.autoMode";
 
+const SELL_MODE_STORAGE_KEY = "restock.sellMode";
+
 const FIXED_PRICE_MODE_STORAGE_KEY = "restock.fixedPriceMode";
 const FIXED_PRICE_VALUE_STORAGE_KEY = "restock.fixedPriceValue";
 const FIXED_COMPARE_AT_STORAGE_KEY = "restock.fixedCompareAt";
@@ -140,6 +142,8 @@ type InFlightEntry = {
   errorMsg?: string | null;
   /** POST result kept for "attention" items so we can restore state */
   result?: ApplyResult | null;
+  /** "sell" for Vendre/delist entries; undefined or "restock" for normal */
+  mode?: "sell" | "restock";
 };
 
 function isAwaitingManualAction(
@@ -178,6 +182,7 @@ export default function RestockScanPage() {
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [locationId, setLocationId] = useState<string>("");
   const [autoMode, setAutoMode] = useState<boolean>(false);
+  const [sellMode, setSellMode] = useState<boolean>(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [inFlight, setInFlight] = useState<InFlightEntry[]>([]);
   const [manualSizeEu, setManualSizeEu] = useState("");
@@ -254,6 +259,7 @@ export default function RestockScanPage() {
     if (typeof window === "undefined") return;
     const saved = window.localStorage.getItem(AUTO_MODE_STORAGE_KEY);
     if (saved === null || saved === "1") setAutoMode(true);
+    setSellMode(window.localStorage.getItem(SELL_MODE_STORAGE_KEY) === "1");
   }, []);
 
   function toggleAutoMode(next: boolean) {
@@ -262,6 +268,25 @@ export default function RestockScanPage() {
       window.localStorage.setItem(AUTO_MODE_STORAGE_KEY, next ? "1" : "0");
     }
   }
+
+  function toggleSellMode(next: boolean) {
+    setSellMode(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(SELL_MODE_STORAGE_KEY, next ? "1" : "0");
+    }
+  }
+
+  // Ctrl+V keyboard shortcut to toggle sell mode (only in auto-mode)
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.ctrlKey && e.key === "v" && autoMode) {
+        e.preventDefault();
+        toggleSellMode(!sellMode);
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [autoMode, sellMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -576,6 +601,53 @@ export default function RestockScanPage() {
       });
   }
 
+  /**
+   * "Vendre" mode — record a physical sale for a scanned GTIN.
+   * Decrements inventory by 1 and resets liquidation pricing via convergeVariant.
+   */
+  function fireDelist(scannedGtin: string) {
+    const id = Math.random().toString(36).slice(2);
+    const locId = locationId;
+
+    setInFlight((prev) => [
+      { id, gtin: scannedGtin, at: Date.now(), status: "processing", title: null, mode: "sell" },
+      ...prev.slice(0, 99),
+    ]);
+
+    fetch("/api/restock/delist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gtin: scannedGtin, locationId: locId }),
+    })
+      .then((r) => r.json())
+      .then((data: { ok: boolean; title?: string | null; newPrice?: number | null; error?: string; warnings?: string[] }) => {
+        if (data.ok) {
+          setInFlight((prev) =>
+            prev.map((e) =>
+              e.id === id
+                ? { ...e, status: "done", title: data.title ?? scannedGtin }
+                : e
+            )
+          );
+          // Auto-dismiss after 4 s
+          setTimeout(() => setInFlight((prev) => prev.filter((e) => e.id !== id)), 4000);
+        } else {
+          const errMsg = data.error ?? "Échec vente";
+          setInFlight((prev) =>
+            prev.map((e) => (e.id === id ? { ...e, status: "error", errorMsg: errMsg } : e))
+          );
+          setTimeout(() => setInFlight((prev) => prev.filter((e) => e.id !== id)), 4000);
+        }
+      })
+      .catch((err: any) => {
+        const errMsg = err?.message ?? "Erreur réseau";
+        setInFlight((prev) =>
+          prev.map((e) => (e.id === id ? { ...e, status: "error", errorMsg: errMsg } : e))
+        );
+        setTimeout(() => setInFlight((prev) => prev.filter((e) => e.id !== id)), 4000);
+      });
+  }
+
   /** Restore an in-flight "attention" item into the blocking manual flow. */
   function handleAttentionItem(entry: InFlightEntry) {
     setInFlight((prev) => prev.filter((e) => e.id !== entry.id));
@@ -713,7 +785,7 @@ export default function RestockScanPage() {
         <strong>{currentLocationName ?? "…choisir emplacement…"}</strong>.
       </p>
 
-      <div className="mt-3 flex items-center gap-2 text-sm">
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
         <label className="inline-flex items-center gap-2 select-none">
           <input
             type="checkbox"
@@ -725,6 +797,22 @@ export default function RestockScanPage() {
             Mode scanette (auto-restock si GTIN unique sur Shopify — sinon choix manuel)
           </span>
         </label>
+
+        {/* Vendre toggle — only visible in auto-mode */}
+        {autoMode && (
+          <button
+            type="button"
+            onClick={() => toggleSellMode(!sellMode)}
+            className={`inline-flex items-center gap-1.5 rounded-sm border px-3 py-1 text-sm font-semibold transition-colors ${
+              sellMode
+                ? "border-orange-600 bg-orange-500 text-white"
+                : "border-gray-300 bg-white text-gray-700 hover:border-gray-500"
+            }`}
+            title="Ctrl+V pour basculer"
+          >
+            {sellMode ? "💰 Mode: Vendre" : "Mode: Restock"}
+          </button>
+        )}
       </div>
 
       <div className="mt-3 rounded-sm border border-gray-200 bg-white p-3">
@@ -819,6 +907,12 @@ export default function RestockScanPage() {
               if (!cleaned) return;
               // Auto-mode: fire POST immediately, clear input for next scan
               if (autoMode && locationId) {
+                if (sellMode) {
+                  setGtin("");
+                  fireDelist(cleaned);
+                  focusScanInput();
+                  return;
+                }
                 if (fixedPriceMode && parsedFixedPrice() == null) {
                   setError("Prix fixe activé — saisir un prix valide (CHF) ou décocher");
                   return;
@@ -835,8 +929,12 @@ export default function RestockScanPage() {
           inputMode="numeric"
           autoComplete="off"
           readOnly={awaitingManual}
-          className={`flex-1 rounded-sm border px-3 py-2 text-lg focus:border-black focus:outline-none ${
-            awaitingManual ? "border-amber-400 bg-amber-50 text-gray-500" : "border-gray-300"
+          className={`flex-1 rounded-sm border px-3 py-2 text-lg focus:outline-none ${
+            awaitingManual
+              ? "border-amber-400 bg-amber-50 text-gray-500 focus:border-amber-500"
+              : sellMode && autoMode
+                ? "border-orange-400 bg-orange-50 focus:border-orange-600"
+                : "border-gray-300 focus:border-black"
           }`}
         />
         <input
@@ -860,6 +958,12 @@ export default function RestockScanPage() {
             const cleaned = gtin.trim();
             if (!cleaned || awaitingManual) return;
             if (autoMode && locationId) {
+              if (sellMode) {
+                setGtin("");
+                fireDelist(cleaned);
+                focusScanInput();
+                return;
+              }
               if (fixedPriceMode && parsedFixedPrice() == null) {
                 setError("Prix fixe activé — saisir un prix valide ou décocher");
                 return;
@@ -872,9 +976,11 @@ export default function RestockScanPage() {
             void runLookup();
           }}
           disabled={!!busy || !gtin.trim() || awaitingManual}
-          className="rounded-sm bg-black px-5 py-2 font-medium text-white disabled:opacity-40"
+          className={`rounded-sm px-5 py-2 font-medium text-white disabled:opacity-40 ${
+            sellMode && autoMode ? "bg-orange-500" : "bg-black"
+          }`}
         >
-          {busy ?? "Scanner"}
+          {busy ?? (sellMode && autoMode ? "💰 Vendre" : "Scanner")}
         </button>
       </div>
 
@@ -1370,12 +1476,14 @@ export default function RestockScanPage() {
                     ? "bg-red-50"
                     : e.status === "attention"
                       ? "bg-amber-50"
-                      : ""
+                      : e.mode === "sell" && e.status === "done"
+                        ? "bg-orange-50"
+                        : ""
                 }`}
               >
                 <span className={`text-sm ${e.status === "processing" ? "animate-pulse" : ""}`}>
-                  {e.status === "processing" && "⏳"}
-                  {e.status === "done" && "✓"}
+                  {e.status === "processing" && (e.mode === "sell" ? "💰" : "⏳")}
+                  {e.status === "done" && (e.mode === "sell" ? "✓" : "✓")}
                   {e.status === "error" && "✗"}
                   {e.status === "attention" && "⚠"}
                 </span>
@@ -1389,6 +1497,11 @@ export default function RestockScanPage() {
                     <span className="ml-1 font-mono text-[10px] text-gray-400">{e.gtin}</span>
                   )}
                 </span>
+                {e.status === "done" && e.mode === "sell" && (
+                  <span className="text-xs text-orange-700 font-medium shrink-0">
+                    Vendu — prix restauré
+                  </span>
+                )}
                 {e.status === "error" && (
                   <span className="text-xs text-red-700 truncate">{e.errorMsg}</span>
                 )}
