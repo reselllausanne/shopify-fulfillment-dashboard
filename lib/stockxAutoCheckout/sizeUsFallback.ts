@@ -14,8 +14,12 @@ function normalizeBrand(brand?: string | null): string | null {
 
 function normalizeGender(value?: string | null, sizeRaw?: string | null): "men" | "women" | "youth" {
   const lower = (value ?? "").toLowerCase();
-  if (/(women|womens|woman|female|\bw\b)/.test(lower)) return "women";
-  if (/(youth|kids|kid|gs|grade school|child|children)/.test(lower)) return "youth";
+  // wmns = Galaxus "Wmns". Slug suffix -w = StockX women's footwear (…-black-w).
+  // A lone "w" inside "white" must not match.
+  if (/\b(women|womens|woman|wmns|wmn|female)\b/.test(lower)) return "women";
+  if (/(?:-w|-wmns)$/.test(lower)) return "women";
+  if (/\(\s*w\s*\)/.test(lower)) return "women";
+  if (/(youth|kids|kid|gs|grade school|preschool|\bps\b|child|children)/.test(lower)) return "youth";
   const size = (sizeRaw ?? "").toUpperCase();
   if (/(^|\b)\d+(\.\d+)?\s*Y\b/.test(size)) return "youth";
   if (/(^|\b)GS\b/.test(size)) return "youth";
@@ -75,14 +79,21 @@ export function apparelLetterSize(sizeRaw: string | null | undefined): string | 
  */
 export function convertEuToUs(
   sizeEU: string,
-  opts?: { brand?: string | null; title?: string | null; genderHint?: string | null }
+  opts?: {
+    brand?: string | null;
+    title?: string | null;
+    genderHint?: string | null;
+    /** StockX urlKey. Women's footwear slugs end in `-w` even when the Galaxus title omits "Women's". */
+    slug?: string | null;
+  }
 ): string | null {
   const eu = normalizeEu(sizeEU);
   if (!eu) return null;
   const letter = apparelLetterSize(eu);
   if (letter) return letter;
   const brand = opts?.brand || inferBrandFromTitle(opts?.title) || null;
-  const chart = getChart(brand, opts?.genderHint ?? opts?.title ?? null, sizeEU);
+  const genderSource = [opts?.genderHint, opts?.title, opts?.slug].filter(Boolean).join(" ");
+  const chart = getChart(brand, genderSource || null, sizeEU);
   if (!chart) return null;
   const key = euKey(eu);
   const index = chart.sizes.EU.findIndex((entry) => euKey(entry) === key);
@@ -91,9 +102,24 @@ export function convertEuToUs(
   if (!us) return null;
   const usStr = String(us).trim();
   // StockX women's footwear deep-links use "8W" not "8" (buy URL ?size=8W).
-  const gender = normalizeGender(opts?.genderHint ?? opts?.title ?? null, sizeEU);
+  const gender = normalizeGender(genderSource, sizeEU);
   if (gender === "women" && /^\d+(\.\d+)?$/.test(usStr)) return `${usStr}W`;
+  // Youth / GS / PS deep-links use "3Y" not "3" (wrong token = size grid, not checkout).
+  if (gender === "youth" && /^\d+(\.\d+)?$/.test(usStr)) return `${usStr}Y`;
   return usStr;
+}
+
+/** KickDB labels: "US W 8" → 8W, "US M 11" → 11. StockX ?size= value. */
+export function stockxSizeQueryFromKickdbLabel(raw: string | null | undefined): string | null {
+  const t = String(raw ?? "").trim();
+  if (!t) return null;
+  const women = t.match(/US\s*W\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (women) return `${women[1]}W`;
+  const men = t.match(/US\s*M\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (men) return men[1];
+  if (/^[0-9]+(?:\.[0-9]+)?W$/i.test(t)) return t.toUpperCase().replace(/\s/g, "");
+  if (/^[0-9]+(?:\.[0-9]+)?$/.test(t)) return t;
+  return null;
 }
 
 export function buildStockxBuyUrl(slug: string, sizeUS?: string | null): string {

@@ -29,6 +29,14 @@ export type GalaxusBuyCandidate = {
   supplierVariantId: string | null;
 };
 
+/** Galaxus GTIN may drop leading zeros (EAN-13 vs 12/14 digits). Try every padded form. */
+export function gtinLookupVariants(gtin: string): string[] {
+  const digits = String(gtin ?? "").replace(/\D/g, "");
+  if (!digits) return [gtin];
+  const bare = digits.replace(/^0+/, "") || digits;
+  return Array.from(new Set([gtin, digits, bare, bare.padStart(12, "0"), bare.padStart(13, "0"), bare.padStart(14, "0")]));
+}
+
 /** True for OS / O/S / One size / onesize tokens (skate-deck / plush / LEGO class). */
 export function isGalaxusOneSizeToken(raw: string): boolean {
   return /^(os|o\/s|one[\s-]*size|onesize)$/i.test(String(raw ?? "").trim());
@@ -132,7 +140,7 @@ export async function resolveGalaxusStxBuyCandidate(input: {
 
   if (gtin) {
     sv = await prisma.supplierVariant.findFirst({
-      where: { gtin, supplierVariantId: { startsWith: STX_PREFIX } },
+      where: { gtin: { in: gtinLookupVariants(gtin) }, supplierVariantId: { startsWith: STX_PREFIX } },
       orderBy: [{ lastSyncAt: "desc" }, { updatedAt: "desc" }],
       select: {
         supplierVariantId: true,

@@ -156,12 +156,18 @@ function parseDateTierLanes(text: string): StockxLaneCard[] {
   const dateRows: Array<{ eta: string; totalChf: number }> = [];
   const monthTok = String.raw`[A-Za-zÀ-ÿ]{3,12}\.?`;
   const dateSpan = String.raw`((?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)?\s*\d{1,2}\s+${monthTok}(?:\s*[–—-]\s*\d{1,2}\s+${monthTok})?)`;
+  // en-US checkout: "November 13 - 21" then "CHF 71.66" (month before day, no Standard word).
+  const monthFirst = String.raw`(${monthTok}\s+\d{1,2}(?:\s*[–—-]\s*\d{1,2}(?:\s+${monthTok})?)?)`;
   const patterns = [
     new RegExp(String.raw`${dateSpan}\s*\n?\s*CHF\s*${MONEY_RE}`, "gi"),
     new RegExp(String.raw`${dateSpan}\s*\n?\s*${MONEY_RE}\s*CHF`, "gi"),
     // Same card, up to ~60 chars of noise between date span and price
     new RegExp(String.raw`${dateSpan}[\s\S]{0,60}?CHF\s*${MONEY_RE}`, "gi"),
     new RegExp(String.raw`${dateSpan}[\s\S]{0,60}?${MONEY_RE}\s*CHF`, "gi"),
+    new RegExp(String.raw`${monthFirst}\s*\n?\s*CHF\s*${MONEY_RE}`, "gi"),
+    new RegExp(String.raw`${monthFirst}\s*\n?\s*${MONEY_RE}\s*CHF`, "gi"),
+    new RegExp(String.raw`${monthFirst}[\s\S]{0,60}?CHF\s*${MONEY_RE}`, "gi"),
+    new RegExp(String.raw`${monthFirst}[\s\S]{0,60}?${MONEY_RE}\s*CHF`, "gi"),
   ];
   for (const dateRe of patterns) {
     for (const m of text.matchAll(dateRe)) {
@@ -273,6 +279,18 @@ export function isCheckoutShellWithoutLanes(body: string | null | undefined): bo
 }
 
 /**
+ * StockX "no sellers" checkout = bid-only page (Good Offer / Better Offer / Review Offer).
+ * Not a purchase. Never click Review Offer / Confirm Offer.
+ */
+export function isNoSellersPage(body: string | null | undefined): boolean {
+  const t = String(body || "");
+  if (/Review Order|Place Order|Vérifier la commande|Passer la commande/i.test(t)) return false;
+  return /no sellers to buy from|there are no sellers|aucun vendeur|pas de vendeur|review offer|good offer|better offer/i.test(
+    t
+  );
+}
+
+/**
  * When lanes parse EMPTY, read raw checkout/PDP body to tell TRUE out-of-stock
  * from a parser miss (buyable, Express-only) or soft hydrate fail. Distinguishes:
  *  - `oos_no_ask`  : body says "aucune demande" / "no asks" / "make an offer" and
@@ -289,6 +307,7 @@ export function classifyEmptyLaneReason(
   body: string | null | undefined
 ): "oos_no_ask" | "express_only" | "proxy_blank" | "oos" {
   const t = String(body || "");
+  if (isNoSellersPage(t)) return "oos_no_ask";
   const noAskRe = /aucune demande|no asks?|make an offer|faire une offre/i;
   const buyableRe =
     /il n['’]en reste que\s*\d|prix de l['’]article|\b(xpress|express)\b/i;
@@ -501,6 +520,58 @@ export function chooseLaneByGalaxusExpressFirst(
     ok: true,
     lane: pick.lane,
     reason: `galaxus_${desired}${ratioNote}`,
+  };
+}
+
+/** Standard may lose at most this share of sell price (5 %). Express must not lose. */
+export const GALAXUS_NOLOSS_MAX_STANDARD_LOSS = 0.05;
+
+/**
+ * Galaxus night-buyer lane rule (LIVE checkout cards):
+ * - EXPRESS if on page and margin >= 0 (no loss)
+ * - else STANDARD if loss <= 5 %
+ * - else abort (report sell / ask / margin)
+ * Standard-only pages (no Express card) are fine: Standard when loss <= 5 %.
+ */
+export function chooseLaneByGalaxusNoLoss(
+  sellChf: number,
+  lanes: StockxLaneCard[],
+  options?: { maxAllInChf?: number }
+): ChooseGalaxusLaneResult {
+  const maxAllInChf = options?.maxAllInChf ?? MAX_ALL_IN_CHF;
+  const under = lanes
+    .filter(
+      (l) =>
+        l.totalChf >= LANE_MIN_ALL_IN_CHF &&
+        l.totalChf <= maxAllInChf &&
+        (isExpressFamily(l.label) || l.label === "STANDARD")
+    )
+    .sort((a, b) => a.totalChf - b.totalChf);
+  if (!under.length) {
+    return { ok: false, reason: "no_lane_under_cap", detail: `sell=${sellChf}` };
+  }
+  const exp = under.filter((l) => isExpressFamily(l.label))[0] ?? null;
+  const std = under.filter((l) => l.label === "STANDARD")[0] ?? null;
+  const expMargin = exp ? laneMarginPct(sellChf, exp.totalChf) : null;
+  const stdMargin = std ? laneMarginPct(sellChf, std.totalChf) : null;
+  if (exp && expMargin != null && expMargin >= 0) {
+    return {
+      ok: true,
+      lane: exp,
+      reason: `noloss_EXP margin ${(expMargin * 100).toFixed(1)}%`,
+    };
+  }
+  if (std && stdMargin != null && stdMargin >= -GALAXUS_NOLOSS_MAX_STANDARD_LOSS) {
+    return {
+      ok: true,
+      lane: std,
+      reason: `noloss_STD margin ${(stdMargin * 100).toFixed(1)}%`,
+    };
+  }
+  return {
+    ok: false,
+    reason: "margin_abort",
+    detail: `sell=${sellChf} exp=${exp?.totalChf ?? "n/a"} (${expMargin == null ? "n/a" : (expMargin * 100).toFixed(1) + "%"}) std=${std?.totalChf ?? "n/a"} (${stdMargin == null ? "n/a" : (stdMargin * 100).toFixed(1) + "%"})`,
   };
 }
 
