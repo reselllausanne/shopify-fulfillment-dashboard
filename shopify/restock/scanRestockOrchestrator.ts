@@ -1703,6 +1703,39 @@ export async function applyScanRestock(input: {
         warnings: outWarnings,
       };
     }
+    // Shape A fallback: GTIN absent on Shopify barcode — check local catalog sources
+    // (KickDB, SupplierVariant, etc.) before giving up. This mirrors lookupScan cascade
+    // step 2 and handles the case where the product is on Shopify but the GTIN barcode
+    // was never written (shopify-exists-no-gtin path).
+    try {
+      const local = await resolveGtinFromLocalSources(gtin);
+      if (local && (local.slug || local.styleSku)) {
+        console.log("[RESTOCK][SCAN][SHAPE-A] Local source fallback", {
+          gtin,
+          source: local.source,
+          slug: local.slug,
+          styleSku: local.styleSku,
+        });
+        const catalogResult = await requireSizeConfirmationForExistingProduct({
+          gtin,
+          slug: local.slug,
+          styleSku: local.styleSku,
+          matchedSizeEu: sanitizeEuSizeForCreate(local.sizeEu),
+          matchedSizeUs: local.sizeUs,
+          gtinConfirmed: local.source === "kickdb-variant",
+          quantity: input.quantity,
+          locationId: input.locationId ?? null,
+          dryRun: input.dryRun,
+          salePrice: input.salePrice ?? null,
+          compareAtPrice: input.compareAtPrice ?? null,
+          warnings,
+        });
+        if (catalogResult) return catalogResult;
+      }
+    } catch (localErr: any) {
+      warnings.push(`Local source fallback échoué: ${localErr?.message ?? localErr}`);
+    }
+
     return {
       ok: false,
       status: "error",
