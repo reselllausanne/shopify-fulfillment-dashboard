@@ -795,7 +795,34 @@ export async function selectAndVerifyStockxLane(
     if (!lanes.length && isNoSellersPage(body)) {
       return { ok: false, reason: "oos_no_ask", lanes, detail: "no sellers (offer-only page, not clicked)" };
     }
-    const pick = chooseLaneByGalaxusNoLoss(options.sellChf, lanes, { maxAllInChf });
+    // Single-price checkout (no lane cards): "Item Price … Subtotal CHF x … Review Order".
+    // Label unknown, so apply the strict rule (margin >= 0). Never buy it at a loss.
+    if (!lanes.length && /Review Order|Vérifier la commande/i.test(body)) {
+      const sub = extractCheckoutSubtotalChf(body);
+      if (sub != null) {
+        const m1 = laneMarginPct(options.sellChf, sub);
+        if (m1 < 0) {
+          return {
+            ok: false,
+            reason: "margin_abort",
+            lanes,
+            detail: `single-price page: subtotal ${sub} vs sell ${options.sellChf} margin ${(m1 * 100).toFixed(1)}%`,
+          };
+        }
+        if (sub <= maxAllInChf) {
+          const synth: StockxLaneCard = { label: "EXPRESS", rawLabel: "single-price", totalChf: sub, eta: null };
+          lanes = [synth];
+          picked = synth;
+          singleXpressSynth = true;
+          pickReason = `single-price:subtotal=${sub} margin ${(m1 * 100).toFixed(1)}%`;
+        } else {
+          return { ok: false, reason: "cap", lanes, detail: `single-price subtotal ${sub} > cap ${maxAllInChf}` };
+        }
+      }
+    }
+    const pick = picked
+      ? ({ ok: true, lane: picked, reason: pickReason } as const)
+      : chooseLaneByGalaxusNoLoss(options.sellChf, lanes, { maxAllInChf });
     if (!pick.ok) {
       // Never synthesize a lane on margin abort (would bypass the no-loss rule).
       if (pick.reason === "margin_abort" || !trySynthSingleXpress()) {
