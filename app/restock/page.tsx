@@ -428,7 +428,16 @@ export default function RestockScanPage() {
     setBusy(busyLabel);
     setError(null);
     try {
-      const scannedGtin = gtin.trim();
+      // Auto-mode clears the gtin input state before the POST fires (setGtin("") is
+      // called on scan). If a second scan races with an in-flight GET lookup and
+      // clears the state again, gtin.trim() can be "" when runApply is eventually
+      // called from the not-found / confirmation panels. Fall back to the gtin stored
+      // on the latest lookup result or the last apply result so we always send a
+      // non-empty gtin and avoid the spurious "Missing gtin" 400 error.
+      const scannedGtin =
+        gtin.trim() ||
+        (lookup?.gtin ?? "") ||
+        (applyResult?.gtin ?? "");
       const currentLoc = currentLocationName ?? "?";
       const sell = parsedFixedPrice();
       const compare = sell != null ? parsedFixedCompareAt(sell) : null;
