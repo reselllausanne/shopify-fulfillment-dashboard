@@ -13,6 +13,8 @@ import { prisma } from "@/app/lib/prisma";
 import {
   HALT_FILE,
   ON_FILE,
+  acquireSingleInstanceLock,
+  releaseLock,
   buildNightQueue,
   closeSession,
   loadState,
@@ -35,6 +37,10 @@ async function main() {
       .map((s) => s.trim())
       .filter(Boolean)
   );
+  if (!(await acquireSingleInstanceLock())) {
+    console.warn("[NIGHT-BUYER] another worker is alive (lock) — exit");
+    process.exit(0);
+  }
   console.warn(`[NIGHT-BUYER] start since=${since.toISOString()} skip=${[...skipOrders].join(",")}`);
   await reconcileInflight();
 
@@ -63,12 +69,14 @@ async function main() {
   }
   console.warn("[NIGHT-BUYER] stopped (night-buyer.on removed)");
   await closeSession();
+  await releaseLock();
   await prisma.$disconnect();
 }
 
 main().catch(async (e) => {
   console.error("[NIGHT-BUYER] crash", e);
   await closeSession().catch(() => undefined);
+  await releaseLock().catch(() => undefined);
   await prisma.$disconnect().catch(() => undefined);
   process.exit(1);
 });

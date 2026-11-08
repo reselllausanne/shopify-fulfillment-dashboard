@@ -43,6 +43,7 @@ import {
   buildStockxBuyUrl,
   buildStockxCheckoutBuyUrl,
   convertEuToUs,
+  stockxSizeQueryFromKickdbLabel,
   inferBrandFromTitle,
 } from "@/lib/stockxAutoCheckout/sizeUsFallback";
 import { linkStockxBuyToShopify } from "@/lib/stockxAutoCheckout/linkAfterBuy";
@@ -794,6 +795,10 @@ export async function selectAndVerifyStockxLane(
   if (options.policy === "galaxus_noloss") {
     if (!lanes.length && isNoSellersPage(body)) {
       return { ok: false, reason: "oos_no_ask", lanes, detail: "no sellers (offer-only page, not clicked)" };
+    }
+    // Wrong size token = size grid ("Select Size"), not a blank page. Needs the exact StockX size.
+    if (!lanes.length && /Select Size|Choose Size|Sélectionner la taille/i.test(body) && !/Review Order|Subtotal/i.test(body) && !isNoSellersPage(body)) {
+      return { ok: false, reason: "size_grid", lanes, detail: `size grid shown (wrong ?size= token), bodyChars=${body.length}` };
     }
     // Single-price checkout (no lane cards): "Item Price … Subtotal CHF x … Review Order".
     // Label unknown, so apply the strict rule (margin >= 0). Never buy it at a loss.
@@ -2121,7 +2126,9 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
     };
   }
 
-  const sizeUS = convertEuToUs(c.sizeEU, {
+  const sizeUS =
+    stockxSizeQueryFromKickdbLabel(c.sizeUsLabel) ??
+    convertEuToUs(c.sizeEU, {
     title: c.productName,
     brand: inferBrandFromTitle(c.productName),
     slug: c.slug,
