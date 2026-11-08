@@ -831,7 +831,14 @@ export async function selectAndVerifyStockxLane(
     if (!pick.ok) {
       // Never synthesize a lane on margin abort (would bypass the no-loss rule).
       if (pick.reason === "margin_abort" || !trySynthSingleXpress()) {
-        return { ok: false, reason: pick.reason, lanes, detail: pick.detail };
+        // Lane cards parsed but none inside cap / min = a price verdict, not a page problem.
+        const overCap = pick.reason === "no_lane_under_cap" && lanes.length > 0;
+        return {
+          ok: false,
+          reason: overCap ? "cap" : pick.reason,
+          lanes,
+          detail: `${pick.detail} lanes=[${lanes.map((l) => `${l.label}:${l.totalChf}`).join(",")}]`,
+        };
       }
     } else {
       picked = pick.lane;
