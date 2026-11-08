@@ -158,6 +158,14 @@ export function stateBlocks(s: PairState | undefined, now: number): boolean {
   return now - s.at < RECHECK_MS[s.status];
 }
 
+/** Pure: StockX order number prefix tells the real lane. */
+export function laneFromOrderNumber(n: string | null | undefined): "EXPRESS" | "STANDARD" | null {
+  const t = String(n ?? "");
+  if (t.startsWith("01-")) return "EXPRESS";
+  if (t.startsWith("03-")) return "STANDARD";
+  return null;
+}
+
 /** Pure: keep the same IP until it ages out or two retryable failures in a row. */
 export const SESSION_MAX_MS = Number(process.env.NIGHT_BUYER_SESSION_MIN || 50) * 60_000;
 export function shouldRotateSession(s: { startedAt: number; consecutiveFails: number }, now: number): boolean {
@@ -537,7 +545,8 @@ export async function processPair(
         reason: "bought",
         stockxOrderNumber: out.stockxOrderNumber,
         totalChf: out.totalChf,
-        lane: out.lane,
+        // Truth = StockX number prefix: 01- Express, 03- Standard.
+        lane: laneFromOrderNumber(out.stockxOrderNumber) ?? out.lane,
       };
       await fs.rm(INFLIGHT_FILE, { force: true });
       return;

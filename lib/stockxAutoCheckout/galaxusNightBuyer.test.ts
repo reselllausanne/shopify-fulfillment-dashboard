@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyCheckoutResult,
   lockIsLive,
+  laneFromOrderNumber,
   missingUnitIndexes,
   shouldRotateSession,
   stateBlocks,
@@ -102,5 +103,13 @@ describe("single instance lock", () => {
     expect(lockIsLive(1_000_000 - 10_000, 1_000_000)).toBe(true);
     expect(lockIsLive(1_000_000 - 60_000, 1_000_000)).toBe(false);
     expect(lockIsLive(null, 1_000_000)).toBe(false);
+  });
+});
+
+describe("lane from order number", () => {
+  it("01 express, 03 standard", () => {
+    expect(laneFromOrderNumber("01-ABC")).toBe("EXPRESS");
+    expect(laneFromOrderNumber("03-ABC")).toBe("STANDARD");
+    expect(laneFromOrderNumber("xx")).toBeNull();
   });
 });
