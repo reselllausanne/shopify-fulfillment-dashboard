@@ -437,6 +437,11 @@ export async function listShopifyVariantsByGtinDetailed(gtin: string): Promise<S
  * API 2026-07: every change MUST include changeFromQuantity (int or null).
  * We read current available and pass it (CAS). On STALE, re-read + retry once.
  * Falls back to changeFromQuantity: null only if level missing after activate.
+ *
+ * Positive deltas refuse by default when Shopify "committed" (reserved on
+ * unfulfilled orders) is > 0 — avoids accidental double-count outside restock.
+ * Physical restock / scan paths pass `allowWhenCommitted: true` so duplicates
+ * and re-scans still increment available; caller may surface `committedWarning`.
  */
 export async function adjustInventoryAtLocation(input: {
   inventoryItemId: string;
@@ -446,19 +451,28 @@ export async function adjustInventoryAtLocation(input: {
   idempotencyKey?: string;
   reason?: string;
   referenceDocumentUri?: string;
-}): Promise<void> {
+  /**
+   * Physical warehouse restock: allow +delta even if units are committed.
+   * Non-restock callers keep the hard refuse.
+   */
+  allowWhenCommitted?: boolean;
+}): Promise<{ committedWarning?: string }> {
   const delta = Math.trunc(input.delta);
-  if (delta === 0) return;
+  if (delta === 0) return {};
 
+  let committedWarning: string | undefined;
   if (delta > 0) {
     const committed = await getInventoryCommittedAtLocation({
       inventoryItemId: input.inventoryItemId,
       locationId: input.locationId,
     });
     if (committed > 0) {
-      throw new Error(
-        `Refusing +${delta} at location: ${committed} unit(s) committed on unfulfilled order(s) (would double-count on hand)`
-      );
+      if (!input.allowWhenCommitted) {
+        throw new Error(
+          `Refusing +${delta} at location: ${committed} unit(s) committed on unfulfilled order(s) (would double-count on hand)`
+        );
+      }
+      committedWarning = `${committed} unit(s) committed on unfulfilled order(s) — still adding +${delta} (restock allows duplicates)`;
     }
   }
 
@@ -500,7 +514,7 @@ export async function adjustInventoryAtLocation(input: {
       break;
     }
     const userErrors = data?.inventoryAdjustQuantities?.userErrors ?? [];
-    if (userErrors.length === 0) return;
+    if (userErrors.length === 0) return { committedWarning };
 
     const stale = userErrors.some(
       (e) =>
@@ -893,11 +907,16 @@ export async function restockShopifyVariantByGtin(input: {
       inventoryItemId: match.inventoryItemId,
       locationId,
     });
-    await adjustInventoryAtLocation({
+    const adjustResult = await adjustInventoryAtLocation({
       inventoryItemId: match.inventoryItemId,
       locationId,
       delta: quantity,
+      // Scan / physical restock: duplicates + committed units OK — always +qty.
+      allowWhenCommitted: true,
     });
+    if (adjustResult.committedWarning) {
+      warnings.push(adjustResult.committedWarning);
+    }
 
     for (const loc of PHYSICAL_LOCATIONS) {
       if (loc.id === locationId) continue;
