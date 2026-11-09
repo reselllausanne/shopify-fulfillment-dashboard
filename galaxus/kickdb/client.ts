@@ -53,10 +53,17 @@ function buildHeaders(): HeadersInit {
   };
 }
 
-export async function searchStockxProducts(query: string): Promise<KickDbSearchResponse> {
+export async function searchStockxProducts(
+  query: string,
+  opts?: { includeVariants?: boolean }
+): Promise<KickDbSearchResponse> {
   const baseUrl = KICKDB_API_BASE_URL.replace(/\/$/, "");
   const url = new URL(`${baseUrl}/stockx/products`);
   url.searchParams.set("query", query);
+  if (opts?.includeVariants) {
+    url.searchParams.set("display[variants]", "true");
+    url.searchParams.set("display[identifiers]", "true");
+  }
 
   const response = await fetch(url.toString(), { headers: buildHeaders() });
   if (!response.ok) {

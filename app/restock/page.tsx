@@ -195,7 +195,7 @@ export default function RestockScanPage() {
   const [fixedCompareAt, setFixedCompareAt] = useState("");
   // Product search (not-found flow)
   const [productQuery, setProductQuery] = useState("");
-  const [productResults, setProductResults] = useState<Array<{ slug: string; title: string; brand: string | null; sku: string | null }>>([]);
+  const [productResults, setProductResults] = useState<Array<{ slug: string; title: string; brand: string | null; sku: string | null; image?: string | null; gtinMatch?: boolean }>>([]);
   const [productSearchOpen, setProductSearchOpen] = useState(false);
   const [productSearchLoading, setProductSearchLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -764,7 +764,11 @@ export default function RestockScanPage() {
     setProductSearchLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/restock/search?q=${encodeURIComponent(productQuery)}`);
+        const scannedGtin = lookup?.status === "not-found" ? lookup.gtin : "";
+        const searchUrl = scannedGtin
+          ? `/api/restock/search?q=${encodeURIComponent(productQuery)}&gtin=${encodeURIComponent(scannedGtin)}`
+          : `/api/restock/search?q=${encodeURIComponent(productQuery)}`;
+        const res = await fetch(searchUrl);
         const data = await res.json();
         if (data.ok) {
           setProductResults(data.results ?? []);
@@ -1230,11 +1234,20 @@ export default function RestockScanPage() {
                       setProductSearchOpen(false);
                       runApply({ identifier: r.slug }, "Création + restock…");
                     }}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-amber-50 border-b border-gray-100 last:border-0 transition-colors"
+                    className={`w-full px-3 py-2 text-left text-sm border-b border-gray-100 last:border-0 transition-colors flex items-center gap-2 ${r.gtinMatch ? "bg-green-50 hover:bg-green-100" : "hover:bg-amber-50"}`}
                   >
-                    <div className="font-medium text-gray-900 truncate">{r.title}</div>
-                    <div className="text-xs text-gray-500 truncate">
-                      {[r.brand, r.sku, r.slug].filter(Boolean).join(" · ")}
+                    {r.image && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={r.image} alt="" className="h-10 w-10 rounded object-contain flex-shrink-0 bg-gray-50" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-gray-900 truncate flex items-center gap-1">
+                        {r.gtinMatch && <span className="text-green-600 text-xs font-bold shrink-0">✓ GTIN</span>}
+                        {r.title}
+                      </div>
+                      <div className="text-xs text-gray-500 truncate">
+                        {[r.brand, r.sku, r.slug].filter(Boolean).join(" · ")}
+                      </div>
                     </div>
                   </button>
                 ))}

@@ -1,66 +1,53 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/app/lib/prisma";
-import { STX_SUPPLIER_VARIANT_WHERE } from "@/galaxus/supplier/supplierKeyGuards";
+import { searchStockxProducts, kickdbVariantMatchesGtin } from "@/galaxus/kickdb/client";
+import { extractBrand, extractImageUrl, pickString } from "@/galaxus/kickdb/extract";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/restock/search?q=<text>
- * Product name/SKU/brand search against the STX supplier catalog.
- * Returns up to 10 distinct products (grouped by providerKey / StockX slug).
+ * GET /api/restock/search?q=<text>[&gtin=<gtin>]
+ *
+ * Live product search against KickDB / StockX API.
+ * If `gtin` is provided, variants are fetched and results with a matching
+ * barcode are flagged (and sorted first).
+ *
+ * Returns up to 10 results:
+ *   { slug, title, brand, sku, image, gtinMatch }
  */
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const q = (url.searchParams.get("q") ?? "").trim();
+    const gtin = (url.searchParams.get("gtin") ?? "").trim();
+
     if (q.length < 2) {
       return NextResponse.json({ ok: true, results: [] });
     }
 
-    const rows = await prisma.supplierVariant.findMany({
-      where: {
-        AND: [
-          STX_SUPPLIER_VARIANT_WHERE,
-          { providerKey: { not: null } },
-          {
-            OR: [
-              { supplierProductName: { contains: q, mode: "insensitive" } },
-              { supplierBrand: { contains: q, mode: "insensitive" } },
-              { supplierSku: { contains: q, mode: "insensitive" } },
-              { providerKey: { contains: q, mode: "insensitive" } },
-            ],
-          },
-        ],
-      },
-      select: {
-        providerKey: true,
-        supplierProductName: true,
-        supplierBrand: true,
-        supplierSku: true,
-      },
-      orderBy: { updatedAt: "desc" },
-      take: 150,
+    const includeVariants = Boolean(gtin);
+    const response = await searchStockxProducts(q, { includeVariants });
+    const products: any[] = response?.data ?? [];
+
+    const results = products.slice(0, 10).map((product: any) => {
+      const variants: any[] = Array.isArray(product.variants) ? product.variants : [];
+      const gtinMatch = gtin
+        ? variants.some((v: any) => kickdbVariantMatchesGtin(v, gtin))
+        : false;
+
+      return {
+        slug: pickString(product.slug, product.urlKey, product.id) ?? "",
+        title: pickString(product.title, product.name) ?? product.id ?? "Unknown",
+        brand: extractBrand(product),
+        sku: pickString(product.sku, product.style_id, product.styleId),
+        image: extractImageUrl(product),
+        gtinMatch,
+      };
     });
 
-    // Deduplicate by providerKey — take first (most recently updated) per slug
-    const seen = new Set<string>();
-    const results: Array<{
-      slug: string;
-      title: string;
-      brand: string | null;
-      sku: string | null;
-    }> = [];
-    for (const r of rows) {
-      if (!r.providerKey || seen.has(r.providerKey)) continue;
-      seen.add(r.providerKey);
-      results.push({
-        slug: r.providerKey,
-        title: r.supplierProductName ?? r.providerKey,
-        brand: r.supplierBrand ?? null,
-        sku: r.supplierSku ?? null,
-      });
-      if (results.length >= 10) break;
+    // GTIN-matched products surface first
+    if (gtin) {
+      results.sort((a, b) => Number(b.gtinMatch) - Number(a.gtinMatch));
     }
 
     return NextResponse.json({ ok: true, results });
