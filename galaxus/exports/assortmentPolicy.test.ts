@@ -60,7 +60,7 @@ describe("galaxusAssortmentBlockReason", () => {
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
   });
 
-  it("fashion-only: delists non-fashion + LEGO, keeps fashion, trading cards, REI allowlist", () => {
+  it("fashion-only: delists non-fashion + LEGO/TCG/controller, keeps fashion, console, REI allowlist", () => {
     delete process.env.GALAXUS_FASHION_ONLY;
     delete process.env.GALAXUS_REI_ALLOWLIST;
     for (const input of [
@@ -78,17 +78,72 @@ describe("galaxusAssortmentBlockReason", () => {
         suggestedRetailInclVatChf: 200,
       })
     ).toBe("lego");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_13",
+        title: "Pokemon TCG Scarlet & Violet Booster Box",
+        brand: "Pokemon",
+        suggestedRetailInclVatChf: 200,
+      })
+    ).toBe("hobby_toy");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_5",
+        title: "Sony PS5 DualSense Wireless Controller Sterling Silver",
+        brand: "Sony",
+        suggestedRetailInclVatChf: 90,
+      })
+    ).toBe("hobby_toy");
     for (const input of [
       { providerKey: "STX_1", title: "Sony PlayStation 5 Console Disc Edition", brand: "Sony", suggestedRetailInclVatChf: 600 },
-      { providerKey: "STX_5", title: "Sony PS5 DualSense Wireless Controller Sterling Silver", suggestedRetailInclVatChf: 90 },
       { providerKey: "STX_041604418976", title: "Stanley Chocolate Flowstate Quencher 40oz Tumbler", suggestedRetailInclVatChf: 80 },
       { providerKey: "STX_10", title: "Nike Dunk Low Panda", brand: "Nike", sizeRaw: "42", suggestedRetailInclVatChf: 150 },
       { providerKey: "STX_11", title: "Essentials Fleece Hoodie Black", brand: "Fear of God", sizeRaw: "M", suggestedRetailInclVatChf: 120 },
-      { providerKey: "STX_13", title: "Pokemon TCG Scarlet & Violet Booster Box", brand: "Pokemon", suggestedRetailInclVatChf: 200 },
       { providerKey: "REI_7350001162034", title: "Kksb HAT Case Raspberry Pi 5" },
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBeNull();
     }
+  });
+
+  it("blocks hobby toys even when fashion-only is off (STX sneakers misclass hole)", () => {
+    process.env.GALAXUS_FASHION_ONLY = "0";
+    for (const input of [
+      { providerKey: "STX_H1", title: "Fidget Spinner Metal Rainbow", suggestedRetailInclVatChf: 15 },
+      { providerKey: "STX_H2", title: "Squishmallow Cat 12 inch", brand: "Squishmallows", suggestedRetailInclVatChf: 40 },
+      { providerKey: "STX_H3", title: "Barbie Dreamhouse Doll", brand: "Mattel", suggestedRetailInclVatChf: 80 },
+      { providerKey: "STX_H4", title: "Bike Basket Front Wire", suggestedRetailInclVatChf: 35 },
+      { providerKey: "STX_H5", title: "PS5 Console Cover Gray Camouflage", brand: "Sony", suggestedRetailInclVatChf: 40 },
+      { providerKey: "STX_H6", title: "Abbey Road Vinyl Record", brand: "Beatles", suggestedRetailInclVatChf: 35 },
+      { providerKey: "STX_H7", title: "Smith Ski Helmet Black", brand: "Smith", suggestedRetailInclVatChf: 120 },
+      { providerKey: "STX_H8", title: "Lindt Advent Calendar Chocolate", brand: "Lindt", suggestedRetailInclVatChf: 25 },
+      { providerKey: "STX_H9", title: "Harry Potter Book Hardcover", brand: "Bloomsbury", suggestedRetailInclVatChf: 30 },
+      { providerKey: "STX_H10", title: "Leather Keyholder Brown", suggestedRetailInclVatChf: 20 },
+      { providerKey: "STX_H11", title: "Warhammer 40k Miniature Game Set", brand: "Games Workshop", suggestedRetailInclVatChf: 90 },
+      { providerKey: "STX_H12", title: "Catan Board Game", brand: "Catan", suggestedRetailInclVatChf: 50 },
+      { providerKey: "STX_H13", title: "Set of Polyhedral Dice", suggestedRetailInclVatChf: 12 },
+      { providerKey: "STX_H14", title: "ROG Harpe Ace Gaming Mouse", brand: "ASUS", suggestedRetailInclVatChf: 80 },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).toBe("hobby_toy");
+    }
+    // Fashion collabs stay.
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_PKM_SHOE",
+        title: "adidas Samba OG Pokémon Mewtwo",
+        brand: "adidas",
+        sizeRaw: "42",
+        suggestedRetailInclVatChf: 150,
+      })
+    ).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_DOLL_COLOR",
+        title: "Nike Vomero 18 Sail Doll Beyond Pink",
+        brand: "Nike",
+        sizeRaw: "42",
+        suggestedRetailInclVatChf: 160,
+      })
+    ).toBeNull();
   });
 
   it("delists every WellPlayed row by default", () => {
@@ -616,18 +671,23 @@ describe("galaxusAssortmentBlockReason", () => {
   });
 
   it("blocks anything above the absolute cap even when the retail-multiple filter is off", () => {
+    // Booster boxes are hobby_toy now; use a fashion SKU for the price-cap probe.
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_9",
-        title: "2019 Pokemon Sun & Moon Team Up Booster Box",
+        title: "Supreme Box Logo Hooded Sweatshirt Black",
+        sizeRaw: "L",
+        brand: "Supreme",
         suggestedRetailInclVatChf: 36179,
       })
     ).toBe("price_outlier");
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_9b",
-        title: "2019 Pokemon Sun & Moon Team Up Booster Box",
-        suggestedRetailInclVatChf: 4000,
+        title: "Supreme Box Logo Hooded Sweatshirt Black",
+        sizeRaw: "L",
+        brand: "Supreme",
+        suggestedRetailInclVatChf: 200,
       })
     ).toBeNull();
   });
@@ -721,7 +781,7 @@ describe("galaxusAssortmentBlockReason", () => {
         title: "2019 Pokemon Sun & Moon Team Up Booster Box",
         suggestedRetailInclVatChf: 36179,
       })
-    ).toBe("price_outlier");
+    ).toBe("hobby_toy");
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_10",

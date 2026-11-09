@@ -18,11 +18,15 @@
  * - rei_not_allowlisted: REI rows outside reiGalaxusAllowlist (GALAXUS_REI_ALLOWLIST=0 disables).
  * - plush (Galaxus / Tali, 2026-10-27): soft toys / stuffed animals (Jellycat, "Plush"
  *   titles). Always blocked — fashion-only alone was not enough (STX defaulted them to
- *   sneakers). Trading cards / hard art toys (Bearbrick) stay allowed.
+ *   sneakers). Hard art toys (Bearbrick) stay allowed.
  * - lego (temp 2026-11-09): all product kind = lego delisted for now. Re-enable by removing
  *   the kind block + restoring "lego" in FASHION_EXEMPT_KINDS.
+ * - hobby_toy (2026-11-09): Pokémon/TCG, board/card/figurine games, dice, dolls, fidget,
+ *   squishy, advent calendars, books, keyholders, bike baskets, vinyl, helmets, PS5/console
+ *   covers, gaming controllers, ASUS gaming peripherals. Title + kind hard block (STX often
+ *   classifies these as sneakers → Mode keep). Fashion collabs (Pokémon sneakers) stay.
  * - non_fashion (Galaxus, 2026-10-13): only "Mode > …" categories + the sport / bag types on
- *   Galaxus's fashion list. Exempt: trading cards, REI allowlist (LEGO + WEL paused).
+ *   Galaxus's fashion list. Exempt: console hardware + REI allowlist (LEGO/WEL/TCG paused).
  *   GALAXUS_FASHION_ONLY=0 disables.
  * - price_outlier: consumer price above GALAXUS_MAX_RETAIL_CHF (default 300, every supplier).
  *   REI allowlist exempt (curated prior sales — Jetson / GB10 / etc. sit above the fashion cap).
@@ -56,6 +60,7 @@ export type GalaxusAssortmentBlockReason =
   | "rei_not_allowlisted"
   | "plush"
   | "lego"
+  | "hobby_toy"
   | "non_fashion"
   | "manual_block"
   | "food"
@@ -167,13 +172,28 @@ const FASHION_EXTRA_LEAVES = new Set([
   "Tasche",
   "Bauchtasche",
 ]);
-/** Non-fashion kept on purpose: trading cards (Pokémon), collectible consoles / controllers.
- *  LEGO paused 2026-11-09 (temp delist) — restore "lego" here when re-enabled. */
-const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>(["tradingcard", "console", "controller"]);
+/** Non-fashion kept on purpose: console hardware only.
+ *  LEGO / tradingcard / controller paused 2026-11-09. */
+const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>(["console"]);
 /** Non-fashion keep holes — ledger in galaxusAssortmentExceptions.ts. */
 const FASHION_EXEMPT_PROVIDER_KEYS = galaxusFashionExemptProviderKeys();
 /** REI allowlist path only (Jetson). WEL paused 2026-11-09 — whole supplier disabled. */
 const FASHION_EXEMPT_SUPPLIERS = new Set(["rei"]);
+/** Hobby / toy kinds always delisted (independent of fashion-only). */
+const HOBBY_TOY_BLOCKED_KINDS = new Set<GalaxusProductKind>([
+  "tradingcard",
+  "controller",
+  "boardgame",
+  "cardgame",
+  "rpg",
+  "miniature",
+  "dice",
+  "playmat",
+  "game_accessory",
+  "puzzle",
+  "book",
+  "coin",
+]);
 /** BWZ / REI / WEL delist holes — same ledger. */
 const DISABLED_SUPPLIER_EXEMPT_PROVIDER_KEYS = galaxusDisabledSupplierExemptProviderKeys();
 /** Category cleanup blocklist holes — same ledger. */
@@ -228,6 +248,31 @@ function isPlushSoftToy(input: GalaxusAssortmentInput): boolean {
   if (PLUSH_SOFT_TOY_BRANDS.has(normalizeStxBrand(input.brand))) return true;
   const text = `${input.title ?? ""} ${input.supplierProductType ?? ""}`;
   return PLUSH_SOFT_TOY_RE.test(text);
+}
+
+/** Title / type patterns for hobby toys misclassified as sneakers (Mode keep hole). */
+const HOBBY_TOY_TITLE_RE =
+  /\b(fidget|squishy|squishmallows?|barbie|american\s*girl|advent(?:s)?[- ]?calendars?|adventskalender|calendrier de l['’]?avent|key[- ]?holders?|schlüsselanhänger|porte[- ]clés|porte[- ]cles|bike\s*baskets?|bicycle\s*baskets?|fahrradkörbe?|fahrradkorb|lenkerkorb|panier\s*(?:vélo|velo)|ps5\s*covers?|playstation\s*5\s*covers?|console\s*covers?|dualsense\s*covers?|controller\s*(?:covers?|skins?|cases?)|schallplatten?|vinyl\s*records?|\bvinyles?\b|board\s*games?|brettspiele?|gesellschaftsspiele?|card\s*games?|kartenspiele?|warhammer|tabletop|miniature\s*games?|figurines?\s*games?|dungeons?\s*&\s*dragons|elite\s*trainer|booster\s*(?:box|pack)|trading\s*cards?|\btcg\b|\bwürfel\b|\bdice\b|playmats?|sammelkarten?|\bbooks?\b|\bbücher\b|\bbuch\b|\blivres?\b)\b/i;
+const HOBBY_DOLL_RE = /\b(dolls?|barbie|american\s*girl|poupees?|poupées?|puppen?)\b/i;
+const HOBBY_HELMET_RE =
+  /\b(helmets?|skihelme?|fahrradhelme?|bike\s*helmets?|cycling\s*helmets?|snowboard\s*helmets?|casques?\s*(?:vélo|velo|ski|intégral|integral))\b/i;
+const HOBBY_BLOCKED_BRANDS = new Set(["asus"]);
+
+function isHobbyToyBlocked(input: GalaxusAssortmentInput, kind: GalaxusProductKind): boolean {
+  if (HOBBY_TOY_BLOCKED_KINDS.has(kind)) return true;
+  if (HOBBY_BLOCKED_BRANDS.has(normalizeStxBrand(input.brand))) return true;
+  const text = `${input.title ?? ""} ${input.brand ?? ""} ${input.supplierProductType ?? ""}`;
+  if (HOBBY_HELMET_RE.test(text)) return true;
+  // "Doll" colorways on sneakers stay; real dolls go.
+  if (HOBBY_DOLL_RE.test(text) && !hasFashionEvidence(input)) return true;
+  if (!HOBBY_TOY_TITLE_RE.test(text)) return false;
+  // TCG tokens always block even on a fashion title.
+  if (/\b(booster\s*(?:box|pack)|elite\s*trainer|trading\s*cards?|\btcg\b|sammelkarten?)\b/i.test(text)) {
+    return true;
+  }
+  // Fashion collabs (e.g. apparel mentioning "vinyl") stay.
+  if (hasFashionEvidence(input) || APPAREL_TEXT_RE.test(text) || FOOTWEAR_TEXT_RE.test(text)) return false;
+  return true;
 }
 
 const IT_COMPONENT_BRANDS = new Set([
@@ -632,6 +677,8 @@ export function galaxusAssortmentBlockReason(
   if (kind === "plush" || isPlushSoftToy(input)) return "plush";
   // LEGO: temp delist 2026-11-09 (independent of GALAXUS_FASHION_ONLY).
   if (kind === "lego") return "lego";
+  // Hobby / toy sweep 2026-11-09 (TCG, games, dolls, fidget, helmets, ASUS, …).
+  if (isHobbyToyBlocked(input, kind)) return "hobby_toy";
   if (isGalaxusFashionOnlyEnabled() && !isGalaxusFashionKept(kind, supplierKey, input)) return "non_fashion";
 
   const consumer = estimateGalaxusConsumerPriceChf(input);
@@ -682,6 +729,7 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
     rei_not_allowlisted: 0,
     plush: 0,
     lego: 0,
+    hobby_toy: 0,
     non_fashion: 0,
     manual_block: 0,
     food: 0,
@@ -692,7 +740,7 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};size_price_outlier=${stats.size_price_outlier};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};plush=${stats.plush};lego=${stats.lego};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block};supplier_disabled=${stats.supplier_disabled};ner_not_apparel=${stats.ner_not_apparel}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};size_price_outlier=${stats.size_price_outlier};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};plush=${stats.plush};lego=${stats.lego};hobby_toy=${stats.hobby_toy};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block};supplier_disabled=${stats.supplier_disabled};ner_not_apparel=${stats.ner_not_apparel}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
