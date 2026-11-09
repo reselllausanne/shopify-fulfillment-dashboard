@@ -125,6 +125,22 @@ describe("galaxusAssortmentBlockReason", () => {
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBe("hobby_toy");
     }
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_H15",
+        title: "Victorinox Swiss Army Knife Classic SD",
+        brand: "Victorinox",
+        suggestedRetailInclVatChf: 35,
+      })
+    ).toBe("hobby_toy");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "HAW_KNIFE",
+        title: "CORVUS Kids at Work Taschenmesser",
+        brand: "Corvus",
+        purchasePriceExVatChf: 12,
+      })
+    ).toBe("hobby_toy");
     // Fashion collabs stay.
     expect(
       galaxusAssortmentBlockReason({
@@ -142,6 +158,15 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "Nike",
         sizeRaw: "42",
         suggestedRetailInclVatChf: 160,
+      })
+    ).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_POCKET_KNIFE_SHOE",
+        title: "Nike Pocket Knife DM Black Hot Punch",
+        brand: "Nike",
+        sizeRaw: "42",
+        suggestedRetailInclVatChf: 180,
       })
     ).toBeNull();
   });

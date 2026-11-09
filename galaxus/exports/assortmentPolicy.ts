@@ -23,8 +23,9 @@
  *   the kind block + restoring "lego" in FASHION_EXEMPT_KINDS.
  * - hobby_toy (2026-11-09): Pokémon/TCG, board/card/figurine games, dice, dolls, fidget,
  *   squishy, advent calendars, books, keyholders, bike baskets, vinyl, helmets, PS5/console
- *   covers, gaming controllers, ASUS gaming peripherals. Title + kind hard block (STX often
- *   classifies these as sneakers → Mode keep). Fashion collabs (Pokémon sneakers) stay.
+ *   covers, gaming controllers, ASUS gaming peripherals, pocket knives (Taschenmesser).
+ *   Title + kind hard block (STX often classifies these as sneakers → Mode keep).
+ *   Fashion collabs (Pokémon sneakers, Nike Pocket Knife DM) stay.
  * - non_fashion (Galaxus, 2026-10-13): only "Mode > …" categories + the sport / bag types on
  *   Galaxus's fashion list. Exempt: console hardware + REI allowlist (LEGO/WEL/TCG paused).
  *   GALAXUS_FASHION_ONLY=0 disables.
@@ -252,7 +253,7 @@ function isPlushSoftToy(input: GalaxusAssortmentInput): boolean {
 
 /** Title / type patterns for hobby toys misclassified as sneakers (Mode keep hole). */
 const HOBBY_TOY_TITLE_RE =
-  /\b(fidget|squishy|squishmallows?|barbie|american\s*girl|advent(?:s)?[- ]?calendars?|adventskalender|calendrier de l['’]?avent|key[- ]?holders?|schlüsselanhänger|porte[- ]clés|porte[- ]cles|bike\s*baskets?|bicycle\s*baskets?|fahrradkörbe?|fahrradkorb|lenkerkorb|panier\s*(?:vélo|velo)|ps5\s*covers?|playstation\s*5\s*covers?|console\s*covers?|dualsense\s*covers?|controller\s*(?:covers?|skins?|cases?)|schallplatten?|vinyl\s*records?|\bvinyles?\b|board\s*games?|brettspiele?|gesellschaftsspiele?|card\s*games?|kartenspiele?|warhammer|tabletop|miniature\s*games?|figurines?\s*games?|dungeons?\s*&\s*dragons|elite\s*trainer|booster\s*(?:box|pack)|trading\s*cards?|\btcg\b|\bwürfel\b|\bdice\b|playmats?|sammelkarten?|\bbooks?\b|\bbücher\b|\bbuch\b|\blivres?\b)\b/i;
+  /\b(fidget|squishy|squishmallows?|barbie|american\s*girl|advent(?:s)?[- ]?calendars?|adventskalender|calendrier de l['’]?avent|key[- ]?holders?|schlüsselanhänger|porte[- ]clés|porte[- ]cles|bike\s*baskets?|bicycle\s*baskets?|fahrradkörbe?|fahrradkorb|lenkerkorb|panier\s*(?:vélo|velo)|ps5\s*covers?|playstation\s*5\s*covers?|console\s*covers?|dualsense\s*covers?|controller\s*(?:covers?|skins?|cases?)|schallplatten?|vinyl\s*records?|\bvinyles?\b|board\s*games?|brettspiele?|gesellschaftsspiele?|card\s*games?|kartenspiele?|warhammer|tabletop|miniature\s*games?|figurines?\s*games?|dungeons?\s*&\s*dragons|elite\s*trainer|booster\s*(?:box|pack)|trading\s*cards?|\btcg\b|\bwürfel\b|\bdice\b|playmats?|sammelkarten?|\bbooks?\b|\bbücher\b|\bbuch\b|\blivres?\b|pocket\s*knifes?|pocketknives?|taschenmesser|couteaux?\s*de\s*poche|swiss\s*army\s*knifes?)\b/i;
 const HOBBY_DOLL_RE = /\b(dolls?|barbie|american\s*girl|poupees?|poupées?|puppen?)\b/i;
 const HOBBY_HELMET_RE =
   /\b(helmets?|skihelme?|fahrradhelme?|bike\s*helmets?|cycling\s*helmets?|snowboard\s*helmets?|casques?\s*(?:vélo|velo|ski|intégral|integral))\b/i;
