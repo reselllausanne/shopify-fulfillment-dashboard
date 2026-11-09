@@ -182,6 +182,7 @@ WHERE o."deliveryType" IN ('direct_delivery', 'warehouse_delivery')
   AND o."archivedAt" IS NULL
   AND o."cancelledAt" IS NULL
   AND o."orderDate" >= $1
+  AND o."orderDate" < $2
   AND COALESCE(l.quantity, 0) > 0
   AND l."warehouseMarkedShippedAt" IS NULL
   AND COALESCE(l.quantity, 0) > COALESCE((
@@ -199,8 +200,11 @@ ORDER BY o."orderDate" ASC, o.id ASC, l."lineNumber" ASC
 
 export async function buildNightQueue(opts: {
   since: Date;
+  /** Exclusive upper bound (Zurich day end = next day 00:00). Omit = no ceiling. */
+  until?: Date | null;
   skipOrders: Set<string>;
 }): Promise<NightPair[]> {
+  const until = opts.until ?? new Date("2099-01-01T00:00:00+02:00");
   const rows = await prisma.$queryRawUnsafe<
     Array<{
       galaxusOrderId: string;
@@ -211,7 +215,7 @@ export async function buildNightQueue(opts: {
       productName: string;
       qty: number | bigint;
     }>
-  >(QUEUE_SQL, opts.since);
+  >(QUEUE_SQL, opts.since, until);
   const lineIds = rows.map((r) => r.lineId);
   if (!lineIds.length) return [];
   const [matches, externals] = await Promise.all([

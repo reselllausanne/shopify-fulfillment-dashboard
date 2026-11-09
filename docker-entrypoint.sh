@@ -27,7 +27,7 @@ if [ -f /app/.data/night-buyer.on ]; then
   (
     sleep 40
     while [ -f /app/.data/night-buyer.on ]; do
-      npx tsx scripts/galaxus-night-buyer.ts >>/app/.data/night-buyer.log 2>&1
+      NIGHT_BUYER_UNTIL="${NIGHT_BUYER_UNTIL:-2026-11-05}" NIGHT_BUYER_SINCE="${NIGHT_BUYER_SINCE:-2026-10-22}" npx tsx scripts/galaxus-night-buyer.ts >>/app/.data/night-buyer.log 2>&1
       sleep 20
     done
   ) &
