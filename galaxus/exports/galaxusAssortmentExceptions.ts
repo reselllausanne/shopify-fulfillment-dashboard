@@ -178,6 +178,16 @@ export const GALAXUS_POLICY_EXCEPTIONS: GalaxusPolicyException[] = [
     reviewAt: "2026-12-01",
     active: true,
   },
+  {
+    id: "hobby_toy_delist",
+    title: "Hobby / toy sweep (TCG, games, dolls, fidget, helmets, ASUS, …)",
+    gates: ["fashion_only"],
+    reason: "policy",
+    note: "2026-11-09: block reason hobby_toy — tradingcard/controller/board/card/rpg/miniature/dice/playmat/game_accessory/puzzle/book/coin kinds + title patterns (fidget, squishy, dolls, advent, keyholder, bike basket, vinyl, PS5 cover, helmet) + ASUS brand. Fashion collabs (Pokémon sneakers) stay. Console hardware still fashion-exempt.",
+    addedAt: "2026-11-09",
+    reviewAt: "2026-12-01",
+    active: true,
+  },
 ];
 
 function activeSkuExceptions(): GalaxusAssortmentException[] {
