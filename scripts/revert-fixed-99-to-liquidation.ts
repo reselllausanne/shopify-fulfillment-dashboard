@@ -5,6 +5,11 @@
  * variants got `restock:fixed-price compareAt=199` + sell 99 instead of
  * StockX-based soldes (compareAt = calcShopifySellPrice, sale = 50%).
  *
+ * Narrow filter: SupplierVariant manualLock + manualNote contains
+ * `restock:fixed-price` + manualPrice ≈ 99. Misses physical ~99 rows that
+ * never got that note. Prefer the broader script:
+ *   scripts/revert-all-99-physical-to-liquidation.ts
+ *
  * Keeps intentional manual 99s:
  *   - adidas Forum Low The Grinch (2023) — GTIN 4067886722040
  *   - adidas Campus 00s Bright Blue Dark Marine — GTIN 4066755739479
