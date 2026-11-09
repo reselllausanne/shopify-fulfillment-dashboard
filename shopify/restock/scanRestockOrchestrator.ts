@@ -2126,6 +2126,7 @@ export async function addStockAtBussignyBySize(input: {
     inventoryItemId: match.inventoryItemId,
     locationId,
     delta: input.quantity,
+    allowWhenCommitted: true,
   });
   return { ok: true, variantId: match.variantId };
 }
