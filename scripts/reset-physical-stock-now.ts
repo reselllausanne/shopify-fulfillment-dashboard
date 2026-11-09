@@ -1,10 +1,14 @@
 /**
  * ONE-TIME script: zero all physical stock + unlock price_locked + clear DB manualLock.
+ * Also zeros the ShopifyVariantLocationStock DB mirror + clears Google Ads custom_label_0
+ * so Google Shopping exclusion takes effect immediately (no need to wait for nightly sync).
+ *
  * Run: npx tsx scripts/reset-physical-stock-now.ts [--dry-run]
  */
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { LOCATIONS } from "@/shopify/inventory/locationConfig";
+import { syncPhysicalInStockMetafieldForProduct } from "@/shopify/inventory/physicalInStockMetafield";
 
 const DRY_RUN = process.argv.includes("--dry-run");
 
@@ -147,6 +151,50 @@ async function main() {
     dbCleared = result.count;
   }
   console.log(`  done. dbCleared=${dbCleared}`);
+
+  // 4. Zero DB mirror (ShopifyVariantLocationStock) + clear Google Ads custom_label_0
+  //    so Google Shopping exclusion takes effect immediately (no need to wait for nightly sync).
+  console.log("\n[4/4] Zeroing DB mirror + clearing Google Ads custom_label_0...");
+  {
+    // Zero all physical location rows in DB mirror.
+    const mirrorResult = await prisma.shopifyVariantLocationStock.updateMany({
+      where: { locationId: { in: PHYSICAL_LOC_IDS } },
+      data: { available: 0 },
+    });
+    console.log(`  DB mirror zeroed: ${mirrorResult.count} rows`);
+
+    // Resolve unique product IDs for the variants we just reset.
+    // We must do this BEFORE the DB mirror zero (using the in-memory `rows` list)
+    // since the DB now shows 0 for all of them.
+    const uniqueVariantIds = [...new Set(rows.map((r) => r.shopifyVariantId))];
+    const productIds = new Set<string>();
+    for (const variantId of uniqueVariantIds) {
+      const { data } = await shopifyGraphQL<{
+        productVariant: { product: { id: string } | null } | null;
+      }>(
+        /* GraphQL */ `query ProductOf($id: ID!) { productVariant(id: $id) { product { id } } }`,
+        { id: variantId }
+      );
+      const pid = data?.productVariant?.product?.id;
+      if (pid) productIds.add(pid);
+    }
+    console.log(`  Resolved ${productIds.size} products from ${uniqueVariantIds.length} variants`);
+
+    // Sync each product — with DB mirror at 0, this clears physical_in_stock + custom_label_0.
+    let labelCleared = 0;
+    let syncErrors = 0;
+    for (const productId of productIds) {
+      const changes: string[] = [];
+      const warnings: string[] = [];
+      await syncPhysicalInStockMetafieldForProduct(productId, changes, warnings);
+      if (changes.some((c) => c.includes("custom_label_0 cleared"))) labelCleared++;
+      if (warnings.length) syncErrors++;
+      process.stdout.write(`\r  synced ${labelCleared + syncErrors}/${productIds.size}`);
+    }
+    console.log(
+      `\n  done. labelCleared=${labelCleared} errors=${syncErrors}`
+    );
+  } // end step 4
 
   console.log(`\n=== DONE ===`);
   console.log(`  Inventory zeroed: ${zeroed} rows`);
