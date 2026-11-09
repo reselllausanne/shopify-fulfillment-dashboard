@@ -12,6 +12,7 @@ import fs from "node:fs/promises";
 import { prisma } from "@/app/lib/prisma";
 import {
   HALT_FILE,
+  autoHealHalt,
   ON_FILE,
   acquireSingleInstanceLock,
   releaseLock,
@@ -46,8 +47,9 @@ async function main() {
 
   while (await exists(ON_FILE)) {
     if (await exists(HALT_FILE)) {
-      console.error(`[NIGHT-BUYER] halted — remove ${HALT_FILE} after fixing`);
-      await sleep(30_000);
+      console.error(`[NIGHT-BUYER] halted — trying auto-heal, else remove ${HALT_FILE} after fixing`);
+      if (await autoHealHalt().catch(() => false)) continue;
+      await sleep(60_000);
       continue;
     }
     const state = await loadState();
