@@ -431,6 +431,56 @@ export async function recoverUnlinkedBuy(
   return linked.ok ? num : null;
 }
 
+/** Token may be mid-renewal and the buying list may lag: retry for a few minutes. */
+export async function recoverWithPolling(
+  candidate: GalaxusBuyCandidate,
+  opts: { sinceMs: number; totalChf: number | null; unitIndex: number },
+  poll: { tries: number; everyMs: number } = { tries: 12, everyMs: 30_000 }
+): Promise<string | null> {
+  for (let i = 0; i < poll.tries; i += 1) {
+    try {
+      const num = await recoverUnlinkedBuy(candidate, opts);
+      if (num) return num;
+    } catch (e: any) {
+      console.warn(`[NIGHT-BUYER] recover try ${i + 1}/${poll.tries}: ${e?.message || e}`);
+    }
+    await new Promise((r) => setTimeout(r, poll.everyMs));
+  }
+  return null;
+}
+
+/**
+ * While halted for "paid without number" / inflight: try to link the fresh buy by itself.
+ * 1 unlinked candidate = link, clear halt. 0 candidates after 30 min with a readable
+ * StockX list = never paid, clear halt. Anything else stays halted.
+ */
+export async function autoHealHalt(): Promise<boolean> {
+  const halted = await fs.readFile(HALT_FILE, "utf8").catch(() => "");
+  if (!/paid without number|inflight/i.test(halted)) return false;
+  const inflight = await readJson<null | { key: string; startedAt: number; candidate: GalaxusBuyCandidate }>(INFLIGHT_FILE, null);
+  if (!inflight) return false;
+  const unitIndex = Number(String(inflight.key).split(":")[1] ?? 0) || 0;
+  let hits: Array<{ orderNumber: string; amount: number | null }>;
+  try {
+    hits = await freshUnlinkedBuys(inflight.candidate, inflight.startedAt);
+  } catch {
+    return false;
+  }
+  if (hits.length === 1) {
+    const num = await recoverUnlinkedBuy(inflight.candidate, { sinceMs: inflight.startedAt, totalChf: null, unitIndex }).catch(() => null);
+    if (!num) return false;
+    console.warn(`[NIGHT-BUYER] auto-heal linked ${num}`);
+  } else if (hits.length === 0) {
+    if (Date.now() - inflight.startedAt < 30 * 60_000) return false;
+    console.warn(`[NIGHT-BUYER] auto-heal: no StockX buy for ${inflight.key} after 30 min — never paid`);
+  } else {
+    return false;
+  }
+  await fs.rm(INFLIGHT_FILE, { force: true });
+  await fs.rm(HALT_FILE, { force: true });
+  return true;
+}
+
 async function resolvePair(
   pair: NightPair
 ): Promise<
@@ -566,11 +616,11 @@ export async function processPair(
       return;
     }
     if (out.kind === "paid_no_number") {
-      const num = await recoverUnlinkedBuy(candidate, {
+      const num = await recoverWithPolling(candidate, {
         sinceMs: startedAt,
         totalChf: out.totalChf,
         unitIndex: pair.unitIndex,
-      }).catch(() => null);
+      });
       if (num) {
         state[key] = {
           ...base,
