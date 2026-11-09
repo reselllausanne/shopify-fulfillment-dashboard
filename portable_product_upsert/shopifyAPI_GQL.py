@@ -404,29 +404,30 @@ def calc_touch_price(stockx_raw_price, product_category="sneakers", product_hand
         result = amount * Decimal('1.10') + Decimal(str(shipping))
         print(f"[COST DEBUG] LEGO pricing: {stockx_raw_price} × 1.10 + {shipping} (shipping) = {result:.2f} CHF")
     else:
-        # Sneakers: 8% processing fees + standard 20 CHF shipping
-        result = amount * Decimal('1.08') + Decimal('20')
+        # Sneakers: real StockX CH checkout (list × 1.1065 + 20 shipping)
+        stx_list_multiplier = Decimal("1") + (Decimal("23.11") / Decimal("217"))
+        result = amount * stx_list_multiplier + Decimal("20")
     
     return result.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
 def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, product_handle="", brand=""):
     """
-    LOCKED Shopify sell formula (v2026-10-11-profit-15-plus-3pct) — manual constants only.
+    LOCKED Shopify sell formula (v2026-11-09-sep19-real-stx) — manual constants only.
     Must stay in sync with shopify/pricing/calcShopifySellPrice.ts.
 
     shopifySellPrice =
-      (sourceCostChf + fixedFulfillmentAndShippingChf + adsPerOrderChf + targetProfitPerOrderChf)
-      / (1 - blendedPaymentCostRate - VATFlatRate - discountLeakageRate - paidAdsRate - targetCM2Rate)
-    then ceil to whole CHF (WeTheNew-style; never below floor).
+      (sourceCostChf + fixedFulfillmentAndShippingChf)
+      / (1 - blendedPaymentCostRate - VATFlatRate - paidAdsRate - targetCM2Rate)
+    then ceil to whole CHF (never below floor).
 
-    Do not silently update from Shopify plan data or payment-method mix.
-    No …9/…5 psych. No +0.30 fee.
+    Shape of 2026-09-19 (ads + CM2 as % of sell), real StockX CH cost.
+    No fixed ads/profit CHF. No discount leakage in denom.
 
-    sourceCost (sneakers): stockx_raw * (1 + 23.11/217) + 20  (real StockX CH checkout)
+    sourceCost (sneakers): stockx_raw * (1 + 23.11/217) + 20
     LEGO: (C + ship) * 1.33, ceil whole CHF
 
-    is_express / brand unused for the locked base (express premium via apply_stx_express_floor).
+    is_express / brand unused for the locked base (express = same calc; no +20).
     """
     _ = (is_express, brand)
     print(f"[PRICE DEBUG] calc_sell_price INPUT: stockx_raw={stockx_raw}")
@@ -434,14 +435,11 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5
     BLENDED_PAYMENT_COST_RATE = 0.029
     VAT_FLAT_RATE = 0.021
-    DISCOUNT_LEAKAGE_RATE = 0.03
-    ADS_PER_ORDER_CHF = 18.0
-    PAID_ADS_RATE = 0.07
-    TARGET_PROFIT_PER_ORDER_CHF = 15.0
-    TARGET_CM2_RATE = 0.03
+    PAID_ADS_RATE = 0.15
+    TARGET_CM2_RATE = 0.12
     STX_LIST_MULTIPLIER = 1.0 + 23.11 / 217.0
     DENOM = 1.0 - (
-        BLENDED_PAYMENT_COST_RATE + VAT_FLAT_RATE + DISCOUNT_LEAKAGE_RATE + PAID_ADS_RATE + TARGET_CM2_RATE
+        BLENDED_PAYMENT_COST_RATE + VAT_FLAT_RATE + PAID_ADS_RATE + TARGET_CM2_RATE
     )
 
     is_lego = "lego" in str(product_category or "").lower() or "lego" in str(product_handle or "").lower()
@@ -458,13 +456,10 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
         return final_price
 
     C = stockx_raw * STX_LIST_MULTIPLIER + 20.0
-    final_price_raw = (
-        C + FIXED_FULFILLMENT_AND_SHIPPING_CHF + ADS_PER_ORDER_CHF + TARGET_PROFIT_PER_ORDER_CHF
-    ) / DENOM
+    final_price_raw = (C + FIXED_FULFILLMENT_AND_SHIPPING_CHF) / DENOM
     final_price = _ceil_to_whole_franc(final_price_raw)
     print(
-        f"[PRICE DEBUG] Locked: (C={C:.2f} + {FIXED_FULFILLMENT_AND_SHIPPING_CHF} + ads {ADS_PER_ORDER_CHF} "
-        f"+ profit {TARGET_PROFIT_PER_ORDER_CHF}) "
+        f"[PRICE DEBUG] Locked: (C={C:.2f} + {FIXED_FULFILLMENT_AND_SHIPPING_CHF}) "
         f"/ {DENOM:.4f} = {final_price_raw:.4f} → ceil franc {final_price}"
     )
     print(f"[PRICE DEBUG] calc_sell_price OUTPUT: {final_price} CHF")
@@ -497,27 +492,16 @@ def _psych_round_up(price: float) -> int:
 
 def read_stx_express_surcharge_chf() -> float:
     """
-    Diff only when standard + express StockX asks are the same (or single lane).
-    Distinct express ask → sell = locked calc(express), no flat +20.
+    Deprecated: express no longer adds a flat surcharge. Always 0.
+    Env vars ignored so old configs cannot reintroduce +20.
     """
-    raw = (
-        os.environ.get("STX_EXPRESS_SURCHARGE_CHF")
-        or os.environ.get("SHOPIFY_STX_EXPRESS_SURCHARGE_CHF")
-        or "20"
-    )
-    try:
-        n = float(raw)
-    except (TypeError, ValueError):
-        return 20.0
-    if n < 0:
-        return 20.0
-    return n
+    return 0.0
 
 
 def apply_stx_express_floor(standard_sell, express_calc=None):
     """
-    Same-price / single-offer only: express = standard + surcharge.
-    When express_calc is already above standard, keep it (no +20).
+    Express floor = standard sell (same locked calc). No flat +20.
+    When express_calc is already above standard, keep it.
     """
     try:
         std = float(standard_sell or 0)
@@ -526,7 +510,7 @@ def apply_stx_express_floor(standard_sell, express_calc=None):
     if std <= 0:
         return express_calc
 
-    floor = _ceil_to_whole_franc(std + read_stx_express_surcharge_chf())
+    floor = _ceil_to_whole_franc(std)
     if express_calc is None:
         return floor
     try:

@@ -26,38 +26,41 @@ export type ShopifyPricingRule = "half" | "lego" | "manual_override";
 export const SHOPIFY_CPA_CAP_HALF = 24.0;
 
 // ---------------------------------------------------------------------------
-// LOCKED Shopify sell formula (v2026-10-11) — manual constants only.
-// Do not silently update from Shopify plan data or payment-method mix.
+// LOCKED Shopify sell formula (v2026-11-09) — volume sweet-spot structure.
+// Shape of 2026-09-19 (ads + CM2 as % of sell, no fixed ads/profit CHF),
+// with real StockX CH checkout cost (raw × 1.1065 + 20).
+//
 // shopifySellPrice =
-//   (sourceCostChf + fixedFulfillmentAndShippingChf + adsPerOrderChf + targetProfitPerOrderChf)
-//   / (1 - blendedPaymentCostRate - VATFlatRate - discountLeakageRate - paidAdsRate - targetCM2Rate)
-// then ceil to whole CHF (WeTheNew-style clean francs; never below floor).
-// sourceCostChf = real StockX checkout cost: raw × 1.1065 + 20.
-// No …9/…5 psych bump.
+//   (sourceCostChf + fixedFulfillmentAndShippingChf)
+//   / (1 - blendedPaymentCostRate - VATFlatRate - paidAdsRate - targetCM2Rate)
+// then ceil to whole CHF.
+// sourceCostChf = raw × 1.1065 + 20.
+// Express uses the same locked calc (no flat +20 surcharge).
 // ---------------------------------------------------------------------------
-export const SHOPIFY_PRICING_LOCK_VERSION = "2026-10-11-profit-15-plus-3pct";
+export const SHOPIFY_PRICING_LOCK_VERSION = "2026-11-09-sep19-real-stx";
 /** Measured Sep 2026 per order: fulfilment 6.2 + postage 4.7 + apps 3.2 + fixed 0.4. */
 export const SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5;
-/** Shopify payouts Jan–Sep 2026 = 97.1% of net sales (fees + refunds). No +0.30. */
+/** Shopify payouts Jan–Sep 2026 = 97.1% of net sales (fees + refunds). */
 export const SHOPIFY_BLENDED_PAYMENT_COST_RATE = 0.029;
 /** Saldo VAT rate. */
 export const SHOPIFY_VAT_FLAT_RATE = 0.021;
 /**
- * Discount codes used at checkout: 2.96% of website sales over the 90 days to Oct 2026.
- * Comes off the paid price after the formula, so the formula must carry it.
+ * @deprecated Not in this lock. Kept at 0 so old call sites that still subtract it
+ * from the denom do not change the locked price.
  */
-export const SHOPIFY_DISCOUNT_LEAKAGE_RATE = 0.03;
+export const SHOPIFY_DISCOUNT_LEAKAGE_RATE = 0;
 /**
- * Ads per order = fixed part + share of price. Blended Google spend per order
- * (90 days to Oct 2026) rises with price but not proportionally: ~21 CHF under
- * 100, ~41 at 150–400, ~60 above 400. 18 + 7% of price fits that curve.
+ * @deprecated Ads are a share of sell again (SHOPIFY_PAID_ADS_RATE). Kept at 0.
  */
-export const SHOPIFY_ADS_PER_ORDER_CHF = 18;
-export const SHOPIFY_PAID_ADS_RATE = 0.07;
-/** Profit per StockX pair after every cost (owner target: 15 CHF). */
-export const SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF = 15;
-/** Extra profit share on top of the fixed 15 CHF: pays for capital, return and fraud risk on expensive pairs. */
-export const SHOPIFY_TARGET_CM2_RATE = 0.03;
+export const SHOPIFY_ADS_PER_ORDER_CHF = 0;
+/** Ads share of sell — matches high-volume week CPA (~15% of ~180 CHF ≈ 27 CHF). */
+export const SHOPIFY_PAID_ADS_RATE = 0.15;
+/**
+ * @deprecated Fixed profit CHF removed; CM2 is SHOPIFY_TARGET_CM2_RATE only.
+ */
+export const SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF = 0;
+/** Target contribution after reserved fees/ads (12% of sell). */
+export const SHOPIFY_TARGET_CM2_RATE = 0.12;
 
 /** Exact floor before storefront publish (centime). */
 export function ceilToCentime(value: number): number {
@@ -79,7 +82,6 @@ export function shopifyLockedDenom(): number {
     1 -
     SHOPIFY_BLENDED_PAYMENT_COST_RATE -
     SHOPIFY_VAT_FLAT_RATE -
-    SHOPIFY_DISCOUNT_LEAKAGE_RATE -
     SHOPIFY_PAID_ADS_RATE -
     SHOPIFY_TARGET_CM2_RATE
   );
@@ -99,18 +101,13 @@ export function calcShopifySellFromSourceCost(sourceCostChf: number): number | n
   if (!Number.isFinite(C) || C <= 0) return null;
   const denom = shopifyLockedDenom();
   if (!(denom > 0)) return null;
-  return ceilToWholeFranc(
-    (C +
-      SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF +
-      SHOPIFY_ADS_PER_ORDER_CHF +
-      SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF) /
-      denom
-  );
+  return ceilToWholeFranc((C + SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF) / denom);
 }
 
 /**
  * Locked Shopify sell from StockX raw ask.
  * sourceCost = raw×1.1065+20 (sneakers) or raw×1.10+legoShip (LEGO markup path separate).
+ * isExpress does not change the locked base.
  */
 export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number | null {
   const stockxRaw = Number(input.stockxRaw);
@@ -214,31 +211,24 @@ export function explainShopifySellPrice(
 }
 
 /**
- * Diff applied only when standard + express StockX asks are the same (or only
- * one lane exists). Distinct express ask → sell = locked calc(express), no +20.
+ * @deprecated Express no longer adds a flat surcharge. Always returns 0.
+ * Env vars ignored so old configs cannot reintroduce +20.
  */
 export function readStxExpressSurchargeChf(): number {
-  const raw =
-    process.env.STX_EXPRESS_SURCHARGE_CHF ??
-    process.env.SHOPIFY_STX_EXPRESS_SURCHARGE_CHF ??
-    "20";
-  const n = Number.parseFloat(String(raw));
-  if (!Number.isFinite(n) || n < 0) return 20;
-  return n;
+  return 0;
 }
 
 /**
- * Same-price / single-offer only: express_price = standard_sell + surcharge.
- * When expressCalc is set and already above standard, keep it (no +20).
+ * Express floor = standard sell (same locked calc). No flat +20.
+ * When expressCalc is above standard, keep it.
  */
 export function applyStxExpressFloor(
   standardSell: number,
   expressCalc: number | null
 ): number | null {
   if (!Number.isFinite(standardSell) || standardSell <= 0) return expressCalc;
-  const floor = ceilToWholeFranc(standardSell + readStxExpressSurchargeChf());
-  if (expressCalc == null) return floor;
-  if (expressCalc <= standardSell) return floor;
+  if (expressCalc == null) return ceilToWholeFranc(standardSell);
+  if (expressCalc <= standardSell) return ceilToWholeFranc(standardSell);
   return ceilToWholeFranc(expressCalc);
 }
 
@@ -246,22 +236,22 @@ export type StxWebsiteSellPrices = {
   normalSell: number | null;
   expressSell: number | null;
   /**
-   * single_plus20 = one StockX offer (or identical buys):
-   *   standard = calc(that buy); express = standard + 20 (diff only)
+   * single_lane = one StockX offer (or identical buys):
+   *   standard = express = locked(calc) — same price
    * dual_lane = distinct standard + express buys:
-   *   standard = calc(standard); express = max(calc(express), standard) — no +20
+   *   standard = locked(standard); express = max(locked(express), standard)
    */
-  mode: "single_plus20" | "dual_lane" | "none";
+  mode: "single_lane" | "dual_lane" | "none";
 };
 
 /**
- * Website STX dual pricing (original rule):
+ * Website STX dual pricing:
  *
  * - Distinct standard + express StockX asks:
  *   standard = locked(standard buy); express = locked(express buy).
- *   Never undercut standard (floor at standard). No flat +20.
- * - Same ask / single lane only:
- *   standard = locked(calc); express = standard + 20 so checkout has a premium.
+ *   Never undercut standard. No flat +20.
+ * - Same ask / single lane:
+ *   standard = express = locked(calc). Same price.
  */
 export function resolveStxWebsiteSellPrices(input: {
   standardBuyPrice: number | null;
@@ -295,8 +285,8 @@ export function resolveStxWebsiteSellPrices(input: {
     if (normalSell == null) return { normalSell: null, expressSell: null, mode: "none" };
     return {
       normalSell,
-      expressSell: ceilToWholeFranc(normalSell + readStxExpressSurchargeChf()),
-      mode: "single_plus20",
+      expressSell: normalSell,
+      mode: "single_lane",
     };
   }
 
@@ -334,7 +324,7 @@ export function calcShopifyTouchPrice(input: {
     return Math.round((stockxRaw * 1.1 + shipping) * 100) / 100;
   }
 
-  return Math.round((stockxRaw * 1.08 + 20) * 100) / 100;
+  return Math.round(stxSourceCostChfFromRaw(stockxRaw) * 100) / 100;
 }
 
 function readLiquidationDiscountPct(): number {

@@ -21,11 +21,11 @@ import {
   stxSourceCostChfFromRaw,
 } from "@/shopify/pricing/calcShopifySellPrice";
 
-/** Locked floor: raw 100 → C=130.65 → (130.65+14.5+18+15)/0.82 → ceil whole CHF. */
-const EXPECTED_SELL_RAW_100 = 218;
-const EXPECTED_SELL_RAW_108_45 = 229;
-const EXPECTED_SELL_RAW_126 = 253;
-const EXPECTED_SELL_RAW_170 = 312;
+/** Locked floor: raw 100 → C=130.65 → (130.65+14.5)/0.68 → ceil whole CHF. */
+const EXPECTED_SELL_RAW_100 = 214;
+const EXPECTED_SELL_RAW_108_45 = 228;
+const EXPECTED_SELL_RAW_126 = 256;
+const EXPECTED_SELL_RAW_170 = 328;
 const BUY_CHF_140 = 140;
 const EXPECTED_RAW_FROM_BUY_140 = 108.45;
 
@@ -57,22 +57,22 @@ describe("calcShopifySellPrice locked formula", () => {
     expect(SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF).toBe(14.5);
     expect(SHOPIFY_BLENDED_PAYMENT_COST_RATE).toBe(0.029);
     expect(SHOPIFY_VAT_FLAT_RATE).toBe(0.021);
-    expect(SHOPIFY_DISCOUNT_LEAKAGE_RATE).toBe(0.03);
-    expect(SHOPIFY_PAID_ADS_RATE).toBe(0.07);
-    expect(SHOPIFY_ADS_PER_ORDER_CHF).toBe(18);
-    expect(SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF).toBe(15);
-    expect(SHOPIFY_TARGET_CM2_RATE).toBe(0.03);
-    expect(shopifyLockedDenom()).toBeCloseTo(0.82, 6);
+    expect(SHOPIFY_DISCOUNT_LEAKAGE_RATE).toBe(0);
+    expect(SHOPIFY_PAID_ADS_RATE).toBe(0.15);
+    expect(SHOPIFY_ADS_PER_ORDER_CHF).toBe(0);
+    expect(SHOPIFY_TARGET_PROFIT_PER_ORDER_CHF).toBe(0);
+    expect(SHOPIFY_TARGET_CM2_RATE).toBe(0.12);
+    expect(shopifyLockedDenom()).toBeCloseTo(0.68, 6);
   });
 
   it("source cost is the real StockX checkout (217 list → 260.11)", () => {
     expect(stxSourceCostChfFromRaw(217)).toBeCloseTo(260.11, 2);
   });
 
-  it("ads 18 CHF + 7%, profit 15 CHF + 3% per pair", () => {
-    expect(calcShopifySellPrice({ stockxRaw: 60, productCategory: "sneakers" })).toBe(164);
-    expect(calcShopifySellPrice({ stockxRaw: 147, productCategory: "sneakers" })).toBe(281);
-    expect(calcShopifySellPrice({ stockxRaw: 300, productCategory: "sneakers" })).toBe(488);
+  it("ads 15% + CM2 12% of sell, real STX cost", () => {
+    expect(calcShopifySellPrice({ stockxRaw: 60, productCategory: "sneakers" })).toBe(149);
+    expect(calcShopifySellPrice({ stockxRaw: 147, productCategory: "sneakers" })).toBe(290);
+    expect(calcShopifySellPrice({ stockxRaw: 300, productCategory: "sneakers" })).toBe(539);
   });
 
   it("ceilToCentime never rounds down", () => {
@@ -86,8 +86,8 @@ describe("calcShopifySellPrice locked formula", () => {
     expect(ceilToWholeFranc(286.36)).toBe(287);
   });
 
-  it("sourceCost 180.08 → 278 (whole CHF)", () => {
-    expect(calcShopifySellFromSourceCost(180.08)).toBe(278);
+  it("sourceCost 180.08 → 287 (whole CHF)", () => {
+    expect(calcShopifySellFromSourceCost(180.08)).toBe(287);
   });
 
   it("prices brands the same", () => {
@@ -197,27 +197,27 @@ describe("resolveStxWebsiteSellPrices", () => {
   const calcFromBuy = (buy: number, isExpress: boolean) =>
     isExpress ? Math.round(buy + 40) : Math.round(buy + 20);
 
-  it("single offer → standard=calc, express=calc+20", () => {
+  it("single offer → standard = express = calc", () => {
     const r = resolveStxWebsiteSellPrices({
       standardBuyPrice: 100,
       expressBuyPrice: null,
       calcFromBuy: () => 210,
     });
-    expect(r.mode).toBe("single_plus20");
+    expect(r.mode).toBe("single_lane");
     expect(r.normalSell).toBe(210);
-    expect(r.expressSell).toBe(230);
+    expect(r.expressSell).toBe(210);
   });
 
-  it("express-only → standard=calc(express), express=standard+20", () => {
+  it("express-only → standard = express = calc(express)", () => {
     const r = resolveStxWebsiteSellPrices({
       standardBuyPrice: null,
       expressBuyPrice: 150,
       deliveryType: "express_standard",
       calcFromBuy: () => 260,
     });
-    expect(r.mode).toBe("single_plus20");
+    expect(r.mode).toBe("single_lane");
     expect(r.normalSell).toBe(260);
-    expect(r.expressSell).toBe(280);
+    expect(r.expressSell).toBe(260);
   });
 
   it("distinct dual lanes → express = calc(express), no +20", () => {
@@ -244,13 +244,13 @@ describe("resolveStxWebsiteSellPrices", () => {
     expect(r.expressSell).toBe(250);
   });
 
-  it("identical dual buys treat as single_plus20", () => {
+  it("identical dual buys treat as single_lane", () => {
     const r = resolveStxWebsiteSellPrices({
       standardBuyPrice: 100,
       expressBuyPrice: 100,
       calcFromBuy: () => 210,
     });
-    expect(r.mode).toBe("single_plus20");
-    expect(r.expressSell).toBe(230);
+    expect(r.mode).toBe("single_lane");
+    expect(r.expressSell).toBe(210);
   });
 });

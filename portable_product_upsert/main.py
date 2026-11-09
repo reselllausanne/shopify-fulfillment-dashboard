@@ -40,7 +40,6 @@ from shopifyAPI_GQL import (
     delete_variant_express_price_metafields,
     apply_stx_express_floor,
     dual_lane_express_sell,
-    read_stx_express_surcharge_chf,
     get_taxonomy_category_id,
     get_category_attributes,
     map_stockx_to_shopify_category,
@@ -2970,8 +2969,8 @@ def process_url(url, thread_id=0, prefetched=None):
                 )
 
             # Express sell:
-            # - Distinct STX express+standard asks → express=max(calc(express), standard) (no +20)
-            # - Same ask / single offer only → standard=calc; express=standard+20
+            # - Distinct STX express+standard asks → express=max(calc(express), standard)
+            # - Same ask / single offer → express = standard (same locked calc, no +20)
             express_sell_price = None
             if express_prices and standard_prices:
                 lowest_express_entry = min(express_prices, key=lambda x: x["price"])
@@ -2997,14 +2996,14 @@ def process_url(url, thread_id=0, prefetched=None):
                 else:
                     express_sell_price = apply_stx_express_floor(sell_price, None)
                     print(
-                        f"[EXPRESS +{int(read_stx_express_surcharge_chf())}] {title} - Size {eu_size}: "
+                        f"[EXPRESS SAME] {title} - Size {eu_size}: "
                         f"identical STX lanes → express={express_sell_price} (normal={sell_price})"
                     )
             else:
-                # One StockX offer only (std-only OR express-only): standard=calc, express=+20
+                # One StockX offer only: standard = express = locked calc
                 express_sell_price = apply_stx_express_floor(sell_price, None)
                 print(
-                    f"[EXPRESS +{int(read_stx_express_surcharge_chf())}] {title} - Size {eu_size}: "
+                    f"[EXPRESS SAME] {title} - Size {eu_size}: "
                     f"single STX offer → express={express_sell_price} (normal={sell_price})"
                 )
         else:

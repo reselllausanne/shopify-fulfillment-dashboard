@@ -125,7 +125,7 @@ describe("syncShopifyStxPricesForSupplierVariantIds", () => {
         ok: true,
         matchedVariantId: "gid://shopify/ProductVariant/1",
         normalPrice: 199,
-        expressPrice: 219,
+        expressPrice: 199,
       })
     );
   });
