@@ -60,7 +60,7 @@ describe("galaxusAssortmentBlockReason", () => {
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
   });
 
-  it("fashion-only: delists non-fashion + LEGO, keeps fashion, trading cards, WEL, REI allowlist", () => {
+  it("fashion-only: delists non-fashion + LEGO, keeps fashion, trading cards, REI allowlist", () => {
     delete process.env.GALAXUS_FASHION_ONLY;
     delete process.env.GALAXUS_REI_ALLOWLIST;
     for (const input of [
@@ -85,11 +85,31 @@ describe("galaxusAssortmentBlockReason", () => {
       { providerKey: "STX_10", title: "Nike Dunk Low Panda", brand: "Nike", sizeRaw: "42", suggestedRetailInclVatChf: 150 },
       { providerKey: "STX_11", title: "Essentials Fleece Hoodie Black", brand: "Fear of God", sizeRaw: "M", suggestedRetailInclVatChf: 120 },
       { providerKey: "STX_13", title: "Pokemon TCG Scarlet & Violet Booster Box", brand: "Pokemon", suggestedRetailInclVatChf: 200 },
-      { providerKey: "WEL_1", title: "Catan Basisspiel", supplierProductType: "Board Games", purchasePriceExVatChf: 30 },
       { providerKey: "REI_7350001162034", title: "Kksb HAT Case Raspberry Pi 5" },
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBeNull();
     }
+  });
+
+  it("delists every WellPlayed row by default", () => {
+    delete process.env.GALAXUS_DISABLED_SUPPLIERS;
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "WEL_1",
+        title: "Catan Basisspiel",
+        supplierProductType: "Board Games",
+        purchasePriceExVatChf: 30,
+      })
+    ).toBe("supplier_disabled");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "WEL_NEW_GAME",
+        title: "Catan: 6th Edition",
+        brand: "Catan Studios",
+        supplierKey: "wel",
+        suggestedRetailInclVatChf: 40,
+      })
+    ).toBe("supplier_disabled");
   });
 
   it("blocks all LEGO sets (temp delist 2026-11-09), even with fashion-only off", () => {
@@ -319,15 +339,6 @@ describe("galaxusAssortmentBlockReason", () => {
         title: "Medicom Toy BE@RBRICK 400%",
         brand: "Bearbrick",
         suggestedRetailInclVatChf: 200,
-      })
-    ).toBeNull();
-    expect(
-      galaxusAssortmentBlockReason({
-        providerKey: "WEL_NEW_GAME",
-        title: "Catan: 6th Edition",
-        brand: "Catan Studios",
-        supplierKey: "wel",
-        suggestedRetailInclVatChf: 40,
       })
     ).toBeNull();
   });

@@ -22,7 +22,7 @@
  * - lego (temp 2026-11-09): all product kind = lego delisted for now. Re-enable by removing
  *   the kind block + restoring "lego" in FASHION_EXEMPT_KINDS.
  * - non_fashion (Galaxus, 2026-10-13): only "Mode > …" categories + the sport / bag types on
- *   Galaxus's fashion list. Exempt: trading cards, WEL, REI allowlist (LEGO exempt paused).
+ *   Galaxus's fashion list. Exempt: trading cards, REI allowlist (LEGO + WEL paused).
  *   GALAXUS_FASHION_ONLY=0 disables.
  * - price_outlier: consumer price above GALAXUS_MAX_RETAIL_CHF (default 300, every supplier).
  *   REI allowlist exempt (curated prior sales — Jetson / GB10 / etc. sit above the fashion cap).
@@ -172,9 +172,9 @@ const FASHION_EXTRA_LEAVES = new Set([
 const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>(["tradingcard", "console", "controller"]);
 /** Non-fashion keep holes — ledger in galaxusAssortmentExceptions.ts. */
 const FASHION_EXEMPT_PROVIDER_KEYS = galaxusFashionExemptProviderKeys();
-/** WEL kept whole; REI is already narrowed by reiGalaxusAllowlist. */
-const FASHION_EXEMPT_SUPPLIERS = new Set(["wel", "rei"]);
-/** BWZ (etc.) delist holes — same ledger. */
+/** REI allowlist path only (Jetson). WEL paused 2026-11-09 — whole supplier disabled. */
+const FASHION_EXEMPT_SUPPLIERS = new Set(["rei"]);
+/** BWZ / REI / WEL delist holes — same ledger. */
 const DISABLED_SUPPLIER_EXEMPT_PROVIDER_KEYS = galaxusDisabledSupplierExemptProviderKeys();
 /** Category cleanup blocklist holes — same ledger. */
 const CATEGORY_BLOCK_EXEMPT_PROVIDER_KEYS = galaxusCategoryBlockExemptProviderKeys();
@@ -532,7 +532,8 @@ function isShoeCapInScope(input: GalaxusAssortmentInput): boolean {
 export function galaxusDisabledSuppliers(): Set<string> {
   const raw = process.env.GALAXUS_DISABLED_SUPPLIERS;
   // rei: whole catalog off (2026-11-02). Jetson Orin Nano stays via assortment exception.
-  const list = raw === undefined ? "bwz,rei" : raw;
+  // wel: WellPlayed whole catalog off (2026-11-09).
+  const list = raw === undefined ? "bwz,rei,wel" : raw;
   return new Set(
     list
       .split(",")

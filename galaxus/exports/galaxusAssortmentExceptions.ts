@@ -168,6 +168,16 @@ export const GALAXUS_POLICY_EXCEPTIONS: GalaxusPolicyException[] = [
     reviewAt: "2026-12-01",
     active: true,
   },
+  {
+    id: "wel_delist",
+    title: "WellPlayed (WEL) whole supplier delisted",
+    gates: ["supplier_disabled", "fashion_only"],
+    reason: "policy",
+    note: "2026-11-09: add wel to GALAXUS_DISABLED_SUPPLIERS default (bwz,rei,wel) + drop from FASHION_EXEMPT_SUPPLIERS. Stock feed zeros qty. Re-enable: remove wel from default disabled list + restore wel in FASHION_EXEMPT_SUPPLIERS.",
+    addedAt: "2026-11-09",
+    reviewAt: "2026-12-01",
+    active: true,
+  },
 ];
 
 function activeSkuExceptions(): GalaxusAssortmentException[] {
