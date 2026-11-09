@@ -60,7 +60,7 @@ describe("galaxusAssortmentBlockReason", () => {
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
   });
 
-  it("fashion-only: delists non-fashion, keeps fashion, LEGO, trading cards, WEL, REI allowlist", () => {
+  it("fashion-only: delists non-fashion + LEGO, keeps fashion, trading cards, WEL, REI allowlist", () => {
     delete process.env.GALAXUS_FASHION_ONLY;
     delete process.env.GALAXUS_REI_ALLOWLIST;
     for (const input of [
@@ -70,19 +70,47 @@ describe("galaxusAssortmentBlockReason", () => {
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBe("non_fashion");
     }
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_12",
+        title: "LEGO Star Wars Millennium Falcon 75192",
+        brand: "LEGO",
+        suggestedRetailInclVatChf: 200,
+      })
+    ).toBe("lego");
     for (const input of [
       { providerKey: "STX_1", title: "Sony PlayStation 5 Console Disc Edition", brand: "Sony", suggestedRetailInclVatChf: 600 },
       { providerKey: "STX_5", title: "Sony PS5 DualSense Wireless Controller Sterling Silver", suggestedRetailInclVatChf: 90 },
       { providerKey: "STX_041604418976", title: "Stanley Chocolate Flowstate Quencher 40oz Tumbler", suggestedRetailInclVatChf: 80 },
       { providerKey: "STX_10", title: "Nike Dunk Low Panda", brand: "Nike", sizeRaw: "42", suggestedRetailInclVatChf: 150 },
       { providerKey: "STX_11", title: "Essentials Fleece Hoodie Black", brand: "Fear of God", sizeRaw: "M", suggestedRetailInclVatChf: 120 },
-      { providerKey: "STX_12", title: "LEGO Star Wars Millennium Falcon 75192", brand: "LEGO", suggestedRetailInclVatChf: 800 },
       { providerKey: "STX_13", title: "Pokemon TCG Scarlet & Violet Booster Box", brand: "Pokemon", suggestedRetailInclVatChf: 200 },
       { providerKey: "WEL_1", title: "Catan Basisspiel", supplierProductType: "Board Games", purchasePriceExVatChf: 30 },
       { providerKey: "REI_7350001162034", title: "Kksb HAT Case Raspberry Pi 5" },
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBeNull();
     }
+  });
+
+  it("blocks all LEGO sets (temp delist 2026-11-09), even with fashion-only off", () => {
+    process.env.GALAXUS_FASHION_ONLY = "0";
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_7b",
+        title: "LEGO Star Wars Advent Calendar Set 75340",
+        brand: "LEGO",
+        suggestedRetailInclVatChf: 96,
+      })
+    ).toBe("lego");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_adidas_lego",
+        title: "adidas Ultra Boost LEGO Color Pack Blue",
+        brand: "Adidas",
+        sizeRaw: "42",
+        suggestedRetailInclVatChf: 200,
+      })
+    ).toBeNull();
   });
 
   it("blocks manually listed rows", () => {
@@ -556,7 +584,7 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBeNull();
   });
 
-  it("blocks LEGO above absolute 300 CHF; still keeps LEGO under the cap (fashion-exempt kind)", () => {
+  it("blocks LEGO via temp delist before price-cap checks", () => {
     delete process.env.GALAXUS_MAX_RETAIL_CHF;
     expect(
       galaxusAssortmentBlockReason({
@@ -565,7 +593,7 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 1100,
       })
-    ).toBe("price_outlier");
+    ).toBe("lego");
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_7b",
@@ -573,7 +601,7 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 96,
       })
-    ).toBeNull();
+    ).toBe("lego");
   });
 
   it("blocks anything above the absolute cap even when the retail-multiple filter is off", () => {
@@ -633,7 +661,7 @@ describe("galaxusAssortmentBlockReason", () => {
   });
 
 
-  it("blocks LEGO Art sets above the absolute fashion cap after Monday rollback", () => {
+  it("blocks LEGO Art / under-cap sets via temp delist (was price-cap-only after Monday rollback)", () => {
     delete process.env.GALAXUS_MAX_RETAIL_CHF;
     expect(
       galaxusAssortmentBlockReason({
@@ -642,7 +670,7 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 407.55,
       })
-    ).toBe("price_outlier");
+    ).toBe("lego");
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_673419345705",
@@ -650,7 +678,7 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 92.09,
       })
-    ).toBeNull();
+    ).toBe("lego");
   });
 
   it("keeps REI allowlisted high-ticket sellers above the absolute cap", () => {

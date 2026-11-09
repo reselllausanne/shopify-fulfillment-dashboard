@@ -153,10 +153,20 @@ export const GALAXUS_POLICY_EXCEPTIONS: GalaxusPolicyException[] = [
     title: "All LEGO sets (product kind = lego)",
     gates: ["price_cap_300"],
     reason: "policy",
-    note: "Was: absolute 300 CHF cap skipped for LEGO kind (Klimt #31221 weekend trial). Monday 2026-10-26 rollback — LEGO again subject to GALAXUS_MAX_RETAIL_CHF. Fashion-only kind exemption for LEGO remains.",
+    note: "Was: absolute 300 CHF cap skipped for LEGO kind (Klimt #31221 weekend trial). Monday 2026-10-26 rollback — LEGO again subject to GALAXUS_MAX_RETAIL_CHF. Fashion-only kind exemption for LEGO remains (until 2026-11-09 temp delist).",
     addedAt: "2026-10-23",
     reviewAt: "2026-10-26",
     active: false,
+  },
+  {
+    id: "lego_temp_delist",
+    title: "All LEGO sets temporarily delisted (product kind = lego)",
+    gates: ["fashion_only"],
+    reason: "policy",
+    note: "Temp remove 2026-11-09: block reason lego + drop from FASHION_EXEMPT_KINDS. Stock feed zeros qty. Flip off by deleting the kind block and restoring lego in FASHION_EXEMPT_KINDS.",
+    addedAt: "2026-11-09",
+    reviewAt: "2026-12-01",
+    active: true,
   },
 ];
 
