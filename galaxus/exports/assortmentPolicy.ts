@@ -18,9 +18,11 @@
  * - rei_not_allowlisted: REI rows outside reiGalaxusAllowlist (GALAXUS_REI_ALLOWLIST=0 disables).
  * - plush (Galaxus / Tali, 2026-10-27): soft toys / stuffed animals (Jellycat, "Plush"
  *   titles). Always blocked — fashion-only alone was not enough (STX defaulted them to
- *   sneakers). LEGO / trading cards / hard art toys (Bearbrick) stay allowed.
+ *   sneakers). Trading cards / hard art toys (Bearbrick) stay allowed.
+ * - lego (temp 2026-11-09): all product kind = lego delisted for now. Re-enable by removing
+ *   the kind block + restoring "lego" in FASHION_EXEMPT_KINDS.
  * - non_fashion (Galaxus, 2026-10-13): only "Mode > …" categories + the sport / bag types on
- *   Galaxus's fashion list. Exempt: LEGO, trading cards, WEL, REI allowlist.
+ *   Galaxus's fashion list. Exempt: trading cards, WEL, REI allowlist (LEGO exempt paused).
  *   GALAXUS_FASHION_ONLY=0 disables.
  * - price_outlier: consumer price above GALAXUS_MAX_RETAIL_CHF (default 300, every supplier).
  *   REI allowlist exempt (curated prior sales — Jetson / GB10 / etc. sit above the fashion cap).
@@ -53,6 +55,7 @@ export type GalaxusAssortmentBlockReason =
   | "gift_card"
   | "rei_not_allowlisted"
   | "plush"
+  | "lego"
   | "non_fashion"
   | "manual_block"
   | "food"
@@ -164,8 +167,9 @@ const FASHION_EXTRA_LEAVES = new Set([
   "Tasche",
   "Bauchtasche",
 ]);
-/** Non-fashion kept on purpose: LEGO, trading cards (Pokémon), collectible consoles / controllers. */
-const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>(["lego", "tradingcard", "console", "controller"]);
+/** Non-fashion kept on purpose: trading cards (Pokémon), collectible consoles / controllers.
+ *  LEGO paused 2026-11-09 (temp delist) — restore "lego" here when re-enabled. */
+const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>(["tradingcard", "console", "controller"]);
 /** Non-fashion keep holes — ledger in galaxusAssortmentExceptions.ts. */
 const FASHION_EXEMPT_PROVIDER_KEYS = galaxusFashionExemptProviderKeys();
 /** WEL kept whole; REI is already narrowed by reiGalaxusAllowlist. */
@@ -625,6 +629,8 @@ export function galaxusAssortmentBlockReason(
   if (isOffSheetCollectible(input)) return "non_fashion";
   // Soft toys: always delist (independent of GALAXUS_FASHION_ONLY).
   if (kind === "plush" || isPlushSoftToy(input)) return "plush";
+  // LEGO: temp delist 2026-11-09 (independent of GALAXUS_FASHION_ONLY).
+  if (kind === "lego") return "lego";
   if (isGalaxusFashionOnlyEnabled() && !isGalaxusFashionKept(kind, supplierKey, input)) return "non_fashion";
 
   const consumer = estimateGalaxusConsumerPriceChf(input);
@@ -674,6 +680,7 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
     gift_card: 0,
     rei_not_allowlisted: 0,
     plush: 0,
+    lego: 0,
     non_fashion: 0,
     manual_block: 0,
     food: 0,
@@ -684,7 +691,7 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};size_price_outlier=${stats.size_price_outlier};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};plush=${stats.plush};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block};supplier_disabled=${stats.supplier_disabled};ner_not_apparel=${stats.ner_not_apparel}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};size_price_outlier=${stats.size_price_outlier};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};plush=${stats.plush};lego=${stats.lego};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block};supplier_disabled=${stats.supplier_disabled};ner_not_apparel=${stats.ner_not_apparel}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
