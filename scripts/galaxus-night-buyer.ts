@@ -2,7 +2,7 @@
  * Overnight Galaxus → StockX buyer. Kill switch: delete .data/night-buyer.on
  * Halt (needs a human): .data/night-buyer.halt exists. Report: .data/night-buyer-report.md
  *
- *   NIGHT_BUYER_SINCE=2026-10-22 NIGHT_BUYER_SKIP_ORDERS=208510767 npx tsx scripts/galaxus-night-buyer.ts
+ *   NIGHT_BUYER_SINCE=2026-10-22 NIGHT_BUYER_UNTIL=2026-11-05 NIGHT_BUYER_SKIP_ORDERS=208510767 npx tsx scripts/galaxus-night-buyer.ts
  *   NIGHT_BUYER_DRY=1  → lane check only, no Place Order
  *
  * Started by docker-entrypoint.sh when .data/night-buyer.on exists, restarted on crash.
@@ -32,6 +32,14 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
   const since = new Date(`${process.env.NIGHT_BUYER_SINCE || "2026-10-22"}T00:00:00+02:00`);
+  // Inclusive calendar day: UNTIL=2026-11-05 → orderDate < 2026-11-06 Zurich.
+  const untilRaw = (process.env.NIGHT_BUYER_UNTIL || "").trim();
+  const until = untilRaw
+    ? new Date(`${untilRaw}T00:00:00+02:00`)
+    : null;
+  const untilExclusive = until
+    ? new Date(until.getTime() + 24 * 3600_000)
+    : null;
   const skipOrders = new Set(
     (process.env.NIGHT_BUYER_SKIP_ORDERS || "208510767")
       .split(",")
@@ -42,7 +50,7 @@ async function main() {
     console.warn("[NIGHT-BUYER] another worker is alive (lock) — exit");
     process.exit(0);
   }
-  console.warn(`[NIGHT-BUYER] start since=${since.toISOString()} skip=${[...skipOrders].join(",")}`);
+  console.warn(`[NIGHT-BUYER] start since=${since.toISOString()} until=${untilExclusive?.toISOString() ?? "none"} skip=${[...skipOrders].join(",")}`);
   await reconcileInflight();
 
   while (await exists(ON_FILE)) {
@@ -53,7 +61,7 @@ async function main() {
       continue;
     }
     const state = await loadState();
-    const queue = await buildNightQueue({ since, skipOrders });
+    const queue = await buildNightQueue({ since, until: untilExclusive, skipOrders });
     const todo = queue.filter((p) => !stateBlocks(state[pairKey(p)], Date.now()));
     console.warn(`[NIGHT-BUYER] queue=${queue.length} todo=${todo.length} (oldest first)`);
     if (!todo.length) {
