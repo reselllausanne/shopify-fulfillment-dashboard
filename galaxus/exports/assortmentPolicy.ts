@@ -512,6 +512,11 @@ export function galaxusEstimatedRetailMarkup(): number {
   return readNumberEnv("GALAXUS_ESTIMATED_RETAIL_MARKUP", 1.4);
 }
 
+/** Swiss VAT rate used to turn a sell price ex VAT into the consumer price. Env: GALAXUS_SWISS_VAT_RATE. */
+export function galaxusSwissVatRate(): number {
+  return readNumberEnv("GALAXUS_SWISS_VAT_RATE", 0.081);
+}
+
 export function resolveAssortmentSupplierKey(input: GalaxusAssortmentInput): string {
   const explicit = String(input.supplierKey ?? "").trim().toLowerCase();
   if (explicit) return explicit;
@@ -525,7 +530,12 @@ export function estimateGalaxusConsumerPriceChf(input: GalaxusAssortmentInput): 
   const srp = Number(input.suggestedRetailInclVatChf);
   if (Number.isFinite(srp) && srp > 0) return srp;
   const buy = Number(input.purchasePriceExVatChf);
-  if (Number.isFinite(buy) && buy > 0) return buy * galaxusEstimatedRetailMarkup();
+  if (Number.isFinite(buy) && buy > 0) {
+    // NER: sell ex VAT = partner buy (0% margin), no SRP. Customer pays exactly that + Swiss VAT,
+    // so the 1.4 retail guess wrongly blocked 214–277 CHF items under the 300 cap.
+    if (resolveAssortmentSupplierKey(input) === "ner") return buy * (1 + galaxusSwissVatRate());
+    return buy * galaxusEstimatedRetailMarkup();
+  }
   return null;
 }
 

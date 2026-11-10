@@ -208,6 +208,8 @@ export async function loadFeedExportCandidates(params: {
 
     accumulateBestCandidates(mappings, bestByGtin, {
       keyBy: "gtin",
+      // Cheapest offer wins only among in-stock offers: sold-out STX must not hide in-stock NER.
+      preferInStock: true,
       requireProductName: false,
       requireImage,
       galaxusPartnerKeysLower,
@@ -325,6 +327,7 @@ export async function loadMasterAndSpecsExportCandidates(params: {
 
     const accumulateOpts = {
       keyBy: "gtin" as const,
+      preferInStock: true,
       requireProductName: false,
       galaxusPartnerKeysLower,
       onExclude: recordExclude,
