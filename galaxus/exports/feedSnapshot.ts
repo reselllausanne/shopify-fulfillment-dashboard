@@ -233,8 +233,8 @@ async function assertSnapshotRowCounts(expected: {
 }): Promise<void> {
   const prismaAny = prisma as any;
   const [stockCount, offerCount] = await Promise.all([
-    withTransientDbRetry("snapshot-assert-stock-count", () => prismaAny.galaxusFeedStockSnapshot.count()),
-    withTransientDbRetry("snapshot-assert-offer-count", () => prismaAny.galaxusFeedOfferSnapshot.count()),
+    withTransientDbRetry<number>("snapshot-assert-stock-count", () => prismaAny.galaxusFeedStockSnapshot.count()),
+    withTransientDbRetry<number>("snapshot-assert-offer-count", () => prismaAny.galaxusFeedOfferSnapshot.count()),
   ]);
 
   const shortfall = (actual: number, target: number) => target > 0 && actual < target * 0.99;
@@ -518,7 +518,7 @@ async function loadSnapshotCsv(scope: "stock" | "offer"): Promise<{ csv: string;
     // Patches can also DELETE rows (keys the live export stopped emitting). Upserts all
     // bump `updatedAt` and are caught above, so a count mismatch can only mean deletes
     // (or drift) — reconcile with a key-only pull, and full-reload if that is not enough.
-    const dbCount: number = await withTransientDbRetry("snapshot-count", () => model.count());
+    const dbCount: number = await withTransientDbRetry<number>("snapshot-count", () => model.count());
     if (rows.size !== dbCount) {
       const keyRows: Array<{ providerKey: string }> = await withTransientDbRetry(
         "snapshot-key-pull",
