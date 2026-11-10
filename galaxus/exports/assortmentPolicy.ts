@@ -26,6 +26,9 @@
  *   covers, gaming controllers, ASUS gaming peripherals, pocket knives (Taschenmesser).
  *   Title + kind hard block (STX often classifies these as sneakers → Mode keep).
  *   Fashion collabs (Pokémon sneakers, Nike Pocket Knife DM) stay.
+ * - product_type_block (2026-11-10): Galaxus Product types from
+ *   "Product type to remove - SM.xlsx" (132 German leaves). Match supplierProductType +
+ *   category-path segments (+ synonyms). Wins over fashion-kept kinds (e.g. Smartwatch).
  * - non_fashion (Galaxus, 2026-10-13): only "Mode > …" categories + the sport / bag types on
  *   Galaxus's fashion list. Exempt: console hardware + REI allowlist (LEGO/WEL/TCG paused).
  *   GALAXUS_FASHION_ONLY=0 disables.
@@ -44,6 +47,7 @@ import { classifyStxBrand, normalizeStxBrand } from "@/galaxus/exports/stxBrandB
 import { bwzShipChfFromManualNote, isBwzUnshippableNote } from "@/app/lib/bwzParcel";
 import { isGalaxusReiAllowlistEnabled, isReiGalaxusAllowlisted } from "@/galaxus/exports/reiGalaxusAllowlist";
 import { galaxusCategoryBlocklistCategory, isGalaxusManuallyBlocked } from "@/galaxus/exports/galaxusManualBlocklist";
+import { matchesGalaxusProductTypeBlocklist } from "@/galaxus/exports/galaxusProductTypeBlocklist";
 import { isGalaxusNerApparelOnlyEnabled, isNerApparelOrShoe } from "@/galaxus/exports/nerApparelOnly";
 import {
   galaxusCategoryBlockExemptProviderKeys,
@@ -66,6 +70,7 @@ export type GalaxusAssortmentBlockReason =
   | "manual_block"
   | "food"
   | "category_block"
+  | "product_type_block"
   | "supplier_disabled"
   | "ner_not_apparel";
 
@@ -657,13 +662,14 @@ export function galaxusAssortmentBlockReason(
     supplierKey,
     supplierProductType: input.supplierProductType,
   });
+  const categoryPath = galaxusCategoryPathForKind(kind, supplierKey);
   const hasShoeSize = SHOE_SIZE_RE.test(String(input.sizeRaw ?? "").trim());
   const keptItItem = IT_COMPONENT_KEEP_RE.test(`${input.title ?? ""} ${input.brand ?? ""}`);
   if (
     !hasShoeSize &&
     !keptItItem &&
     !CLASSIFIER_ELECTRONICS_SKIP_SUPPLIERS.has(supplierKey) &&
-    IT_COMPONENT_PATH_RE.test(galaxusCategoryPathForKind(kind, supplierKey))
+    IT_COMPONENT_PATH_RE.test(categoryPath)
   ) {
     return "electronics";
   }
@@ -680,15 +686,30 @@ export function galaxusAssortmentBlockReason(
   if (kind === "lego") return "lego";
   // Hobby / toy sweep 2026-11-09 (TCG, games, dolls, fidget, helmets, ASUS, …).
   if (isHobbyToyBlocked(input, kind)) return "hobby_toy";
+
+  const reiAllowlisted =
+    supplierKey === "rei" &&
+    isGalaxusReiAllowlistEnabled() &&
+    (isReiGalaxusAllowlisted(input.providerKey) ||
+      isReiGalaxusAllowlisted(input.gtin ? `REI_${String(input.gtin).trim()}` : null));
+
+  // SM Product-type remove list (2026-11-10) — after hobby so overlapping toys keep hobby_toy reason.
+  // Exempt: REI allowlist (Jetson / Pi cases) + per-SKU fashion exceptions (Stanley tumbler trial).
+  if (
+    !reiAllowlisted &&
+    !FASHION_EXEMPT_PROVIDER_KEYS.has(providerKeyNorm) &&
+    matchesGalaxusProductTypeBlocklist({
+      supplierProductType: input.supplierProductType,
+      categoryPath,
+      title: input.title,
+    })
+  ) {
+    return "product_type_block";
+  }
   if (isGalaxusFashionOnlyEnabled() && !isGalaxusFashionKept(kind, supplierKey, input)) return "non_fashion";
 
   const consumer = estimateGalaxusConsumerPriceChf(input);
   if (consumer != null) {
-    const reiAllowlisted =
-      supplierKey === "rei" &&
-      isGalaxusReiAllowlistEnabled() &&
-      (isReiGalaxusAllowlisted(input.providerKey) ||
-        isReiGalaxusAllowlisted(input.gtin ? `REI_${String(input.gtin).trim()}` : null));
     // Fashion-oriented absolute cap; REI allowlist (NVIDIA Jetson / GB10 / prior sellers) only.
     if (!reiAllowlisted && consumer > galaxusMaxRetailChf()) {
       return "price_outlier";
@@ -735,13 +756,14 @@ export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
     manual_block: 0,
     food: 0,
     category_block: 0,
+    product_type_block: 0,
     supplier_disabled: 0,
     ner_not_apparel: 0,
   };
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};size_price_outlier=${stats.size_price_outlier};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};plush=${stats.plush};lego=${stats.lego};hobby_toy=${stats.hobby_toy};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block};supplier_disabled=${stats.supplier_disabled};ner_not_apparel=${stats.ner_not_apparel}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};size_price_outlier=${stats.size_price_outlier};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card};rei_not_allowlisted=${stats.rei_not_allowlisted};plush=${stats.plush};lego=${stats.lego};hobby_toy=${stats.hobby_toy};non_fashion=${stats.non_fashion};manual_block=${stats.manual_block};food=${stats.food};category_block=${stats.category_block};product_type_block=${stats.product_type_block};supplier_disabled=${stats.supplier_disabled};ner_not_apparel=${stats.ner_not_apparel}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
