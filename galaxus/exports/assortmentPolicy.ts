@@ -527,15 +527,15 @@ export function resolveAssortmentSupplierKey(input: GalaxusAssortmentInput): str
 }
 
 export function estimateGalaxusConsumerPriceChf(input: GalaxusAssortmentInput): number | null {
+  // The 300 CHF cap is the price we sell at, including VAT. Suggested retail is not that
+  // price: StockX SRP can sit above a sell price we would still list.
+  // On the feed, purchasePriceExVatChf is the Galaxus sell ex VAT already.
+  const sellExVat = Number(input.purchasePriceExVatChf);
+  if (Number.isFinite(sellExVat) && sellExVat > 0) {
+    return sellExVat * (1 + galaxusSwissVatRate());
+  }
   const srp = Number(input.suggestedRetailInclVatChf);
   if (Number.isFinite(srp) && srp > 0) return srp;
-  const buy = Number(input.purchasePriceExVatChf);
-  if (Number.isFinite(buy) && buy > 0) {
-    // NER: sell ex VAT = partner buy (0% margin), no SRP. Customer pays exactly that + Swiss VAT,
-    // so the 1.4 retail guess wrongly blocked 214–277 CHF items under the 300 cap.
-    if (resolveAssortmentSupplierKey(input) === "ner") return buy * (1 + galaxusSwissVatRate());
-    return buy * galaxusEstimatedRetailMarkup();
-  }
   return null;
 }
 

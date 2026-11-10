@@ -558,6 +558,30 @@ describe("galaxusAssortmentBlockReason", () => {
     }
   });
 
+  it("300 CHF cap uses the sell price, not suggested retail", () => {
+    delete process.env.GALAXUS_MAX_RETAIL_CHF;
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_SRP",
+        title: "UGG Lowmel Chestnut",
+        brand: "UGG",
+        sizeRaw: "42",
+        suggestedRetailInclVatChf: 400,
+        purchasePriceExVatChf: 200,
+      })
+    ).not.toBe("price_outlier");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_SELL",
+        title: "UGG Lowmel Chestnut",
+        brand: "UGG",
+        sizeRaw: "42",
+        suggestedRetailInclVatChf: 200,
+        purchasePriceExVatChf: 290,
+      })
+    ).toBe("price_outlier");
+  });
+
   it("NER price cap uses sell price + VAT, not the 1.4 retail guess", () => {
     delete process.env.GALAXUS_MAX_RETAIL_CHF;
     // buy 250 ex VAT -> 270 incl VAT: under 300, must stay.
@@ -1036,6 +1060,7 @@ describe("galaxusAssortmentBlockReasonForCandidate", () => {
 
   it("reads variant + kickdb product fields from a feed candidate", () => {
     process.env.GALAXUS_MAX_RETAIL_CHF = "5000";
+    // Sell ex VAT 260 is about 281 incl VAT. Suggested retail 399 must not trip the shoe cap.
     expect(
       galaxusAssortmentBlockReasonForCandidate({
         providerKey: "STX_14",
@@ -1047,6 +1072,21 @@ describe("galaxusAssortmentBlockReasonForCandidate", () => {
           supplierBrand: "Nike",
           sizeRaw: "EU 44",
           suggestedRetailPriceInclVat: "399.00",
+        },
+        product: { name: "Nike Dunk Low Retro Grey Fog", retailPrice: 115 },
+      })
+    ).toBeNull();
+    expect(
+      galaxusAssortmentBlockReasonForCandidate({
+        providerKey: "STX_14B",
+        sellPriceExVat: 400,
+        mapping: { supplierKey: "stx" },
+        variant: {
+          supplierVariantId: "stx_abd",
+          supplierProductName: "Nike Dunk Low Retro Grey Fog",
+          supplierBrand: "Nike",
+          sizeRaw: "EU 44",
+          suggestedRetailPriceInclVat: "120.00",
         },
         product: { name: "Nike Dunk Low Retro Grey Fog", retailPrice: 115 },
       })
