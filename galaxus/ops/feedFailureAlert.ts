@@ -12,15 +12,18 @@ function alertWebhookUrl(): string {
   );
 }
 
+/** True when this key is outside the dedupe window. Does NOT claim the slot. */
 function shouldSendAlert(key: string): boolean {
-  const now = Date.now();
   const last = recentAlerts.get(key) ?? 0;
-  if (now - last < DEDUP_MS) return false;
-  recentAlerts.set(key, now);
-  return true;
+  return Date.now() - last >= DEDUP_MS;
 }
 
-async function postSlack(text: string): Promise<{ sent: boolean; reason?: string }> {
+/** Claim the dedupe slot — only after at least one channel really delivered. */
+function markAlertSent(key: string): void {
+  recentAlerts.set(key, Date.now());
+}
+
+async function postSlackWebhook(text: string): Promise<{ sent: boolean; reason?: string }> {
   const webhook = alertWebhookUrl();
   if (!webhook) {
     return { sent: false, reason: "no_webhook_configured" };
@@ -41,6 +44,68 @@ async function postSlack(text: string): Promise<{ sent: boolean; reason?: string
     console.error("[GALAXUS][FEED][ALERT] Slack notify failed", err);
     return { sent: false, reason: "slack_fetch_error" };
   }
+}
+
+/**
+ * Email fallback (Postmark). The Slack webhook env vars were empty in prod, so every
+ * stale / failure / crash-loop alert was silently dropped ("no_webhook_configured") while
+ * Galaxus prices went un-pushed for up to 41 h. Email is configured on the VPS already.
+ */
+async function postEmail(subject: string, text: string): Promise<{ sent: boolean; reason?: string }> {
+  const serverToken = process.env.POSTMARK_SERVER_TOKEN?.trim();
+  const from = process.env.POSTMARK_FROM_EMAIL?.trim();
+  const to =
+    process.env.GALAXUS_ALERT_EMAIL?.trim() || process.env.STOCKX_ALERT_EMAIL?.trim() || from;
+  if (!serverToken || !from || !to) {
+    return { sent: false, reason: "no_email_configured" };
+  }
+  try {
+    const res = await fetch("https://api.postmarkapp.com/email", {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "X-Postmark-Server-Token": serverToken,
+      },
+      body: JSON.stringify({
+        From: from,
+        To: to,
+        Subject: subject,
+        TextBody: text,
+        MessageStream: process.env.POSTMARK_MESSAGE_STREAM?.trim() || "outbound",
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error("[GALAXUS][FEED][ALERT] Postmark failed", res.status, body.slice(0, 200));
+      return { sent: false, reason: `email_http_${res.status}` };
+    }
+    return { sent: true };
+  } catch (err) {
+    console.error("[GALAXUS][FEED][ALERT] Postmark error", err);
+    return { sent: false, reason: "email_fetch_error" };
+  }
+}
+
+/** Slack + email in parallel; delivered when at least one channel succeeds. */
+async function sendAlert(
+  dedupeKey: string,
+  subject: string,
+  text: string
+): Promise<{ sent: boolean; reason?: string }> {
+  const [slack, email] = await Promise.all([
+    postSlackWebhook(text),
+    postEmail(subject, text),
+  ]);
+  if (slack.sent || email.sent) {
+    markAlertSent(dedupeKey);
+    return { sent: true };
+  }
+  if (slack.reason === "no_webhook_configured" && email.reason === "no_email_configured") {
+    console.error("[GALAXUS][FEED][ALERT] NO CHANNEL configured (Slack webhook + Postmark both missing)");
+    return { sent: false, reason: "no_alert_channel_configured" };
+  }
+  return { sent: false, reason: email.reason ?? slack.reason };
 }
 
 /** Slack incoming webhook → channel notif on phone (enable Slack mobile alerts for that channel). */
@@ -69,7 +134,7 @@ export async function notifyGalaxusFeedFailure(params: {
     .filter(Boolean)
     .join("\n");
 
-  return postSlack(text);
+  return sendAlert(dedupeKey, `[Resell] Galaxus feed upload FAILED (${params.scope})`, text);
 }
 
 /** No successful price feed for too long — outage detector. */
@@ -91,7 +156,7 @@ export async function notifyGalaxusFeedStale(params: {
     "",
     "Prices on Galaxus may be outdated. Check Galaxus ops → Push price.",
   ].join("\n");
-  return postSlack(text);
+  return sendAlert("stale:price-feed", `[Resell] Galaxus price feed STALE (${age})`, text);
 }
 
 /**
@@ -117,7 +182,11 @@ export async function notifyGalaxusMasterSpecsFeedStale(params: {
     "Fix: `bash scripts/galaxus-ops-cron.sh push-master-specs` (COPY dump → oneshot SFTP).",
     "Do not use feed-worker Prisma stream — nightly cron only.",
   ].join("\n");
-  return postSlack(text);
+  return sendAlert(
+    "stale:master-specs-feed",
+    `[Resell] Galaxus master/specs feed STALE (${age})`,
+    text
+  );
 }
 
 /** Crash-recovery circuit breaker tripped — stop blind OOM requeue loops. */
@@ -139,5 +208,5 @@ export async function notifyGalaxusFeedCrashLoop(params: {
     "Not auto-requeued. Fix heap/snapshot then push from Galaxus ops UI.",
     "Likely: master live-build OOM — rebuild master/specs snapshot on ops-background first.",
   ].join("\n");
-  return postSlack(text);
+  return sendAlert(dedupeKey, `[Resell] Galaxus feed CRASH LOOP (${params.scope})`, text);
 }
