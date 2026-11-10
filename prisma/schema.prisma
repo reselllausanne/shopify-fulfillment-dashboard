@@ -2746,7 +2746,6 @@ model AdsProductDaily {
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([date, campaignId, merchantId, feedLabel, languageCode, offerId], map: "ads_product_daily_key")
-  @@index([date], map: "ads_product_daily_date_idx")
   @@index([campaignId, date], map: "ads_product_daily_campaign_id_date_idx")
   @@index([offerId], map: "ads_product_daily_offer_id_idx")
   @@index([shopifyProductId], map: "ads_product_daily_shopify_product_id_idx")
