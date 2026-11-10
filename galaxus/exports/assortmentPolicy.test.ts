@@ -512,6 +512,45 @@ describe("galaxusAssortmentBlockReason", () => {
     }
   });
 
+  it("keeps NER English-titled apparel by clothing size", () => {
+    delete process.env.GALAXUS_NER_APPAREL_ONLY;
+    for (const input of [
+      { providerKey: "NER_41", title: "Castelli Sorpasso RoS Bibtight", sizeRaw: "L" },
+      { providerKey: "NER_42", title: "Endura Hummvee", sizeRaw: "M" },
+      { providerKey: "NER_43", title: "Fox Racing Flexair Pant", sizeRaw: "32, M" },
+      { providerKey: "NER_44", title: "Northwave Extreme Thermal L/S Trikot", sizeRaw: "S" },
+      { providerKey: "NER_45", title: "POC VPD Air leg warmers", sizeRaw: "XL" },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).not.toBe("ner_not_apparel");
+    }
+    // Gear stays out even with a size letter.
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "NER_46", title: "Pompe à Pied Topeak Joe Blow", sizeRaw: "M" })
+    ).toBe("ner_not_apparel");
+  });
+
+  it("NER price cap uses sell price + VAT, not the 1.4 retail guess", () => {
+    delete process.env.GALAXUS_MAX_RETAIL_CHF;
+    // buy 250 ex VAT -> 270 incl VAT: under 300, must stay.
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "NER_50",
+        title: "ASICS Gel-Quantum 360 I",
+        sizeRaw: "46.5",
+        purchasePriceExVatChf: 250,
+      })
+    ).not.toBe("price_outlier");
+    // buy 290 ex VAT -> 313 incl VAT: over 300, blocked.
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "NER_51",
+        title: "ASICS Gel-Quantum 360 I",
+        sizeRaw: "46.5",
+        purchasePriceExVatChf: 290,
+      })
+    ).toBe("price_outlier");
+  });
+
   it("keeps electronics that are not storage or IT components", () => {
     for (const input of [
       { providerKey: "STX_1", title: "Sony PlayStation 5 Console Disc Edition", brand: "Sony", suggestedRetailInclVatChf: 600 },
@@ -721,7 +760,7 @@ describe("galaxusAssortmentBlockReason", () => {
         providerKey: "NER_1",
         title: "Nike Air Max 95 OG Neon",
         sizeRaw: "42",
-        purchasePriceExVatChf: 260,
+        purchasePriceExVatChf: 330,
       })
     ).toBe("shoe_over_cap");
     expect(
@@ -801,7 +840,7 @@ describe("galaxusAssortmentBlockReason", () => {
         title: "Nike Dunk Low",
         brand: "Nike",
         sizeRaw: "42",
-        purchasePriceExVatChf: 220,
+        purchasePriceExVatChf: 290,
       })
     ).toBe("price_outlier");
     expect(

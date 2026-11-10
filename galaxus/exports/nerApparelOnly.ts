@@ -36,6 +36,8 @@ const NER_OFFSHEET_RE =
 const JEWELRY_BRACELET_RE = /\bbracelets?\b/i;
 const WATCH_STRAP_RE = /\b(garmin|polar|suunto|coros|wahoo|montres?|watch)\b/i;
 
+/** Clothing sizes (S, M, L, XL, 2XL, "M/L", "32, M"). English NER titles ("Fox Flexair Pant") carry no French noun. */
+const APPAREL_SIZE_RE = /(?:^|[\s,/])(?:[2-5]?X{0,3}[SL]|XS|M)(?=$|[\s,/])/i;
 const SHOE_SIZE_RE = /^(?:EU\s*)?(1[6-9]|[2-4]\d|5[0-2])(?:[.,]5)?(?:\s?[123]\/3|\s?[⅓⅔])?$|^(?:US|UK)\s*\d/i;
 
 function isNerOffSheet(title: string): boolean {
@@ -75,5 +77,5 @@ export function isNerApparelOrShoe(input: { title?: string | null; sizeRaw?: str
   if (PART_FOR_RE.test(title)) return false;
   if (gearAt >= 0 && (wearAt < 0 || gearAt <= wearAt) && !APPAREL_KIT_RE.test(title)) return false;
   if (wearAt >= 0) return true;
-  return SHOE_SIZE_RE.test(size);
+  return SHOE_SIZE_RE.test(size) || APPAREL_SIZE_RE.test(size);
 }
