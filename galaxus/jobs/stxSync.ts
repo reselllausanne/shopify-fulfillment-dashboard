@@ -815,6 +815,39 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
   };
 }
 
+/**
+ * Price refresh writes a newly found barcode onto SupplierVariant
+ * (`gtin = COALESCE(existing, incoming)`) but used to leave VariantMapping at
+ * PENDING_GTIN with a null gtin. The Galaxus feed only reads the mapping, so
+ * those sizes never entered the price file.
+ * Copy the variant barcode onto the mapping when the provider key already is
+ * STX_{gtin} and no other variant owns that key.
+ */
+export async function promotePendingStxMappingsThatAlreadyHaveGtin(now = new Date()): Promise<number> {
+  const updated = await prisma.$executeRaw`
+    UPDATE "VariantMapping" AS m
+    SET
+      "gtin" = v."gtin",
+      "providerKey" = v."providerKey",
+      "status" = 'SUPPLIER_GTIN',
+      "updatedAt" = ${now}
+    FROM "SupplierVariant" AS v
+    WHERE m."supplierVariantId" = v."supplierVariantId"
+      AND m."status" = 'PENDING_GTIN'
+      AND (m."gtin" IS NULL OR btrim(m."gtin") = '')
+      AND v."supplierVariantId" LIKE 'stx_%'
+      AND v."gtin" ~ '^[0-9]{8}$|^[0-9]{12,14}$'
+      AND v."providerKey" = 'STX_' || v."gtin"
+      AND NOT EXISTS (
+        SELECT 1
+        FROM "SupplierVariant" AS other
+        WHERE other."providerKey" = v."providerKey"
+          AND other."supplierVariantId" <> v."supplierVariantId"
+      )
+  `;
+  return Number(updated) || 0;
+}
+
 export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Promise<StxSyncResult> {
   const startedAt = Date.now();
   const concurrency = Math.max(1, options.concurrency ?? readStxRefreshConcurrency());
@@ -822,6 +855,12 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
   const limitProducts = Math.max(1, options.limitProducts ?? readStxRefreshProductBatch());
   const now = new Date();
   const db = stxDb() as any;
+  const promotedPendingGtin = await promotePendingStxMappingsThatAlreadyHaveGtin(now);
+  if (promotedPendingGtin > 0) {
+    console.info("[galaxus][sync:stx-price-stock] promoted pending mappings that already had a GTIN", {
+      promotedPendingGtin,
+    });
+  }
 
   // Stalest first so hourly shards rotate the whole catalog instead of re-hitting the same head.
   const products = await db.kickDBProduct.findMany({
@@ -842,6 +881,7 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
   let shopifyStockRestored = 0;
   let remappedToCanonical = 0;
   let updated = 0;
+  let mappingsPromoted = 0;
   const dirtySupplierVariantIds = new Set<string>();
   /** Flush DB writes every wave so a mid-shard crash keeps progress. */
   const WAVE = 400;
@@ -921,6 +961,21 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
       updated += await bulkUpdateSupplierVariants(batch.map(stxVariantSyncPatch), now, {
         updateGtinWhenProvided: false,
       });
+      const mappingRows = batch
+        .filter((row) => row.gtin && row.providerKey)
+        .map((row) => ({
+          supplierVariantId: row.supplierVariantId,
+          gtin: row.gtin,
+          providerKey: row.providerKey,
+          status: "SUPPLIER_GTIN",
+        }));
+      if (mappingRows.length > 0) {
+        const mapped = await bulkUpsertVariantMappings(mappingRows, now, {
+          doNotDowngradeFromMatched: true,
+          onlySetPendingIfMissing: true,
+        });
+        mappingsPromoted += mapped.inserted + mapped.updated;
+      }
     }
     // Persist cursor after each wave so retries skip already-rotated products.
     await bumpKickdbLastFetchedAt(
@@ -941,6 +996,8 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
     processedProducts,
     processedVariants,
     updatedCount: updated,
+    mappingsPromoted,
+    promotedPendingGtin,
     stockZeroed,
     shopifySoldoutZeroed,
     shopifyStockRestored,
