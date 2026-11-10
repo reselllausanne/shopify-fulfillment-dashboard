@@ -928,7 +928,15 @@ export async function runPendingFeedTriggers(params: { origin: string; scope: Fe
   return drained;
 }
 
-const STALE_PRICE_FEED_MS = 6 * 60 * 60 * 1000;
+/**
+ * Healthy cadence is a successful stock-price push every ~10-20 min. The old 6 h threshold
+ * (plus an empty Slack webhook) let Galaxus prices go stale for up to 41 h unnoticed.
+ * Tunable: GALAXUS_PRICE_FEED_STALE_MINUTES (default 60, min 15).
+ */
+const STALE_PRICE_FEED_MS =
+  Math.max(15, Number.parseInt(process.env.GALAXUS_PRICE_FEED_STALE_MINUTES ?? "", 10) || 60) *
+  60 *
+  1000;
 /** ProductData + SpecificationData — alert if nightly 04:00 COPY push missed (~26h). */
 const STALE_MASTER_SPECS_FEED_MS = 26 * 60 * 60 * 1000;
 /** A whole PriceData file is ~620k rows; sales in a burst share one delayed upload. */

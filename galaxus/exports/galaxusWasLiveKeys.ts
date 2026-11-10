@@ -10,22 +10,39 @@ import { prisma } from "@/app/lib/prisma";
  */
 export async function loadGalaxusDelistZeroEligibleKeys(): Promise<Set<string>> {
   const prismaAny = prisma as any;
-  const rows = (await prismaAny.$queryRaw`
-    SELECT c."providerKey" AS "providerKey"
-    FROM "ChannelListingState" c
-    LEFT JOIN "GalaxusFeedStockSnapshot" s ON s."providerKey" = c."providerKey"
-    WHERE c.channel = 'GALAXUS'
-      AND c."lastPushedStock" > 0
-      AND (
-        s."providerKey" IS NULL
-        OR coalesce((s."rowJson"->>'QuantityOnStock')::int, 0) > 0
-      )
-  `) as Array<{ providerKey?: string | null }>;
+
+  // Two cheap sequential scans + set difference in memory.
+  //
+  // The previous single statement (`CLS LEFT JOIN snapshot … rowJson->>'QuantityOnStock'`)
+  // let the planner under-estimate the CLS side 6x (63k est. vs 383k actual) and pick a
+  // nested loop with ~383k random index lookups into the snapshot: 85 s and ~180k disk
+  // block reads per call (13.5 s mean over 7.7k calls, run on every feed build).
+  // Semantics are unchanged: a key is eligible when it still shows lastPushedStock > 0 on
+  // Galaxus AND is NOT already present in the stock snapshot with quantity <= 0.
+  const [liveRows, zeroedRows] = await Promise.all([
+    prismaAny.$queryRaw`
+      SELECT c."providerKey" AS "providerKey"
+      FROM "ChannelListingState" c
+      WHERE c.channel = 'GALAXUS'
+        AND c."lastPushedStock" > 0
+    ` as Promise<Array<{ providerKey?: string | null }>>,
+    prismaAny.$queryRaw`
+      SELECT s."providerKey" AS "providerKey"
+      FROM "GalaxusFeedStockSnapshot" s
+      WHERE coalesce((s."rowJson"->>'QuantityOnStock')::int, 0) <= 0
+    ` as Promise<Array<{ providerKey?: string | null }>>,
+  ]);
+
+  const alreadyZeroed = new Set<string>();
+  for (const row of zeroedRows) {
+    const key = String(row?.providerKey ?? "").trim();
+    if (key) alreadyZeroed.add(key);
+  }
 
   const out = new Set<string>();
-  for (const row of rows) {
+  for (const row of liveRows) {
     const key = String(row?.providerKey ?? "").trim();
-    if (key) out.add(key);
+    if (key && !alreadyZeroed.has(key)) out.add(key);
   }
   return out;
 }

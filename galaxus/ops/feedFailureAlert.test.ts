@@ -11,6 +11,11 @@ describe("notifyGalaxusFeedFailure", () => {
 
   beforeEach(() => {
     vi.stubEnv("GALAXUS_ALERT_SLACK_WEBHOOK_URL", "https://hooks.slack.com/test");
+    // Keep the email fallback off unless a test opts in (local/CI env may define Postmark).
+    vi.stubEnv("POSTMARK_SERVER_TOKEN", "");
+    vi.stubEnv("POSTMARK_FROM_EMAIL", "");
+    vi.stubEnv("GALAXUS_ALERT_EMAIL", "");
+    vi.stubEnv("STOCKX_ALERT_EMAIL", "");
   });
 
   afterEach(() => {
@@ -78,6 +83,46 @@ describe("notifyGalaxusFeedFailure", () => {
     expect(body.text).toContain("master/specs");
     expect(body.text).toContain("31h");
     expect(body.text).toContain("push-master-specs");
+  });
+
+  it("falls back to Postmark email when no Slack webhook is configured", async () => {
+    vi.stubEnv("GALAXUS_ALERT_SLACK_WEBHOOK_URL", "");
+    vi.stubEnv("BEATBOT_ALERT_SLACK_WEBHOOK_URL", "");
+    vi.stubEnv("SLACK_WEBHOOK_URL", "");
+    vi.stubEnv("POSTMARK_SERVER_TOKEN", "pm-token");
+    vi.stubEnv("POSTMARK_FROM_EMAIL", "from@example.com");
+    vi.stubEnv("GALAXUS_ALERT_EMAIL", "ops@example.com");
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    global.fetch = vi.fn(async (url, init) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    const res = await notifyGalaxusFeedFailure({ scope: "price", error: "email-fallback-err-1" });
+    expect(res.sent).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://api.postmarkapp.com/email");
+    const payload = JSON.parse(String(calls[0].init.body));
+    expect(payload.To).toBe("ops@example.com");
+    expect(payload.Subject).toContain("Galaxus feed upload FAILED");
+  });
+
+  it("does not claim the dedupe slot when no channel delivered (retry next tick)", async () => {
+    vi.stubEnv("GALAXUS_ALERT_SLACK_WEBHOOK_URL", "");
+    vi.stubEnv("BEATBOT_ALERT_SLACK_WEBHOOK_URL", "");
+    vi.stubEnv("SLACK_WEBHOOK_URL", "");
+    vi.stubEnv("POSTMARK_SERVER_TOKEN", "");
+    vi.stubEnv("POSTMARK_FROM_EMAIL", "");
+    global.fetch = vi.fn(async () => new Response("{}", { status: 200 })) as typeof fetch;
+
+    const first = await notifyGalaxusFeedFailure({ scope: "stock", error: "no-channel-err-2" });
+    expect(first.sent).toBe(false);
+    expect(first.reason).toBe("no_alert_channel_configured");
+
+    // Channel appears later: the same error must still alert (slot was not burned).
+    vi.stubEnv("GALAXUS_ALERT_SLACK_WEBHOOK_URL", "https://hooks.slack.com/test");
+    const second = await notifyGalaxusFeedFailure({ scope: "stock", error: "no-channel-err-2" });
+    expect(second.sent).toBe(true);
   });
 
   it("posts crash-loop hard-stop alert", async () => {

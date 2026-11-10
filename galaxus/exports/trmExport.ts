@@ -1,7 +1,6 @@
 import { GALAXUS_FEED_SUPPLIER_ALLOWLIST, GALAXUS_FEED_SUPPLIER_BLOCKLIST } from "@/galaxus/config";
 
 const FEED_ELIGIBLE_MAPPING_STATUSES = ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] as const;
-const ENABLE_LEGACY_SUPPLIER_ID_FILTER = process.env.GALAXUS_FEED_LEGACY_SUPPLIER_ID_FILTER === "1";
 
 type TrmFeedExclusionReason =
   | "MISSING_GTIN"
@@ -21,42 +20,25 @@ function buildSupplierKeyFilter(keys: string[]) {
   return { supplierKey: { in: normalized } };
 }
 
-/** Legacy join filter — kept for rows missing supplierKey backfill. */
-function buildSupplierIdFilter(keys: string[]) {
-  const normalized = keys.map(normalizeSupplierKey).filter(Boolean);
-  if (normalized.length === 0) return null;
-  const or = normalized.flatMap((key) => [
-    { supplierVariant: { supplierVariantId: { startsWith: `${key}:`, mode: "insensitive" } } },
-    { supplierVariant: { supplierVariantId: { startsWith: `${key}_`, mode: "insensitive" } } },
-  ]);
-  return or.length > 0 ? { OR: or } : null;
-}
-
+/**
+ * Scope by `VariantMapping.supplierKey` only (indexed column, kept in sync by the
+ * `trg_variant_mapping_supplier_key` trigger + Prisma extension).
+ *
+ * The old `GALAXUS_FEED_LEGACY_SUPPLIER_ID_FILTER=1` mode OR-ed in
+ * `supplierVariant.supplierVariantId ILIKE 'key:%'` relation filters. Prisma compiles each
+ * relation filter into its own LEFT JOIN, so every feed page became a 41-way self-join on
+ * SupplierVariant (3.7 s/page mean, ~190 h cumulative). supplierKey is fully backfilled
+ * (0 NULL / 0 mismatch in prod, Nov 2026), so the legacy path is removed for good.
+ */
 function buildSupplierScopeFilter(keys: string[]) {
-  const byKey = buildSupplierKeyFilter(keys);
-  if (!ENABLE_LEGACY_SUPPLIER_ID_FILTER) {
-    return byKey;
-  }
-  const byId = buildSupplierIdFilter(keys);
-  if (byKey && byId) {
-    return { OR: [byKey, byId] };
-  }
-  return byKey || byId;
+  return buildSupplierKeyFilter(keys);
 }
 
-/** Excludes supplier id prefixes from Galaxus feed scope (NOT … OR …). */
+/** Excludes supplier keys from Galaxus feed scope. */
 function buildSupplierBlocklistFilter(keys: string[]) {
   const normalized = keys.map(normalizeSupplierKey).filter(Boolean);
   if (normalized.length === 0) return null;
-  if (!ENABLE_LEGACY_SUPPLIER_ID_FILTER) {
-    return { NOT: { supplierKey: { in: normalized } } };
-  }
-  const or = normalized.flatMap((key) => [
-    { supplierKey: key },
-    { supplierVariant: { supplierVariantId: { startsWith: `${key}:`, mode: "insensitive" } } },
-    { supplierVariant: { supplierVariantId: { startsWith: `${key}_`, mode: "insensitive" } } },
-  ]);
-  return or.length > 0 ? { NOT: { OR: or } } : null;
+  return { NOT: { supplierKey: { in: normalized } } };
 }
 
 export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagnostics = true) {
@@ -88,13 +70,7 @@ export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagn
   };
   const statusFilter = includeTrmDiagnostics
     ? {
-        OR: [
-          eligibleWhere,
-          { supplierKey: "trm" },
-          ...(ENABLE_LEGACY_SUPPLIER_ID_FILTER
-            ? [{ supplierVariant: { supplierVariantId: { startsWith: "trm:", mode: "insensitive" } } }]
-            : []),
-        ],
+        OR: [eligibleWhere, { supplierKey: "trm" }],
       }
     : eligibleWhere;
 
