@@ -205,6 +205,45 @@ else
   bad "worker loop missing verify_compose_service_running"
 fi
 
+# --- feed worker recreated LAST (its 25 min drain must not delay other services) ---
+ord="$(order_workers_feed_last worker-a worker-galaxus-feed worker-b worker-c)"
+if [ "$ord" = "worker-a worker-b worker-c worker-galaxus-feed" ]; then
+  pass "feed worker ordered last"
+else
+  bad "feed worker ordering: '$ord'"
+fi
+ord2="$(order_workers_feed_last worker-a worker-b)"
+if [ "$ord2" = "worker-a worker-b" ]; then pass "ordering unchanged without feed worker"; else bad "ordering w/o feed: '$ord2'"; fi
+ord3="$(order_workers_feed_last worker-galaxus-feed)"
+if [ "$ord3" = "worker-galaxus-feed" ]; then pass "ordering feed-only"; else bad "ordering feed-only: '$ord3'"; fi
+ord4="$(DEPLOY_WORKERS='x worker-galaxus-feed y' DEPLOY_SERVICE=web resolve_deploy_workers)"
+if [ "$ord4" = "x y worker-galaxus-feed" ]; then pass "explicit DEPLOY_WORKERS also feed-last"; else bad "explicit workers: '$ord4'"; fi
+
+# --- docker GC guarantees (static) ---
+GC="$ROOT/scripts/vps-docker-gc.sh"
+if [ -f "$GC" ]; then pass "vps-docker-gc.sh exists"; else bad "vps-docker-gc.sh missing"; fi
+if grep -vE '^\s*#' "$GC" | grep -qE 'volume prune|system prune|--volumes|docker volume|docker rm|docker stop|docker kill'; then
+  bad "gc must never touch volumes/containers"
+else
+  pass "gc never touches volumes/containers"
+fi
+if grep -q 'image prune -a -f --filter "until=' "$GC" && grep -q 'builder prune -f --filter "until=' "$GC"; then
+  pass "gc prunes only with age filter"
+else
+  bad "gc prune commands must carry an until= filter"
+fi
+set +e
+DOCKER_GC_UNTIL_HOURS=1 bash "$GC" >/dev/null 2>&1
+gc_code=$?
+set -e
+if [ "$gc_code" -eq 2 ]; then pass "gc rejects cutoff < 24h"; else bad "gc cutoff guard exit=$gc_code"; fi
+if grep -q 'vps-docker-gc.sh' "$ROOT/scripts/vps-deploy-from-github.sh" \
+  && grep -q 'docker gc failed (non-fatal)' "$ROOT/scripts/vps-deploy-from-github.sh"; then
+  pass "deploy calls gc non-fatally"
+else
+  bad "deploy must call gc non-fatally"
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "FAIL"
   exit 1

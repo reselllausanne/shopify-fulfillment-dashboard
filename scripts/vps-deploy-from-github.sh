@@ -9,7 +9,8 @@
 #   bash scripts/vps-deploy-from-github.sh --validate-config   # CI / local, no SSH
 #   bash scripts/vps-deploy-from-github.sh --sha=<40hex> --migrate  # build → migrate → up
 #
-# Env files (.env) are never written. No reset --hard / clean / prune / volume rm.
+# Env files (.env) are never written. No reset --hard / clean / volume rm.
+# Docker disk GC lives ONLY in scripts/vps-docker-gc.sh (age-filtered images/build cache, never volumes).
 set -euo pipefail
 
 REPO="${REPO:-/opt/resell}"
@@ -371,12 +372,36 @@ verify_critical_workers_running() {
   done
 }
 
+DEPLOY_FEED_WORKER="${DEPLOY_FEED_WORKER:-worker-galaxus-feed}"
+
+# The feed worker drains its in-flight build on SIGTERM (up to ~25 min), so recreating it
+# blocks the deploy for that long. Put it LAST so every other service gets the new code in
+# ~2 min instead of waiting behind the drain.
+order_workers_feed_last() {
+  local w out="" has_feed=0
+  for w in "$@"; do
+    [ -n "$w" ] || continue
+    if [ "$w" = "$DEPLOY_FEED_WORKER" ]; then
+      has_feed=1
+    else
+      out="$out $w"
+    fi
+  done
+  if [ "$has_feed" = "1" ]; then
+    out="$out $DEPLOY_FEED_WORKER"
+  fi
+  # shellcheck disable=SC2086
+  echo $out
+}
+
 resolve_deploy_workers() {
   if [ -n "$DEPLOY_WORKERS" ]; then
-    echo "$DEPLOY_WORKERS"
+    # shellcheck disable=SC2086
+    order_workers_feed_last $DEPLOY_WORKERS
     return 0
   fi
-  docker compose config --services | grep -vx "$DEPLOY_SERVICE" | tr '\n' ' '
+  # shellcheck disable=SC2046
+  order_workers_feed_last $(docker compose config --services | grep -vx "$DEPLOY_SERVICE")
 }
 
 parse_args() {
@@ -552,6 +577,10 @@ main() {
   # Cron Python (SSE consumer / create queue) runs from /opt/shopify-automation;
   # keep it on the same GitHub SHA. Non-fatal: web is already live.
   bash "$REPO/scripts/sync-shopify-automation.sh" || echo "WARN: shopify-automation sync failed"
+
+  # Free old images/build cache (age-filtered, never volumes). Non-fatal; lock still held so
+  # no concurrent build races the prune.
+  bash "$REPO/scripts/vps-docker-gc.sh" || echo "WARN: docker gc failed (non-fatal)"
 
   echo "DEPLOY_OK requested=$WANT running=$HEAD_NOW pre_tag=$PRE_TAG"
 }
