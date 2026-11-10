@@ -98,6 +98,7 @@ export async function POST(request: Request) {
         baseOrderId,
         lines,
         deliveryCharge,
+        force: Boolean(body?.force),
       });
       return new NextResponse(content, {
         headers: {
