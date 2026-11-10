@@ -2571,7 +2571,6 @@ model GalaxusFeedSpecsSnapshot {
   updatedAt        DateTime @updatedAt
 
   @@id([providerKey, specificationKey])
-  @@index([providerKey])
   @@index([updatedAt])
   @@schema("public")
 }
