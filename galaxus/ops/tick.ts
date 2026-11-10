@@ -7,6 +7,7 @@ import {
   drainFeedPushQueue,
 } from "./feedPipeline";
 import { pruneGalaxusJobRunPayloads } from "./jobRunRetention";
+import { runDbRetention } from "./dbRetention";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { runEdiInPipeline } from "./orderPipeline";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
@@ -292,6 +293,15 @@ export async function runOpsTick(origin: string, options?: OpsTickOptions) {
     }
   } catch (err) {
     console.error("[galaxus][ops][tick] job-run payload prune failed", err);
+  }
+
+  try {
+    const retention = await runDbRetention();
+    if (!retention.skipped && (retention.manifestCleared > 0 || retention.driftDeleted > 0)) {
+      console.info("[galaxus][ops][tick] db retention", retention);
+    }
+  } catch (err) {
+    console.error("[galaxus][ops][tick] db retention failed", err);
   }
 
   return {
