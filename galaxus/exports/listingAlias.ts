@@ -80,6 +80,56 @@ export function buildGalaxusListingIdentity(input: {
   };
 }
 
+export type GalaxusClsRow = {
+  supplierVariantId: string;
+  providerKey: string;
+  createdAt: Date;
+  status: string;
+};
+
+/** Above this many supplier variants, one paginated pass over CLS beats ~N/5000 random IN lookups. */
+export const CLS_FULL_SCAN_THRESHOLD = 50_000;
+const CLS_CHUNK_SIZE = 5000;
+/**
+ * Non-archived GALAXUS CLS rows for the given supplier variants, oldest first.
+ *
+ * Small sets: chunked IN lookups (bind-var limit 32767).
+ * Catalog-scale sets (~1M SVs): the IN approach is ~200 random-IO lookups into a 2.8M-row table
+ * (~11 min `listingAlias` phase on an IO-bound DB). CLS GALAXUS holds only ~860k rows, so one
+ * sequential scan filtered in memory returns the identical rows.
+ */
+export async function loadGalaxusClsRowsForSupplierVariants(
+  svIds: string[]
+): Promise<GalaxusClsRow[]> {
+  const select = { supplierVariantId: true, providerKey: true, createdAt: true, status: true };
+  const model = (prisma as any).channelListingState;
+
+  if (svIds.length <= CLS_FULL_SCAN_THRESHOLD) {
+    const rows: GalaxusClsRow[] = [];
+    for (let offset = 0; offset < svIds.length; offset += CLS_CHUNK_SIZE) {
+      const chunk = svIds.slice(offset, offset + CLS_CHUNK_SIZE);
+      const batch = await model.findMany({
+        where: { channel: "GALAXUS", supplierVariantId: { in: chunk }, archivedAt: null },
+        select,
+        orderBy: { createdAt: "asc" },
+      });
+      rows.push(...batch);
+    }
+    return rows;
+  }
+
+  // One unordered query = one sequential heap scan (id-ordered pagination over uuid ids is
+  // random heap IO: measured ~5s per 20k rows). ~860k narrow rows fit comfortably in memory.
+  const wanted = new Set(svIds);
+  const all: GalaxusClsRow[] = await model.findMany({
+    where: { channel: "GALAXUS", archivedAt: null },
+    select,
+  });
+  const rows = all.filter((row) => wanted.has(row.supplierVariantId));
+  rows.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  return rows;
+}
+
 /**
  * Batch-resolve Galaxus listing identities for export/order paths.
  */
@@ -99,31 +149,7 @@ export async function loadGalaxusListingIdentities(
   // At catalog scale (NER ~1M SVs) a single findMany blows the limit, which is
   // what killed every stock/offer push. Chunk the IN list like every other
   // large export loader (availableStock / evidenceStock use the same pattern).
-  const CLS_CHUNK_SIZE = 5000;
-  const clsRows: Array<{
-    supplierVariantId: string;
-    providerKey: string;
-    createdAt: Date;
-    status: string;
-  }> = [];
-  for (let offset = 0; offset < svIds.length; offset += CLS_CHUNK_SIZE) {
-    const chunk = svIds.slice(offset, offset + CLS_CHUNK_SIZE);
-    const batch = await (prisma as any).channelListingState.findMany({
-      where: {
-        channel: "GALAXUS",
-        supplierVariantId: { in: chunk },
-        archivedAt: null,
-      },
-      select: {
-        supplierVariantId: true,
-        providerKey: true,
-        createdAt: true,
-        status: true,
-      },
-      orderBy: { createdAt: "asc" },
-    });
-    clsRows.push(...batch);
-  }
+  const clsRows = await loadGalaxusClsRowsForSupplierVariants(svIds);
 
   const clsBySv = new Map<string, string[]>();
   for (const row of clsRows as Array<{ supplierVariantId: string; providerKey: string }>) {

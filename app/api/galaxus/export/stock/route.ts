@@ -66,6 +66,9 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/** Above this many STX gtins, read the (small) ETA table once instead of N/500 IN lookups. */
+const STX_ETA_BULK_THRESHOLD = 2000;
+
 type ExportRow = Record<string, string>;
 
 function decimalToString(value: unknown): string {
@@ -322,6 +325,33 @@ export async function GET(request: Request) {
     }
     let supportsCancelledAt = true;
     const rows: Array<{ gtin: string; etaMin: Date; etaMax: Date }> = [];
+    // Catalog scale: ~hundreds of IN(500) lookups for a table where only ~1.6k rows carry an ETA
+    // (4+ min `stxEta` phase). Read the ETA rows once and keep the exact gtins we asked for.
+    const bulkEta = stxGtins.length > STX_ETA_BULK_THRESHOLD;
+    if (bulkEta) {
+      const wanted = new Set(stxGtins);
+      const etaWhere = {
+        stockxOrderId: { not: null },
+        etaMin: { not: null },
+        etaMax: { not: null },
+      };
+      let etaRows: Array<{ gtin: string; etaMin: Date; etaMax: Date }>;
+      try {
+        etaRows = await (prismaAny as any).stxPurchaseUnit.findMany({
+          where: { ...etaWhere, cancelledAt: null },
+          select: { gtin: true, etaMin: true, etaMax: true },
+        });
+      } catch (error: any) {
+        if (!String(error?.message ?? "").includes("Unknown argument `cancelledAt`")) throw error;
+        etaRows = await (prismaAny as any).stxPurchaseUnit
+          .findMany({ where: etaWhere, select: { gtin: true, etaMin: true, etaMax: true } })
+          .catch(() => []);
+      }
+      for (const row of etaRows) {
+        if (wanted.has(row.gtin)) rows.push(row);
+      }
+      batches.length = 0;
+    }
     for (const batch of batches) {
       try {
         const batchRows = await (prismaAny as any).stxPurchaseUnit.findMany({
