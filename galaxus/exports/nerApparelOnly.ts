@@ -9,7 +9,7 @@ const SHOE_TEXT_RE =
   /\b(chaussures?|baskets?|sneakers?|bottes?|bottines?|boots?|sandales?|tongs?|claquettes?|mules?|sabots?|chaussons?|espadrilles|mocassins?|derbies|ballerines?|shoes?|trainers?|slides?|clogs?|samba|gazelle|superstar|campus|dunk|air max|air force|jordan|yeezy|new balance|gel-\w+|ultraboost|spezial|handball|forum|stan smith|old skool|chuck taylor|crocs)\b/i;
 
 const APPAREL_TEXT_RE =
-  /\b(maillots?|cuissards?|vestes?|gilets?|doudounes?|pantalons?|shorts?|collants?|t-?shirts?|tee-?shirts?|tees?|d[ée]bardeurs?|tops?|sweats?|sweat-?shirts?|hoodies?|pulls?|pullovers?|polaires?|softshell|hardshell|coupe-?vent|jupes?|jupe-?short|robes?|brassi[eè]res?|soutiens?-?gorge|culottes?|boxers?|cale[çc]ons?|slips?|strings?|chaussettes|socquettes|socks?|manchettes|jambi[eè]res|sous-?v[eê]tements?|parkas?|anoraks?|combinaisons?|blousons?|chemises?|polos?|leggings?|tights|baselayer|base layer|casquettes?|caps?|bonnets?|beanies?|gants|gloves?|moufles|tour de cou|cache-?cou|bandeaux?|bandanas?|cagoules?|jammers?|bikinis?|trifonctions?|surv[eê]tements?|jogging|joggers?|cargo|jeans?|chinos?|kimonos?|ponchos?|v[eê]tements?|jacket|jackets|pants|trousers|shirts?|sweater|fleece|vest|bra|bodysuit|onesie|pyjamas?|peignoirs?|chapeaux?|bobs?|visi[eè]res?)\b|^haut\b/i;
+  /\b(maillots?|cuissards?|vestes?|gilets?|doudounes?|pantalons?|shorts?|collants?|t-?shirts?|tee-?shirts?|tees?|d[ée]bardeurs?|tops?|sweats?|sweat-?shirts?|hoodies?|pulls?|pullovers?|polaires?|softshell|hardshell|coupe-?vent|jupes?|jupe-?short|robes?|brassi[eè]res?|soutiens?-?gorge|culottes?|boxers?|cale[çc]ons?|slips?|strings?|chaussettes|socquettes|socks?|manchettes|jambi[eè]res|sous-?v[eê]tements?|parkas?|anoraks?|combinaisons?|blousons?|chemises?|polos?|leggings?|tights|baselayer|base layer|casquettes?|caps?|bonnets?|beanies?|gants|gloves?|moufles|tour de cou|cache-?cou|bandeaux?|bandanas?|cagoules?|jammers?|bikinis?|trifonctions?|surv[eê]tements?|jogging|joggers?|cargo|jeans?|chinos?|kimonos?|ponchos?|v[eê]tements?|jacket|jackets|pants|trousers|shirts?|sweater|fleece|vest|bra|bodysuit|onesie|pyjamas?|peignoirs?|chapeaux?|bobs?|visi[eè]res?|neck warmers?|neck gaiters?|gaiters?|guêtres?|overshoes|pant|bib ?tights?|bib ?shorts?|trikots?|jerseys?|snapbacks?|trucker|hats?|headbands?|czapka|flexi chute|ceramiwarm|suunto (?:athletic|ath\d)|watch bands?|wb loop|silicone straps?|(?:loop|textile|nylon) straps?)\b|^haut\b/i;
 
 const GEAR_TEXT_RE =
   /\b(cha[iî]nes?|plateaux?|selles?|bo[iî]tiers?|p[ée]dal\w*|tiges?|roues?|pneus?|cassettes?|disques?|rotors?|guidons?|potences?|cintres?|cadres?|fourches?|rayons?|jantes?|moyeux?|c[aâ]bles?|gaines?|plaquettes?|casques?|lunettes?|masques?|sacs?|sacoches?|bidons?|gourdes?|pompes?|outils?|kits?|adaptateurs?|roulements?|amortisseurs?|d[ée]railleurs?|manettes?|leviers?|freins?|[ée]triers?|chambres?|valves?|spray|imperm[ée]abilisant|rechange|lessive|nettoyant|b[aâ]tons?|genouill[eè]res?|coudi[eè]res?|prot[eè]ges?|dorsale|sabots? (?:de )?protection|montres?|entretoises?|flasques?|inflator|cartouches?|pr[ée]sentoirs?|home trainers?|tapis|sangles?|trousses?|r[ée]troviseurs?|brosses?|stickers?|autocollants?|paniers?|tables?|shoe shields|gilets? (?:de |d')?(?:protection|hydratation)|coques?|films?|extracteurs?|tente|matelas|r[ée]chaud|lampe|[ée]clairage|compteur|support|antivol|porte|skis?|fixations?|raquettes?|ballons?|poign[ée]es?|grips?(?! sneakers)|d[ée]monte|patins?|cales|boyau|tubeless|housses?)\b|visi[eè]re (?:magn|de rechange)|\b(troy lee|leatt|kini|kask|o'neal)\b.*visi[eè]re/i;
@@ -20,8 +20,11 @@ const PART_FOR_RE =
 
 /** Fashion-adjacent accessories kept when they are the product noun (bags, sunglasses/lenses/goggles, watch straps). */
 const ACCESSORY_KEEP_RE =
-  /\b(sacs?(?! (?:de (?:couchage|cadre|selle|guidon|top ?tube|potence)|(?:de )?porte-?bagages?))|duffel|(?:sacs?|ceintures?) banane|trousses? de toilette|lunettes?|masques?|verres? de (?:remplacement|rechange)|[ée]crans? de (?:remplacement|rechange)|bracelets?)\b/i;
+  /\b(brillen?|schwimmbrillen?|fahrradbrillen?|julbo|azr|oakley|uvex sportstyle|backpacks?|rucksacks?|duffl?e(?:l)? ?(?:bags?)?|duffel|(?:waist|hip|belt|bum) ?(?:bags?|packs?)|sunglasses|glasses|goggles|replacement lenses|sacs?(?! (?:de (?:couchage|cadre|selle|guidon|top ?tube|potence)|(?:de )?porte-?bagages?))|duffel|(?:sacs?|ceintures?) banane|trousses? de toilette|lunettes?|masques?|verres? de (?:remplacement|rechange)|[ée]crans? de (?:remplacement|rechange)|bracelets?)\b/i;
 const BIKE_ACCESSORY_RE = /\bpour (?:v[ée]los?|vtt|roues?|cadres?|guidons?|selles?|porte-?bagages?)\b/i;
+
+const VOLUME_BAG_RE = /\(\d{2,3}(?:\+\d{2})? ?l\)|\b\d{2,3}(?:\+\d{2})? ?l\b.*\bbag\b|\b(?:duffle|duffel)\b|\bBlack Hole\b/i;
+const RACK_BAG_RE = /\b(rack|pannier|roller|taschen|luggage|porte-?bagages?|sacoches?|frame bag|saddle bag)\b/i;
 
 /** Jersey + pant bundles sold as "Kit Maillot …". */
 const APPAREL_KIT_RE = /^kit (?:maillot|tenue)/i;
@@ -37,7 +40,7 @@ const JEWELRY_BRACELET_RE = /\bbracelets?\b/i;
 const WATCH_STRAP_RE = /\b(garmin|polar|suunto|coros|wahoo|montres?|watch)\b/i;
 
 /** Clothing sizes (S, M, L, XL, 2XL, "M/L", "32, M"). English NER titles ("Fox Flexair Pant") carry no French noun. */
-const APPAREL_SIZE_RE = /(?:^|[\s,/])(?:[2-5]?X{0,3}[SL]|XS|M)(?=$|[\s,/])/i;
+const APPAREL_SIZE_RE = /(?:^|[\s,/])(?:KID)?(?:[2-5]?X{0,3}[SL]|XS|M)(?=$|[\s,/])/i;
 const SHOE_SIZE_RE = /^(?:EU\s*)?(1[6-9]|[2-4]\d|5[0-2])(?:[.,]5)?(?:\s?[123]\/3|\s?[⅓⅔])?$|^(?:US|UK)\s*\d/i;
 
 function isNerOffSheet(title: string): boolean {
@@ -60,8 +63,11 @@ function firstMatchAt(re: RegExp, text: string): number {
  */
 export function isNerApparelOrShoe(input: { title?: string | null; sizeRaw?: string | null }): boolean {
   const title = String(input.title ?? "");
-  const size = String(input.sizeRaw ?? "").trim();
+  // NER shoe sizes carry a French-sizing suffix ("38FR").
+  const size = String(input.sizeRaw ?? "").trim().replace(/\s?FR$/i, "");
   if (isNerOffSheet(title)) return false;
+  // Rucksacks named only by brand + volume ("The North Face Base Camp (50 l)"); rack/pannier bags stay off.
+  if (VOLUME_BAG_RE.test(title) && !RACK_BAG_RE.test(title) && !BIKE_ACCESSORY_RE.test(title)) return true;
   const gearAt = firstMatchAt(GEAR_TEXT_RE, title);
   const wearHits = [firstMatchAt(SHOE_TEXT_RE, title), firstMatchAt(APPAREL_TEXT_RE, title)].filter((i) => i >= 0);
   const wearAt = wearHits.length ? Math.min(...wearHits) : -1;
