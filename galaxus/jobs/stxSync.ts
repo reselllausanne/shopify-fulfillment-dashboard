@@ -50,15 +50,55 @@ type StxSyncOptions = {
   concurrency?: number;
 };
 
-/** Default shard size so one ops-background run finishes in ~1h (not 17h). Env override. */
+/** Products pulled per shard. Env: STX_REFRESH_PRODUCT_BATCH. */
 function readStxRefreshProductBatch(): number {
   const n = Number.parseInt(String(process.env.STX_REFRESH_PRODUCT_BATCH ?? "8000"), 10);
   return Number.isFinite(n) && n > 0 ? n : 8000;
 }
 
+/**
+ * Parallel KickDB fetches. 4-wide refreshed ~13k products/day (~19 day catalog).
+ * 48-wide is ~12x when fetch latency dominates, which puts a full pass under 2 days.
+ * Env: STX_REFRESH_CONCURRENCY (capped at 64).
+ */
 function readStxRefreshConcurrency(): number {
-  const n = Number.parseInt(String(process.env.STX_REFRESH_CONCURRENCY ?? "4"), 10);
-  return Number.isFinite(n) && n > 0 ? Math.min(n, 8) : 4;
+  const n = Number.parseInt(String(process.env.STX_REFRESH_CONCURRENCY ?? "48"), 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 64) : 48;
+}
+
+/** Stop once the stalest product is younger than this. Env: STX_REFRESH_MAX_AGE_HOURS. */
+function readStxRefreshMaxAgeMs(): number {
+  const hours = Number.parseInt(String(process.env.STX_REFRESH_MAX_AGE_HOURS ?? "36"), 10);
+  const safe = Number.isFinite(hours) && hours > 0 ? hours : 36;
+  return safe * 60 * 60 * 1000;
+}
+
+/** 40 x 8000 covers the ~250k catalog once if every row is stale. Env: STX_REFRESH_MAX_BATCHES. */
+function readStxRefreshMaxBatches(): number {
+  const n = Number.parseInt(String(process.env.STX_REFRESH_MAX_BATCHES ?? "40"), 10);
+  return Number.isFinite(n) && n > 0 ? n : 40;
+}
+
+function stxFetchAgeMs(value: Date | string | null | undefined): number {
+  if (!value) return Number.POSITIVE_INFINITY;
+  const t = new Date(value).getTime();
+  return Number.isFinite(t) ? Date.now() - t : Number.POSITIVE_INFINITY;
+}
+
+async function fetchStockxProductWithRetry(fetchId: string) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      return await fetchStockxProductByIdOrSlugRaw(fetchId);
+    } catch (err) {
+      lastError = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const retryable = /429|502|503|504|timeout|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(msg);
+      if (!retryable || attempt === 3) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 400 * 2 ** attempt));
+    }
+  }
+  throw lastError;
 }
 
 /** Session-mode client when available — long bulk writes die on :6543 transaction pooler. */
@@ -822,19 +862,11 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
   const limitProducts = Math.max(1, options.limitProducts ?? readStxRefreshProductBatch());
   const now = new Date();
   const db = stxDb() as any;
-
-  // Stalest first so hourly shards rotate the whole catalog instead of re-hitting the same head.
-  const products = await db.kickDBProduct.findMany({
-    select: { kickdbProductId: true, urlKey: true },
-    where: { notFound: false },
-    orderBy: [
-      { lastFetchedAt: { sort: "asc", nulls: "first" } },
-      { updatedAt: "asc" },
-    ],
-    take: limitProducts,
-  });
-
-  const limit = createLimiter(concurrency);
+  const singleShard = options.limitProducts != null;
+  const maxBatches = singleShard ? 1 : readStxRefreshMaxBatches();
+  const maxAgeMs = readStxRefreshMaxAgeMs();
+  let batchesRun = 0;
+  let productsSeen = 0;
   let processedProducts = 0;
   let processedVariants = 0;
   let stockZeroed = 0;
@@ -843,6 +875,25 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
   let remappedToCanonical = 0;
   let updated = 0;
   const dirtySupplierVariantIds = new Set<string>();
+
+  // One hourly tick used to fetch 8000 then stop, so the stalest row waited ~19 days.
+  // Keep pulling stalest-first shards until the catalog is inside the age target.
+  while (batchesRun < maxBatches) {
+  const products = await db.kickDBProduct.findMany({
+    select: { kickdbProductId: true, urlKey: true, lastFetchedAt: true },
+    where: { notFound: false },
+    orderBy: [
+      { lastFetchedAt: { sort: "asc", nulls: "first" } },
+      { updatedAt: "asc" },
+    ],
+    take: limitProducts,
+  });
+  if (products.length === 0) break;
+  if (stxFetchAgeMs(products[0]?.lastFetchedAt) < maxAgeMs) break;
+  batchesRun += 1;
+  productsSeen += products.length;
+
+  const limit = createLimiter(concurrency);
   /** Flush DB writes every wave so a mid-shard crash keeps progress. */
   const WAVE = 400;
 
@@ -874,7 +925,7 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
           if (!dbProductId || !fetchId) return empty;
           let payload: any;
           try {
-            const res = await fetchStockxProductByIdOrSlugRaw(fetchId);
+            const res = await fetchStockxProductWithRetry(fetchId);
             payload = res.product;
           } catch {
             // Rotate past permanent KickDB failures; still mark as touched below.
@@ -925,18 +976,22 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
     // Persist cursor after each wave so retries skip already-rotated products.
     await bumpKickdbLastFetchedAt(
       waveResults.map((c) => c.dbProductId).filter((id): id is string => Boolean(id)),
-      now
+      new Date()
     );
   }
 
   if (dirtySupplierVariantIds.size > 0) {
     scheduleStxRefreshMarketplaceFeedPush(Array.from(dirtySupplierVariantIds));
+    dirtySupplierVariantIds.clear();
+  }
   }
 
   const durationMs = Date.now() - startedAt;
   console.info("[galaxus][sync:stx-price-stock] done", {
-    productsSeen: products.length,
+    productsSeen,
+    batchesRun,
     batchLimit: limitProducts,
+    maxAgeHours: Math.round(maxAgeMs / 3600000),
     concurrency,
     processedProducts,
     processedVariants,
@@ -945,7 +1000,6 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
     shopifySoldoutZeroed,
     shopifyStockRestored,
     remappedToCanonical,
-    galaxusFeedDirtyKeys: dirtySupplierVariantIds.size,
     durationMs,
   });
 
@@ -960,7 +1014,7 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
     stockZeroed,
     shopifySoldoutZeroed,
     shopifyStockRestored,
-    productsSeen: products.length,
+    productsSeen,
     durationMs,
   };
 }
