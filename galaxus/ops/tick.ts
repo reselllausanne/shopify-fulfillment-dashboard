@@ -8,6 +8,7 @@ import {
 } from "./feedPipeline";
 import { pruneGalaxusJobRunPayloads } from "./jobRunRetention";
 import { runDbRetention } from "./dbRetention";
+import { ensureFeedSnapshotRebuild } from "./snapshotWatchdog";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { runEdiInPipeline } from "./orderPipeline";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
@@ -293,6 +294,16 @@ export async function runOpsTick(origin: string, options?: OpsTickOptions) {
     }
   } catch (err) {
     console.error("[galaxus][ops][tick] job-run payload prune failed", err);
+  }
+
+  try {
+    // Invalid snapshot => every push does a full live catalog export (egress + IO). Re-arm rebuild.
+    const watchdog = await ensureFeedSnapshotRebuild({ origin });
+    if (watchdog.action !== "skipped") {
+      console.info("[galaxus][ops][tick] feed snapshot watchdog", watchdog);
+    }
+  } catch (err) {
+    console.error("[galaxus][ops][tick] feed snapshot watchdog failed", err);
   }
 
   try {
