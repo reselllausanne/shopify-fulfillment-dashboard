@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { prisma } from "@/app/lib/prisma";
+import { withTransientDbRetry } from "@/galaxus/exports/transientDbRetry";
 import { GALAXUS_PRICE_CURRENCY, GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { toCsv } from "@/galaxus/exports/csv";
 import { runGalaxusExportGET } from "@/galaxus/ops/internalExportGet";
@@ -196,18 +197,21 @@ async function bulkReplaceSnapshotRows(params: {
       : prismaAny.galaxusFeedOfferSnapshot;
   const now = new Date();
 
-  await model.deleteMany({});
+  await withTransientDbRetry("snapshot-delete-all", () => model.deleteMany({}));
 
   for (let offset = 0; offset < params.rows.length; offset += CHUNK_SIZE) {
     const chunk = params.rows.slice(offset, offset + CHUNK_SIZE);
-    await model.createMany({
-      data: chunk.map((row) => ({
-        providerKey: String(row.ProviderKey ?? "").trim(),
-        rowJson: row,
-        updatedAt: now,
-      })),
-      skipDuplicates: true,
-    });
+    const chunkLabel = `snapshot-create-chunk-${offset / CHUNK_SIZE}`;
+    await withTransientDbRetry(chunkLabel, () =>
+      model.createMany({
+        data: chunk.map((row) => ({
+          providerKey: String(row.ProviderKey ?? "").trim(),
+          rowJson: row,
+          updatedAt: now,
+        })),
+        skipDuplicates: true,
+      })
+    );
   }
 }
 
@@ -229,8 +233,8 @@ async function assertSnapshotRowCounts(expected: {
 }): Promise<void> {
   const prismaAny = prisma as any;
   const [stockCount, offerCount] = await Promise.all([
-    prismaAny.galaxusFeedStockSnapshot.count(),
-    prismaAny.galaxusFeedOfferSnapshot.count(),
+    withTransientDbRetry("snapshot-assert-stock-count", () => prismaAny.galaxusFeedStockSnapshot.count()),
+    withTransientDbRetry("snapshot-assert-offer-count", () => prismaAny.galaxusFeedOfferSnapshot.count()),
   ]);
 
   const shortfall = (actual: number, target: number) => target > 0 && actual < target * 0.99;
@@ -415,10 +419,14 @@ export async function patchFeedSnapshotsForProviderKeys(params: {
   const staleStock = missingProviderKeys(keys, stockParsed.rows);
   const staleOffer = missingProviderKeys(keys, offerParsed.rows);
   if (staleStock.length > 0) {
-    await prismaAny.galaxusFeedStockSnapshot.deleteMany({ where: { providerKey: { in: staleStock } } });
+    await withTransientDbRetry("snapshot-patch-stale-stock-delete", () =>
+      prismaAny.galaxusFeedStockSnapshot.deleteMany({ where: { providerKey: { in: staleStock } } })
+    );
   }
   if (staleOffer.length > 0) {
-    await prismaAny.galaxusFeedOfferSnapshot.deleteMany({ where: { providerKey: { in: staleOffer } } });
+    await withTransientDbRetry("snapshot-patch-stale-offer-delete", () =>
+      prismaAny.galaxusFeedOfferSnapshot.deleteMany({ where: { providerKey: { in: staleOffer } } })
+    );
   }
 
   return { patched: keys.length };
@@ -435,13 +443,16 @@ async function pullSnapshotRows(
   let maxUpdatedAtMs = 0;
   let cursor: string | undefined;
   for (;;) {
-    const batch: SnapshotPullBatch[] = await model.findMany({
-      ...(where ? { where } : {}),
-      orderBy: { providerKey: "asc" },
-      take: CHUNK_SIZE,
-      ...(cursor ? { cursor: { providerKey: cursor }, skip: 1 } : {}),
-      select: { providerKey: true, rowJson: true, updatedAt: true },
-    });
+    const batchLabel = `snapshot-pull-page-${cursor ?? "start"}`;
+    const batch: SnapshotPullBatch[] = await withTransientDbRetry(batchLabel, () =>
+      model.findMany({
+        ...(where ? { where } : {}),
+        orderBy: { providerKey: "asc" },
+        take: CHUNK_SIZE,
+        ...(cursor ? { cursor: { providerKey: cursor }, skip: 1 } : {}),
+        select: { providerKey: true, rowJson: true, updatedAt: true },
+      })
+    );
     if (batch.length === 0) break;
     for (const item of batch) {
       into.set(item.providerKey, item.rowJson as Record<string, string>);
@@ -507,11 +518,12 @@ async function loadSnapshotCsv(scope: "stock" | "offer"): Promise<{ csv: string;
     // Patches can also DELETE rows (keys the live export stopped emitting). Upserts all
     // bump `updatedAt` and are caught above, so a count mismatch can only mean deletes
     // (or drift) — reconcile with a key-only pull, and full-reload if that is not enough.
-    const dbCount: number = await model.count();
+    const dbCount: number = await withTransientDbRetry("snapshot-count", () => model.count());
     if (rows.size !== dbCount) {
-      const keyRows: Array<{ providerKey: string }> = await model.findMany({
-        select: { providerKey: true },
-      });
+      const keyRows: Array<{ providerKey: string }> = await withTransientDbRetry(
+        "snapshot-key-pull",
+        () => model.findMany({ select: { providerKey: true } })
+      );
       const keep = new Set(keyRows.map((row) => row.providerKey));
       for (const key of rows.keys()) {
         if (!keep.has(key)) rows.delete(key);
