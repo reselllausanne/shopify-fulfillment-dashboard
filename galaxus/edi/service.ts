@@ -584,13 +584,17 @@ export async function buildCustomInvoicePreview(options: {
   baseOrderId: string;
   lines: CustomInvoiceLineInput[];
   deliveryCharge?: number | null;
+  /** Skip order-line match / remaining-qty checks (wrong-delivery / purchasing invoices). */
+  force?: boolean;
 }): Promise<{ filename: string; content: string }> {
   const order = await loadOrderForCustomInvoice(options.baseOrderId);
   if (!Array.isArray(options.lines) || options.lines.length === 0) {
     throw new Error("At least one invoice line is required.");
   }
-  const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
-  assertCustomInvoiceAllowed(order.lines, options.lines, invoicedSoFar);
+  if (!options.force) {
+    const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
+    assertCustomInvoiceAllowed(order.lines, options.lines, invoicedSoFar);
+  }
   const edi = buildCustomInvoice(order, options.lines, {
     supplierId: GALAXUS_SUPPLIER_ID,
     deliveryCharge: options.deliveryCharge,
@@ -609,8 +613,11 @@ export async function sendCustomInvoice(options: {
   if (!Array.isArray(options.lines) || options.lines.length === 0) {
     throw new Error("At least one invoice line is required.");
   }
-  const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
-  assertCustomInvoiceAllowed(order.lines, options.lines, invoicedSoFar);
+  // force=true: wrong-delivery / purchasing invoices for SKUs not on the order line.
+  if (!options.force) {
+    const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
+    assertCustomInvoiceAllowed(order.lines, options.lines, invoicedSoFar);
+  }
 
   const edi = buildCustomInvoice(order, options.lines, {
     supplierId: GALAXUS_SUPPLIER_ID,
