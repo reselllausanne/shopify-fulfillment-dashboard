@@ -5,6 +5,10 @@ import { prisma } from "@/app/lib/prisma";
 import { buildDocNumber } from "@/galaxus/edi/docNumbers";
 import { allocateSscc } from "@/galaxus/sscc/generator";
 import { generateSsccLabelPdf } from "@/galaxus/labels/ssccLabel";
+import {
+  describeGalaxusWarehouseShipTo,
+  galaxusWarehouseShipToConflict,
+} from "@/galaxus/warehouse/deliverySites";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { packOrderLines } from "./packing";
 import { buildProviderKey, extractProviderKeyFromOrderKey, normalizeProviderKey, resolveSupplierCode } from "@/galaxus/supplier/providerKey";
@@ -500,9 +504,7 @@ export type CompositeLineInput = {
 };
 
 function sameGalaxusDeliveryAddress(a: any, b: any): boolean {
-  const norm = (o: any) =>
-    `${String(o?.recipientPostalCode ?? "").trim().toLowerCase()}|${String(o?.recipientAddress1 ?? "").trim().toLowerCase()}|${String(o?.recipientCity ?? "").trim().toLowerCase()}`;
-  return norm(a) === norm(b);
+  return !galaxusWarehouseShipToConflict(a, b);
 }
 
 function buildCompositeDeliveryNoteData(
@@ -677,11 +679,12 @@ export async function createCompositeWarehouseShipment(
         return { status: "error", shipments: [], message: `Order not found: ${row.sourceOrderId}` };
       }
       if (!sameGalaxusDeliveryAddress(anchorAny, o)) {
+        const left = describeGalaxusWarehouseShipTo(anchorAny);
+        const right = describeGalaxusWarehouseShipTo(o);
         return {
           status: "error",
           shipments: [],
-          message:
-            "All orders must share the same Galaxus delivery address (postal code, street, city) to combine shipments.",
+          message: `Cannot combine ${left.summary} with ${right.summary}.`,
         };
       }
       orderMap.set(o.id, o);

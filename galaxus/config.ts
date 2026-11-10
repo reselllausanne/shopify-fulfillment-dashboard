@@ -104,16 +104,16 @@ export const GALAXUS_BUYER_CITY = "Zürich";
 export const GALAXUS_BUYER_COUNTRY = "Switzerland";
 export const GALAXUS_BUYER_VAT_ID = "CHE-109.049.266 MWST";
 
-// Fixed receiver address required for SSCC labels.
+// Blank manual SSCC only (no order). Shipment labels use the ORDP delivery party
+// (Wohlen / Villmergen or Bülach / Fiege). Do not send every parcel to one site.
 export const GALAXUS_SSCC_RECIPIENT_NAME =
   process.env.GALAXUS_SSCC_RECIPIENT_NAME ?? "Digitec Galaxus AG";
-export const GALAXUS_SSCC_RECIPIENT_LINE2 =
-  process.env.GALAXUS_SSCC_RECIPIENT_LINE2 ?? "c/o Fiege Logistik Schweiz AG";
+export const GALAXUS_SSCC_RECIPIENT_LINE2 = process.env.GALAXUS_SSCC_RECIPIENT_LINE2 ?? "";
 export const GALAXUS_SSCC_RECIPIENT_STREET =
-  process.env.GALAXUS_SSCC_RECIPIENT_STREET ?? "Schützenmattstrasse 133/137";
+  process.env.GALAXUS_SSCC_RECIPIENT_STREET ?? "Ferroring 23";
 export const GALAXUS_SSCC_RECIPIENT_POSTAL_CODE =
-  process.env.GALAXUS_SSCC_RECIPIENT_POSTAL_CODE ?? "CH-8180";
+  process.env.GALAXUS_SSCC_RECIPIENT_POSTAL_CODE ?? "CH-5612";
 export const GALAXUS_SSCC_RECIPIENT_CITY =
-  process.env.GALAXUS_SSCC_RECIPIENT_CITY ?? "Bülach";
+  process.env.GALAXUS_SSCC_RECIPIENT_CITY ?? "Villmergen";
 export const GALAXUS_SSCC_RECIPIENT_COUNTRY =
   process.env.GALAXUS_SSCC_RECIPIENT_COUNTRY ?? "Schweiz";

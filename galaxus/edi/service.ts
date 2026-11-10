@@ -935,6 +935,9 @@ export function parseOrderFromXml(xml: string, fallbackOrderId: string) {
     buyerPartyGln: buyer?.partyIds?.gln ?? undefined,
     supplierPartyId: supplier?.partyIds?.supplier_specific ?? undefined,
     deliveryPartyId: delivery?.partyIds?.delivery_specific ?? undefined,
+    // GLN is on the ORDP (Wohlen 7640151820015, Bülach 7640151820107) but not a DB column.
+    // Labels identify the warehouse from the delivery street/city stored below.
+    deliveryPartyGln: delivery?.partyIds?.gln ?? undefined,
     marketplacePartyId: marketplace?.partyIds?.marketplace_specific ?? undefined,
     lines,
   };
@@ -1151,13 +1154,25 @@ function findParty(data: any, role: string) {
   return null;
 }
 
+function partyIdText(value: unknown): string | null {
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text || null;
+  }
+  // fast-xml-parser parses a numeric GLN (7640151820015) as a number. It is < 2^53.
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return null;
+}
+
 function extractPartyIds(raw: any) {
   const entries = Array.isArray(raw) ? raw : raw ? [raw] : [];
   const result: Record<string, string> = {};
   for (const entry of entries) {
     const type = entry?.["@_type"] ?? entry?.type;
-    const value = entry?.["#text"] ?? entry?.text ?? entry;
-    if (type && typeof value === "string") {
+    const value = partyIdText(entry?.["#text"] ?? entry?.text ?? entry);
+    if (type && value) {
       result[String(type)] = value;
     }
   }

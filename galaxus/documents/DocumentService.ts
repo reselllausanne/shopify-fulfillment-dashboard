@@ -29,6 +29,7 @@ import { renderLabelHtml } from "./templates/label";
 import { renderPdfFromHtml } from "./renderers/playwrightRenderer";
 import type { Address, Company, DeliveryNoteData, DeliveryNoteOrderGroup, InvoiceData, LabelData, OrderLine, VatSummaryLine } from "./types";
 import { buildProviderKey } from "../supplier/providerKey";
+import { ssccRecipientFromGalaxusOrder } from "@/galaxus/warehouse/deliverySites";
 import crypto from "crypto";
 
 type GenerateOptions = {
@@ -691,7 +692,7 @@ async function buildLabelData(
     shipmentId: shipment?.shipmentId ?? "",
     orderNumbers: [order.orderNumber ?? order.galaxusOrderId],
     sender: buildSupplierAddress(),
-    recipient: buildRecipient(order),
+    recipient: ssccRecipientFromGalaxusOrder(order),
     sscc,
     barcodeDataUrl,
   };

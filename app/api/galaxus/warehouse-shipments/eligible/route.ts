@@ -45,8 +45,10 @@ const ORDER_SELECT = {
   currencyCode: true,
   recipientName: true,
   recipientAddress1: true,
+  recipientAddress2: true,
   recipientPostalCode: true,
   recipientCity: true,
+  recipientCountry: true,
   archivedAt: true,
   cancelledAt: true,
   lines: { select: ORDER_LINE_SELECT },
@@ -513,8 +515,10 @@ export async function GET(request: Request) {
       currencyCode: order.currencyCode ?? null,
       recipientName: order.recipientName ?? null,
       recipientAddress1: order.recipientAddress1 ?? null,
+      recipientAddress2: order.recipientAddress2 ?? null,
       recipientPostalCode: order.recipientPostalCode ?? null,
       recipientCity: order.recipientCity ?? null,
+      recipientCountry: order.recipientCountry ?? null,
       lines: (order.lines ?? []).map((line) => {
         const enriched = enrichedLinesById.get(String(line.id)) ?? line;
         const productKey = resolveOrderLineProductKey(enriched);
