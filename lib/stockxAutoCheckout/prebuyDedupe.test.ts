@@ -2,11 +2,27 @@ import { describe, expect, it } from "vitest";
 import {
   normSizeEU,
   prebuyBlocksNewPurchase,
+  prebuySkipGmailFromEnv,
   sizeFromSku,
   sizesCompatible,
   styleIdFromSku,
   type PrebuyDedupeResult,
 } from "@/lib/stockxAutoCheckout/prebuyDedupe";
+
+describe("prebuySkipGmailFromEnv", () => {
+  it("accepts 1/true/yes/on", () => {
+    expect(prebuySkipGmailFromEnv("1")).toBe(true);
+    expect(prebuySkipGmailFromEnv("true")).toBe(true);
+    expect(prebuySkipGmailFromEnv("YES")).toBe(true);
+    expect(prebuySkipGmailFromEnv("on")).toBe(true);
+  });
+
+  it("rejects empty/other", () => {
+    expect(prebuySkipGmailFromEnv("")).toBe(false);
+    expect(prebuySkipGmailFromEnv(undefined)).toBe(false);
+    expect(prebuySkipGmailFromEnv("0")).toBe(false);
+  });
+});
 
 describe("styleIdFromSku / sizeFromSku", () => {
   it("strips Nike size suffix", () => {

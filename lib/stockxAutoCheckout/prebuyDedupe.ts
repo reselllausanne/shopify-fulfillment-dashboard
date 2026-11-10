@@ -251,9 +251,25 @@ function productMatchesLine(
   return false;
 }
 
+/** Escape hatch when Gmail IMAP app-password is down — StockX API dedupe still runs. */
+export function prebuySkipGmailFromEnv(
+  envValue: string | undefined | null = process.env.STOCKX_PREBUY_SKIP_GMAIL
+): boolean {
+  const v = String(envValue ?? "")
+    .trim()
+    .toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 export async function searchGmailPurchaseHits(
   line: PrebuyDedupeInput
 ): Promise<PrebuyGmailHit[]> {
+  if (prebuySkipGmailFromEnv()) {
+    console.warn(
+      "[PREBUY] STOCKX_PREBUY_SKIP_GMAIL set — skipping Gmail IMAP (StockX API dedupe only)"
+    );
+    return [];
+  }
   const creds = imapCreds();
   if (!creds) {
     throw new Error("STOCKX_OTP_IMAP_* missing — cannot run Gmail prebuy dedupe");

@@ -53,6 +53,7 @@ import { recoverStockxOrderNumberFromBuyingListText } from "@/lib/stockxAutoChec
 import {
   findUnlinkedStockxMatches,
   prebuyBlocksNewPurchase,
+  prebuySkipGmailFromEnv,
   runPrebuyDedupeCheck,
   sizeFromSku,
 } from "@/lib/stockxAutoCheckout/prebuyDedupe";
@@ -1701,7 +1702,11 @@ export async function runStockxAutoCheckoutForOrder(options: {
         customerFirstName: shopify.customerFirstName,
         customerLastName: shopify.customerLastName,
       },
-      { linkIfClear: true }
+      {
+        linkIfClear: true,
+        // IMAP app-password outage escape: STOCKX_PREBUY_SKIP_GMAIL=1
+        skipGmail: prebuySkipGmailFromEnv(),
+      }
     );
     if (prebuyBlocksNewPurchase(prebuy)) {
       const reason: StockxNeedsHumanReason =
