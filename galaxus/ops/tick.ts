@@ -6,6 +6,7 @@ import {
   checkGalaxusPriceFeedHealth,
   drainFeedPushQueue,
 } from "./feedPipeline";
+import { pruneGalaxusJobRunPayloads } from "./jobRunRetention";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { runEdiInPipeline } from "./orderPipeline";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
@@ -282,6 +283,15 @@ export async function runOpsTick(origin: string, options?: OpsTickOptions) {
     masterSpecsFeedHealth = await checkGalaxusMasterSpecsFeedHealth();
   } catch (err) {
     console.error("[galaxus][ops][tick] master-specs feed health check failed", err);
+  }
+
+  try {
+    const pruned = await pruneGalaxusJobRunPayloads();
+    if (!pruned.skipped && pruned.cleared > 0) {
+      console.info("[galaxus][ops][tick] pruned GalaxusJobRun payloads", pruned);
+    }
+  } catch (err) {
+    console.error("[galaxus][ops][tick] job-run payload prune failed", err);
   }
 
   return {
