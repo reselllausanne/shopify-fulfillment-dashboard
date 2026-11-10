@@ -1,0 +1,652 @@
+{
+  "LEGO": [
+    "LEGO",
+    "LEGO Set"
+  ],
+  "Brettspiele": [
+    "Brettspiele",
+    "Board Games",
+    "Gesellschaftsspiele"
+  ],
+  "Sammelkarten": [
+    "Sammelkarten",
+    "Trading Cards",
+    "TCG"
+  ],
+  "Sammelkarten Zubehör": [
+    "Sammelkarten Zubehör",
+    "Sammelkarten",
+    "Trading Card",
+    "TCG Accessories"
+  ],
+  "Tabletop Miniaturen": [
+    "Tabletop Miniaturen",
+    "Tabletop",
+    "Miniaturen",
+    "Warhammer"
+  ],
+  "Kartenspiele": [
+    "Kartenspiele",
+    "Card Games"
+  ],
+  "Sonstige Spiele": [
+    "Sonstige Spiele",
+    "Gesellschaftsspiele",
+    "Board Games",
+    "Spiele"
+  ],
+  "Würfel": [
+    "Würfel",
+    "Dice"
+  ],
+  "Velokorb": [
+    "Velokorb",
+    "Fahrradkorb",
+    "Bike Basket",
+    "Lenkerkorb"
+  ],
+  "Zubehör Gesellschaftsspiel": [
+    "Zubehör Gesellschaftsspiel",
+    "Spielzubehör",
+    "Game Accessories"
+  ],
+  "Game": [
+    "Game",
+    "Games",
+    "Video Game"
+  ],
+  "Sammelfigur": [
+    "Sammelfigur",
+    "Collectible Figure",
+    "Action Figure",
+    "Funko"
+  ],
+  "Fidget Toys": [
+    "Fidget Toys",
+    "Fidget",
+    "Squishy",
+    "Squishmallow"
+  ],
+  "Belletristik": [
+    "Belletristik",
+    "Fiction",
+    "Roman"
+  ],
+  "Schallplatten": [
+    "Schallplatten",
+    "Vinyl",
+    "Vinyl Record",
+    "LP"
+  ],
+  "Gaming Controller": [
+    "Gaming Controller",
+    "Controller",
+    "Gamepad"
+  ],
+  "Velohelm Zubehör": [
+    "Velohelm Zubehör",
+    "Velohelm",
+    "Fahrradhelm",
+    "Bike Helmet"
+  ],
+  "Puppe": [
+    "Puppe",
+    "Doll",
+    "Barbie",
+    "Puppen"
+  ],
+  "Adventskalender": [
+    "Adventskalender",
+    "Advent Calendar",
+    "Calendrier de l'avent"
+  ],
+  "Schlüsselanhänger": [
+    "Schlüsselanhänger",
+    "Keychain",
+    "Key Holder",
+    "Porte-clés"
+  ],
+  "Protektoren": [
+    "Protektoren",
+    "Protector",
+    "Knee Pads",
+    "Elbow Pads"
+  ],
+  "Spielzeugfigur": [
+    "Spielzeugfigur",
+    "Actionfigur",
+    "Toy Figure"
+  ],
+  "Ratgeber": [
+    "Ratgeber",
+    "Guidebook",
+    "How-to Book"
+  ],
+  "Weiteres Gaming Zubehör": [
+    "Weiteres Gaming Zubehör",
+    "Gaming Accessories",
+    "Gaming Zubehör"
+  ],
+  "Geschicklichkeitsspiele": [
+    "Geschicklichkeitsspiele",
+    "Skill Game"
+  ],
+  "Würfelspiele": [
+    "Würfelspiele",
+    "Dice Game",
+    "Würfel"
+  ],
+  "Rätselspiele": [
+    "Rätselspiele",
+    "Puzzle Game"
+  ],
+  "Legespiele": [
+    "Legespiele",
+    "Tile Game",
+    "Legespiel"
+  ],
+  "Basketbälle": [
+    "Basketbälle",
+    "Basketball"
+  ],
+  "Smartphone Hülle": [
+    "Smartphone Hülle",
+    "Phone Case",
+    "Handyhülle",
+    "Smartphone Case",
+    "Phone Cover"
+  ],
+  "Deko Figuren + Skulpturen": [
+    "Deko Figuren + Skulpturen",
+    "Deko Figur",
+    "Sculpture",
+    "Figurine Decor"
+  ],
+  "Modellbaufarbe": [
+    "Modellbaufarbe",
+    "Model Paint",
+    "Modellbau Farbe"
+  ],
+  "Fachbücher": [
+    "Fachbücher",
+    "Fachbuch",
+    "Textbook"
+  ],
+  "Kameratasche": [
+    "Kameratasche",
+    "Camera Bag",
+    "Camera Case"
+  ],
+  "Velogepäck Zubehör": [
+    "Velogepäck Zubehör",
+    "Bike Bag",
+    "Pannier"
+  ],
+  "Kinderbücher": [
+    "Kinderbücher",
+    "Kinderbuch",
+    "Children's Book"
+  ],
+  "Velowerkzeug": [
+    "Velowerkzeug",
+    "Bike Tool",
+    "Fahrradwerkzeug"
+  ],
+  "Feuerzeug + Streichholz": [
+    "Feuerzeug + Streichholz",
+    "Lighter",
+    "Feuerzeug",
+    "Matches"
+  ],
+  "Puzzle": [
+    "Puzzle",
+    "Puzzles"
+  ],
+  "LEGO DUPLO": [
+    "LEGO DUPLO",
+    "DUPLO",
+    "LEGO"
+  ],
+  "Leichtathletik": [
+    "Leichtathletik",
+    "Athletics",
+    "Track and Field"
+  ],
+  "Sachbücher": [
+    "Sachbücher",
+    "Sachbuch",
+    "Nonfiction"
+  ],
+  "Blaster": [
+    "Blaster",
+    "Nerf",
+    "Blitzblaster"
+  ],
+  "Einkaufshilfe": [
+    "Einkaufshilfe",
+    "Shopping Aid",
+    "Shopping Trolley"
+  ],
+  "Hoverboard": [
+    "Hoverboard",
+    "Hover Board"
+  ],
+  "Hundeschuhe": [
+    "Hundeschuhe",
+    "Dog Shoes",
+    "Dog Boots"
+  ],
+  "Hygienemaske": [
+    "Hygienemaske",
+    "Face Mask",
+    "Surgical Mask"
+  ],
+  "Kindergartentasche": [
+    "Kindergartentasche",
+    "Kindergarten Bag",
+    "Kids Backpack"
+  ],
+  "Maus": [
+    "Maus",
+    "Mouse",
+    "Computer Mouse"
+  ],
+  "Mehrzweckmesser": [
+    "Mehrzweckmesser",
+    "Multi Tool Knife",
+    "Taschenmesser"
+  ],
+  "Pinsel": [
+    "Pinsel",
+    "Paint Brush",
+    "Brush"
+  ],
+  "Poolroboter": [
+    "Poolroboter",
+    "Pool Robot"
+  ],
+  "Velocomputer Zubehör": [
+    "Velocomputer Zubehör",
+    "Bike Computer",
+    "Velocomputer"
+  ],
+  "Zubehör Running": [
+    "Zubehör Running",
+    "Running Accessories"
+  ],
+  "Aufbewahrungsbox": [
+    "Aufbewahrungsbox",
+    "Storage Box"
+  ],
+  "Bastelset": [
+    "Bastelset",
+    "Craft Kit",
+    "Craft Set"
+  ],
+  "Bausatz": [
+    "Bausatz",
+    "DIY Kit",
+    "Build Kit"
+  ],
+  "Fussbälle": [
+    "Fussbälle",
+    "Football",
+    "Soccer Ball",
+    "Fussball"
+  ],
+  "Gaming Headset": [
+    "Gaming Headset",
+    "Gaming Headphones",
+    "Headset"
+  ],
+  "Haftnotiz": [
+    "Haftnotiz",
+    "Sticky Notes",
+    "Post-it"
+  ],
+  "Heft + Block": [
+    "Heft + Block",
+    "Notebook",
+    "Notizblock"
+  ],
+  "Hundemantel": [
+    "Hundemantel",
+    "Dog Coat",
+    "Dog Jacket"
+  ],
+  "Jugendbücher": [
+    "Jugendbücher",
+    "Jugendbuch",
+    "Young Adult Book"
+  ],
+  "Lunchbox": [
+    "Lunchbox",
+    "Lunch Box",
+    "Brotbox"
+  ],
+  "Mausmatte": [
+    "Mausmatte",
+    "Mouse Pad",
+    "Mauspad"
+  ],
+  "Motorradkombi": [
+    "Motorradkombi",
+    "Motorcycle Suit"
+  ],
+  "Musik CDs": [
+    "Musik CDs",
+    "CD",
+    "Audio CD",
+    "Musik CD"
+  ],
+  "Plüschtier": [
+    "Plüschtier",
+    "Plush",
+    "Kuscheltiere",
+    "Soft Toy",
+    "Plüsch"
+  ],
+  "Portemonnaie": [
+    "Portemonnaie",
+    "Wallet",
+    "Geldbörse"
+  ],
+  "Skateboard Deck": [
+    "Skateboard Deck",
+    "Skate Deck"
+  ],
+  "Skateboard Rollen": [
+    "Skateboard Rollen",
+    "Skateboard Wheels",
+    "Skate Wheels"
+  ],
+  "Spielteppich + Spielmatte": [
+    "Spielteppich + Spielmatte",
+    "Play Mat",
+    "Spielmatte",
+    "Playmat"
+  ],
+  "Stirnlampe": [
+    "Stirnlampe",
+    "Headlamp",
+    "Head Torch"
+  ],
+  "Tastatur": [
+    "Tastatur",
+    "Keyboard"
+  ],
+  "Tischlampe": [
+    "Tischlampe",
+    "Desk Lamp",
+    "Table Lamp"
+  ],
+  "Trinkflasche + Thermosflasche": [
+    "Trinkflasche + Thermosflasche",
+    "Wasserflaschen + Thermosflaschen",
+    "Water Bottle",
+    "Thermosflasche",
+    "Tumbler",
+    "Trinkflasche"
+  ],
+  "Zubehör Ballsport": [
+    "Zubehör Ballsport",
+    "Ball Sport Accessories"
+  ],
+  "Zubehör Golf": [
+    "Zubehör Golf",
+    "Golf Accessories"
+  ],
+  "Abfalleimer": [
+    "Abfalleimer",
+    "Trash Can",
+    "Bin",
+    "Waste Bin"
+  ],
+  "American Footballs": [
+    "American Footballs",
+    "American Football",
+    "Football"
+  ],
+  "Audio Zubehör": [
+    "Audio Zubehör",
+    "Audio Accessories"
+  ],
+  "Bandage": [
+    "Bandage",
+    "Sports Tape"
+  ],
+  "Baseballhandschuh": [
+    "Baseballhandschuh",
+    "Baseball Glove"
+  ],
+  "Bilder": [
+    "Bilder",
+    "Picture",
+    "Poster Art"
+  ],
+  "Bilderrahmen": [
+    "Bilderrahmen",
+    "Picture Frame",
+    "Frame"
+  ],
+  "Boxhandschuhe": [
+    "Boxhandschuhe",
+    "Boxing Gloves"
+  ],
+  "Crosstrainer": [
+    "Crosstrainer",
+    "Elliptical",
+    "Cross Trainer"
+  ],
+  "Crypto Wallet": [
+    "Crypto Wallet",
+    "Hardware Wallet"
+  ],
+  "Entwicklungsboard + Kit": [
+    "Entwicklungsboard + Kit",
+    "Dev Board",
+    "Arduino",
+    "Raspberry Pi Kit"
+  ],
+  "Flaschenhalter": [
+    "Flaschenhalter",
+    "Bottle Cage",
+    "Bottle Holder"
+  ],
+  "Fotoalbum": [
+    "Fotoalbum",
+    "Photo Album"
+  ],
+  "Gepäckträger": [
+    "Gepäckträger",
+    "Bike Rack",
+    "Luggage Carrier"
+  ],
+  "Gesichtsmaske": [
+    "Gesichtsmaske",
+    "Face Mask"
+  ],
+  "Handzahnbürste": [
+    "Handzahnbürste",
+    "Toothbrush"
+  ],
+  "Hundehütte": [
+    "Hundehütte",
+    "Dog House",
+    "Dog Kennel"
+  ],
+  "Industriestaubsauger Zubehör": [
+    "Industriestaubsauger Zubehör",
+    "Vacuum Accessories"
+  ],
+  "Kinderball": [
+    "Kinderball",
+    "Kids Ball",
+    "Kinder Ball"
+  ],
+  "Klemmbausteine": [
+    "Klemmbausteine",
+    "Building Bricks",
+    "Building Blocks",
+    "LEGO"
+  ],
+  "Krabbeldecke + Spielbogen": [
+    "Krabbeldecke + Spielbogen",
+    "Play Gym",
+    "Activity Gym"
+  ],
+  "Künstlerfarbe + Bastelfarbe": [
+    "Künstlerfarbe + Bastelfarbe",
+    "Paint",
+    "Craft Paint",
+    "Acrylic Paint"
+  ],
+  "Luftballon": [
+    "Luftballon",
+    "Balloon"
+  ],
+  "Lupe": [
+    "Lupe",
+    "Magnifier",
+    "Magnifying Glass"
+  ],
+  "Miniaturen": [
+    "Miniaturen",
+    "Miniature",
+    "Miniatures"
+  ],
+  "Modellauto": [
+    "Modellauto",
+    "Model Car",
+    "Diecast"
+  ],
+  "Motorikspielzeug": [
+    "Motorikspielzeug",
+    "Motor Skills Toy"
+  ],
+  "Multi-Tool": [
+    "Multi-Tool",
+    "Multitool",
+    "Multi Tool"
+  ],
+  "Mundspülung": [
+    "Mundspülung",
+    "Mouthwash"
+  ],
+  "Münzen": [
+    "Münzen",
+    "Coins",
+    "Coin"
+  ],
+  "Musikspielzeug": [
+    "Musikspielzeug",
+    "Musical Toy"
+  ],
+  "Necessaire": [
+    "Necessaire",
+    "Toiletry Bag",
+    "Wash Bag"
+  ],
+  "Reisezubehör": [
+    "Reisezubehör",
+    "Travel Accessories"
+  ],
+  "Retro Gaming": [
+    "Retro Gaming",
+    "Retro Console",
+    "Retro Game"
+  ],
+  "Schneeschaufel": [
+    "Schneeschaufel",
+    "Snow Shovel"
+  ],
+  "Schraubenschlüssel": [
+    "Schraubenschlüssel",
+    "Wrench",
+    "Spanner"
+  ],
+  "Schraubenzieher": [
+    "Schraubenzieher",
+    "Screwdriver"
+  ],
+  "Schreibstifte": [
+    "Schreibstifte",
+    "Pen",
+    "Pencil",
+    "Marker"
+  ],
+  "Schuhtrockner": [
+    "Schuhtrockner",
+    "Shoe Dryer"
+  ],
+  "Smartwatch": [
+    "Smartwatch",
+    "Smart Watch"
+  ],
+  "Sonstige Literatur": [
+    "Sonstige Literatur",
+    "Literatur",
+    "Books"
+  ],
+  "Spielesammlung": [
+    "Spielesammlung",
+    "Game Collection"
+  ],
+  "Steckschlüssel + Stecknuss": [
+    "Steckschlüssel + Stecknuss",
+    "Socket Wrench",
+    "Socket Set"
+  ],
+  "Sticker": [
+    "Sticker",
+    "Stickers",
+    "Aufkleber"
+  ],
+  "Temporäre Tattoos": [
+    "Temporäre Tattoos",
+    "Temporary Tattoo"
+  ],
+  "Tiervertreiber": [
+    "Tiervertreiber",
+    "Animal Repellent"
+  ],
+  "Tracker": [
+    "Tracker",
+    "GPS Tracker",
+    "Tile Tracker"
+  ],
+  "Uhrenbeweger": [
+    "Uhrenbeweger",
+    "Watch Winder"
+  ],
+  "Uhrenbox + Schmuckaufbewahrung": [
+    "Uhrenbox + Schmuckaufbewahrung",
+    "Watch Box",
+    "Jewelry Box"
+  ],
+  "Velolicht": [
+    "Velolicht",
+    "Bike Light",
+    "Fahrradlicht"
+  ],
+  "Velopumpe": [
+    "Velopumpe",
+    "Bike Pump",
+    "Fahrradpumpe"
+  ],
+  "Vitrine + Buffetschrank": [
+    "Vitrine + Buffetschrank",
+    "Display Cabinet",
+    "Vitrine"
+  ],
+  "Vorbau": [
+    "Vorbau",
+    "Stem",
+    "Bike Stem"
+  ],
+  "Walkie Talkie": [
+    "Walkie Talkie",
+    "Walkie-Talkie",
+    "Two-Way Radio"
+  ]
+}

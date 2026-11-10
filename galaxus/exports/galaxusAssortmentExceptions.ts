@@ -188,6 +188,16 @@ export const GALAXUS_POLICY_EXCEPTIONS: GalaxusPolicyException[] = [
     reviewAt: "2026-12-01",
     active: true,
   },
+  {
+    id: "sm_product_type_delist",
+    title: "Galaxus Product types from SM remove xlsx (132 leaves)",
+    gates: ["fashion_only"],
+    reason: "partner_request",
+    note: "2026-11-10: Product type to remove - SM.xlsx → block reason product_type_block (supplierProductType + category path segments + synonyms). Includes Smartwatch / Portemonnaie / bike tools / toys not covered by path leaf alone.",
+    addedAt: "2026-11-10",
+    reviewAt: "2026-12-15",
+    active: true,
+  },
 ];
 
 function activeSkuExceptions(): GalaxusAssortmentException[] {

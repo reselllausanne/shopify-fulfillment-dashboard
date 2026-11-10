@@ -63,13 +63,29 @@ describe("galaxusAssortmentBlockReason", () => {
   it("fashion-only: delists non-fashion + LEGO/TCG/controller, keeps fashion, console, REI allowlist", () => {
     delete process.env.GALAXUS_FASHION_ONLY;
     delete process.env.GALAXUS_REI_ALLOWLIST;
-    for (const input of [
-      { providerKey: "STX_2", title: "Apple AirPods Pro 2", suggestedRetailInclVatChf: 250 },
-      { providerKey: "STX_3", title: "Supreme Skateboard Deck", brand: "Supreme", suggestedRetailInclVatChf: 150 },
-      { providerKey: "STX_4", title: "Stanley Quencher 40oz Tumbler Rose", suggestedRetailInclVatChf: 80 },
-    ]) {
-      expect(galaxusAssortmentBlockReason(input)).toBe("non_fashion");
-    }
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_2",
+        title: "Apple AirPods Pro 2",
+        suggestedRetailInclVatChf: 250,
+      })
+    ).toBe("non_fashion");
+    // SM product-type list also catches these (title / path leaf).
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_3",
+        title: "Supreme Skateboard Deck",
+        brand: "Supreme",
+        suggestedRetailInclVatChf: 150,
+      })
+    ).toBe("product_type_block");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_4",
+        title: "Stanley Quencher 40oz Tumbler Rose",
+        suggestedRetailInclVatChf: 80,
+      })
+    ).toBe("product_type_block");
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_12",
@@ -103,6 +119,47 @@ describe("galaxusAssortmentBlockReason", () => {
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBeNull();
     }
+  });
+
+  it("blocks Galaxus product types from SM remove xlsx (path / supplierProductType / long title)", () => {
+    process.env.GALAXUS_FASHION_ONLY = "0";
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_PT1",
+        title: "Random Widget",
+        supplierProductType: "Smartphone Hülle",
+        suggestedRetailInclVatChf: 25,
+      })
+    ).toBe("product_type_block");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_PT2",
+        title: "Apple Watch Series 10 GPS",
+        brand: "Apple",
+        supplierProductType: "Smartwatch",
+        suggestedRetailInclVatChf: 400,
+      })
+    ).toBe("product_type_block");
+    // Overlap with hobby_toy kinds → hobby_toy wins (reason order).
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_PT3",
+        title: "Catan Board Game",
+        brand: "Catan",
+        supplierProductType: "Brettspiele",
+        suggestedRetailInclVatChf: 50,
+      })
+    ).toBe("hobby_toy");
+    // Sneakers stay (not in SM product-type remove list).
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_PT_OK",
+        title: "Nike Dunk Low Panda",
+        brand: "Nike",
+        sizeRaw: "42",
+        suggestedRetailInclVatChf: 150,
+      })
+    ).toBeNull();
   });
 
   it("blocks hobby toys even when fashion-only is off (STX sneakers misclass hole)", () => {
@@ -561,19 +618,21 @@ describe("galaxusAssortmentBlockReason", () => {
     }
   });
 
-  it("keeps Nvidia, DDR5, SO-DIMM and Raspberry Pi items", () => {
+  it("keeps Nvidia GPUs / RAM; SM product-type list delists Entwicklungsboard + Kit", () => {
     for (const input of [
-      { providerKey: "STX_7", title: "Nvidia Jetson Orin Nano Developer Kit", brand: "Nvidia" },
       { providerKey: "REI_8", title: "PNY NVIDIA RTX A2000 12GB", brand: "PNY" },
       { providerKey: "REI_9", title: "CSX DIMM DDR5-5600MHZ 8 GO CSX, CL46", brand: "CSX" },
       { providerKey: "REI_10", title: "Kingston Fury Beast 32GB DDR5 RAM", brand: "Kingston" },
       { providerKey: "REI_11", title: "CSX SODIMM CSX 2 GO DDR3-1600MHZ", brand: "CSX" },
-      { providerKey: "REI_12", title: "RASPBERRY PI Raspberry Pi Compute Modul 5, 2GB RAM, sans eMMC", brand: "RASPBERRY PI" },
-      { providerKey: "REI_13", title: "KKSB Boîtier pour Raspberry Pi 5 & M.2 NVMe HAT", brand: "KKSB" },
-      { providerKey: "REI_14", title: "AKASA Gehäuse für Raspberry Pi 4, Alu, schwarz", brand: "AKASA" },
-      { providerKey: "REI_15", title: "RASPBERRY PI Netzteil USB-C 27 W für Raspberry Pi 5, weiss", brand: "RASPBERRY PI" },
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBeNull();
+    }
+    // Excel "Entwicklungsboard + Kit" — REI path; STX often misclassifies Jetson as sneakers.
+    for (const input of [
+      { providerKey: "REI_12", title: "RASPBERRY PI Raspberry Pi Compute Modul 5, 2GB RAM, sans eMMC", brand: "RASPBERRY PI" },
+      { providerKey: "REI_15", title: "RASPBERRY PI Netzteil USB-C 27 W für Raspberry Pi 5, weiss", brand: "RASPBERRY PI" },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).toBe("product_type_block");
     }
   });
 
