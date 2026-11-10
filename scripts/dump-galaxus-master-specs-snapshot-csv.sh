@@ -66,6 +66,16 @@ head -1 "$OUT_DIR/ProductData_resell_lausanne.csv" | grep -q '^ProviderKey,' \
 head -1 "$OUT_DIR/SpecificationData_resell_lausanne.csv" | grep -q '^ProviderKey,' \
   || { echo "FATAL: specs CSV header invalid: $(head -1 "$OUT_DIR/SpecificationData_resell_lausanne.csv")" >&2; exit 4; }
 
+# Refuse half-wiped snap dumps (rebuild deleteMany then crash left ~300k master).
+master_lines="$(wc -l < "$OUT_DIR/ProductData_resell_lausanne.csv" | tr -d ' ')"
+specs_lines="$(wc -l < "$OUT_DIR/SpecificationData_resell_lausanne.csv" | tr -d ' ')"
+min_master="${GALAXUS_MASTER_DUMP_MIN_LINES:-1500000}"
+min_specs="${GALAXUS_SPECS_DUMP_MIN_LINES:-5000000}"
+if (( master_lines < min_master || specs_lines < min_specs )); then
+  echo "FATAL: dump too small master_lines=$master_lines specs_lines=$specs_lines (min $min_master / $min_specs) — snap tables likely wiped mid-rebuild" >&2
+  exit 5
+fi
+
 ls -lah "$OUT_DIR"
 wc -l "$OUT_DIR"/ProductData_resell_lausanne.csv "$OUT_DIR"/SpecificationData_resell_lausanne.csv
 echo "[dump-master-specs-csv] done"
