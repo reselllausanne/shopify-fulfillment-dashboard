@@ -221,7 +221,7 @@ async function loadPrioritySkus(limit: number): Promise<string[]> {
       SELECT sv."supplierSku"
       FROM "SupplierVariant" sv
       LEFT JOIN "BarcodesGgStyleCache" c
-        ON c."styleCode" = UPPER(TRIM(sv."supplierSku"))
+        ON c."styleCode" = UPPER(REPLACE(TRIM(sv."supplierSku"), ' ', ''))
       WHERE sv."supplierVariantId" LIKE 'stx_%'
         AND (sv.gtin IS NULL OR btrim(sv.gtin) = '')
         AND sv."supplierSku" IS NOT NULL
@@ -260,7 +260,7 @@ async function loadPrioritySkus(limit: number): Promise<string[]> {
       FROM "SupplierVariant" sv
       LEFT JOIN "KickDBProduct" kp ON kp."styleId" = sv."supplierSku"
       LEFT JOIN "BarcodesGgStyleCache" c
-        ON c."styleCode" = UPPER(TRIM(sv."supplierSku"))
+        ON c."styleCode" = UPPER(REPLACE(TRIM(sv."supplierSku"), ' ', ''))
       WHERE sv."supplierVariantId" LIKE 'stx_%'
         AND (sv.gtin IS NULL OR btrim(sv.gtin) = '')
         AND sv."supplierSku" IS NOT NULL
@@ -296,11 +296,11 @@ async function loadPrioritySkus(limit: number): Promise<string[]> {
     const stockOnly = PRIORITY === "listed_stock";
     const pool = Math.min(Math.max(limit * 8, 800), 15000);
     const candidates = await prisma.$queryRaw<Array<{ styleId: string }>>`
-      SELECT UPPER(TRIM(kp."styleId")) AS "styleId"
+      SELECT UPPER(REPLACE(TRIM(kp."styleId"), ' ', '')) AS "styleId"
       FROM "ShopifySyncState" ss
       JOIN "KickDBProduct" kp ON kp."kickdbProductId" = ss."kickdbProductId"
       LEFT JOIN "BarcodesGgStyleCache" c
-        ON c."styleCode" = UPPER(TRIM(kp."styleId"))
+        ON c."styleCode" = UPPER(REPLACE(TRIM(kp."styleId"), ' ', ''))
       WHERE ss."shopifyProductId" IS NOT NULL
         AND ss."syncStatus" IN ('synced', 'pending')
         AND kp."styleId" IS NOT NULL
@@ -355,7 +355,7 @@ async function loadPrioritySkus(limit: number): Promise<string[]> {
       SELECT sv."supplierSku"
       FROM "SupplierVariant" sv
       LEFT JOIN "BarcodesGgStyleCache" c
-        ON c."styleCode" = UPPER(TRIM(sv."supplierSku"))
+        ON c."styleCode" = UPPER(REPLACE(TRIM(sv."supplierSku"), ' ', ''))
       WHERE (sv.gtin IS NULL OR btrim(sv.gtin) = '')
         AND sv.stock > 0
         AND sv."supplierVariantId" LIKE 'stx_%'
@@ -375,7 +375,7 @@ async function loadPrioritySkus(limit: number): Promise<string[]> {
     SELECT sv."supplierSku"
     FROM "SupplierVariant" sv
     LEFT JOIN "BarcodesGgStyleCache" c
-      ON c."styleCode" = UPPER(TRIM(sv."supplierSku"))
+      ON c."styleCode" = UPPER(REPLACE(TRIM(sv."supplierSku"), ' ', ''))
     WHERE (sv.gtin IS NULL OR btrim(sv.gtin) = '')
       AND sv."supplierVariantId" LIKE 'stx_%'
       AND sv."supplierSku" IS NOT NULL
