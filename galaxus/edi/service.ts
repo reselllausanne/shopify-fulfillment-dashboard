@@ -559,7 +559,10 @@ export async function buildOutgoingEdiXml(options: {
   return { filename: edi.filename, content: edi.content };
 }
 
-async function loadOrderForCustomInvoice(baseOrderId: string) {
+async function loadOrderForCustomInvoice(
+  baseOrderId: string,
+  options?: { allowDirectDelivery?: boolean }
+) {
   const order =
     (await prisma.galaxusOrder.findUnique({
       where: { id: baseOrderId },
@@ -573,7 +576,7 @@ async function loadOrderForCustomInvoice(baseOrderId: string) {
     throw new Error(`Order not found: ${baseOrderId}`);
   }
   const deliveryType = String((order as any)?.deliveryType ?? "").toLowerCase();
-  if (deliveryType === "direct_delivery") {
+  if (deliveryType === "direct_delivery" && !options?.allowDirectDelivery) {
     throw new Error("Custom invoices are only allowed for warehouse delivery orders.");
   }
   return order;
@@ -587,7 +590,9 @@ export async function buildCustomInvoicePreview(options: {
   /** Skip order-line match / remaining-qty checks (wrong-delivery / purchasing invoices). */
   force?: boolean;
 }): Promise<{ filename: string; content: string }> {
-  const order = await loadOrderForCustomInvoice(options.baseOrderId);
+  const order = await loadOrderForCustomInvoice(options.baseOrderId, {
+    allowDirectDelivery: Boolean(options.force),
+  });
   if (!Array.isArray(options.lines) || options.lines.length === 0) {
     throw new Error("At least one invoice line is required.");
   }
@@ -609,11 +614,14 @@ export async function sendCustomInvoice(options: {
   force?: boolean;
 }): Promise<{ filename: string; status: "uploaded" | "error"; message?: string }> {
   assertSftpConfig();
-  const order = await loadOrderForCustomInvoice(options.baseOrderId);
+  const order = await loadOrderForCustomInvoice(options.baseOrderId, {
+    allowDirectDelivery: Boolean(options.force),
+  });
   if (!Array.isArray(options.lines) || options.lines.length === 0) {
     throw new Error("At least one invoice line is required.");
   }
-  // force=true: wrong-delivery / purchasing invoices for SKUs not on the order line.
+  // force=true: wrong-delivery / purchasing invoices for SKUs not on the order line
+  // (also allows direct_delivery POs — warehouse-only gate otherwise).
   if (!options.force) {
     const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
     assertCustomInvoiceAllowed(order.lines, options.lines, invoicedSoFar);
