@@ -3,6 +3,15 @@ name: Deploy VPS
 on:
   push:
     branches: [main]
+    # Docs/tests-only merges change nothing that runs on the VPS, but each deploy recreates
+    # every worker (kills the in-flight feed run + 25 min drain). Mixed commits still deploy.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".cursor/**"
+      - "**/*.test.ts"
+      - "**/*.test.tsx"
+      - "**/__tests__/**"
   workflow_dispatch:
     inputs:
       sha:

@@ -18,6 +18,8 @@ Several Cursor chats (Cloud + local) may edit this repo at once. **Coordinate on
 - **GitHub `main`** is the only shared source of truth for both Macs and the VPS.
 - Every change: feature branch → commit → push → PR/merge to `main` → **auto deploy** (Actions).
 - When the user asks to **change and merge** (or ship / put on prod): merge to `main`, then **verify Deploy VPS succeeded** and report VPS SHA. Do not wait for a separate “deploy VPS” ask.
+- Exception: merges touching **only** `docs/**`, `*.md`, `.cursor/**`, or `*.test.ts(x)` / `__tests__/**` do **not** trigger Deploy VPS (nothing runs on the VPS). Say so instead of waiting for a deploy.
+- Every deploy recreates all workers (kills the in-flight Galaxus feed run; the feed worker drains up to ~25 min, now recreated last). Batch changes into fewer merges; avoid merging while a feed run/snapshot rebuild matters.
 - **Never** hotfix on the VPS (`/opt/resell` is deploy-only).
 - **Never** `git pull` over tracked dirty files; use `scripts/safe-sync.sh` / `scripts/safe-push.sh`.
 - **Never** force-push, `reset --hard`, or `clean` unless the user explicitly orders it.
