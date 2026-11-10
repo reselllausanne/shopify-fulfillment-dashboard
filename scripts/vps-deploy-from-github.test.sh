@@ -227,10 +227,10 @@ if grep -vE '^\s*#' "$GC" | grep -qE 'volume prune|system prune|--volumes|docker
 else
   pass "gc never touches volumes/containers"
 fi
-if grep -q 'image prune -a -f --filter "until=' "$GC" && grep -q 'builder prune -f --filter "until=' "$GC"; then
-  pass "gc prunes only with age filter"
+if grep -q 'image prune -a -f --filter "until=' "$GC" && grep -q 'builder prune -f --keep-storage "' "$GC"; then
+  pass "gc image prune age-filtered, build cache size-bounded"
 else
-  bad "gc prune commands must carry an until= filter"
+  bad "gc image prune needs until= filter and builder prune needs --keep-storage"
 fi
 set +e
 DOCKER_GC_UNTIL_HOURS=1 bash "$GC" >/dev/null 2>&1
