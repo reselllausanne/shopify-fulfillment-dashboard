@@ -332,25 +332,69 @@ run_master_specs_snapshot_rebuild() {
   log "START rebuild-master-specs-snapshot (tsx, ops-background heap, Phase-2 memory-flat)"
   if ! bash scripts/vps-ops-oneshot-run.sh master-specs-snap-rebuild \
     npx tsx scripts/run-master-specs-snapshot-rebuild.ts; then
-    log "ERROR: rebuild-master-specs-snapshot failed — refusing live fallback (OOM)"
+    # Mid-rebuild DB drop / OOM wipes snap tables + meta — still SFTP last good CSV.
+    log "ERROR: rebuild-master-specs-snapshot failed (DB/OOM) — will try last good CSV SFTP"
     return 1
   fi
   log "DONE rebuild-master-specs-snapshot"
 }
 
+# SFTP already-dumped CSVs only (no Postgres COPY). Used when rebuild wiped DB snap
+# but Nov-good files remain under .data/galaxus-master-specs-snap.
+run_master_specs_sftp_prebuilt() {
+  local dump_dir="${GALAXUS_MASTER_SPECS_DUMP_DIR:-/opt/resell/.data/galaxus-master-specs-snap}"
+  local container_dir="/app/.data/galaxus-master-specs-snap"
+  local master_csv="$dump_dir/ProductData_resell_lausanne.csv"
+  local specs_csv="$dump_dir/SpecificationData_resell_lausanne.csv"
+  local master_lines specs_lines
+  if [[ ! -f "$master_csv" || ! -f "$specs_csv" ]]; then
+    log "ERROR: prebuilt master/specs CSV missing under $dump_dir"
+    return 1
+  fi
+  master_lines="$(wc -l < "$master_csv" | tr -d ' ')"
+  specs_lines="$(wc -l < "$specs_csv" | tr -d ' ')"
+  # Header + ~2M / ~7M rows — refuse tiny/corrupt leftovers from a bad dump.
+  if (( master_lines < 1500000 || specs_lines < 5000000 )); then
+    log "ERROR: prebuilt CSV too small master_lines=$master_lines specs_lines=$specs_lines"
+    return 1
+  fi
+  log "START master-specs SFTP prebuilt only (master_lines=$master_lines specs_lines=$specs_lines)"
+  if ! bash scripts/vps-ops-oneshot-run.sh master-specs-copy-sftp \
+    env GALAXUS_MASTER_SPECS_PREBUILT_DIR="$container_dir" \
+      GALAXUS_MASTER_SPECS_TRUST_PREBUILT=1 \
+    npx tsx scripts/sftp-galaxus-master-specs-csv.ts; then
+    log "ERROR: master-specs SFTP of prebuilt CSVs failed"
+    return 1
+  fi
+  log "DONE master-specs SFTP prebuilt only"
+}
+
 # Postgres COPY → CSV → SFTP. Feed-worker Prisma stream hangs/OOM on ~7M specs rows.
-# Dump dir under .data so oneshot SFTP sees it via the standard /app/.data mount
-# (plain `compose run` is SIGKILL'd by deploys — same bug as snap rebuild).
+# Dump into a temp dir first — never rm last-good CSVs until the new dump passes size gates.
 run_master_specs_copy_push() {
   local dump_dir="${GALAXUS_MASTER_SPECS_DUMP_DIR:-/opt/resell/.data/galaxus-master-specs-snap}"
   local container_dir="/app/.data/galaxus-master-specs-snap"
+  local tmp_dir="${dump_dir}.tmp.$$"
   log "START master-specs COPY dump + SFTP (dir=$dump_dir)"
-  rm -rf "$dump_dir"
-  mkdir -p "$dump_dir"
-  if ! bash scripts/dump-galaxus-master-specs-snapshot-csv.sh "$dump_dir"; then
-    log "ERROR: master-specs COPY dump failed"
+  rm -rf "$tmp_dir"
+  mkdir -p "$tmp_dir"
+  if ! bash scripts/dump-galaxus-master-specs-snapshot-csv.sh "$tmp_dir"; then
+    log "ERROR: master-specs COPY dump failed — keeping previous CSVs in $dump_dir"
+    rm -rf "$tmp_dir"
     return 1
   fi
+  local master_lines specs_lines
+  master_lines="$(wc -l < "$tmp_dir/ProductData_resell_lausanne.csv" | tr -d ' ')"
+  specs_lines="$(wc -l < "$tmp_dir/SpecificationData_resell_lausanne.csv" | tr -d ' ')"
+  if (( master_lines < 1500000 || specs_lines < 5000000 )); then
+    log "ERROR: fresh COPY too small master_lines=$master_lines specs_lines=$specs_lines — refusing to replace last-good CSVs (half-wiped snap?)"
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  mkdir -p "$dump_dir"
+  mv -f "$tmp_dir/ProductData_resell_lausanne.csv" "$dump_dir/"
+  mv -f "$tmp_dir/SpecificationData_resell_lausanne.csv" "$dump_dir/"
+  rm -rf "$tmp_dir"
   if ! bash scripts/vps-ops-oneshot-run.sh master-specs-copy-sftp \
     env GALAXUS_MASTER_SPECS_PREBUILT_DIR="$container_dir" \
     npx tsx scripts/sftp-galaxus-master-specs-csv.ts; then
@@ -404,15 +448,28 @@ case "$ACTION" in
   push-master-specs)
     # Nightly durable: rebuild snap (if stale) → Postgres COPY CSVs → SFTP oneshot.
     # Never use feed-worker Prisma stream for 7M specs (hangs / heap blowup).
+    # If rebuild dies mid-wipe (DB drop/OOM), still SFTP last-good on-disk CSVs —
+    # aborting with zero push left Galaxus on stale portal stamps for days.
+    rebuild_ok=1
     if master_specs_snapshot_is_fresh; then
       log "SKIP master/specs snapshot rebuild — meta fresh (<${GALAXUS_MASTER_SPECS_SKIP_REBUILD_IF_FRESH_HOURS:-20}h)"
     elif ! run_master_specs_snapshot_rebuild; then
-      log "ERROR: push-master-specs aborted — snapshot rebuild failed (no live fallback)"
-      exit 1
+      rebuild_ok=0
+      log "WARN: snapshot rebuild failed — falling back to last-good CSV SFTP"
     fi
-    if ! run_master_specs_copy_push; then
-      log "ERROR: push-master-specs aborted — COPY/SFTP failed"
-      exit 1
+    if [[ "$rebuild_ok" == "1" ]]; then
+      if ! run_master_specs_copy_push; then
+        log "WARN: COPY dump/SFTP failed — trying last-good prebuilt CSV"
+        if ! run_master_specs_sftp_prebuilt; then
+          log "ERROR: push-master-specs aborted — COPY and prebuilt SFTP both failed"
+          exit 1
+        fi
+      fi
+    else
+      if ! run_master_specs_sftp_prebuilt; then
+        log "ERROR: push-master-specs aborted — rebuild failed and no usable prebuilt CSV"
+        exit 1
+      fi
     fi
     log "DONE push-master-specs"
     ;;

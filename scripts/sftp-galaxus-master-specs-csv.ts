@@ -32,9 +32,35 @@ async function main() {
     where: { id: "default" },
     select: { masterRowCount: true, specsRowCount: true, masterRebuiltAt: true },
   });
-  const masterRows = Number(meta?.masterRowCount ?? 0);
-  const specsRows = Number(meta?.specsRowCount ?? 0);
-  if (masterRows <= 0 || specsRows <= 0) {
+  let masterRows = Number(meta?.masterRowCount ?? 0);
+  let specsRows = Number(meta?.specsRowCount ?? 0);
+  const trustPrebuilt =
+    String(process.env.GALAXUS_MASTER_SPECS_TRUST_PREBUILT ?? "")
+      .trim()
+      .toLowerCase() === "1" ||
+    String(process.env.GALAXUS_MASTER_SPECS_TRUST_PREBUILT ?? "")
+      .trim()
+      .toLowerCase() === "true";
+  // Rebuild can wipe meta to 0 after deleteMany then die (pooler drop / OOM).
+  // Still allow SFTP of large prebuilt CSVs when explicitly trusted by cron fallback.
+  if ((masterRows <= 0 || specsRows <= 0) && trustPrebuilt) {
+    const minMasterBytes = 500 * 1024 * 1024;
+    const minSpecsBytes = 100 * 1024 * 1024;
+    if (masterSize < minMasterBytes || specsSize < minSpecsBytes) {
+      throw new Error(
+        `snapshot meta empty and prebuilt too small masterBytes=${masterSize} specsBytes=${specsSize}`
+      );
+    }
+    // Approximate row counts from file size (Galaxus feed run bookkeeping only).
+    masterRows = Math.max(1, Math.round(masterSize / 700));
+    specsRows = Math.max(1, Math.round(specsSize / 35));
+    console.warn("[sftp-master-specs-csv] meta empty — trusting prebuilt CSV sizes", {
+      masterSize,
+      specsSize,
+      masterRows,
+      specsRows,
+    });
+  } else if (masterRows <= 0 || specsRows <= 0) {
     throw new Error(`snapshot meta empty master=${masterRows} specs=${specsRows}`);
   }
 
