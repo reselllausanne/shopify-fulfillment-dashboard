@@ -12,6 +12,13 @@ import {
   filterGalaxusLinesForAwbPin,
   type AwbGalaxusPin,
 } from "@/app/api/scan-awb/packing-session/awbGalaxusPin";
+import {
+  describeGalaxusWarehouseShipTo,
+  galaxusWarehouseMixMessage,
+  galaxusWarehouseShipToConflict,
+  type GalaxusShipToInput,
+  type GalaxusShipToView,
+} from "@/galaxus/warehouse/deliverySites";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,6 +58,7 @@ type MatchResponse = {
     productName: string | null;
     sizeEU: string | null;
     physicalDeliveryNoteRequired: boolean;
+    shipTo: GalaxusShipToView;
     remainingBefore: number;
     resolvedVia: "awb_stx_purchase_unit" | "gtin" | "supplier_pid" | "buyer_pid" | "supplier_sku";
     notes?: string[];
@@ -300,6 +308,12 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
             createdAt: true,
             deliveryType: true,
             physicalDeliveryNoteRequired: true,
+            recipientName: true,
+            recipientAddress1: true,
+            recipientAddress2: true,
+            recipientPostalCode: true,
+            recipientCity: true,
+            recipientCountry: true,
           },
         },
       },
@@ -387,12 +401,41 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
       return (a.lineNumber ?? 0) - (b.lineNumber ?? 0);
     });
 
+    let sessionShipTo: GalaxusShipToInput | null = null;
+    if (session.length > 0) {
+      const sessionOrderIds = Array.from(new Set(session.map((row) => row.galaxusOrderId).filter(Boolean)));
+      const sessionOrders = await prisma.galaxusOrder.findMany({
+        where: { galaxusOrderId: { in: sessionOrderIds } },
+        select: {
+          recipientName: true,
+          recipientAddress1: true,
+          recipientAddress2: true,
+          recipientPostalCode: true,
+          recipientCity: true,
+          recipientCountry: true,
+        },
+      });
+      if (sessionOrders.length === 0) {
+        return reject("Open box has no Galaxus delivery address. Clear the box and scan again.", scanCodeRaw);
+      }
+      sessionShipTo = sessionOrders[0];
+      if (sessionOrders.some((row) => galaxusWarehouseShipToConflict(sessionShipTo!, row))) {
+        return reject(
+          "This box already mixes Galaxus warehouses. Clear it and pack one warehouse per box.",
+          scanCodeRaw
+        );
+      }
+    }
+
     for (const line of sorted) {
       const cov = coverage[line.id];
       if (!cov) continue;
       const inSession = sessionCountByLine.get(line.id) ?? 0;
       const availableAfterSession = cov.remaining - inSession;
       if (availableAfterSession <= 0) continue;
+      if (sessionShipTo && galaxusWarehouseShipToConflict(sessionShipTo, line.order)) {
+        return reject(galaxusWarehouseMixMessage(sessionShipTo, line.order), scanCodeRaw);
+      }
 
       let unitIndex = cov.shipped + cov.reserved + inSession;
       if (
@@ -448,6 +491,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
             productName: line.productName ?? null,
             sizeEU: line.size ?? null,
             physicalDeliveryNoteRequired: Boolean(line.order.physicalDeliveryNoteRequired),
+            shipTo: describeGalaxusWarehouseShipTo(line.order),
             remainingBefore: cov.remaining,
             resolvedVia,
             ...(notes.length > 0 ? { notes } : {}),

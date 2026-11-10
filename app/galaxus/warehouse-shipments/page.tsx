@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { dedupeById } from "@/galaxus/_lib/dedupeById";
+import { describeGalaxusWarehouseShipTo } from "@/galaxus/warehouse/deliverySites";
 
 type OrderListItem = {
   id: string;
@@ -49,8 +50,11 @@ type EligibleOrder = {
   currencyCode?: string | null;
   recipientName?: string | null;
   recipientAddress1?: string | null;
+  recipientAddress2?: string | null;
   recipientPostalCode?: string | null;
   recipientCity?: string | null;
+  recipientCountry?: string | null;
+  deliveryPartyGln?: string | null;
   lines: EligibleLine[];
 };
 
@@ -1263,6 +1267,7 @@ export default function GalaxusWarehouseShipmentsPage() {
               );
             };
 
+            const shipTo = describeGalaxusWarehouseShipTo(order);
             return (
               <div key={order.id} className="border rounded bg-white">
                 <div className="border-b px-3 py-2 text-sm flex flex-wrap items-center justify-between gap-2">
@@ -1270,8 +1275,16 @@ export default function GalaxusWarehouseShipmentsPage() {
                     {order.orderNumber ?? order.galaxusOrderId}
                     <span className="text-xs text-gray-500"> - {formatOrderListDate(order.orderDate)}</span>
                   </div>
-                  <div className="text-xs text-gray-500">
-                    {order.recipientName ?? "-"} - {order.recipientPostalCode ?? ""} {order.recipientCity ?? ""}
+                  <div
+                    className={`text-xs font-medium ${
+                      shipTo.known
+                        ? shipTo.siteKey === "buelach"
+                          ? "text-sky-800"
+                          : "text-gray-700"
+                        : "text-amber-800"
+                    }`}
+                  >
+                    Ship to {shipTo.summary}
                   </div>
                 </div>
                 <div className="overflow-auto">

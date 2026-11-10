@@ -469,6 +469,8 @@ type PackingSessionEntry = {
   productName: string | null;
   sizeEU: string | null;
   physicalDeliveryNoteRequired: boolean;
+  shipToSummary?: string | null;
+  shipToKnown?: boolean;
   resolvedVia: string;
 };
 
@@ -490,6 +492,11 @@ type PackingSessionApiResponse =
         productName: string | null;
         sizeEU: string | null;
         physicalDeliveryNoteRequired: boolean;
+        shipTo?: {
+          label: string;
+          known: boolean;
+          summary: string;
+        };
         remainingBefore: number;
         resolvedVia: string;
         notes?: string[];
@@ -1780,6 +1787,8 @@ export default function ScanPage() {
           productName: data.matched.productName,
           sizeEU: data.matched.sizeEU,
           physicalDeliveryNoteRequired: Boolean(data.matched.physicalDeliveryNoteRequired),
+          shipToSummary: data.matched.shipTo?.summary ?? null,
+          shipToKnown: data.matched.shipTo?.known ?? false,
           resolvedVia: data.matched.resolvedVia,
         };
         setPackingSession((prev) => {
@@ -2997,9 +3006,20 @@ export default function ScanPage() {
                     orders (one SSCC, one Swiss Post label, one delivery note). DELR only for
                     the pairs in this box — not the rest of each order.
                   </p>
+                  <p className="text-sm mt-2 font-medium">
+                    {(() => {
+                      const ship = packingSession.find((entry) => entry.shipToSummary);
+                      if (!ship?.shipToSummary) {
+                        return "Ship-to comes from the Galaxus order. Scan again if this box was started before the warehouse split.";
+                      }
+                      return ship.shipToKnown
+                        ? `Ship to ${ship.shipToSummary}`
+                        : `Unknown Galaxus warehouse — still ship to the order address: ${ship.shipToSummary}`;
+                    })()}
+                  </p>
                   <p className="text-xs mt-1 text-green-800">
                     Reminder: put the Swiss Post label + delivery note (+ any required customs docs)
-                    inside the parcel before sealing.
+                    inside the parcel before sealing. One box = one Galaxus warehouse.
                   </p>
                   <div className="mt-3 space-y-2">
                     {(() => {

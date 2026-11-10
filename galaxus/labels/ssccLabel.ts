@@ -5,6 +5,7 @@ import { createSsccBarcodeDataUrl, normalizeSscc } from "@/galaxus/barcodes/barc
 import { renderBasicSsccLabelHtml, renderLabelHtml } from "@/galaxus/documents/templates/label";
 import { renderPdfFromHtml } from "@/galaxus/documents/renderers/playwrightRenderer";
 import type { Address, LabelData } from "@/galaxus/documents/types";
+import { ssccRecipientFromGalaxusOrder } from "@/galaxus/warehouse/deliverySites";
 import {
   GALAXUS_SUPPLIER_ADDRESS_LINES,
   GALAXUS_SUPPLIER_NAME,
@@ -41,7 +42,7 @@ export async function generateSsccLabelPdf(
     shipmentId,
     orderNumbers,
     sender: buildSupplierAddress(),
-    recipient: buildRecipient(),
+    recipient: buildRecipient(order),
     sscc: normalized,
     barcodeDataUrl,
   };
@@ -55,7 +56,7 @@ export async function generateBasicSsccLabelPdf(sscc: string): Promise<SsccLabel
   const normalized = normalizeSscc(sscc);
   const barcodeDataUrl = await createSsccBarcodeDataUrl(normalized);
   const html = renderBasicSsccLabelHtml({
-    recipient: buildRecipient(),
+    recipient: buildFallbackRecipient(),
     sscc: normalized,
     barcodeDataUrl,
   });
@@ -215,11 +216,15 @@ function buildSupplierAddress(): Address {
   };
 }
 
-function buildRecipient(): Address {
+function buildRecipient(order: GalaxusOrder): Address {
+  return ssccRecipientFromGalaxusOrder(order);
+}
+
+function buildFallbackRecipient(): Address {
   return {
     name: GALAXUS_SSCC_RECIPIENT_NAME,
     line1: GALAXUS_SSCC_RECIPIENT_STREET,
-    line2: GALAXUS_SSCC_RECIPIENT_LINE2,
+    line2: GALAXUS_SSCC_RECIPIENT_LINE2 || null,
     postalCode: GALAXUS_SSCC_RECIPIENT_POSTAL_CODE,
     city: GALAXUS_SSCC_RECIPIENT_CITY,
     country: GALAXUS_SSCC_RECIPIENT_COUNTRY,

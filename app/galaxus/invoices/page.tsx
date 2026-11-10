@@ -1,6 +1,11 @@
 "use client";
 
 import { type ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  describeGalaxusWarehouseShipTo,
+  ssccRecipientFromGalaxusOrder,
+  type GalaxusShipToInput,
+} from "@/galaxus/warehouse/deliverySites";
 
 type OrderListItem = {
   id: string;
@@ -19,6 +24,26 @@ type OrderListItem = {
 };
 
 /** Short label like `[invoiced]` / `[20/22 · 2 left]` / `[not invoiced]` (same style as archived/cancelled). */
+function shipToInputFromOrder(order: Record<string, unknown> | null): GalaxusShipToInput {
+  const text = (key: string) => {
+    const value = order?.[key];
+    if (value == null) return null;
+    const trimmed = String(value).trim();
+    return trimmed || null;
+  };
+  return {
+    galaxusOrderId: text("galaxusOrderId"),
+    orderNumber: text("orderNumber"),
+    deliveryPartyGln: text("deliveryPartyGln"),
+    recipientName: text("recipientName"),
+    recipientAddress1: text("recipientAddress1"),
+    recipientAddress2: text("recipientAddress2"),
+    recipientPostalCode: text("recipientPostalCode"),
+    recipientCity: text("recipientCity"),
+    recipientCountry: text("recipientCountry"),
+  };
+}
+
 function formatInvoiceStatusTag(o: OrderListItem): string | null {
   if (o.invoiceLinesTotal == null || o.invoiceLinesFullyInvoiced == null) return null;
   const total = o.invoiceLinesTotal;
@@ -676,6 +701,11 @@ export default function GalaxusInvoicesPage() {
     setSsccBusy(true);
     setSsccError(null);
     try {
+      if (String(orderDetail?.deliveryType ?? "") === "direct_delivery") {
+        throw new Error("Direct delivery uses a Swiss Post label, not a warehouse SSCC.");
+      }
+      const shipTo = shipToInputFromOrder(orderDetail);
+      const recipient = ssccRecipientFromGalaxusOrder(shipTo);
       const selectedPreset =
         SSCC_PRINT_PRESETS.find((preset) => preset.id === ssccPresetId) ?? SSCC_PRINT_PRESETS[0];
       const res = await fetch("/api/galaxus/sscc/manual/full", {
@@ -685,12 +715,12 @@ export default function GalaxusInvoicesPage() {
           shipmentId,
           orderNumbers: [orderId],
           recipient: {
-            name: "Digitec Galaxus AG",
-            line1: "Dock A19 - A39",
-            line2: "Ferroring 23",
-            postalCode: "CH-5612",
-            city: "Villmergen",
-            country: "Schweiz",
+            name: recipient.name,
+            line1: recipient.line1,
+            line2: recipient.line2,
+            postalCode: recipient.postalCode,
+            city: recipient.city,
+            country: recipient.country,
           },
           print: {
             widthMm: selectedPreset.widthMm,
@@ -1104,7 +1134,10 @@ export default function GalaxusInvoicesPage() {
             <div>
               <h2 className="text-base font-semibold">Generate SSCC label</h2>
               <p className="text-xs text-gray-600">
-                Enter order ID and shipment ID, then the PDF downloads directly.
+                Address comes from this Galaxus order. Wohlen and Bülach are not interchangeable.
+              </p>
+              <p className="mt-2 text-sm font-medium text-gray-900">
+                {describeGalaxusWarehouseShipTo(shipToInputFromOrder(orderDetail)).summary}
               </p>
             </div>
             <label className="block text-sm">
