@@ -24,6 +24,7 @@ const ACCESSORY_KEEP_RE =
 const BIKE_ACCESSORY_RE = /\bpour (?:v[ée]los?|vtt|roues?|cadres?|guidons?|selles?|porte-?bagages?)\b/i;
 
 const VOLUME_BAG_RE = /\(\d{2,3}(?:\+\d{2})? ?l\)|\b\d{2,3}(?:\+\d{2})? ?l\b.*\bbag\b|\b(?:duffle|duffel)\b|\bBlack Hole\b/i;
+const VOLUME_NOT_BAG_RE = /\b(tentes?|tents?|coolers?|glaci[eè]res?|bidons?|bottles?|bouteilles?|tanks?|r[ée]servoirs?|barrels?|canisters?|cartridges?|boxes|box|bo[iî]tes?|bladder|poche [àa] eau|hydration|reservoir|sleeping|couchage|stoves?|r[ée]chaud|lampes?|lamps?|lights?)\b/i;
 const RACK_BAG_RE = /\b(rack|pannier|roller|taschen|luggage|porte-?bagages?|sacoches?|frame bag|saddle bag)\b/i;
 
 /** Jersey + pant bundles sold as "Kit Maillot …". */
@@ -35,7 +36,8 @@ const APPAREL_KIT_RE = /^kit (?:maillot|tenue)/i;
  * Sport-watch straps (Garmin, Suunto, "bracelet de montre") stay.
  */
 const NER_OFFSHEET_RE =
-  /\b(couronnes?|pignons?|sprockets?|chainrings?|pannier racks?|porte-?v[ée]los?|jeux? de direction|lithium packs?|dry sacks?|sacs? [ée]tanches?|wash bags?|pencil cases?|trousses? de toilette)\b|\bcl[ée]s?\s+allen\b|\ballen\s+keys?\b|\bscrews?\b|\brings?\b|\bbagues?\b|\bcolliers?\b|\bnecklaces?\b|\bearrings?\b|\bpendentifs?\b|\bboucles?\s+d['’]oreilles?\b/i;
+  /\b((?:face|protective|dust|hygiene) masks?|masques? (?:de protection|hygi[eè]nique)|couronnes?|pignons?|sprockets?|chainrings?|pannier racks?|porte-?v[ée]los?|jeux? de direction|lithium packs?|dry sacks?|sacs? [ée]tanches?|wash bags?|pencil cases?|trousses? de toilette)\b|\bcl[ée]s?\s+allen\b|\ballen\s+keys?\b|\bscrews?\b|\brings?\b|\bbagues?\b|\bcolliers?\b|\bnecklaces?\b|\bearrings?\b|\bpendentifs?\b|\bboucles?\s+d['’]oreilles?\b/i;
+const TOWEL_RE = /\b(towels?|serviettes?|handt(?:uch|ücher))\b/i;
 const JEWELRY_BRACELET_RE = /\bbracelets?\b/i;
 const WATCH_STRAP_RE = /\b(garmin|polar|suunto|coros|wahoo|montres?|watch)\b/i;
 
@@ -45,6 +47,8 @@ const SHOE_SIZE_RE = /^(?:EU\s*)?(1[6-9]|[2-4]\d|5[0-2])(?:[.,]5)?(?:\s?[123]\/3
 
 function isNerOffSheet(title: string): boolean {
   if (NER_OFFSHEET_RE.test(title)) return true;
+  // Plain towels are off-sheet; "Towel" as a fabric in a garment title ("Towel short sleeve T-shirt") stays.
+  if (TOWEL_RE.test(title) && !APPAREL_TEXT_RE.test(title)) return true;
   return JEWELRY_BRACELET_RE.test(title) && !WATCH_STRAP_RE.test(title);
 }
 
@@ -67,7 +71,15 @@ export function isNerApparelOrShoe(input: { title?: string | null; sizeRaw?: str
   const size = String(input.sizeRaw ?? "").trim().replace(/\s?FR$/i, "");
   if (isNerOffSheet(title)) return false;
   // Rucksacks named only by brand + volume ("The North Face Base Camp (50 l)"); rack/pannier bags stay off.
-  if (VOLUME_BAG_RE.test(title) && !RACK_BAG_RE.test(title) && !BIKE_ACCESSORY_RE.test(title)) return true;
+  if (
+    VOLUME_BAG_RE.test(title) &&
+    !RACK_BAG_RE.test(title) &&
+    !BIKE_ACCESSORY_RE.test(title) &&
+    !VOLUME_NOT_BAG_RE.test(title) &&
+    firstMatchAt(GEAR_TEXT_RE, title) < 0
+  ) {
+    return true;
+  }
   const gearAt = firstMatchAt(GEAR_TEXT_RE, title);
   const wearHits = [firstMatchAt(SHOE_TEXT_RE, title), firstMatchAt(APPAREL_TEXT_RE, title)].filter((i) => i >= 0);
   const wearAt = wearHits.length ? Math.min(...wearHits) : -1;

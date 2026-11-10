@@ -549,6 +549,10 @@ describe("galaxusAssortmentBlockReason", () => {
       { providerKey: "NER_71", title: "Garmin Edge 1040", sizeRaw: "1" },
       { providerKey: "NER_72", title: "Kask Protone Icon (59 - 62 cm)", sizeRaw: "L(59-62CM)" },
       { providerKey: "NER_73", title: "Tektro R559 - Extra Long Reach Brakes", sizeRaw: "OS" },
+      { providerKey: "NER_74", title: "Pinguin Map 2023 towel", sizeRaw: "XL" },
+      { providerKey: "NER_75", title: "Respro City protective mask", sizeRaw: "M" },
+      { providerKey: "NER_76", title: "Coleman Cooler Box (30 l)", sizeRaw: "OS" },
+      { providerKey: "NER_77", title: "MSR Hydration Reservoir (20 l)", sizeRaw: "OS" },
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBe("ner_not_apparel");
     }
