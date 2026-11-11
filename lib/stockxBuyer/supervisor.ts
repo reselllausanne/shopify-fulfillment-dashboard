@@ -572,6 +572,12 @@ export async function runCycle(rt: Runtime): Promise<CycleResult> {
   let galaxusTried = 0;
   let shopifyQueue = 0;
 
+  // Pick up manual `release` events written by the control CLI while we run.
+  if (!cfg.dryRun) {
+    const fresh = await loadReduced().catch(() => null);
+    if (fresh) for (const k of [...rt.states.keys()]) if (!fresh.states.has(k)) rt.states.delete(k);
+  }
+
   if (cfg.rebuy && now - rt.lastRebuyAt > cfg.rebuyEveryMs) {
     rt.lastRebuyAt = now;
     rt.phase = "rebuy-sweep";
@@ -584,21 +590,28 @@ export async function runCycle(rt: Runtime): Promise<CycleResult> {
   }
 
   if (cfg.shopify) {
-    rt.phase = "shopify-queue";
-    const open = await buildShopifyJobs({
-      since: cfg.shopifySince,
-      only: cfg.onlyOrders,
-      log,
-      stopAfterJobs: cfg.batchSize * 3,
-    });
-    const all = [...rt.rebuyJobs, ...open].filter((j) => !stateBlocks(rt.states.get(j.key), Date.now()));
-    shopifyQueue = all.length;
-    // Rebuys rank with Express: the customer is already waiting.
-    const ordered = orderQueue(
-      all.map((j) => ({ ...j, express: j.express || j.rebuyOfCancelled })) as Array<ShopifyJob & { express: boolean }>
-    );
-    log(`shopify queue=${ordered.length} (express/rebuy first)`);
-    if (ordered.length) shopifyTried = await shopifyPhase(rt, ordered);
+    // Customers first: drain the Shopify queue (up to 4 batches) before any Galaxus work.
+    const rounds = cfg.once ? 1 : 4;
+    for (let round = 0; round < rounds; round += 1) {
+      rt.phase = "shopify-queue";
+      const open = await buildShopifyJobs({
+        since: cfg.shopifySince,
+        only: cfg.onlyOrders,
+        log,
+        stopAfterJobs: cfg.batchSize * 3,
+      });
+      const all = [...rt.rebuyJobs, ...open].filter((j) => !stateBlocks(rt.states.get(j.key), Date.now()));
+      shopifyQueue = all.length;
+      // Rebuys rank with Express: the customer is already waiting.
+      const ordered = orderQueue(
+        all.map((j) => ({ ...j, express: j.express || j.rebuyOfCancelled })) as Array<ShopifyJob & { express: boolean }>
+      );
+      log(`shopify queue=${ordered.length} (express/rebuy first)`);
+      if (!ordered.length) break;
+      const tried = await shopifyPhase(rt, ordered);
+      shopifyTried += tried;
+      if (!tried || (await isHalted()) || (!cfg.once && !(await isOn()))) break;
+    }
   }
 
   if (cfg.galaxus && !(await isHalted()) && !(await exists(NIGHT_HALT_FILE)) && (cfg.once || (await isOn()))) {
