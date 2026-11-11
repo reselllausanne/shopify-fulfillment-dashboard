@@ -307,7 +307,8 @@ export async function GET(request: Request) {
     const supplierVariantId = String(variant?.supplierVariantId ?? "");
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     // Hard floor: never publish STX PurchasePrice below source buy (stale snapshot / bad lock).
-    if (isStx && Number.isFinite(priceValue) && priceValue > 0) {
+    // Locked manualPrice is the invoice. StockX ask must not raise it (hoodie 69 vs ask 225).
+    if (isStx && !lockedFinalExVat && Number.isFinite(priceValue) && priceValue > 0) {
       const buy = parseNumber(variant?.price);
       if (buy != null && buy > 0 && priceValue < buy) {
         const floor = calcGalaxusStxSellFromSourceCost(buy);

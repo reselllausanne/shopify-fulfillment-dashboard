@@ -396,7 +396,7 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           manualLock: true,
-          manualPrice: 129,
+          manualPrice: 69,
           manualNote: expect.stringMatching(/in-stock:fixed-price.*Essential Hoodie/i),
         }),
       })

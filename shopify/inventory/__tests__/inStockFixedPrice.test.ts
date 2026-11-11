@@ -27,6 +27,7 @@ describe("inStockFixedPrice", () => {
     expect(r?.costChf).toBe(42);
     expect(r?.sellChf).toBe(129);
     expect(r?.expressChf).toBe(169);
+    expect(r?.galaxusExVatChf).toBe(69);
   });
 
   it("resolves FW24 Black hoodie by SKU base with sell 129/169", () => {
