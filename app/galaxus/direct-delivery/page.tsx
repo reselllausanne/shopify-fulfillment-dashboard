@@ -4,8 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSoftPageRefresh } from "@/app/hooks/useSoftPageRefresh";
 import { dedupeById } from "@/galaxus/_lib/dedupeById";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
-import { PhysicalStockBadge, PhysicalStockHintText, ShipAsap48hBadge } from "@/app/components/PhysicalStockBadge";
-import { isGalaxus48hShipLocation } from "@/galaxus/warehouse/delivery48h";
+import { PhysicalStockBadge, PhysicalStockHintText } from "@/app/components/PhysicalStockBadge";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
 import GalaxusExternalBuyPanel, {
   isExternalBuyLine,
@@ -31,8 +30,6 @@ type OrderListItem = {
   hasPhysicalStock?: boolean;
   physicalStockLineCount?: number;
   physicalStockLabel?: string | null;
-  shipAsap48h?: boolean;
-  shipAsap48hLineCount?: number;
   _count?: { lines: number; shipments: number };
 };
 
@@ -551,13 +548,10 @@ export default function GalaxusDirectDeliveryPage() {
     return [...fresh, ...rest];
   }, [orders, searchHits, newOrderIds]);
 
-  const ordersByTab = useMemo(() => {
-    const filtered = orderedList.filter((order) => orderMatchesDirectDeliveryTab(order, leftTab));
-    if (leftTab !== "to_process") return filtered;
-    return [...filtered].sort(
-      (a, b) => Number(Boolean(b.shipAsap48h)) - Number(Boolean(a.shipAsap48h))
-    );
-  }, [orderedList, leftTab]);
+  const ordersByTab = useMemo(
+    () => orderedList.filter((order) => orderMatchesDirectDeliveryTab(order, leftTab)),
+    [orderedList, leftTab],
+  );
 
   // Search keeps both tabs in memory. Switching À traiter / Fulfilled refilters
   // without a new request. Move the detail pane onto a row that is actually listed.
@@ -1202,21 +1196,10 @@ export default function GalaxusDirectDeliveryPage() {
                   className={`w-full text-left border rounded p-2 text-sm ${orderListCardClass(
                     order,
                     selected
-                  )} ${order.shipAsap48h ? "border-l-4 border-l-red-600" : ""}`}
+                  )}`}
                 >
                   <div className="font-medium flex items-center gap-1.5 flex-wrap">
                     <span>{order.orderNumber ?? order.galaxusOrderId}</span>
-                    {order.shipAsap48h ? (
-                      <span
-                        className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-red-600 text-white"
-                        title="Bussigny 1030 in stock. 48h Galaxus route. Ship now."
-                      >
-                        48h SHIP
-                        {order.shipAsap48hLineCount && order.shipAsap48hLineCount > 1
-                          ? ` ×${order.shipAsap48hLineCount}`
-                          : ""}
-                      </span>
-                    ) : null}
                     {order.hasPhysicalStock ? (
                       <span
                         className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-green-600 text-white"
@@ -1242,11 +1225,6 @@ export default function GalaxusDirectDeliveryPage() {
                     >
                       {order.linkedCount ?? 0}/{order._count?.lines ?? 0} linked
                     </span>
-                    {order.shipAsap48h ? (
-                      <span className="block text-red-700 font-semibold mt-0.5">
-                        Bussigny 1030 · ship now
-                      </span>
-                    ) : null}
                     {order.hasPhysicalStock && order.physicalStockLabel ? (
                       <span className="block text-green-800 mt-0.5">{order.physicalStockLabel}</span>
                     ) : null}
@@ -1306,13 +1284,6 @@ export default function GalaxusDirectDeliveryPage() {
             <div className="text-sm text-gray-500">Loading order…</div>
           ) : selectedOrder ? (
             <div className="space-y-3">
-              {(selectedOrder.lines || []).some((line: { physicalStock?: { locationId?: string | null; locationName?: string | null } | null }) =>
-                isGalaxus48hShipLocation(line.physicalStock)
-              ) ? (
-                <div className="rounded bg-red-600 text-white px-3 py-2 text-sm font-semibold">
-                  48h · Bussigny 1030 · ship now. Do not wait on StockX.
-                </div>
-              ) : null}
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="text-sm min-w-0">
                   {/* End customer first: ORDP often puts Digitec Galaxus AG in
@@ -1521,7 +1492,6 @@ export default function GalaxusDirectDeliveryPage() {
                               <span className="text-gray-300">○</span>
                             )}
                             {buildLineTitle(line)}
-                            <ShipAsap48hBadge physicalStock={line.physicalStock} />
                             <PhysicalStockBadge
                               physicalStock={line.physicalStock}
                               avoidStockxHint={!procOk || Boolean(line.physicalStock)}

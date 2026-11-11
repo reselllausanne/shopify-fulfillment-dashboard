@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSoftPageRefresh } from "@/app/hooks/useSoftPageRefresh";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
-import { PhysicalStockBadge, PhysicalStockHintText, ShipAsap48hBadge } from "@/app/components/PhysicalStockBadge";
-import { isGalaxus48hShipLocation } from "@/galaxus/warehouse/delivery48h";
+import { PhysicalStockBadge, PhysicalStockHintText } from "@/app/components/PhysicalStockBadge";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
 import GalaxusExternalBuyPanel, {
   isExternalBuyLine,
@@ -22,8 +21,6 @@ type OrderListItem = {
   shippedCount: number;
   fulfilledCount: number;
   _count?: { shipments: number; lines: number };
-  shipAsap48h?: boolean;
-  shipAsap48hLineCount?: number;
 };
 
 type OrderDetail = {
@@ -648,35 +645,20 @@ export default function WarehouseBulkPage() {
               Active orders ({orders.length}) {loading ? "· loading..." : ""}
             </div>
             <div className="space-y-2">
-              {[...orders]
-                .sort((a, b) => Number(Boolean(b.shipAsap48h)) - Number(Boolean(a.shipAsap48h)))
-                .map((order) => {
+              {orders.map((order) => {
                 const selectedRow = order.id === selectedOrderId;
                 return (
                   <button
                     key={order.id}
                     className={`w-full text-left border rounded p-2 text-xs ${
                       selectedRow ? "border-indigo-500 bg-indigo-50" : "border-gray-200"
-                    } ${order.shipAsap48h ? "border-l-4 border-l-red-600" : ""}`}
+                    }`}
                     onClick={() => setSelectedOrderId(order.id)}
                   >
-                    <div className="font-semibold flex items-center gap-1.5 flex-wrap">
-                      <span>{order.galaxusOrderId}</span>
-                      {order.shipAsap48h ? (
-                        <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-red-600 text-white">
-                          48h SHIP
-                          {order.shipAsap48hLineCount && order.shipAsap48hLineCount > 1
-                            ? ` ×${order.shipAsap48hLineCount}`
-                            : ""}
-                        </span>
-                      ) : null}
-                    </div>
+                    <div className="font-semibold">{order.galaxusOrderId}</div>
                     <div className="text-gray-600">
                       {order.deliveryType ?? "—"} · {order._count?.lines ?? 0} lines
                     </div>
-                    {order.shipAsap48h ? (
-                      <div className="text-red-700 font-semibold">Bussigny 1030 · ship now</div>
-                    ) : null}
                   </button>
                 );
               })}
@@ -688,13 +670,6 @@ export default function WarehouseBulkPage() {
               <div className="text-sm text-gray-500">Select an order.</div>
             ) : (
               <div className="space-y-3">
-                {(detail?.lines || []).some((line: { physicalStock?: { locationId?: string | null; locationName?: string | null } | null }) =>
-                  isGalaxus48hShipLocation(line.physicalStock)
-                ) ? (
-                  <div className="rounded bg-red-600 text-white px-3 py-2 text-sm font-semibold">
-                    48h · Bussigny 1030 · ship now. Do not wait on StockX.
-                  </div>
-                ) : null}
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="text-sm min-w-0">
                     <span className="font-semibold">{selected.galaxusOrderId}</span>
@@ -871,7 +846,6 @@ export default function WarehouseBulkPage() {
                                       : "GLD · Golden — do not buy StockX"}
                                   </span>
                                 ) : null}
-                                <ShipAsap48hBadge physicalStock={line.physicalStock} />
                                 <PhysicalStockBadge
                                   physicalStock={line.physicalStock}
                                   avoidStockxHint={!linked}

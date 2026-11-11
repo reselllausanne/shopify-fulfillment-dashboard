@@ -1,5 +1,4 @@
 import React from "react";
-import { isGalaxus48hShipLocation } from "@/galaxus/warehouse/delivery48h";
 import {
   formatPhysicalStockLabel,
   type OrderLinePhysicalStock,
@@ -26,23 +25,6 @@ export function PhysicalStockBadge({
     >
       {label}
       {avoidStockxHint ? " · no StockX" : ""}
-    </span>
-  );
-}
-
-/** Bussigny 1030 on-hand. Galaxus route promises ~48h, so this unit ships now. */
-export function ShipAsap48hBadge({
-  physicalStock,
-}: {
-  physicalStock?: { locationId?: string | null; locationName?: string | null } | null;
-}) {
-  if (!isGalaxus48hShipLocation(physicalStock)) return null;
-  return (
-    <span
-      className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-red-600 text-white shrink-0"
-      title="In stock at Warehouse Bussigny (1030). Galaxus 48h route. Ship now."
-    >
-      48h ship now
     </span>
   );
 }
