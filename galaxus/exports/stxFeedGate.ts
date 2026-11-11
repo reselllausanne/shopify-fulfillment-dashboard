@@ -108,7 +108,7 @@ export function shouldOmitStxFromGalaxusFeed(input: {
  * out of any CSV before upload — belt-and-braces for stale snapshots that predate
  * the row-level guard.
  *
- * Runs one DB scan; the query uses the `providerKey` index and filters in Postgres.
+ * Runs one seq scan of SupplierVariant (ILIKE cannot use a btree; deliberately NOT indexed: a partial index on STX would cover ~1M frequently repriced rows and kill HOT updates on `price`). Filters in Postgres.
  */
 export async function loadStxFeedGateProviderKeys(): Promise<Set<string>> {
   const rows = await prisma.$queryRawUnsafe<Array<{ providerKey: string | null }>>(
