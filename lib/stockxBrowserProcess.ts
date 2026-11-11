@@ -3,7 +3,7 @@ import path from "node:path";
 
 const CHROME_CMD_RE = /(?:^|\/)(chrome|chromium|chrome-wrapper)(?:\s|$)/i;
 
-function cmdlineMatchesUserDataDir(cmdline: string, userDataDir: string): boolean {
+export function cmdlineMatchesUserDataDir(cmdline: string, userDataDir: string): boolean {
   const resolved = path.resolve(userDataDir);
   const args = cmdline.split("\0").filter(Boolean);
   for (let i = 0; i < args.length; i++) {
@@ -19,7 +19,10 @@ function cmdlineMatchesUserDataDir(cmdline: string, userDataDir: string): boolea
     }
   }
   // Fallback: absolute path appears in argv (Playwright sometimes joins oddly).
-  return cmdline.includes(`--user-data-dir=${resolved}`) || cmdline.includes(`--user-data-dir=${userDataDir}`);
+  // Exact boundary: `/x/stockx-profile` must NOT match `/x/stockx-profile-galaxus`.
+  const exact = (dir: string) =>
+    new RegExp(`--user-data-dir=${dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\0|\\s|$)`).test(cmdline);
+  return exact(resolved) || exact(userDataDir);
 }
 
 async function listPidsUsingUserDataDir(userDataDir: string): Promise<number[]> {
