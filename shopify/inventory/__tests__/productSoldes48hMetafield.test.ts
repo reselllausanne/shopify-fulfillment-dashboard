@@ -15,6 +15,7 @@ type VariantFixture = {
   delivery?: string | null;
   price?: string;
   compare?: string | null;
+  qty?: number;
 };
 
 function productState(
@@ -31,6 +32,7 @@ function productState(
           nodes: variants.map((v) => ({
             price: v.price ?? "100.00",
             compareAtPrice: v.compare === undefined ? null : v.compare,
+            inventoryQuantity: v.qty ?? 1,
             delivery48h: v.delivery == null ? null : { value: v.delivery },
           })),
         },
@@ -74,6 +76,20 @@ describe("syncProductSoldes48hMetafield", () => {
         productState("true", [
           { delivery: null, price: "90.00", compare: "140.00" },
           { delivery: "false", price: "90.00", compare: "140.00" },
+        ])
+      )
+      .mockResolvedValueOnce({ data: { metafieldsSet: { userErrors: [] } } });
+    const changes: string[] = [];
+    await syncProductSoldes48hMetafield(PID, changes);
+    expect(changes).toEqual(["Shopify product soldes_48h=false (warehouse sale compare-at)"]);
+  });
+
+  it("clears soldes_48h when the only discounted size is sold out", async () => {
+    mockedGraphQL
+      .mockResolvedValueOnce(
+        productState("true", [
+          { delivery: null, price: "260.00", compare: null, qty: 1 },
+          { delivery: "true", price: "149.00", compare: "319.00", qty: 0 },
         ])
       )
       .mockResolvedValueOnce({ data: { metafieldsSet: { userErrors: [] } } });
@@ -135,6 +151,7 @@ describe("reconcileProductSoldes48hMetafields", () => {
                   {
                     id: "gid://shopify/ProductVariant/11",
                     availableForSale: true,
+                    inventoryQuantity: 1,
                     price: "129.00",
                     compareAtPrice: null,
                   },
@@ -151,6 +168,7 @@ describe("reconcileProductSoldes48hMetafields", () => {
                   {
                     id: "gid://shopify/ProductVariant/22",
                     availableForSale: true,
+                    inventoryQuantity: 2,
                     price: "90.00",
                     compareAtPrice: "140.00",
                   },

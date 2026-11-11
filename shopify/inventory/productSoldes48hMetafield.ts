@@ -2,8 +2,8 @@
  * Product metafield `custom.soldes_48h` (boolean) — theme SALES badge.
  *
  * Set when a warehouse sale is applied to an in-stock size
- * (`custom.delivery_48h` + compare-at above price). Cleared on reprice
- * when that reduction is gone, even if the size is still in stock.
+ * (`custom.delivery_48h` + on-hand qty + compare-at above price). Cleared on
+ * reprice, and when the only discounted size is sold out.
  * Stock alone does not keep the badge. Tag `soldes-48h` is removed with it.
  *
  * Idempotent: writes only when the product-level value differs.
@@ -27,6 +27,7 @@ query ProductSoldes48h($id: ID!) {
       nodes {
         price
         compareAtPrice
+        inventoryQuantity
         delivery48h: metafield(namespace: "custom", key: "delivery_48h") { value }
       }
     }
@@ -73,13 +74,25 @@ export function hasRealDiscount(
 type SoldesVariantNode = {
   price?: string | null;
   compareAtPrice?: string | null;
+  inventoryQuantity?: number | null;
   delivery48h?: { value: string | null } | null;
 };
 
-/** Warehouse sale still on this size: delivery_48h and compare-at above price. */
+/** On-hand units. A sold-out size (qty 0) does not keep the SALES badge. */
+export function variantHasStock(variant: SoldesVariantNode | null | undefined): boolean {
+  if (!variant) return false;
+  if (typeof variant.inventoryQuantity === "number") return variant.inventoryQuantity > 0;
+  return false;
+}
+
+/** Warehouse sale still on an in-stock size: qty, delivery_48h, compare-at above price. */
 export function variantKeepsSoldesBadge(variant: SoldesVariantNode | null | undefined): boolean {
   if (!variant) return false;
-  return isTrue(variant.delivery48h?.value) && hasRealDiscount(variant.price, variant.compareAtPrice);
+  return (
+    variantHasStock(variant) &&
+    isTrue(variant.delivery48h?.value) &&
+    hasRealDiscount(variant.price, variant.compareAtPrice)
+  );
 }
 
 function hasSoldesTag(tags: string[] | null | undefined): boolean {
@@ -193,7 +206,7 @@ query ReconcileSoldes48h($cursor: String) {
       tags
       soldes: metafield(namespace: "custom", key: "soldes_48h") { value }
       variants(first: 40) {
-        nodes { id availableForSale price compareAtPrice }
+        nodes { id availableForSale inventoryQuantity price compareAtPrice }
       }
     }
   }
@@ -209,6 +222,7 @@ type ReconcileNode = {
     nodes: Array<{
       id: string;
       availableForSale: boolean;
+      inventoryQuantity: number | null;
       price: string | null;
       compareAtPrice: string | null;
     }>;
@@ -263,7 +277,10 @@ export async function reconcileProductSoldes48hMetafields(options?: {
       if (!isTrue(p.soldes?.value)) continue;
       scanned += 1;
       const stillOnSale = (p.variants?.nodes ?? []).some(
-        (v) => v.availableForSale && hasRealDiscount(v.price, v.compareAtPrice)
+        (v) =>
+          (v.inventoryQuantity ?? 0) > 0 &&
+          v.availableForSale !== false &&
+          hasRealDiscount(v.price, v.compareAtPrice)
       );
       if (stillOnSale) continue;
       try {
