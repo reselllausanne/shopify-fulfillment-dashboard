@@ -157,7 +157,13 @@ export async function loadOrderLines(orderName: string, cache: Cache): Promise<C
   return lines;
 }
 
-async function lineAlreadyBought(lineItemId: string): Promise<string | null> {
+/**
+ * 'bought'    → live StockX order linked.
+ * 'cancelled' → linked StockX order was cancelled: only the rebuy sweep may touch it
+ *               (open queue must skip it, or the same line is queued twice).
+ * 'none'      → never linked.
+ */
+export async function lineLinkState(lineItemId: string): Promise<"bought" | "cancelled" | "none"> {
   const ids = [lineItemId, lineItemId.replace(/\D/g, "")].filter(Boolean);
   const hit = await prisma.orderMatch.findFirst({
     where: {
@@ -167,11 +173,14 @@ async function lineAlreadyBought(lineItemId: string): Promise<string | null> {
     },
     select: { stockxOrderNumber: true, stockxStatus: true },
   });
-  if (!hit?.stockxOrderNumber?.trim()) return null;
-  const st = String(hit.stockxStatus ?? "").toUpperCase();
-  // A cancelled StockX order is not "bought": the rebuy sweep owns it.
-  if (st.includes("CANCEL") || st.includes("REFUND")) return null;
-  return hit.stockxOrderNumber.trim();
+  if (!hit?.stockxOrderNumber?.trim()) return "none";
+  return isCancelledStatus(hit.stockxStatus) ? "cancelled" : "bought";
+}
+
+/** Pure. */
+export function isCancelledStatus(status: string | null | undefined): boolean {
+  const st = String(status ?? "").toUpperCase();
+  return st.includes("CANCEL") || st.includes("REFUND");
 }
 
 export type BuildOpts = {
@@ -256,7 +265,7 @@ export async function buildShopifyJobs(opts: BuildOpts): Promise<ShopifyJob[]> {
       if (line.skip) continue;
       const nb = isClearlyNotStockxBuyable({ title: line.title, sku: line.sku });
       if (nb.notBuyable) continue;
-      if (line.lineItemId && (await lineAlreadyBought(line.lineItemId))) continue;
+      if (line.lineItemId && (await lineLinkState(line.lineItemId)) !== "none") continue;
       if (!line.sizeEU) continue;
       const slug = line.sku ? await urlKeyForSku(line.sku) : null;
       if (!slug) continue;

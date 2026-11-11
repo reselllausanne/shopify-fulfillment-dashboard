@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/app/lib/prisma", () => ({ prisma: {} }));
 
-import { EMPTY_LINES_TTL_MS, cacheEntryFresh, normName, orderIsBuyable, skuCandidates } from "@/lib/stockxBuyer/shopifyQueue";
+import { EMPTY_LINES_TTL_MS, cacheEntryFresh, isCancelledStatus, normName, orderIsBuyable, skuCandidates } from "@/lib/stockxBuyer/shopifyQueue";
 
 describe("skuCandidates", () => {
   it("tries the full colour-coded style id first, then shorter prefixes", () => {
@@ -46,5 +46,14 @@ describe("cacheEntryFresh", () => {
     expect(cacheEntryFresh({ at: 0, lines: [] }, 1000)).toBe(true);
     expect(cacheEntryFresh({ at: 0, lines: [] }, EMPTY_LINES_TTL_MS + 1)).toBe(false);
     expect(cacheEntryFresh(undefined, 0)).toBe(false);
+  });
+});
+
+describe("isCancelledStatus", () => {
+  it("cancelled and refunded StockX orders belong to the rebuy sweep", () => {
+    expect(isCancelledStatus("CANCELLED")).toBe(true);
+    expect(isCancelledStatus("Order Refunded")).toBe(true);
+    expect(isCancelledStatus("SHIPPED")).toBe(false);
+    expect(isCancelledStatus(null)).toBe(false);
   });
 });

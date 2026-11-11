@@ -151,7 +151,7 @@ async function halt(rt: Runtime, reason: string): Promise<void> {
   rt.counters.halts += 1;
   log(`HALT ${reason}`);
   if (!rt.cfg.dryRun) await haltBuyer(reason);
-  await postSlack(`:octagonal_sign: StockX buyer HALT: ${reason}`).catch(() => false);
+  if (!rt.cfg.dryRun) await postSlack(`:octagonal_sign: StockX buyer HALT: ${reason}`).catch(() => false);
 }
 
 /** Learn from a failure and apply the playbook remedy. Never throws. */
@@ -177,7 +177,7 @@ async function learn(rt: Runtime, key: string, out: JobOutcome): Promise<void> {
       const last = rt.escalated.get(e.signature) ?? 0;
       if (Date.now() - last > 3600_000) {
         rt.escalated.set(e.signature, Date.now());
-        await postSlack(`:mag: StockX buyer: unknown failure x${e.count}: ${e.signature}\nsample: ${e.sampleDetail ?? ""}`).catch(
+        if (!rt.cfg.dryRun) await postSlack(`:mag: StockX buyer: unknown failure x${e.count}: ${e.signature}\nsample: ${e.sampleDetail ?? ""}`).catch(
           () => false
         );
       }
@@ -245,7 +245,7 @@ async function goatHold(
     holdMinutes: Math.round(rt.cfg.goatHoldMs / 60_000),
   });
   log(text.replace(/\n/g, " | "));
-  await postSlack(`:moneybag: ${text}`).catch(() => false);
+  if (!rt.cfg.dryRun) await postSlack(`:moneybag: ${text}`).catch(() => false);
   return true;
 }
 
