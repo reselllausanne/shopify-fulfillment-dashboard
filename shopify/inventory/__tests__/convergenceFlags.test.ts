@@ -355,6 +355,7 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
       return vars?.variants?.[0]?.price === "49.00" && vars?.variants?.[0]?.compareAtPrice == null;
     })).toBe(true);
     expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", false);
+    expect(mockedGraphQL.mock.calls.some((c) => String(c[0]).includes("soldes_48h"))).toBe(true);
     expect(result.changes.some((c) => c.includes("67"))).toBe(false);
   });
 
@@ -409,6 +410,7 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
       return vars?.variants?.[0]?.price === "129.00" && vars?.variants?.[0]?.compareAtPrice == null;
     })).toBe(true);
     expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", false);
+    expect(mockedGraphQL.mock.calls.some((c) => String(c[0]).includes("soldes_48h"))).toBe(true);
     expect(result.changes.some((c) => c.includes("89"))).toBe(false);
   });
 
@@ -463,6 +465,7 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
       return vars?.variants?.[0]?.price === "99.00";
     })).toBe(true);
     expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", false);
+    expect(mockedGraphQL.mock.calls.some((c) => String(c[0]).includes("soldes_48h"))).toBe(true);
     expect(result.changes.some((c) => c.includes("169"))).toBe(false);
   });
 

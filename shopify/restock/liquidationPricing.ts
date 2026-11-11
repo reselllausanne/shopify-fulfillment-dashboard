@@ -18,6 +18,7 @@ import {
 } from "@/shopify/restock/liquidationExpressPrice";
 import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 import { resolvePhysicalCatalogIdentity } from "@/galaxus/jobs/physicalCatalogHydrate";
+import { syncProductSoldes48hMetafield } from "@/shopify/inventory/productSoldes48hMetafield";
 
 const METAFIELD_SET_MUTATION = /* GraphQL */ `
 mutation LiqSetMetafield($metafields: [MetafieldsSetInput!]!) {
@@ -227,6 +228,9 @@ export async function applyLiquidationSaleDisplay(input: {
   } catch (err: any) {
     warnings.push(`express_price metafield failed: ${err?.message ?? err}`);
   }
+
+  // Same hook reprice uses to clear the badge: sale on → soldes_48h true.
+  await syncProductSoldes48hMetafield(input.variant.productId, [], warnings);
 
   return { applied: true, referencePrice: reference, salePrice, warnings };
 }

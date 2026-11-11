@@ -1,35 +1,32 @@
 /**
- * Product metafield `custom.soldes_48h` (boolean).
+ * Product metafield `custom.soldes_48h` (boolean) — theme SALES badge.
  *
- * Legacy soldes flag the FullStack theme still reads to render the "SALES"
- * promotional picto on the product card / PDP. The soldes system moved to the
- * variant metafield `custom.delivery_48h` (+ product `custom.physical_in_stock`),
- * but nothing kept `soldes_48h` in sync — so a pair that was once on soldes and
- * later sold out kept `soldes_48h=true` and showed a stuck SALES badge.
- *
- * Rule (link to OUR stock): soldes_48h(product) = true iff ANY variant has
- * `custom.delivery_48h=true`. delivery_48h is itself stock-linked (convergence
- * sets it only with a real liquidation lock + physical qty > 0, and clears it
- * when physical hits 0), so soldes_48h follows local stock automatically.
+ * Set when a warehouse sale is applied to an in-stock size
+ * (`custom.delivery_48h` + compare-at above price). Cleared on reprice
+ * when that reduction is gone, even if the size is still in stock.
+ * Stock alone does not keep the badge. Tag `soldes-48h` is removed with it.
  *
  * Idempotent: writes only when the product-level value differs.
  */
-import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL, type ShopifyGraphQLResult } from "@/lib/shopifyAdmin";
-import { PHYSICAL_LOCATIONS } from "@/shopify/inventory/locationConfig";
 
 export const PRODUCT_SOLDES_48H_METAFIELD = {
   namespace: "custom",
   key: "soldes_48h",
 } as const;
 
+export const SOLDES_48H_TAG = "soldes-48h";
+
 const PRODUCT_SOLDES_QUERY = /* GraphQL */ `
 query ProductSoldes48h($id: ID!) {
   product(id: $id) {
     id
+    tags
     soldes: metafield(namespace: "custom", key: "soldes_48h") { value }
     variants(first: 100) {
       nodes {
+        price
+        compareAtPrice
         delivery48h: metafield(namespace: "custom", key: "delivery_48h") { value }
       }
     }
@@ -45,8 +42,48 @@ mutation SetProductSoldes48h($metafields: [MetafieldsSetInput!]!) {
 }
 `;
 
+const TAGS_REMOVE_MUTATION = /* GraphQL */ `
+mutation RemoveSoldes48hTag($id: ID!, $tags: [String!]!) {
+  tagsRemove(id: $id, tags: $tags) {
+    userErrors { field message }
+  }
+}
+`;
+
 function isTrue(raw: string | null | undefined): boolean {
   return String(raw ?? "").trim().toLowerCase() === "true";
+}
+
+function money(value: string | number | null | undefined): number | null {
+  if (value == null || value === "") return null;
+  const n = typeof value === "number" ? value : Number.parseFloat(String(value));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** compare-at is a real markdown, not merely present. */
+export function hasRealDiscount(
+  price: string | number | null | undefined,
+  compareAt: string | number | null | undefined
+): boolean {
+  const p = money(price);
+  const c = money(compareAt);
+  return p != null && c != null && c > p && c > 0;
+}
+
+type SoldesVariantNode = {
+  price?: string | null;
+  compareAtPrice?: string | null;
+  delivery48h?: { value: string | null } | null;
+};
+
+/** Warehouse sale still on this size: delivery_48h and compare-at above price. */
+export function variantKeepsSoldesBadge(variant: SoldesVariantNode | null | undefined): boolean {
+  if (!variant) return false;
+  return isTrue(variant.delivery48h?.value) && hasRealDiscount(variant.price, variant.compareAtPrice);
+}
+
+function hasSoldesTag(tags: string[] | null | undefined): boolean {
+  return (tags ?? []).some((tag) => String(tag).toLowerCase() === SOLDES_48H_TAG);
 }
 
 async function resolveProductIdFromVariantId(variantId: string): Promise<string | null> {
@@ -81,9 +118,20 @@ export async function writeProductSoldes48h(productId: string, enabled: boolean)
   if (ue.length) throw new Error(ue.map((e) => e.message).join("; "));
 }
 
+async function removeSoldesTag(productId: string): Promise<void> {
+  const { errors, data } = await shopifyGraphQL<{
+    tagsRemove: { userErrors: Array<{ message: string }> };
+  }>(TAGS_REMOVE_MUTATION, { id: productId, tags: [SOLDES_48H_TAG] });
+  if (errors?.length) throw new Error(errors.map((e) => e.message).join("; "));
+  const ue = data?.tagsRemove?.userErrors ?? [];
+  if (ue.length) throw new Error(ue.map((e) => e.message).join("; "));
+}
+
 /**
- * Sync product `custom.soldes_48h` from variant `custom.delivery_48h` (OR).
- * Diff-only. Non-throwing: pushes issues into `warnings`.
+ * Sync product `custom.soldes_48h` from live warehouse sale prices.
+ * True only while some variant still has delivery_48h and compare-at > price.
+ * Reprice (compare-at cleared or no longer above price) turns it off and
+ * drops tag soldes-48h. Diff-only. Non-throwing: pushes issues into `warnings`.
  */
 export async function syncProductSoldes48hMetafield(
   productId: string,
@@ -94,8 +142,9 @@ export async function syncProductSoldes48hMetafield(
   try {
     const { data, errors } = await shopifyGraphQL<{
       product: {
+        tags: string[] | null;
         soldes: { value: string | null } | null;
-        variants: { nodes: Array<{ delivery48h: { value: string | null } | null }> };
+        variants: { nodes: SoldesVariantNode[] };
       } | null;
     }>(PRODUCT_SOLDES_QUERY, { id: productId });
     if (errors?.length) throw new Error(errors.map((e) => e.message).join("; "));
@@ -103,10 +152,16 @@ export async function syncProductSoldes48hMetafield(
     if (!product) return;
 
     const current = isTrue(product.soldes?.value);
-    const want = (product.variants?.nodes ?? []).some((v) => isTrue(v.delivery48h?.value));
+    const want = (product.variants?.nodes ?? []).some((v) => variantKeepsSoldesBadge(v));
     if (current !== want) {
       await writeProductSoldes48h(productId, want);
-      changes.push(`Shopify product soldes_48h=${want ? "true" : "false"} (any variant delivery_48h)`);
+      changes.push(
+        `Shopify product soldes_48h=${want ? "true" : "false"} (warehouse sale compare-at)`
+      );
+    }
+    if (!want && hasSoldesTag(product.tags)) {
+      await removeSoldesTag(productId);
+      changes.push(`Shopify tag ${SOLDES_48H_TAG} removed`);
     }
   } catch (err: any) {
     warnings.push(`Shopify soldes_48h metafield failed: ${err?.message ?? err}`);
@@ -127,9 +182,7 @@ export async function syncProductSoldes48hForVariant(
   }
 }
 
-// Cheap sweep query: variant IDs only (no per-variant metafields). Physical
-// stock is resolved from the DB mirror, so we never pay Shopify query cost for
-// delivery_48h across the whole soldes set (that read throttles hard).
+// Sweep reads price / compare-at / availability only — no per-variant metafields.
 const RECONCILE_SOLDES_QUERY = /* GraphQL */ `
 query ReconcileSoldes48h($cursor: String) {
   products(first: 10, after: $cursor, query: "metafields.custom.soldes_48h:true") {
@@ -137,8 +190,11 @@ query ReconcileSoldes48h($cursor: String) {
     nodes {
       id
       handle
+      tags
       soldes: metafield(namespace: "custom", key: "soldes_48h") { value }
-      variants(first: 40) { nodes { id } }
+      variants(first: 40) {
+        nodes { id availableForSale price compareAtPrice }
+      }
     }
   }
 }
@@ -147,8 +203,16 @@ query ReconcileSoldes48h($cursor: String) {
 type ReconcileNode = {
   id: string;
   handle: string;
+  tags: string[] | null;
   soldes: { value: string | null } | null;
-  variants: { nodes: Array<{ id: string }> };
+  variants: {
+    nodes: Array<{
+      id: string;
+      availableForSale: boolean;
+      price: string | null;
+      compareAtPrice: string | null;
+    }>;
+  };
 };
 type ReconcileResponse = {
   products: {
@@ -156,21 +220,6 @@ type ReconcileResponse = {
     nodes: ReconcileNode[];
   };
 };
-
-/** Physical on-hand qty across express/soldes-capable locations for a variant set. */
-async function physicalQtyForVariantIds(variantIds: string[]): Promise<number> {
-  if (variantIds.length === 0) return 0;
-  const physIds = PHYSICAL_LOCATIONS.map((l) => l.id);
-  const rows = await prisma.$queryRaw<Array<{ qty: number }>>`
-    SELECT COALESCE(SUM(s."available"), 0)::int AS qty
-    FROM "public"."ShopifyVariantLocationStock" s
-    WHERE s."shopifyVariantId" = ANY(${variantIds}::text[])
-      AND s."sourceType" = 'physical'
-      AND s."locationId" = ANY(${physIds}::text[])
-      AND s."available" > 0
-  `;
-  return Number(rows[0]?.qty ?? 0);
-}
 
 export type ReconcileSoldes48hResult = {
   scanned: number;
@@ -182,8 +231,8 @@ export type ReconcileSoldes48hResult = {
 
 /**
  * Full sweep over products currently flagged `custom.soldes_48h:true`.
- * Clears the flag when no variant has delivery_48h=true (i.e. no live soldes
- * stock). Idempotent; dry-run supported.
+ * Clears the flag when no in-stock variant still has compare-at > price
+ * (repriced, or the discounted size sold out). Idempotent; dry-run supported.
  */
 export async function reconcileProductSoldes48hMetafields(options?: {
   dryRun?: boolean;
@@ -213,11 +262,15 @@ export async function reconcileProductSoldes48hMetafields(options?: {
     for (const p of conn.nodes) {
       if (!isTrue(p.soldes?.value)) continue;
       scanned += 1;
-      const variantIds = (p.variants?.nodes ?? []).map((v) => v.id).filter(Boolean);
-      const physicalQty = await physicalQtyForVariantIds(variantIds);
-      if (physicalQty > 0) continue; // still holds local stock — keep soldes as-is
+      const stillOnSale = (p.variants?.nodes ?? []).some(
+        (v) => v.availableForSale && hasRealDiscount(v.price, v.compareAtPrice)
+      );
+      if (stillOnSale) continue;
       try {
-        if (!dryRun) await writeProductSoldes48h(p.id, false);
+        if (!dryRun) {
+          await writeProductSoldes48h(p.id, false);
+          if (hasSoldesTag(p.tags)) await removeSoldesTag(p.id);
+        }
         cleared += 1;
         if (sample.length < 50) sample.push(p.handle);
       } catch {

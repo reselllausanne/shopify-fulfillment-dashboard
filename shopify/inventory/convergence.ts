@@ -503,6 +503,8 @@ export async function convergeVariant(
         `${fixedPriceRule.label} — physical=0, express/48h off, normal price kept`
       );
     }
+    // Reprice off soldes: compare-at is gone. Drop the SALES metafield too.
+    await syncProductSoldes48hMetafield(shopifyVariant.productId, changes, warnings);
     return {
       gtin: cleanGtin,
       physicalQty,
@@ -611,6 +613,7 @@ export async function convergeVariant(
 
     // Never keep soldes-48h on fixed retail stock.
     await syncBussignyDelivery48h(shopifyVariant, cleanGtin, false, changes, warnings);
+    await syncProductSoldes48hMetafield(shopifyVariant.productId, changes, warnings);
 
     return {
       gtin: cleanGtin,
@@ -979,8 +982,8 @@ export async function convergeVariant(
     warnings.push(...expressSync.warnings);
   }
 
-  // Product-level SALES badge (custom.soldes_48h) follows variant delivery_48h.
-  // Cleared automatically when the last soldes unit sells (delivery_48h=false).
+  // SALES badge follows a live warehouse reduction. Reprice (compare-at
+  // cleared or no longer above price) turns custom.soldes_48h off.
   if (shopifyVariant?.productId) {
     await syncProductSoldes48hMetafield(shopifyVariant.productId, changes, warnings);
   }
