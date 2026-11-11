@@ -8,6 +8,7 @@ import { runStockPriceSync } from "@/galaxus/jobs/stockSync";
 import { runStxPriceStockRefresh, runStxSync } from "@/galaxus/jobs/stxSync";
 import { claimJob, completeJob, failJob } from "@/galaxus/jobs/queue";
 import { runOpsJob } from "@/galaxus/ops/jobRunner";
+import { startStxSnapshotReconcileLoop } from "@/galaxus/ops/stxSnapshotReconcile";
 import {
   OPS_GLD_REFRESH_JOB,
   OPS_IMAGE_SYNC_JOB,
@@ -33,6 +34,7 @@ async function run() {
     "http://127.0.0.1:3000";
 
   console.info(`[ops-background-worker] start ${workerId} poll=${pollMs}ms`);
+  startStxSnapshotReconcileLoop(defaultOrigin);
 
   for (;;) {
     let claimed = false;
