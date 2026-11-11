@@ -61,6 +61,7 @@ import { isClearlyNotStockxBuyable } from "@/lib/stockxAutoCheckout/nonStockxBuy
 import {
   MAX_ALL_IN_CHF,
   SHOPIFY_MAX_ALL_IN_CHF,
+  MAX_LOSS_PCT,
   type StockxDesiredLane,
   type StockxLaneCard,
   type StockxLaneLabel,
@@ -838,7 +839,7 @@ export async function selectAndVerifyStockxLane(
       const sub = extractCheckoutSubtotalChf(body);
       if (sub != null) {
         const m1 = laneMarginPct(options.sellChf, sub);
-        if (m1 < 0) {
+        if (m1 < -MAX_LOSS_PCT) {
           return {
             ok: false,
             reason: "margin_abort",

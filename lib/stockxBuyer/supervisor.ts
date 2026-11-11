@@ -117,7 +117,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SupervisorC
     ),
     onlyOrders: null,
     batchSize: Math.floor(num(env.STOCKX_BUYER_BATCH, 5)),
-    galaxusPerCycle: Math.floor(num(env.STOCKX_BUYER_GALAXUS_PER_CYCLE, 16)),
+    galaxusPerCycle: Math.floor(num(env.STOCKX_BUYER_GALAXUS_PER_CYCLE, 40)),
     maxAllInChf: num(env.STOCKX_BUYER_MAX_ALL_IN_CHF, 1_000_000),
     idleMs: num(env.STOCKX_BUYER_IDLE_MS, 60_000),
     rebuyEveryMs: num(env.STOCKX_BUYER_REBUY_EVERY_MS, 15 * 60_000),

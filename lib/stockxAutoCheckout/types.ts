@@ -4,6 +4,14 @@ export const MAX_ALL_IN_CHF = 250;
  * Real gate is marginOk (sale >= live total); this is only a sanity ceiling.
  */
 export const SHOPIFY_MAX_ALL_IN_CHF = 1500;
+/**
+ * Max accepted loss vs the customer sale price (Shopify + Galaxus), as a fraction of the sale.
+ * 0.10 = buy when all-in <= sale * 1.10. Env STOCKX_MAX_LOSS_PCT (0..0.25).
+ */
+export const MAX_LOSS_PCT = (() => {
+  const n = Number(process.env.STOCKX_MAX_LOSS_PCT ?? 0.1);
+  return Number.isFinite(n) ? Math.min(0.25, Math.max(0, n)) : 0.1;
+})();
 
 export type StockxDesiredLane = "STANDARD" | "EXPRESS";
 
