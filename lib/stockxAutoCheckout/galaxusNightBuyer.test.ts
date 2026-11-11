@@ -22,13 +22,21 @@ describe("night buyer lane rule", () => {
     const r = chooseLaneByGalaxusNoLoss(186.13, [lane("STANDARD", 152), lane("EXPRESS", 153.1)]);
     expect(r.ok && r.lane.label).toBe("EXPRESS");
   });
-  it("Standard when Express loses but Standard loss <= 5%", () => {
+  it("Standard when Express loses but Standard loss <= max loss", () => {
     const r = chooseLaneByGalaxusNoLoss(100, [lane("STANDARD", 104), lane("EXPRESS", 120)]);
     expect(r.ok && r.lane.label).toBe("STANDARD");
   });
-  it("aborts when Standard loses more than 5%", () => {
-    const r = chooseLaneByGalaxusNoLoss(100, [lane("STANDARD", 106.7), lane("EXPRESS", 120)]);
+  it("aborts when both lanes lose more than the max loss (10%)", () => {
+    const r = chooseLaneByGalaxusNoLoss(100, [lane("STANDARD", 111), lane("EXPRESS", 120)]);
     expect(r.ok).toBe(false);
+  });
+  it("accepts Standard at 7% loss (within 10%)", () => {
+    const r = chooseLaneByGalaxusNoLoss(100, [lane("STANDARD", 107), lane("EXPRESS", 120)]);
+    expect(r.ok && r.lane.label).toBe("STANDARD");
+  });
+  it("falls back to Express when only Express is within 10% loss", () => {
+    const r = chooseLaneByGalaxusNoLoss(100, [lane("STANDARD", 125), lane("EXPRESS", 109)]);
+    expect(r.ok && r.lane.label).toBe("EXPRESS");
   });
   it("Standard-only page buys at no loss", () => {
     const r = chooseLaneByGalaxusNoLoss(106.64, [lane("STANDARD", 88.67)]);

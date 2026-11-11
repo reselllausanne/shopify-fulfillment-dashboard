@@ -506,7 +506,8 @@ describe("subtotal verify", () => {
 describe("marginOk", () => {
   it("requires sale >= total", () => {
     expect(marginOk(100, 86.74)).toBe(true);
-    expect(marginOk(80, 86.74)).toBe(false);
+    expect(marginOk(80, 86.74)).toBe(true); // 8.4% loss, within 10%
+    expect(marginOk(80, 90)).toBe(false); // 12.5% loss
     expect(marginOk(null, 80)).toBe(false);
   });
 });

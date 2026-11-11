@@ -1,6 +1,7 @@
 import { chooseGalaxusDesiredLane } from "@/lib/stockxAutoCheckout/galaxusLanePolicy";
 import {
   MAX_ALL_IN_CHF,
+  MAX_LOSS_PCT,
   type StockxDesiredLane,
   type StockxLaneCard,
   type StockxLaneLabel,
@@ -524,7 +525,7 @@ export function chooseLaneByGalaxusExpressFirst(
 }
 
 /** Standard may lose at most this share of sell price (5 %). Express must not lose. */
-export const GALAXUS_NOLOSS_MAX_STANDARD_LOSS = 0.05;
+export const GALAXUS_NOLOSS_MAX_STANDARD_LOSS = MAX_LOSS_PCT;
 
 /**
  * Galaxus night-buyer lane rule (LIVE checkout cards):
@@ -566,6 +567,14 @@ export function chooseLaneByGalaxusNoLoss(
       ok: true,
       lane: std,
       reason: `noloss_STD margin ${(stdMargin * 100).toFixed(1)}%`,
+    };
+  }
+  // Only Express is within the accepted loss (Standard missing or too dear).
+  if (exp && expMargin != null && expMargin >= -MAX_LOSS_PCT) {
+    return {
+      ok: true,
+      lane: exp,
+      reason: `loss_EXP margin ${(expMargin * 100).toFixed(1)}%`,
     };
   }
   return {
@@ -660,5 +669,5 @@ export function chooseLaneByCsAtMargin(
 /** Shopify auto path: sale ≥ total (not Galaxus 5% CSAT). */
 export function marginOk(saleChf: number | null, totalChf: number | null): boolean {
   if (saleChf == null || totalChf == null) return false;
-  return saleChf + 0.001 >= totalChf;
+  return saleChf * (1 + MAX_LOSS_PCT) + 0.001 >= totalChf;
 }
