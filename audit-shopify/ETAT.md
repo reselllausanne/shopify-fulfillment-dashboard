@@ -91,3 +91,4 @@
 - 16:50 MEMO_ADS_A_NE_JAMAIS_OUBLIER.md créé (règles, faits, pistes, sources, erreurs). À relire avant toute action Ads.
 - 23:50 ads_07/ads_08 : étude par lot Explorer corrigée du biais de sélection (ads_05 §11) ; score de voisinage non prédictif (ads_07). Memo mis à jour.
 - 00:20 ads_09 : enchère marginale + marge (élasticité 0,5-0,7, ROAS marginal 2,3-3,0, POAS par marque, seuil corrigé 4,7-5,1, anomalie 8-10.11). Memo mis à jour.
+- 00:50 cash_01 : leviers mensuels chiffrés, bilan fixes (bank), probe gclid Shopify (journey sans query string), tables banque DB vides. Memo non modifié.
