@@ -86,7 +86,7 @@ async function main() {
   const subject = override ? `[TEST] ${mail.subject}` : mail.subject;
   console.log(`to=${to} lang=${lang} (customer=${line.customerEmail})\nsubject: ${subject}\n\n${mail.text}`);
   if (arg("dry") === "1") return;
-  const res = await getMailer().sendRawEmail({ to, subject, textBody: mail.text, ignoreOverride: true });
+  const res = await getMailer().sendRawEmail({ to, subject, textBody: mail.text, ignoreOverride: true } as any);
   console.log("RESULT", JSON.stringify(res).slice(0, 300));
 }
 
