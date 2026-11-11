@@ -317,6 +317,11 @@ export async function shopifyGraphQL<T>(
     return lastResult as ShopifyGraphQLResult<T>;
   };
 
+  // Default: serialize callers (legacy safe). TURBO reprice sets SHOPIFY_ALLOW_PARALLEL=1
+  // so N in-flight requests can fill the Admin API bucket instead of 1 req/s.
+  if (process.env.SHOPIFY_ALLOW_PARALLEL === "1") {
+    return run();
+  }
   const resultPromise = slot.chain.then(run, run);
   slot.chain = resultPromise.then(
     () => undefined,
