@@ -1,0 +1,18 @@
+---
+description: Un seul Chrome pour les achats StockX. Fermer la page ou le process, jamais en empiler.
+alwaysApply: true
+---
+
+# Un seul Chrome StockX
+
+Le Chrome du Mac (`Google Chrome.app` et ses Google Chrome Helper) n'est pas le buyer. Ne jamais le tuer, ne jamais lancer Playwright dedans.
+
+Le buyer vit sur le VPS, profil `/app/.data/stockx-profile` (Shopify) ou `stockx-profile-galaxus` (Galaxus).
+
+## Pendant un run
+
+- Un seul process Chrome pour ce profil. Pas de warm-daemon plus un cold launch sur le même profil. Ça ouvre la popup « Profile error occurred » et laisse des dizaines de helpers.
+- Une page. Entre deux paires, recharger cette page. Ne pas ouvrir un nouvel onglet ni un nouveau Chrome.
+- Échec (taille, proxy, checkout) : fermer cette page, rouvrir une page dans le même Chrome, réessayer. Pas un nouveau navigateur.
+- Fin du run, crash, ou arrêt demandé : `ctx.close()` puis tuer le Chrome de ce profil. Vérifier qu'il reste 0 process `chrome-linux64/chrome` pour ce `user-data-dir`.
+- Jamais deux buyers en parallèle. Le deuxième se bat pour le profil et ne ferme pas le premier.

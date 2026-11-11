@@ -51,6 +51,8 @@ export type ShopifyBatchBuyItem = {
    * (Express → EXPRESS, else STANDARD). Set explicitly to force a lane.
    */
   ship?: StockxDesiredLane;
+  /** Rebuy over a CANCELLED StockX match (relinks the Shopify line). */
+  allowRebuyOfCancelled?: boolean;
 };
 
 export type ShopifyBatchBuyItemResult = {
@@ -308,10 +310,23 @@ async function ensureWarmSession(): Promise<LiveSession> {
   return session;
 }
 
-async function alreadyMatchedOrder(orderName: string): Promise<string | null> {
+async function alreadyMatchedOrder(
+  orderName: string,
+  lineItemId?: string | null
+): Promise<string | null> {
   const name = orderName.startsWith("#") ? orderName : `#${orderName}`;
+  // Multi-line orders: match the LINE, not the order. Otherwise buying line 1 makes line 2
+  // look "already matched" and the second pair is never bought.
+  const lineId = String(lineItemId ?? "").trim();
+  const ids = lineId ? [lineId, lineId.replace(/\D/g, "")].filter(Boolean) : [];
   const hit = await prisma.orderMatch.findFirst({
-    where: { shopifyOrderName: name, stockxOrderNumber: { not: "" } },
+    where: ids.length
+      ? {
+          shopifyLineItemId: { in: ids },
+          stockxOrderNumber: { not: "" },
+          NOT: { stockxOrderNumber: { startsWith: "pp:" } },
+        }
+      : { shopifyOrderName: name, stockxOrderNumber: { not: "" } },
     select: { stockxOrderNumber: true },
   });
   const n = hit?.stockxOrderNumber?.trim();
@@ -362,7 +377,9 @@ export async function runShopifyBatchBuy(options: {
       const slug = item.slug.trim();
       const sizeEU = item.sizeEU.trim();
 
-      const matched = await alreadyMatchedOrder(orderName);
+      const matched = item.allowRebuyOfCancelled
+        ? null
+        : await alreadyMatchedOrder(orderName, item.lineItemId);
       if (matched) {
         skipped += 1;
         out.push({
@@ -493,6 +510,7 @@ export async function runShopifyBatchBuy(options: {
         maxAllInChf,
         dryRun,
         desiredLane: itemLane,
+        allowRebuyOfCancelled: item.allowRebuyOfCancelled,
         reuse: { ctx: session.ctx, page: session.page },
         skipGoto: true,
       });

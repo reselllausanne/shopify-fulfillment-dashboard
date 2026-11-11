@@ -674,6 +674,14 @@ function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Dead sticky / CONNECT 400 is a transport miss, not a StockX verdict. */
+function isProxyTransportError(err: unknown): boolean {
+  const msg = String((err as { message?: string } | null)?.message || err || "");
+  return /CONNECT tunnel failed|curl: \((?:7|28|56)\)|Proxy CONNECT|ECONNRESET|ETIMEDOUT|socket hang up/i.test(
+    msg
+  );
+}
+
 function stockxProxyEnabled(): boolean {
   if (STOCKX_PROXY_MODE === "off" || STOCKX_PROXY_MODE === "0" || STOCKX_PROXY_MODE === "false") {
     return false;
@@ -1183,9 +1191,23 @@ async function callStockx<T>(
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const useProxy = preferProxy && stockxProxyEnabled();
-      const http = await withStockxRateLimit(() =>
-        useProxy ? stockxPostViaProxy(url, headers, body) : stockxPostDirect(url, headers, body)
-      );
+      let http: StockxHttpResult;
+      try {
+        http = await withStockxRateLimit(() =>
+          useProxy ? stockxPostViaProxy(url, headers, body) : stockxPostDirect(url, headers, body)
+        );
+      } catch (err) {
+        if (useProxy && isProxyTransportError(err) && attempt < maxAttempts) {
+          preferProxy = false;
+          console.warn("[STOCKX] proxy transport failed → direct", {
+            operationName,
+            attempt,
+            error: String((err as { message?: string })?.message || err).slice(0, 180),
+          });
+          continue;
+        }
+        throw err;
+      }
 
       const raw = http.raw;
       const status = http.status;
