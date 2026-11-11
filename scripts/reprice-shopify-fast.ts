@@ -57,12 +57,16 @@ function num(name: string, fallback: number): number {
 
 const APPLY = process.argv.includes("--apply");
 const ONLY_UNPRICED = process.argv.includes("--only-unpriced");
+/** Only variants currently in stock on Shopify (ChannelListingState.lastPushedStock > 0). */
+const ONLY_CLS_STOCK = process.argv.includes("--only-cls-stock");
 const LIMIT = num("limit", 1000);
 const SHARDS = Math.max(1, Math.floor(num("shards", 1)));
 const SHARD = Math.min(SHARDS - 1, Math.floor(num("shard", 0)));
 const SKIP_FRESH_HOURS = num("skip-fresh-hours", 24);
 const MAX_PRICE = num("max-price", 5000);
 const PROGRESS_EVERY = Math.max(1, Math.floor(num("progress-every", 200)));
+/** Parallel Shopify product pipelines (shared rate limiter). Default 1. */
+const CONCURRENCY = Math.max(1, Math.min(12, Math.floor(num("concurrency", 1))));
 /**
  * Only sizes whose DB row changed after the last Shopify write AND whose formula
  * price differs from that write. Newest changes first, capped by --max-products.
@@ -205,7 +209,7 @@ function truthy(v: string | null | undefined): boolean {
 
 async function main() {
   console.log(
-    `${APPLY ? "APPLY" : "DRY-RUN"} | mode=${MODE} | shard ${SHARD}/${SHARDS} | skip-fresh=${VERIFY_BULK ? 0 : SKIP_FRESH_HOURS}h | only-unpriced=${ONLY_UNPRICED} | only-drifted=${ONLY_DRIFTED} | max-price=${MAX_PRICE} | limit=${LIMIT}`
+    `${APPLY ? "APPLY" : "DRY-RUN"} | mode=${MODE} | shard ${SHARD}/${SHARDS} | skip-fresh=${VERIFY_BULK ? 0 : SKIP_FRESH_HOURS}h | only-unpriced=${ONLY_UNPRICED} | only-drifted=${ONLY_DRIFTED} | only-cls-stock=${ONLY_CLS_STOCK} | concurrency=${CONCURRENCY} | max-price=${MAX_PRICE} | limit=${LIMIT}`
   );
   const startedAt = Date.now();
 
@@ -279,6 +283,7 @@ async function main() {
       AND COALESCE(sv."standardBuyPrice", sv.price) > 0
       AND sss."syncStatus" = 'synced'
       AND sss."shopifyProductId" IS NOT NULL
+      ${ONLY_CLS_STOCK ? `AND cls."lastPushedStock" > 0` : ""}
       ${shardClause}
       ${skipFreshClause}
       ${onlyUnpricedClause}
@@ -332,6 +337,7 @@ async function main() {
       AND COALESCE(sv."standardBuyPrice", sv.price) > 0
       AND sss."syncStatus" = 'synced'
       AND sss."shopifyProductId" IS NOT NULL
+      ${ONLY_CLS_STOCK ? `AND cls."lastPushedStock" > 0` : ""}
       ${shardClause}
       ${pendingSkipFresh}
       ${pendingOnlyUnpriced}
@@ -415,7 +421,10 @@ async function main() {
   let variantsAdminOnly = 0;
   let productErrors = 0;
 
-  for (const [rawProductId, bucket] of byProduct) {
+  const productEntries = Array.from(byProduct.entries());
+  let nextIdx = 0;
+
+  async function processOne(rawProductId: string, bucket: { byBarcode: Map<string, Row>; rows: Row[] }) {
     const productGid = toProductGid(rawProductId);
     let productData: {
       product: {
@@ -438,7 +447,7 @@ async function main() {
       const fromSnapshot = snapshotNodes.get(productGid);
       if (!fromSnapshot) {
         productsMissingInSnapshot += 1;
-        continue;
+        return;
       }
       productData = { product: { id: productGid, variants: { pageInfo: { hasNextPage: false }, nodes: fromSnapshot } } };
     } else {
@@ -461,7 +470,7 @@ async function main() {
       } catch (err) {
         productErrors += 1;
         console.error(`  product ${productGid} query failed:`, err instanceof Error ? err.message : err);
-        continue;
+        return;
       }
     }
 
@@ -507,7 +516,7 @@ async function main() {
       const idx = freeNodes.findIndex((n) => n.id === hit.id);
       if (idx >= 0) freeNodes.splice(idx, 1);
       pairings.push({ row, node: hit, via: "size" });
-      variantsMatchedBySize += 1;
+      variantsMatchedBySize += 1; // single-threaded interleaving OK for +=
     }
 
     for (const { row, node, via } of pairings) {
@@ -608,7 +617,7 @@ async function main() {
 
     if (bulkVariants.length === 0) {
       productsDone += 1;
-      continue;
+      return;
     }
 
     if (!APPLY) {
@@ -619,7 +628,7 @@ async function main() {
           `  [dry] ${productsDone} products, would push ${variantsPushed} variants (size-fallback ${variantsMatchedBySize})`
         );
       }
-      continue;
+      return;
     }
 
     try {
@@ -634,7 +643,7 @@ async function main() {
     } catch (err) {
       productErrors += 1;
       console.error(`  product ${productGid} bulk update failed:`, err instanceof Error ? err.message : err);
-      continue;
+      return;
     }
 
     for (let i = 0; i < metafields.length; i += 25) {
@@ -659,6 +668,16 @@ async function main() {
       );
     }
   }
+
+  async function worker() {
+    for (;;) {
+      const i = nextIdx++;
+      if (i >= productEntries.length) return;
+      const [rawProductId, bucket] = productEntries[i]!;
+      await processOne(rawProductId, bucket);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, productEntries.length || 1) }, () => worker()));
 
   console.log(
     `\nRESUME shard ${SHARD}/${SHARDS}: products=${productsDone} pushedVariants=${variantsPushed} matchedBySize=${variantsMatchedBySize} unchanged=${variantsUnchanged} locked=${variantsLocked} adminOnly=${variantsAdminOnly} ceiling=${variantsCeiling} noMatch=${variantsNoMatch} productErrors=${productErrors}${
