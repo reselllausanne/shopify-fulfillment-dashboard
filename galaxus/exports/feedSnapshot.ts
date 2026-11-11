@@ -9,7 +9,9 @@ import { enqueueOpsBackgroundJob } from "@/galaxus/ops/enqueueOpsBackgroundJob";
 import { runOpsJob } from "@/galaxus/ops/jobRunner";
 import { OPS_SNAPSHOT_REBUILD_JOB } from "@/galaxus/ops/opsBackgroundJobs";
 import { reconcileDeletedKeysByBucket } from "@/galaxus/exports/snapshotDeleteReconcile";
-import { applySnapshotDiff } from "@/galaxus/exports/snapshotDiffApply";
+import { applySnapshotDiff, useDiffSnapshotRebuild } from "@/galaxus/exports/snapshotDiffApply";
+
+export { useDiffSnapshotRebuild };
 import {
   clearSnapshotLocalCache,
   readSnapshotLocalCache,
@@ -216,15 +218,6 @@ async function bulkReplaceSnapshotRows(params: {
       })
     );
   }
-}
-
-/**
- * Diff-apply (default) writes only changed rows and never empties the tables, so the snapshot
- * stays valid during the rebuild. Set GALAXUS_FEED_SNAPSHOT_FULL_REBUILD=1 for the legacy
- * invalidate → delete-all → reinsert path.
- */
-export function useDiffSnapshotRebuild(): boolean {
-  return String(process.env.GALAXUS_FEED_SNAPSHOT_FULL_REBUILD ?? "").trim() !== "1";
 }
 
 async function persistSnapshotRows(params: {

@@ -37,6 +37,15 @@ const ALLOWED_TABLES: ReadonlySet<string> = new Set([
   "GalaxusFeedOfferSnapshot",
 ]);
 
+/**
+ * Diff-apply (default) writes only changed rows and never empties the tables, so the snapshot
+ * stays valid during the rebuild. Set GALAXUS_FEED_SNAPSHOT_FULL_REBUILD=1 for the legacy
+ * invalidate → delete-all → reinsert path.
+ */
+export function useDiffSnapshotRebuild(): boolean {
+  return String(process.env.GALAXUS_FEED_SNAPSHOT_FULL_REBUILD ?? "").trim() !== "1";
+}
+
 export const SNAPSHOT_DIFF_CHUNK_SIZE = 2000;
 const DELETE_CHUNK_SIZE = 2000;
 
