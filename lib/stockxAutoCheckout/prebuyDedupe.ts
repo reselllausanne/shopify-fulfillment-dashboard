@@ -194,11 +194,25 @@ export function sizesCompatible(a: string | null, b: string | null): boolean {
   return Number.isFinite(fa) && Number.isFinite(fb) && Math.abs(fa - fb) < 0.15;
 }
 
+/**
+ * Shopify's "sizeEU" label can be a US size ("11"). StockX list nodes carry the EU title
+ * (localizedSizeTitle) AND the US trait ("11", "8W", "5.5Y"). Match the label against both,
+ * otherwise a US-labelled line never matches its own purchase (=> double buy).
+ */
+export function sizeMatchesUsTrait(label: string | null, usTrait: string | null): boolean {
+  if (!label || !usTrait) return false;
+  const strip = (v: string) => v.replace(/^(?:EU|US)\s*/i, "").replace(/\s*[MWYC]$/i, "").trim();
+  const a = Number(strip(String(label)).replace(",", "."));
+  const b = Number(strip(String(usTrait)).replace(",", "."));
+  return Number.isFinite(a) && Number.isFinite(b) && a > 0 && a < 20 && Math.abs(a - b) < 0.01;
+}
+
 function buyNodeMeta(n: StockxBuyingNode): {
   styleId: string | null;
   urlKey: string | null;
   title: string | null;
   sizeEU: string | null;
+  sizeUs: string | null;
 } {
   const pv = n.productVariant ?? {};
   const product = pv.product ?? {};
@@ -206,6 +220,7 @@ function buyNodeMeta(n: StockxBuyingNode): {
     styleId: product.styleId ? String(product.styleId) : null,
     urlKey: product.urlKey ? String(product.urlKey) : null,
     title: product.title || product.primaryTitle || product.name || null,
+    sizeUs: (pv as any).traits?.size ? String((pv as any).traits.size) : null,
     sizeEU: n.localizedSizeTitle
       ? String(n.localizedSizeTitle)
       : pv.sizeChart?.displayOptions?.[0]?.size
@@ -446,7 +461,7 @@ export async function findUnlinkedStockxMatches(
       if (buyMs && buyMs < sellMs) continue;
       const meta = buyNodeMeta(n);
       if (!productMatchesLine(line, meta.styleId, meta.urlKey)) continue;
-      if (!isOS && !sizesCompatible(sizeEU, meta.sizeEU)) continue;
+      if (!isOS && !sizesCompatible(sizeEU, meta.sizeEU) && !sizeMatchesUsTrait(sizeEU, meta.sizeUs)) continue;
       out.push({
         account: acc.source,
         orderNumber: num,
