@@ -677,7 +677,7 @@ function sleepMs(ms: number): Promise<void> {
 /** Dead sticky / CONNECT 400 is a transport miss, not a StockX verdict. */
 function isProxyTransportError(err: unknown): boolean {
   const msg = String((err as { message?: string } | null)?.message || err || "");
-  return /CONNECT tunnel failed|curl: \((?:7|28|56)\)|Proxy CONNECT|ECONNRESET|ETIMEDOUT|socket hang up/i.test(
+  return /CONNECT tunnel failed|curl: \((?:6|7|18|28|35|52|55|56|97)\)|Proxy CONNECT|ECONNRESET|ETIMEDOUT|socket hang up/i.test(
     msg
   );
 }

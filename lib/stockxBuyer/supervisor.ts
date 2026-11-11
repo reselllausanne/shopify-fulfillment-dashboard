@@ -32,6 +32,7 @@ import { findUnlinkedStockxMatches } from "@/lib/stockxAutoCheckout/prebuyDedupe
 import { precheckStockxBuyability } from "@/lib/stockxAutoCheckout/precheckAvailability";
 import { killChromeForUserDataDir } from "@/lib/stockxBrowserProcess";
 import { postSlack } from "@/lib/stockxAuthAlert";
+import { redactSecrets } from "@/lib/stockxBuyer/redact";
 import { checkGoat, goatAlertText } from "@/lib/stockxBuyer/goatWatch";
 import {
   BUYER_DIR,
@@ -125,7 +126,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SupervisorC
 const DATA_DIR = process.env.NIGHT_BUYER_DATA_DIR || path.join(process.cwd(), ".data");
 const PROFILE_DIRS = [path.join(DATA_DIR, "stockx-profile"), path.join(DATA_DIR, "stockx-profile-galaxus")];
 
-const log = (msg: string) => console.warn(`[STOCKX-BUYER] ${msg}`);
+const log = (msg: string) => console.warn(`[STOCKX-BUYER] ${redactSecrets(msg)}`);
 
 type Counters = { bought: number; verdicts: number; retries: number; halts: number; goatAlerts: number };
 
@@ -147,7 +148,8 @@ async function persistState(rt: Runtime, state: JobState): Promise<void> {
   if (!rt.cfg.dryRun) await appendEvent({ t: Date.now(), ev: "state", state });
 }
 
-async function halt(rt: Runtime, reason: string): Promise<void> {
+async function halt(rt: Runtime, rawReason: string): Promise<void> {
+  const reason = redactSecrets(rawReason);
   rt.counters.halts += 1;
   log(`HALT ${reason}`);
   if (!rt.cfg.dryRun) await haltBuyer(reason);

@@ -12,6 +12,7 @@
  */
 
 import { ImapFlow } from "imapflow";
+import { redactSecrets } from "@/lib/stockxBuyer/redact";
 import { simpleParser } from "mailparser";
 import { prisma } from "@/app/lib/prisma";
 import { buildStockxOrderClaimIndex } from "@/app/lib/stockxCrossChannelClaims";
@@ -572,7 +573,7 @@ export async function runPrebuyDedupeCheck(
   } catch (e: any) {
     return {
       verdict: "SKIP_REASON",
-      detail: `prebuy check failed (fail closed): ${e?.message || e}`,
+      detail: `prebuy check failed (fail closed): ${redactSecrets(String(e?.message || e))}`,
       gmailHits: [],
       stxCandidates: [],
     };

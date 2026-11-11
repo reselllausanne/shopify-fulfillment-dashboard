@@ -1,3 +1,5 @@
+import { redactSecrets } from "@/lib/stockxBuyer/redact";
+
 /**
  * Pure policy for the unified StockX buyer (Shopify + Galaxus).
  * No I/O here: everything is unit-tested in policy.test.ts.
@@ -74,7 +76,7 @@ const SESSION_ROTATE_REASONS = new Set(["proxy_blank", "cf_abort_45s", "cf_no_st
 export function classifyResult(r: RawCheckoutResult): JobOutcome {
   const lane = r.lane ? String(r.lane) : null;
   const reason = String(r.reason ?? "unknown");
-  const detail = r.detail ?? null;
+  const detail = r.detail == null ? null : redactSecrets(r.detail);
 
   if (r.kind === "easy_buy") {
     if (r.stockxOrderNumber) {

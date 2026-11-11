@@ -8,6 +8,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { BUYER_DIR } from "@/lib/stockxBuyer/ledger";
+import { redactSecrets } from "@/lib/stockxBuyer/redact";
 
 export const LEARNINGS_FILE = path.join(BUYER_DIR, "learnings.jsonl");
 
@@ -151,7 +152,7 @@ export function makeLearning(input: {
     remedy: pb?.remedy ?? "none",
     key: input.key,
     reason: input.reason,
-    detail: input.detail ? input.detail.slice(0, 400) : null,
+    detail: input.detail ? redactSecrets(input.detail).slice(0, 400) : null,
   };
 }
 
