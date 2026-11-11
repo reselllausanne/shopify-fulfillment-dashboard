@@ -2,11 +2,8 @@ import { prisma } from "@/app/lib/prisma";
 import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
 import {
   isGalaxusStxSupplierLine,
-  isGalaxusGldSupplierLine,
-  isCrocsLightningMcQueenLine,
   galaxusLineWarehouseStockHint,
 } from "@/galaxus/warehouse/lineInventorySource";
-import { resolveGalaxusBuySourceOverride } from "@/galaxus/warehouse/buySourceOverride";
 import { chooseGalaxusDesiredLane } from "@/lib/stockxAutoCheckout/galaxusLanePolicy";
 import type { StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
 
@@ -115,31 +112,16 @@ export async function resolveGalaxusStxBuyCandidate(input: {
     priceLineAmount?: unknown;
     unitNetPrice?: unknown;
   };
-  /**
-   * Buy every line on StockX, not only STX-supplier lines (NER/WEL/REI feed lines are StockX
-   * products too). Still excluded: Crocs Lightning McQueen, manual buy-source overrides, GLD.
-   */
-  allowNonStxLines?: boolean;
 }): Promise<
   | { ok: true; candidate: GalaxusBuyCandidate }
   | { ok: false; reason: string }
 > {
   const { order, line } = input;
-  if (input.allowNonStxLines) {
-    if (
-      resolveGalaxusBuySourceOverride(line) ||
-      isCrocsLightningMcQueenLine(line) ||
-      isGalaxusGldSupplierLine(line)
-    ) {
-      return { ok: false, reason: "not_stx_line" };
-    }
-  } else {
-    if (!isGalaxusStxSupplierLine(line)) {
-      return { ok: false, reason: "not_stx_line" };
-    }
-    if (galaxusLineWarehouseStockHint(line)) {
-      return { ok: false, reason: "warehouse_stock_hint" };
-    }
+  if (!isGalaxusStxSupplierLine(line)) {
+    return { ok: false, reason: "not_stx_line" };
+  }
+  if (galaxusLineWarehouseStockHint(line)) {
+    return { ok: false, reason: "warehouse_stock_hint" };
   }
 
   const sellChf = galaxusLineNetRevenueChf(line);
@@ -181,15 +163,10 @@ export async function resolveGalaxusStxBuyCandidate(input: {
     const kv = await prisma.kickDBVariant
       .findFirst({
         where: { gtin: { in: gtinLookupVariants(gtin) }, sizeUs: { not: null } },
-        select: { sizeUs: true, product: { select: { urlKey: true, styleId: true } } },
+        select: { sizeUs: true },
       })
       .catch(() => null);
     sizeUsLabel = kv?.sizeUs?.trim() || null;
-    // Non-STX feed lines have no stx_ SupplierVariant: GTIN → KickDB product is the slug source.
-    if (input.allowNonStxLines && kv?.product?.urlKey?.trim()) {
-      slug = kv.product.urlKey.trim();
-      styleId = kv.product.styleId?.trim() || null;
-    }
   }
   if (sv?.supplierVariantId) {
     const mapped = await prisma.variantMapping.findFirst({
@@ -204,8 +181,8 @@ export async function resolveGalaxusStxBuyCandidate(input: {
       },
     });
     if (!sizeUsLabel) sizeUsLabel = mapped?.kickdbVariant?.sizeUs?.trim() || null;
-    slug = mapped?.kickdbVariant?.product?.urlKey?.trim() || slug;
-    styleId = mapped?.kickdbVariant?.product?.styleId?.trim() || styleId;
+    slug = mapped?.kickdbVariant?.product?.urlKey?.trim() || null;
+    styleId = mapped?.kickdbVariant?.product?.styleId?.trim() || null;
   }
 
   if (!slug && (sv?.supplierSku || styleId)) {

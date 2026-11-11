@@ -35,8 +35,6 @@ const STOCKX_PLAUSIBLE_RE =
  * Prefer patterns over one-off SKUs. Extend carefully — streetwear tees CAN be on StockX.
  */
 const NON_STOCKX_PATTERNS: ReadonlyArray<{ re: RegExp; label: string }> = [
-  // Own in-stock apparel (user 2026-11-11, Alo hoodies): never auto-buy on StockX.
-  { re: /\balo\s+yoga\b/i, label: "alo_yoga_in_stock" },
   { re: /\bwatch\s*face\b[\s\S]{0,40}\btee\b|\btee\b[\s\S]{0,40}\bwatch\s*face\b/i, label: "watch_face_tee" },
   { re: /\baudemars\b[\s\S]{0,60}\btee\b|\btee\b[\s\S]{0,60}\baudemars\b/i, label: "audemars_merch_tee" },
   {
