@@ -22,6 +22,8 @@ import {
 } from "@/galaxus/exports/masterSpecsFeed";
 import { loadStxFeedGateProviderKeys } from "@/galaxus/exports/stxFeedGate";
 import { withTransientDbRetry } from "@/galaxus/exports/transientDbRetry";
+import { MasterSpecsDiffWriter } from "@/galaxus/exports/masterSpecsDiffApply";
+import { useDiffSnapshotRebuild } from "@/galaxus/exports/snapshotDiffApply";
 import { loadWelCardOmitProviderKeys } from "@/galaxus/exports/welFeedOmit";
 import { skipGalaxusFeedValidationForTrigger } from "@/galaxus/feedExecutor";
 import { attachAvailableStock } from "@/inventory/availableStock";
@@ -123,8 +125,25 @@ function candidatesFromMappings(
 
 async function insertMasterSnapshotRows(
   rows: Array<Record<string, string>>,
-  now: Date
+  now: Date,
+  diff?: MasterSpecsDiffWriter
 ): Promise<number> {
+  if (diff) {
+    return diff.upsertMaster(
+      rows
+        .map((row) => {
+          const providerKey = String(row.ProviderKey ?? "").trim();
+          if (!providerKey) return null;
+          return {
+            providerKey,
+            gtin: String(row.Gtin ?? "").trim() || null,
+            supplierKey: providerKey.split("_")[0]?.trim() || null,
+            rowJson: normaliseMasterRow(row),
+          };
+        })
+        .filter((v): v is NonNullable<typeof v> => v !== null)
+    );
+  }
   const prismaAny = prisma as any;
   let inserted = 0;
   for (let offset = 0; offset < rows.length; offset += UPSERT_CHUNK_SIZE) {
@@ -154,8 +173,29 @@ async function insertMasterSnapshotRows(
 
 async function insertSpecsSnapshotRows(
   rows: Array<Record<string, string>>,
-  now: Date
+  now: Date,
+  diff?: MasterSpecsDiffWriter
 ): Promise<number> {
+  if (diff) {
+    return diff.upsertSpecs(
+      rows
+        .map((row) => {
+          const providerKey = String(row.ProviderKey ?? "").trim();
+          const specificationKey = String(row.SpecificationKey ?? "").trim();
+          if (!providerKey || !specificationKey) return null;
+          return {
+            providerKey,
+            specificationKey,
+            rowJson: {
+              ProviderKey: providerKey,
+              SpecificationKey: specificationKey,
+              SpecificationValue: String(row.SpecificationValue ?? ""),
+            } as Record<string, string>,
+          };
+        })
+        .filter((v): v is NonNullable<typeof v> => v !== null)
+    );
+  }
   const prismaAny = prisma as any;
   let inserted = 0;
   for (let offset = 0; offset < rows.length; offset += UPSERT_CHUNK_SIZE) {
@@ -231,21 +271,27 @@ export async function rebuildMasterSpecsSnapshot(params?: {
     new Set([...Array.from(masterById.keys()), ...Array.from(specsById.keys())])
   );
 
-  // Invalidate before wipe so a mid-rebuild crash cannot serve truncated tables as ready.
   const prismaAny = prisma as any;
-  await prismaAny.galaxusFeedSnapshotMeta.updateMany({
-    where: { id: SNAPSHOT_META_ID },
-    data: {
-      masterRebuiltAt: null,
-      specsRebuiltAt: null,
-      masterRowCount: 0,
-      specsRowCount: 0,
-    },
-  });
-  await prismaAny.galaxusFeedMasterSnapshot.deleteMany({});
-  await prismaAny.galaxusFeedSpecsSnapshot.deleteMany({});
+  // Diff mode (default): upsert changed rows, sweep dropped keys at the end. Tables are never
+  // emptied, so the snapshot stays ready for uploads during the whole rebuild.
+  // Legacy (GALAXUS_FEED_SNAPSHOT_FULL_REBUILD=1): invalidate, wipe, reinsert everything.
+  const diff = useDiffSnapshotRebuild() ? new MasterSpecsDiffWriter() : undefined;
+  if (!diff) {
+    // Invalidate before wipe so a mid-rebuild crash cannot serve truncated tables as ready.
+    await prismaAny.galaxusFeedSnapshotMeta.updateMany({
+      where: { id: SNAPSHOT_META_ID },
+      data: {
+        masterRebuiltAt: null,
+        specsRebuiltAt: null,
+        masterRowCount: 0,
+        specsRowCount: 0,
+      },
+    });
+    await prismaAny.galaxusFeedMasterSnapshot.deleteMany({});
+    await prismaAny.galaxusFeedSpecsSnapshot.deleteMany({});
+  }
   maybeExposeGc();
-  logHeap("tables-wiped", { unionWinners: unionIds.length });
+  logHeap(diff ? "diff-start" : "tables-wiped", { unionWinners: unionIds.length });
 
   const mergePhysical = isPhysicalMergeEnabled();
   const now = new Date();
@@ -323,8 +369,8 @@ export async function rebuildMasterSpecsSnapshot(params?: {
     }
     masterRows = nextMaster;
 
-    masterRowCount += await insertMasterSnapshotRows(masterRows, now);
-    specsRowCount += await insertSpecsSnapshotRows(specsRows, now);
+    masterRowCount += await insertMasterSnapshotRows(masterRows, now, diff);
+    specsRowCount += await insertSpecsSnapshotRows(specsRows, now, diff);
 
     if (materializeChunks % 10 === 0 || offset + MATERIALIZE_CHUNK_SIZE >= unionIds.length) {
       logHeap("materialize-progress", {
@@ -374,8 +420,8 @@ export async function rebuildMasterSpecsSnapshot(params?: {
       altMaster = altMaster.filter((row) => !blocked.has(String(row.ProviderKey ?? "").trim()));
       altSpecs = altSpecs.filter((row) => !blocked.has(String(row.ProviderKey ?? "").trim()));
     }
-    masterRowCount += await insertMasterSnapshotRows(altMaster, now);
-    specsRowCount += await insertSpecsSnapshotRows(altSpecs, now);
+    masterRowCount += await insertMasterSnapshotRows(altMaster, now, diff);
+    specsRowCount += await insertSpecsSnapshotRows(altSpecs, now, diff);
     console.info("[GALAXUS][FEED][SNAPSHOT][MASTER_SPECS] alternatives", {
       exportable: exportable.length,
       altMaster: altMaster.length,
@@ -395,6 +441,21 @@ export async function rebuildMasterSpecsSnapshot(params?: {
     throw new Error(
       `Refusing to publish empty master/specs snapshot (master=${masterRowCount}, specs=${specsRowCount})`
     );
+  }
+
+  if (diff) {
+    // Scoped rebuilds (single supplier / key list) only emit a subset: never sweep the rest.
+    const scoped = Boolean(supplier) || (providerKeys?.length ?? 0) > 0;
+    const swept = scoped ? { masterDeleted: 0, specsDeleted: 0 } : await diff.sweep();
+    console.info("[GALAXUS][FEED][SNAPSHOT][MASTER_SPECS] diff applied", {
+      masterKeys: diff.seenMaster.size,
+      specsKeys: diff.seenSpecs.size,
+      masterWritten: diff.masterWritten,
+      specsWritten: diff.specsWritten,
+      ...swept,
+    });
+    diff.seenMaster.clear();
+    diff.seenSpecs.clear();
   }
 
   const finishedAt = new Date();
