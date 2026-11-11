@@ -152,3 +152,34 @@ Correction : la cible tROAS de 5 était celle des relevés du 08-29.08 seulement
 Relation empirique coût de pub par commande Shopify / ROAS Google mensuel : ROAS 5,0 ↔ 31 CHF ; 3,9 ↔ 39 ; 3,5 ↔ 34 ; 3,1-3,3 ↔ 44. La contribution avant pub est de 40,3 CHF par commande : le seuil de rentabilité en ROAS Google est ≈ 3,5-3,9.
 
 Quotidien (F, `ads_campaign_daily`) du 20.10 au 10.11 : 7 494 CHF, 19 559 CHF de valeur, ROAS 2,6. 08-10.11 : 0,5 à 1,1, 1 à 2 conversions par jour.
+
+## 10. Explorer contre main : quasi-expérience (F = SQL Supabase en lecture seule, I = interprétation)
+
+Correction : aucune campagne New Balance n'existe. New Balance est dans la campagne `all` (1 787 CHF, 8 387 de valeur, 38 conversions depuis août). La suggestion de fusion NB était fausse.
+
+Produits avec impressions par semaine (F, `ads_product_daily`) : 9 k puis 16 k la semaine du 27.07, avant le premier lot Explorer (07.08), à dépense comparable. 7 468 produits y reçoivent une impression pour la première fois. Explorer n'a donc pas causé la dispersion. Nouveaux paliers semaines du 21 et 28.09.
+
+Population : produits en stock, ELIGIBLE, sans impression du 01.07 au 06.08 et sans conversion Ads en 2026 avant le 07.08. Période mesurée 07.08-10.11. Touché = présent dans `ads_explorer_batch_models`. Non touché = jamais sorti de main. Main = campagnes hors `explorer*` / `long tail*`.
+
+Total (toutes marques) :
+
+| groupe | produits | % avec impressions en main | coût CHF | conv. | valeur CHF | conv. / 1 000 produits |
+|---|---|---|---|---|---|---|
+| non touchés | 22 211 | 82 % | 7 173 | 146,0 | 24 933 | 6,6 |
+| touchés (main + Explorer) | 8 341 | 42 % | 1 255 | 6,8 | ≈ 1 400 | 0,8 |
+
+Par marque, mêmes critères (F) :
+
+| marque | non touchés n | conv./1 000 | touchés n | conv./1 000 | impressions en main (non touchés / touchés) |
+|---|---|---|---|---|---|
+| Nike | 9 392 | 4,9 | 2 290 | 0,9 | 82 % / 48 % |
+| Adidas | 5 983 | 3,7 | 1 645 | 0,8 | 82 % / 39 % |
+| Jordan | 1 981 | 3,1 | 1 733 | 0,3 | 83 % / 34 % |
+| New Balance | 1 632 | 1,8 | 913 | 0,0 | 74 % / 47 % |
+| Asics | 1 078 | 1,4 | 550 | 1,8 | 78 % / 40 % |
+
+Lecture (I) : à taux égal aux non touchés de la même marque, les 5 marques auraient donné ≈ 25 conversions ; observé ≈ 4,8. Écart ≈ 20 conversions en 3 mois, ≈ 3-4 k de valeur. Coût direct d'Explorer + Long Tail : 1 484 CHF pour 2 223 de valeur, ROAS 1,5, sous le seuil 3,5-3,9.
+
+Mécanisme (F, code + tables) : les produits « sous-exposés » après 10 jours sont garés dans `long_tail_all` (≈ 7 300 modèles). Ce label les exclut de l'arbre main. Long Tail Shopping leur donne ≈ 4 impressions par produit. Ils quittent donc main, où 82 % des produits équivalents obtiennent des impressions.
+
+Limites : (1) la sélection Explorer n'est pas aléatoire mais pseudo-aléatoire par marque ; (2) les non touchés incluent des produits avec ventes Shopify 365 j, qu'Explorer exclut, ce qui biaise contre Explorer ; (3) les produits Explorer restent en main moins longtemps ; (4) échantillons Asics et NB petits ; (5) conversions rares (146 sur 22 k), l'ordre de grandeur est solide, pas la décimale.
