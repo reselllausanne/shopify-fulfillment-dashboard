@@ -2439,10 +2439,32 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
     }
 
     if (!stockxOrderNumber) {
+      // What did the page say after Place Order? Needed to tell "paid, number lagging"
+      // from "payment refused / click did nothing".
+      const snippet = (await page.locator("body").innerText().catch(() => ""))
+        .replace(/\s+/g, " ")
+        .slice(0, 300);
+      const url = page.url().replace(/^https?:\/\/[^/]+/, "").slice(0, 80);
+      const shot = await captureAutoScreenshot(page, `galaxus-${c.galaxusOrderId}-nonum`).catch(() => null);
+      console.warn(`[STOCKX-CHECKOUT][GALAXUS] no order # after Place Order url=${url} shot=${shot ?? "-"} body="${snippet}"`);
+      const refused =
+        /declin|refus|échou|echou|payment (failed|error|could not)|paiement (a échoué|refusé|impossible)|problème (de|avec)|something went wrong|try again|réessay|unable to (process|place)/i.test(
+          snippet
+        );
+      if (refused) {
+        return {
+          kind: "needs_human",
+          reason: "bot_fail",
+          detail: `Payment not completed (no charge): ${snippet.slice(0, 160)}`,
+          lane: selected.lane.label,
+          pickReason: selected.pickReason,
+          totalChf,
+        };
+      }
       return {
         kind: "needs_human",
         reason: "bot_fail",
-        detail: "Paid but no StockX order number parsed — check VNC / account",
+        detail: `Paid but no StockX order number parsed — check VNC / account | url=${url} body="${snippet.slice(0, 160)}"`,
         lane: selected.lane.label,
         pickReason: selected.pickReason,
         totalChf,
