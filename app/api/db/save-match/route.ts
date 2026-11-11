@@ -12,6 +12,10 @@ import {
   markOrderMatchMetafieldsSynced,
   setSupplierOrderMetafields,
 } from "@/shopify/orders/setSupplierMetafields";
+import {
+  isCancelRebuyLink,
+  resetProgressionMilestonesForCancelRebuy,
+} from "@/lib/stockxDelayRebuy/resetMilestonesForCancelRebuy";
 /** Auto-send on new milestones only; rematch uses emailedAt / lastMilestoneKey gate. */
 const AUTO_SEND_EMAILS = true;
 // Date handling helpers live in this file
@@ -730,7 +734,25 @@ export async function POST(req: Request) {
     });
 
     console.log(`[DB] Match saved: ${match.id}`);
-    
+
+    // Cancel→rebuy (manual dashboard rematch): wipe old progression mails so AWB
+    // can notify again for the new StockX order number.
+    let previousLastMilestoneKey = existingMatch?.lastMilestoneKey || null;
+    if (
+      isCancelRebuyLink({
+        previousStockxOrderNumber: existingMatch?.stockxOrderNumber,
+        previousStockxStatus: existingMatch?.stockxStatus,
+        newStockxOrderNumber: finalStockxOrderNumber,
+      })
+    ) {
+      const reset = await resetProgressionMilestonesForCancelRebuy(match.id, {
+        seedConfirmedAsEmailed: true,
+        checkoutType: resolvedCheckoutType || match.stockxCheckoutType,
+        stockxOrderNumber: finalStockxOrderNumber,
+      });
+      previousLastMilestoneKey = reset.seededConfirmedKey;
+    }
+
     // 🔍 VALIDATION: Verify chainId/orderId were persisted
     if (stockxOrderNumber && (stockxChainId || stockxOrderId)) {
       console.log(`[DB] ✅ Verification - chainId/orderId persisted:`, {
@@ -755,7 +777,7 @@ export async function POST(req: Request) {
 
     await upsertMilestoneEventAndMaybeEmail({
       match: pickEmailMatch(match),
-      previousLastMilestoneKey: existingMatch?.lastMilestoneKey || null,
+      previousLastMilestoneKey,
       checkoutType: (match.stockxCheckoutType as string | null) || null,
       states: (match.stockxStates as StockXState[]) || null,
       statesHash: (match.stockxStatesHash as string | null) || null,

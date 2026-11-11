@@ -6,6 +6,10 @@ import { sendPurchaseConfirmedEmailForMatch } from "@/app/lib/notifications/stoc
 import type { StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
 import { enrichOrderMatchFromStockxOrderNumber } from "@/lib/stockxAutoCheckout/enrichAfterLink";
 import { isCustomerDelayMailEnabled } from "@/lib/stockxDelayRebuy/flags";
+import {
+  isCancelRebuyLink,
+  resetProgressionMilestonesForCancelRebuy,
+} from "@/lib/stockxDelayRebuy/resetMilestonesForCancelRebuy";
 import { sendCustomerDelayMail } from "@/lib/stockxDelayRebuy/sendCustomer";
 import {
   markOrderMatchMetafieldsSynced,
@@ -99,11 +103,11 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
     where: { shopifyLineItemId },
     select: { stockxOrderNumber: true, stockxStatus: true },
   });
-  const prevStatus = String(prev?.stockxStatus ?? "").toUpperCase();
-  const isCancelRebuy =
-    Boolean(prev?.stockxOrderNumber) &&
-    prev!.stockxOrderNumber !== stockxOrderNumber &&
-    (prevStatus.includes("CANCEL") || prevStatus.includes("REFUND"));
+  const isCancelRebuy = isCancelRebuyLink({
+    previousStockxOrderNumber: prev?.stockxOrderNumber,
+    previousStockxStatus: prev?.stockxStatus,
+    newStockxOrderNumber: stockxOrderNumber,
+  });
 
   const match = await prisma.orderMatch.upsert({
     where: { shopifyLineItemId },
@@ -185,7 +189,8 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
     select: { id: true, customerTrackingToken: true },
   });
 
-  // Drop stale tracking from the cancelled buy so AWB cron starts clean.
+  // Drop stale tracking + progression mails from the cancelled buy so AWB cron
+  // can email the new buy's milestones (old DELIVERED_TO_SWISS… etc. blocked otherwise).
   if (isCancelRebuy) {
     await prisma.orderMatch.update({
       where: { id: match.id },
@@ -199,6 +204,11 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
         stockxEstimatedDelivery: null,
         stockxLatestEstimatedDelivery: null,
       },
+    });
+    await resetProgressionMilestonesForCancelRebuy(match.id, {
+      seedConfirmedAsEmailed: true,
+      checkoutType,
+      stockxOrderNumber,
     });
   }
 
