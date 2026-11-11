@@ -60,6 +60,8 @@ import {
 import { isClearlyNotStockxBuyable } from "@/lib/stockxAutoCheckout/nonStockxBuyable";
 import {
   MAX_ALL_IN_CHF,
+  SHOPIFY_MAX_ALL_IN_CHF,
+  MAX_LOSS_PCT,
   type StockxDesiredLane,
   type StockxLaneCard,
   type StockxLaneLabel,
@@ -492,12 +494,19 @@ async function clickPlaceOrder(page: Page, opts?: { dry?: boolean }): Promise<bo
   return true;
 }
 
+/** Why the last clickReviewOrder returned false (goes into the ledger detail). */
+let lastReviewDiag = "";
+
 async function clickReviewOrder(page: Page): Promise<boolean> {
+  lastReviewDiag = "";
   const byTestId = page.locator('[data-testid="checkout-confirm-button"]').first();
   if (await byTestId.isVisible({ timeout: 6000 }).catch(() => false)) {
     const confirmLabel = ((await byTestId.innerText().catch(() => "")) || "").replace(/\s+/g, " ");
     // Offer pages reuse this button. Review/Confirm Offer is a BID, never a purchase.
-    if (/offer|offre/i.test(confirmLabel)) return false;
+    if (/offer|offre/i.test(confirmLabel)) {
+      lastReviewDiag = `offer_page label="${confirmLabel.slice(0, 40)}"`;
+      return false;
+    }
     await byTestId.scrollIntoViewIfNeeded().catch(() => undefined);
     await byTestId.click({ force: true });
     return true;
@@ -509,7 +518,7 @@ async function clickReviewOrder(page: Page): Promise<boolean> {
     await byRole.click({ force: true });
     return true;
   }
-  return page.evaluate(() => {
+  const clicked = await page.evaluate(() => {
     const el =
       document.querySelector('[data-testid="checkout-confirm-button"]') ||
       Array.from(document.querySelectorAll("button")).find((b) =>
@@ -521,6 +530,21 @@ async function clickReviewOrder(page: Page): Promise<boolean> {
     (el as HTMLElement).click();
     return true;
   });
+  if (!clicked) {
+    const diag = await page
+      .evaluate(() => {
+        const btns = Array.from(document.querySelectorAll("button"))
+          .map((b) => (b.textContent || "").replace(/\s+/g, " ").trim())
+          .filter(Boolean)
+          .slice(0, 10);
+        const body = (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 160);
+        return `url=${location.pathname}${location.search.slice(0, 60)} buttons=${JSON.stringify(btns)} body="${body}"`;
+      })
+      .catch(() => "diag_failed");
+    lastReviewDiag = diag;
+    console.warn(`[STOCKX-CHECKOUT] review button missing ${diag}`.slice(0, 600));
+  }
+  return clicked;
 }
 
 async function parseLanesFromPage(page: Page): Promise<StockxLaneCard[]> {
@@ -837,7 +861,7 @@ export async function selectAndVerifyStockxLane(
       const sub = extractCheckoutSubtotalChf(body);
       if (sub != null) {
         const m1 = laneMarginPct(options.sellChf, sub);
-        if (m1 < 0) {
+        if (m1 < -MAX_LOSS_PCT) {
           return {
             ok: false,
             reason: "margin_abort",
@@ -1353,7 +1377,7 @@ export async function previewStockxCheckout(options: {
   /** Force lane; default from Shopify Express detection. */
   desiredLane?: StockxDesiredLane | null;
 }): Promise<StockxCheckoutPreview> {
-  const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
+  const maxAllInChf = Math.min(SHOPIFY_MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? SHOPIFY_MAX_ALL_IN_CHF));
   const shopify = await loadShopifyLine(options.orderName, options.lineItemId);
   const shopifyExpress = detectShopifyExpress({
     deliveryMode: shopify.deliveryMode,
@@ -1641,7 +1665,7 @@ export async function runStockxAutoCheckoutForOrder(options: {
    */
   allowRebuyOfCancelled?: boolean;
 }): Promise<StockxAutoCheckoutResult> {
-  const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
+  const maxAllInChf = Math.min(SHOPIFY_MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? SHOPIFY_MAX_ALL_IN_CHF));
   let shopify: ShopifyLineCtx;
   try {
     shopify = await loadShopifyLine(options.orderName, options.lineItemId);
@@ -1958,10 +1982,11 @@ export async function runStockxAutoCheckoutForOrder(options: {
     const pick = { ok: true as const, lane: selected.lane };
 
     if (!(await clickReviewOrder(page))) {
-      return fail("bot_fail", {
+      const offerPage = lastReviewDiag.startsWith("offer_page");
+      return fail(offerPage ? "oos_no_ask" : "bot_fail", {
         lanes,
         recommended: pick.lane,
-        detail: "Review/confirm button missing",
+        detail: `Review/confirm button missing | ${lastReviewDiag}`.slice(0, 400),
       });
     }
     await page.waitForTimeout(4500);
@@ -2308,8 +2333,8 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
     if (!(await clickReviewOrder(page))) {
       return {
         kind: "needs_human",
-        reason: "bot_fail",
-        detail: "Review/confirm button missing",
+        reason: lastReviewDiag.startsWith("offer_page") ? "oos_no_ask" : "bot_fail",
+        detail: `Review/confirm button missing | ${lastReviewDiag}`.slice(0, 400),
         lane: selected.lane.label,
         pickReason: selected.pickReason,
       };

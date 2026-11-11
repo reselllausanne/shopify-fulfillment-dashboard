@@ -117,7 +117,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SupervisorC
     ),
     onlyOrders: null,
     batchSize: Math.floor(num(env.STOCKX_BUYER_BATCH, 5)),
-    galaxusPerCycle: Math.floor(num(env.STOCKX_BUYER_GALAXUS_PER_CYCLE, 12)),
+    galaxusPerCycle: Math.floor(num(env.STOCKX_BUYER_GALAXUS_PER_CYCLE, 40)),
     maxAllInChf: num(env.STOCKX_BUYER_MAX_ALL_IN_CHF, 1_000_000),
     idleMs: num(env.STOCKX_BUYER_IDLE_MS, 60_000),
     rebuyEveryMs: num(env.STOCKX_BUYER_REBUY_EVERY_MS, 15 * 60_000),
@@ -364,8 +364,13 @@ async function galaxusPhase(rt: Runtime): Promise<number> {
   if (!todo.length) return 0;
   log(`galaxus queue=${queue.length} todo=${todo.length}`);
   let done = 0;
+  // Browser attempts are the scarce resource. Non-StockX lines are an instant verdict:
+  // they must not eat the per-cycle slots (278 todo were 90 % non-StockX = 20+ cycles).
+  let browserTried = 0;
+  let handled = 0;
   const isOnSup = async () => rt.cfg.once || (await isOn());
-  for (const pair of todo.slice(0, rt.cfg.galaxusPerCycle)) {
+  for (const pair of todo) {
+    if (browserTried >= rt.cfg.galaxusPerCycle || handled >= 400) break;
     if (!(await isOnSup()) || (await isHalted()) || (await exists(NIGHT_HALT_FILE))) break;
     const key = jobKey("galaxus", { orderRef: pair.galaxusOrderId, lineId: pair.lineId, unitIndex: pair.unitIndex });
     rt.phase = `galaxus:${pair.galaxusOrderId}:${pair.unitIndex}`;
@@ -384,8 +389,11 @@ async function galaxusPhase(rt: Runtime): Promise<number> {
     await processPair(pair, night, { isOn: isOnSup });
     await saveNightState(night);
     done += 1;
+    handled += 1;
     const after = night[pairKey(pair)];
     if (after && after !== before) await mirrorGalaxus(rt, pair, key, after);
+    if (after?.status === "not_stockx") continue;
+    browserTried += 1;
     await sleep(2_500);
   }
   await closeGalaxusSession().catch(() => undefined);
@@ -524,13 +532,14 @@ export async function healBuyerHalt(rt: Runtime): Promise<boolean> {
     try {
       hits = await findUnlinkedStockxMatches(
         {
-          shopifyOrderName: s.orderRef,
+          shopifyOrderName: s.orderRef ?? "",
           shopifyOrderId: "",
           shopifyLineItemId: s.key.replace(/\D/g, ""),
           shopifyCreatedAt: new Date((att?.t ?? s.at) - 3600_000).toISOString(),
-          title: s.title,
+          title: s.title ?? "",
           sku: null,
-          sizeEU: att?.sizeEU ?? null,
+          // Size-agnostic on purpose: a missed match here = release = rebuy = double buy.
+          sizeEU: null,
           urlKeyHint: att?.slug ?? null,
         },
         { forceRefresh: true }
@@ -572,6 +581,12 @@ export async function runCycle(rt: Runtime): Promise<CycleResult> {
   let galaxusTried = 0;
   let shopifyQueue = 0;
 
+  // Pick up manual `release` events written by the control CLI while we run.
+  if (!cfg.dryRun) {
+    const fresh = await loadReduced().catch(() => null);
+    if (fresh) for (const k of [...rt.states.keys()]) if (!fresh.states.has(k)) rt.states.delete(k);
+  }
+
   if (cfg.rebuy && now - rt.lastRebuyAt > cfg.rebuyEveryMs) {
     rt.lastRebuyAt = now;
     rt.phase = "rebuy-sweep";
@@ -584,21 +599,28 @@ export async function runCycle(rt: Runtime): Promise<CycleResult> {
   }
 
   if (cfg.shopify) {
-    rt.phase = "shopify-queue";
-    const open = await buildShopifyJobs({
-      since: cfg.shopifySince,
-      only: cfg.onlyOrders,
-      log,
-      stopAfterJobs: cfg.batchSize * 3,
-    });
-    const all = [...rt.rebuyJobs, ...open].filter((j) => !stateBlocks(rt.states.get(j.key), Date.now()));
-    shopifyQueue = all.length;
-    // Rebuys rank with Express: the customer is already waiting.
-    const ordered = orderQueue(
-      all.map((j) => ({ ...j, express: j.express || j.rebuyOfCancelled })) as Array<ShopifyJob & { express: boolean }>
-    );
-    log(`shopify queue=${ordered.length} (express/rebuy first)`);
-    if (ordered.length) shopifyTried = await shopifyPhase(rt, ordered);
+    // Customers first: drain the Shopify queue (up to 4 batches) before any Galaxus work.
+    const rounds = cfg.once ? 1 : 4;
+    for (let round = 0; round < rounds; round += 1) {
+      rt.phase = "shopify-queue";
+      const open = await buildShopifyJobs({
+        since: cfg.shopifySince,
+        only: cfg.onlyOrders,
+        log,
+        stopAfterJobs: cfg.batchSize * 3,
+      });
+      const all = [...rt.rebuyJobs, ...open].filter((j) => !stateBlocks(rt.states.get(j.key), Date.now()));
+      shopifyQueue = all.length;
+      // Rebuys rank with Express: the customer is already waiting.
+      const ordered = orderQueue(
+        all.map((j) => ({ ...j, express: j.express || j.rebuyOfCancelled })) as Array<ShopifyJob & { express: boolean }>
+      );
+      log(`shopify queue=${ordered.length} (express/rebuy first)`);
+      if (!ordered.length) break;
+      const tried = await shopifyPhase(rt, ordered);
+      shopifyTried += tried;
+      if (!tried || (await isHalted()) || (!cfg.once && !(await isOn()))) break;
+    }
   }
 
   if (cfg.galaxus && !(await isHalted()) && !(await exists(NIGHT_HALT_FILE)) && (cfg.once || (await isOn()))) {
