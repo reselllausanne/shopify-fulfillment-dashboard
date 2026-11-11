@@ -259,7 +259,9 @@ export async function refreshStockxToken(
       headless: false,
       persistent: true,
       forceLogin: false,
-      reuseTokenFile: !force,
+      // near_expiry must really remint: reusing the still-valid file token is a no-op that lets it
+      // expire (Galaxus token died 2026-11-11 22:24Z after hourly cron "reused" it 49 min earlier).
+      reuseTokenFile: remintReason === "missing" && !force,
       autoNavigate: true,
       autoLogin: true,
       allowProfileReset: false,
