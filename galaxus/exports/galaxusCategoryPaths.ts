@@ -510,12 +510,28 @@ export const GALAXUS_CATEGORY_PATHS: Record<GalaxusProductKind, string> = {
   unknown: "Mode > Alles in Mode > Schuhe > Sneakers",
 };
 
+/**
+ * Suppliers whose catalogue is (almost) all footwear: no keyword hit still means "sneakers"
+ * (StockX/GOAT titles like "Jordan 1 Retro High OG Chicago" carry no shoe word).
+ * Every other supplier (HAW toys/condoms, ALT appliances, VEN batteries, EXL toys, BWZ baby, …)
+ * used to inherit the same Sneakers fallback and shipped to Galaxus as
+ * "Mode > Alles in Mode > Schuhe > Sneakers" (Galaxus complaint, 2026-11-11).
+ * They now resolve to "unknown", which the assortment policy blocks ("unclassified").
+ * Kill switch: GALAXUS_DEFAULT_SNEAKERS_ALL=1 restores the old fallback.
+ */
+export const SNEAKER_DEFAULT_SUPPLIERS: ReadonlySet<string> = new Set(["stx", "ner", "the", "gld", "nso"]);
+
 /** Default kind when no signal matches — supplier-aware. */
 export function defaultGalaxusProductKind(supplierKey?: string | null): GalaxusProductKind {
-  if (String(supplierKey ?? "").toLowerCase() === "wel") return "boardgame";
-  if (String(supplierKey ?? "").toLowerCase() === "rei") return "passive_component";
-  if (String(supplierKey ?? "").toLowerCase() === "xnt") return "home_accessory";
-  return "sneakers";
+  const key = String(supplierKey ?? "").toLowerCase();
+  if (key === "wel") return "boardgame";
+  if (key === "rei") return "passive_component";
+  if (key === "xnt") return "home_accessory";
+  // Callers that do not know the supplier keep the legacy fallback.
+  if (!key) return "sneakers";
+  if (SNEAKER_DEFAULT_SUPPLIERS.has(key)) return "sneakers";
+  if (String(process.env.GALAXUS_DEFAULT_SNEAKERS_ALL ?? "").trim() === "1") return "sneakers";
+  return "unknown";
 }
 
 export function galaxusCategoryPathForKind(
