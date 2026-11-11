@@ -8,8 +8,69 @@ import { prisma } from "@/app/lib/prisma";
  * Keys already at 0 in the snapshot were pushed (or built) as delists — do not
  * pad the feed forever (~380k sticky zeros → 872k stock vs ~490k offer).
  */
-export async function loadGalaxusDelistZeroEligibleKeys(): Promise<Set<string>> {
+/**
+ * Above this many keys a scoped lookup stops paying off (and the array param gets large):
+ * fall back to the full-table scans.
+ */
+export const DELIST_SCOPE_MAX_KEYS = 20_000;
+
+/**
+ * Eligibility decided only for `scope` keys. Any key OUTSIDE the scope answers `true`
+ * (= emit the zero), which is the same fail-open direction as a load error: a needed delist
+ * is never skipped, at worst a redundant zero row is emitted.
+ */
+class ScopedDelistEligibleSet extends Set<string> {
+  private readonly scope: ReadonlySet<string>;
+  constructor(scope: ReadonlySet<string>, eligible: Iterable<string>) {
+    super(eligible);
+    this.scope = scope;
+  }
+  override has(key: string): boolean {
+    return !this.scope.has(key) || super.has(key);
+  }
+}
+
+/**
+ * @param scopeKeys when provided (live patch export for a handful of keys), only these keys
+ *   are looked up by index instead of scanning ~380k CLS rows + the whole 1.6M-row stock
+ *   snapshot (JSON predicate) on every patch. Semantics per key are identical to the full load.
+ */
+export async function loadGalaxusDelistZeroEligibleKeys(
+  scopeKeys?: ReadonlyArray<string> | null
+): Promise<Set<string>> {
   const prismaAny = prisma as any;
+
+  const scoped = Array.from(
+    new Set((scopeKeys ?? []).map((k) => String(k ?? "").trim()).filter(Boolean))
+  );
+  if (scopeKeys != null && scoped.length > 0 && scoped.length <= DELIST_SCOPE_MAX_KEYS) {
+    const [liveScoped, zeroedScoped] = await Promise.all([
+      prismaAny.$queryRaw`
+        SELECT c."providerKey" AS "providerKey"
+        FROM "ChannelListingState" c
+        WHERE c.channel = 'GALAXUS'
+          AND c."lastPushedStock" > 0
+          AND c."providerKey" = ANY(${scoped}::text[])
+      ` as Promise<Array<{ providerKey?: string | null }>>,
+      prismaAny.$queryRaw`
+        SELECT s."providerKey" AS "providerKey"
+        FROM "GalaxusFeedStockSnapshot" s
+        WHERE s."providerKey" = ANY(${scoped}::text[])
+          AND coalesce((s."rowJson"->>'QuantityOnStock')::int, 0) <= 0
+      ` as Promise<Array<{ providerKey?: string | null }>>,
+    ]);
+    const zeroed = new Set<string>();
+    for (const row of zeroedScoped) {
+      const key = String(row?.providerKey ?? "").trim();
+      if (key) zeroed.add(key);
+    }
+    const eligible = new Set<string>();
+    for (const row of liveScoped) {
+      const key = String(row?.providerKey ?? "").trim();
+      if (key && !zeroed.has(key)) eligible.add(key);
+    }
+    return new ScopedDelistEligibleSet(new Set(scoped), eligible);
+  }
 
   // Two cheap sequential scans + set difference in memory.
   //

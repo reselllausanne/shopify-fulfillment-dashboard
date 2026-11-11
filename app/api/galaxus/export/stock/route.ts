@@ -273,7 +273,20 @@ export async function GET(request: Request) {
   let delistZeroEligibleKeys: Set<string> | null = null;
   let zeroSkippedNotEligible = 0;
   try {
-    delistZeroEligibleKeys = await loadGalaxusDelistZeroEligibleKeys();
+    // Live patch (`providerKeys` filter): every key asked about below is one of the filter keys,
+    // an alias-remapped candidate key, or a superseded key (alternatives are filtered by the
+    // same providerKeys). Look only those up by index instead of scanning ~380k CLS rows and
+    // the whole stock snapshot on each patch (~160M rows / 12 h of DB egress + 2 h of DB time).
+    // Keys outside this scope fail open (emit zero) — never skip a needed delist.
+    const delistScopeKeys =
+      providerKeys.length > 0
+        ? [
+            ...providerKeys,
+            ...supersededProviderKeys,
+            ...exportCandidates.map((c: any) => String(c?.providerKey ?? "")),
+          ]
+        : null;
+    delistZeroEligibleKeys = await loadGalaxusDelistZeroEligibleKeys(delistScopeKeys);
   } catch (err: any) {
     console.warn(
       "[GALAXUS][EXPORT][STOCK] delist-eligible key load failed — fail-open (emit all zeros)",
