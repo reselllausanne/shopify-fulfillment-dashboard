@@ -29,6 +29,14 @@ import {
 } from "@/lib/stockxAutoCheckout/galaxusBuyCandidates";
 import { linkStockxBuyToGalaxus } from "@/lib/stockxAutoCheckout/linkAfterBuyGalaxus";
 import { isClearlyNotStockxBuyable } from "@/lib/stockxAutoCheckout/nonStockxBuyable";
+import {
+  isPaymentNotCompletedDetail,
+  nextPaymentStreak,
+  paymentBreakerTripped,
+  PAYMENT_BREAKER_LIMIT,
+  PAYMENT_BREAKER_MESSAGE,
+} from "@/lib/stockxPaymentDiag";
+import { postSlack } from "@/lib/stockxAuthAlert";
 
 export const DATA_DIR = process.env.NIGHT_BUYER_DATA_DIR || path.join(process.cwd(), ".data");
 export const ON_FILE = path.join(DATA_DIR, "night-buyer.on");
@@ -404,16 +412,16 @@ async function freshUnlinkedBuys(
  * Paid, no number. Find the fresh unlinked StockX buy for this product and link it.
  * Exactly one unlinked candidate in the window = link. Else null (caller halts).
  */
-export async function recoverUnlinkedBuy(
+export async function recoverUnlinkedBuyDetailed(
   candidate: GalaxusBuyCandidate,
   opts: { sinceMs: number; totalChf: number | null; unitIndex: number }
-): Promise<string | null> {
+): Promise<{ num: string | null; hitCount: number }> {
   const hits = await freshUnlinkedBuys(candidate, opts.sinceMs);
   if (hits.length !== 1) {
     console.error(
       `[NIGHT-BUYER] recover: ${hits.length} unlinked candidates (${hits.map((h) => h.orderNumber).join(",")})`
     );
-    return null;
+    return { num: null, hitCount: hits.length };
   }
   const num = hits[0]!.orderNumber;
   const lane = num.startsWith("01-") ? "EXPRESS" : "STANDARD";
@@ -432,25 +440,64 @@ export async function recoverUnlinkedBuy(
     desiredLane: lane as any,
     stockxCheckoutType: lane,
   });
-  return linked.ok ? num : null;
+  return { num: linked.ok ? num : null, hitCount: 1 };
 }
 
-/** Token may be mid-renewal and the buying list may lag: retry for a few minutes. */
+export async function recoverUnlinkedBuy(
+  candidate: GalaxusBuyCandidate,
+  opts: { sinceMs: number; totalChf: number | null; unitIndex: number }
+): Promise<string | null> {
+  return (await recoverUnlinkedBuyDetailed(candidate, opts)).num;
+}
+
+/**
+ * Token may be mid-renewal and the buying list may lag: retry for a few minutes.
+ * `readable` = the StockX buying list was read at least once (so "0 candidates" is real
+ * evidence of no order, not a dead token).
+ */
+export async function recoverWithPollingDetailed(
+  candidate: GalaxusBuyCandidate,
+  opts: { sinceMs: number; totalChf: number | null; unitIndex: number },
+  poll: { tries: number; everyMs: number } = { tries: 12, everyMs: 30_000 }
+): Promise<{ num: string | null; readable: boolean; sawOrder: boolean }> {
+  let readable = false;
+  let sawOrder = false;
+  for (let i = 0; i < poll.tries; i += 1) {
+    try {
+      const r = await recoverUnlinkedBuyDetailed(candidate, opts);
+      readable = true;
+      if (r.hitCount > 0) sawOrder = true;
+      if (r.num) return { num: r.num, readable, sawOrder };
+    } catch (e: any) {
+      console.warn(`[NIGHT-BUYER] recover try ${i + 1}/${poll.tries}: ${e?.message || e}`);
+    }
+    if (i < poll.tries - 1) await new Promise((r) => setTimeout(r, poll.everyMs));
+  }
+  return { num: null, readable, sawOrder };
+}
+
 export async function recoverWithPolling(
   candidate: GalaxusBuyCandidate,
   opts: { sinceMs: number; totalChf: number | null; unitIndex: number },
   poll: { tries: number; everyMs: number } = { tries: 12, everyMs: 30_000 }
 ): Promise<string | null> {
-  for (let i = 0; i < poll.tries; i += 1) {
-    try {
-      const num = await recoverUnlinkedBuy(candidate, opts);
-      if (num) return num;
-    } catch (e: any) {
-      console.warn(`[NIGHT-BUYER] recover try ${i + 1}/${poll.tries}: ${e?.message || e}`);
-    }
-    await new Promise((r) => setTimeout(r, poll.everyMs));
-  }
-  return null;
+  return (await recoverWithPollingDetailed(candidate, opts, poll)).num;
+}
+
+/** Consecutive Place Order clicks without an order number and without any order in the API. */
+let noOrderStreak = 0;
+export function getNoOrderStreak(): number {
+  return noOrderStreak;
+}
+export function resetNoOrderStreak(): void {
+  noOrderStreak = 0;
+}
+
+async function tripPaymentBreaker(pair: NightPair): Promise<void> {
+  const msg = `${PAYMENT_BREAKER_MESSAGE} (${PAYMENT_BREAKER_LIMIT} Place Order clicks, no order; last ${pair.galaxusOrderId} ${pair.productName})`;
+  await fs.rm(INFLIGHT_FILE, { force: true });
+  await halt(msg);
+  await postSlack(`:octagonal_sign: StockX buyer HALT: ${msg}`).catch(() => false);
 }
 
 /**
@@ -612,6 +659,7 @@ export async function processPair(
   const candidate = resolved.candidate;
   let lastReason = "";
   let lastDetail: string | null = null;
+  let firstNoNumberAt: number | null = null;
   for (let attempt = 1; attempt <= MAX_TRIES; attempt += 1) {
     if (!(await isOn())) return;
     const startedAt = Date.now();
@@ -631,6 +679,7 @@ export async function processPair(
     if (session) session.consecutiveFails = out.kind === "retry" ? session.consecutiveFails + 1 : 0;
 
     if (out.kind === "bought") {
+      noOrderStreak = nextPaymentStreak(noOrderStreak, "order");
       state[key] = {
         ...base,
         status: "bought",
@@ -658,12 +707,16 @@ export async function processPair(
       return;
     }
     if (out.kind === "paid_no_number") {
-      const num = await recoverWithPolling(candidate, {
-        sinceMs: startedAt,
+      // Evidence window starts at the FIRST unconfirmed click of this pair: a late-appearing
+      // earlier buy must still be found (never re-buy a pair that was paid).
+      firstNoNumberAt ??= startedAt;
+      const { num, readable, sawOrder } = await recoverWithPollingDetailed(candidate, {
+        sinceMs: firstNoNumberAt,
         totalChf: out.totalChf,
         unitIndex: pair.unitIndex,
       });
       if (num) {
+        noOrderStreak = nextPaymentStreak(noOrderStreak, "order");
         state[key] = {
           ...base,
           status: "bought",
@@ -675,8 +728,53 @@ export async function processPair(
         await fs.rm(INFLIGHT_FILE, { force: true });
         return;
       }
-      await halt(`paid without number, not recoverable: ${pair.galaxusOrderId} ${pair.productName}`);
-      return;
+      if (!readable || sawOrder) {
+        // Cannot read the buying list (dead token) or an unlinked order exists: cannot prove nothing was paid. Halt.
+        await halt(`paid without number, not recoverable: ${pair.galaxusOrderId} ${pair.productName}`);
+        return;
+      }
+      // Readable list, no order: click did not charge. Count toward the breaker, retry.
+      noOrderStreak = nextPaymentStreak(noOrderStreak, "no_order");
+      console.warn(`[NIGHT-BUYER] Place Order without order # and none in StockX API (streak ${noOrderStreak}/${PAYMENT_BREAKER_LIMIT})`);
+      if (paymentBreakerTripped(noOrderStreak)) {
+        await tripPaymentBreaker(pair);
+        return;
+      }
+      lastReason = "no_order_after_place_order";
+      lastDetail = String(out.totalChf ?? "");
+      await new Promise((r) => setTimeout(r, Math.min(60_000, 6_000 * attempt)));
+      continue;
+    }
+    if (out.kind === "retry" && isPaymentNotCompletedDetail(out.detail)) {
+      // Page said payment refused. Quick API check (an order may still exist), else count it.
+      const { num, sawOrder } = await recoverWithPollingDetailed(
+        candidate,
+        { sinceMs: firstNoNumberAt ?? startedAt, totalChf: null, unitIndex: pair.unitIndex },
+        { tries: 1, everyMs: 0 }
+      );
+      if (num) {
+        noOrderStreak = nextPaymentStreak(noOrderStreak, "order");
+        state[key] = {
+          ...base,
+          status: "bought",
+          reason: "bought_recovered",
+          stockxOrderNumber: num,
+          totalChf: null,
+          lane: num.startsWith("01-") ? "EXPRESS" : "STANDARD",
+        };
+        await fs.rm(INFLIGHT_FILE, { force: true });
+        return;
+      }
+      if (sawOrder) {
+        await halt(`paid without number, not recoverable: ${pair.galaxusOrderId} ${pair.productName}`);
+        return;
+      }
+      noOrderStreak = nextPaymentStreak(noOrderStreak, "no_order");
+      console.warn(`[NIGHT-BUYER] payment refused on page (streak ${noOrderStreak}/${PAYMENT_BREAKER_LIMIT})`);
+      if (paymentBreakerTripped(noOrderStreak)) {
+        await tripPaymentBreaker(pair);
+        return;
+      }
     }
     lastReason = out.reason;
     lastDetail = out.detail;

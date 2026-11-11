@@ -15,6 +15,11 @@ import {
 import { connectWarmBrowser } from "@/lib/stockxWarmBrowser";
 import { killChromeForUserDataDir } from "@/lib/stockxBrowserProcess";
 import {
+  extractPaymentSnippet,
+  isPaymentRefused,
+  PAYMENT_NOT_COMPLETED_PREFIX,
+} from "@/lib/stockxPaymentDiag";
+import {
   chooseLane,
   chooseLaneByCsAtMargin,
   chooseLaneByGalaxusExpressFirst,
@@ -2058,11 +2063,22 @@ export async function runStockxAutoCheckoutForOrder(options: {
 
     await pay.click();
     await page.waitForTimeout(8000);
-    const after = `${page.url()}\n${await page.locator("body").innerText().catch(() => "")}`;
+    const afterBody = await page.locator("body").innerText().catch(() => "");
+    const after = `${page.url()}\n${afterBody}`;
     const orderMatch =
       after.match(/\b(0[1-3]-[A-Z0-9]{8,})\b/) ||
       after.match(/numéro de commande[^\n]*([0-9A-Z-]{8,})/i);
     let stockxOrderNumber = orderMatch?.[1] ?? null;
+    let shopifyClickSnippet = "";
+    let shopifyClickRefused = false;
+    if (!stockxOrderNumber) {
+      shopifyClickSnippet = extractPaymentSnippet(afterBody, 400);
+      shopifyClickRefused = isPaymentRefused(afterBody, page.url());
+      const clickShot = await captureAutoScreenshot(page, `shopify-${shopify.orderName}-postclick`).catch(() => null);
+      console.warn(
+        `[STOCKX-CHECKOUT] post-click (no order # yet) url=${page.url().replace(/^https?:\/\/[^/]+/, "").slice(0, 120)} shot=${clickShot ?? "-"} refused=${shopifyClickRefused} body="${shopifyClickSnippet}"`
+      );
+    }
     if (!stockxOrderNumber) {
       // Auto-resolve "paid but confirmation spinner hung": payment went through but the
       // order number never rendered. Force-refresh the buying API and match this exact
@@ -2105,10 +2121,17 @@ export async function runStockxAutoCheckoutForOrder(options: {
       }
     }
     if (!stockxOrderNumber) {
+      if (shopifyClickRefused) {
+        return fail("bot_fail", {
+          lanes,
+          recommended: pick.lane,
+          detail: `${PAYMENT_NOT_COMPLETED_PREFIX} (no charge): ${shopifyClickSnippet.slice(0, 200)}`,
+        });
+      }
       return fail("bot_fail", {
         lanes,
         recommended: pick.lane,
-        detail: "Paid but no StockX order number parsed (buying API had no single match) — check VNC / account",
+        detail: `Paid but no StockX order number parsed (buying API had no single match) — check VNC / account | body="${shopifyClickSnippet.slice(0, 160).replace(/"/g, "'")}"`,
       });
     }
 
@@ -2403,11 +2426,27 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
     }
 
     await page.waitForTimeout(8000);
-    const after = `${page.url()}\n${await page.locator("body").innerText().catch(() => "")}`;
+    const afterBody = await page.locator("body").innerText().catch(() => "");
+    const after = `${page.url()}\n${afterBody}`;
     const orderMatch =
       after.match(/\b(0[1-3]-[A-Z0-9]{8,})\b/) ||
       after.match(/numéro de commande[^\n]*([0-9A-Z-]{8,})/i);
     let stockxOrderNumber = orderMatch?.[1] ?? null;
+
+    // Capture what the checkout page said RIGHT AFTER the click, before any navigation
+    // to /buying/orders (that overwrites the evidence).
+    let clickSnippet = "";
+    let clickUrl = "";
+    let clickRefused = false;
+    if (!stockxOrderNumber) {
+      clickSnippet = extractPaymentSnippet(afterBody, 400);
+      clickUrl = page.url().replace(/^https?:\/\/[^/]+/, "").slice(0, 120);
+      clickRefused = isPaymentRefused(afterBody, page.url());
+      const clickShot = await captureAutoScreenshot(page, `galaxus-${c.galaxusOrderId}-postclick`).catch(() => null);
+      console.warn(
+        `[STOCKX-CHECKOUT][GALAXUS] post-click (no order # yet) url=${clickUrl} shot=${clickShot ?? "-"} refused=${clickRefused} body="${clickSnippet}"`
+      );
+    }
 
     // Confirmation spinner often hangs with no order # — scrape /buying/orders
     // in the same session (newest-first) and match size + title (+ optional CHF).
@@ -2439,23 +2478,16 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
     }
 
     if (!stockxOrderNumber) {
-      // What did the page say after Place Order? Needed to tell "paid, number lagging"
-      // from "payment refused / click did nothing".
-      const snippet = (await page.locator("body").innerText().catch(() => ""))
-        .replace(/\s+/g, " ")
-        .slice(0, 300);
-      const url = page.url().replace(/^https?:\/\/[^/]+/, "").slice(0, 80);
-      const shot = await captureAutoScreenshot(page, `galaxus-${c.galaxusOrderId}-nonum`).catch(() => null);
-      console.warn(`[STOCKX-CHECKOUT][GALAXUS] no order # after Place Order url=${url} shot=${shot ?? "-"} body="${snippet}"`);
-      const refused =
-        /declin|refus|échou|echou|payment (failed|error|could not)|paiement (a échoué|refusé|impossible)|problème (de|avec)|something went wrong|try again|réessay|unable to (process|place)/i.test(
-          snippet
-        );
+      // Evidence = the checkout page right after the click (captured above), not the
+      // orders list we navigated to for recovery.
+      const url = clickUrl;
+      const snippet = clickSnippet.replace(/"/g, "'");
+      const refused = clickRefused;
       if (refused) {
         return {
           kind: "needs_human",
           reason: "bot_fail",
-          detail: `Payment not completed (no charge): ${snippet.slice(0, 160)}`,
+          detail: `${PAYMENT_NOT_COMPLETED_PREFIX} (no charge): ${snippet.slice(0, 200)}`,
           lane: selected.lane.label,
           pickReason: selected.pickReason,
           totalChf,
