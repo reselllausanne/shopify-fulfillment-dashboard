@@ -1,84 +1,64 @@
 const LANDING_URL = "https://www.resell-lausanne.ch/pages/black-friday";
 
 /**
- * Exact sizes observed on eligible live-sale Shopify variants on 2026-11-11.
- * Never infer intermediate sizes or collapse fractional systems.
+ * Live landing ranges. Each email button opens one range.
+ * Exact sizes stay distinct inside that range; the landing expands them.
  */
-export const BF2026_EMAIL_SIZES = [
-  "23.5",
-  "29.5",
-  "31",
-  "34",
-  "35.5",
-  "36",
-  "36 2/3",
-  "36.5",
-  "37",
-  "37.5",
-  "38",
-  "38 2/3",
-  "38.5",
-  "39",
-  "39 1/3",
-  "39.5",
-  "40",
-  "40 2/3",
-  "40.5",
-  "41",
-  "41 1/3",
-  "41.5",
-  "42",
-  "42 2/3",
-  "42.5",
-  "43",
-  "43 1/3",
-  "43.5",
-  "44",
-  "44.5",
-  "45",
-  "45 1/3",
-  "45.5",
-  "46",
+export const BF2026_EMAIL_SIZE_RANGES = [
+  {
+    label: "36–37.5",
+    size: "36-37.5",
+    sizes: ["36", "36 2/3", "36.5", "37", "37.5"],
+  },
+  {
+    label: "38–39.5",
+    size: "38-39.5",
+    sizes: ["38", "38 2/3", "38.5", "39", "39 1/3", "39.5"],
+  },
+  {
+    label: "40–41.5",
+    size: "40-41.5",
+    sizes: ["40", "40 2/3", "40.5", "41", "41 1/3", "41.5"],
+  },
+  {
+    label: "42–43.5",
+    size: "42-43.5",
+    sizes: ["42", "42 2/3", "42.5", "43", "43 1/3", "43.5"],
+  },
+  {
+    label: "44–46",
+    size: "44-46",
+    sizes: ["44", "44.5", "45", "45 1/3", "45.5", "46"],
+  },
 ] as const;
 
-export type Bf2026EmailSize = (typeof BF2026_EMAIL_SIZES)[number];
+export type Bf2026EmailSizeRange =
+  (typeof BF2026_EMAIL_SIZE_RANGES)[number]["size"];
 
-function encode(value: string): string {
-  return encodeURIComponent(value);
-}
-
-export function bf2026SizeUrl(size: Bf2026EmailSize): string {
+export function bf2026SizeUrl(size: Bf2026EmailSizeRange): string {
   return (
-    `${LANDING_URL}?size=${encode(size)}` +
+    `${LANDING_URL}?size=${size}` +
     "&utm_source=email" +
     "&utm_medium=bfcm" +
     "&utm_campaign=bfcm_2026_size" +
-    `&utm_content=size_${encode(size)}`
+    `&utm_content=size_${size}`
   );
 }
 
-export const BF2026_SIZE_LINKS = BF2026_EMAIL_SIZES.map((size) => ({
-  label: `EU ${size}`,
-  size,
-  url: bf2026SizeUrl(size),
+export const BF2026_SIZE_LINKS = BF2026_EMAIL_SIZE_RANGES.map((range) => ({
+  label: range.label,
+  size: range.size,
+  url: bf2026SizeUrl(range.size),
 }));
 
 function sizeRows(): string {
-  const rows: string[] = [];
-  for (let index = 0; index < BF2026_SIZE_LINKS.length; index += 4) {
-    const cells = BF2026_SIZE_LINKS.slice(index, index + 4)
-      .map(
-        ({ label, url }) =>
-          `<td width="25%" align="center" style="padding:4px;">` +
-          `<a class="size-button" href="${url.replaceAll("&", "&amp;")}" ` +
-          `style="display:block;padding:14px 4px;border:1px solid #D7D7D0;` +
-          `color:#101010;font:700 13px/18px Arial,Helvetica,sans-serif;` +
-          `text-decoration:none;">${label}</a></td>`,
-      )
-      .join("");
-    rows.push(`<tr>${cells}${"<td></td>".repeat(4 - Math.min(4, BF2026_SIZE_LINKS.length - index))}</tr>`);
-  }
-  return rows.join("");
+  return BF2026_SIZE_LINKS.map(
+    ({ label, url }) =>
+      `<tr><td style="padding:4px 0;"><a class="size-button" href="${url.replaceAll("&", "&amp;")}" ` +
+      `style="display:block;padding:16px 12px;border:1px solid #D7D7D0;` +
+      `color:#101010;font:700 16px/20px Arial,Helvetica,sans-serif;` +
+      `text-align:center;text-decoration:none;">${label}</a></td></tr>`,
+  ).join("");
 }
 
 export function renderBf2026SizeEmailHtml(): string {
@@ -93,7 +73,7 @@ export function renderBf2026SizeEmailHtml(): string {
 html,body{margin:0!important;padding:0!important;width:100%!important}
 table,td{border-collapse:collapse;mso-table-lspace:0;mso-table-rspace:0}
 a{color:inherit}
-@media screen and (max-width:620px){.shell{width:100%!important}.pad{padding-left:20px!important;padding-right:20px!important}.headline{font-size:42px!important;line-height:42px!important}.size-button{font-size:12px!important;padding:13px 2px!important}}
+@media screen and (max-width:620px){.shell{width:100%!important}.pad{padding-left:20px!important;padding-right:20px!important}.headline{font-size:42px!important;line-height:42px!important}.size-button{font-size:15px!important;padding:15px 8px!important}}
 </style>
 </head>
 <body style="margin:0;padding:0;background:#ECEBE6;">

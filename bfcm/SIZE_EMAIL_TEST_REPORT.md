@@ -1,32 +1,15 @@
 # BFCM size email — test report
 
-Run: 11 November 2026, Europe/Zurich.
+Run: 11 November 2026, Europe/Zurich. Updated after live range landing.
 
-- ✅ Desktop and 390 px previews render all 34 exact live-sale catalog sizes.
-  Every chip has one `size` value followed by BFCM UTM parameters.
-- ✅ EU 38 opens production landing, displays saved EU 38, and hides deals.
-- ✅ EU 42.5 remains exact and displays saved EU 42.5.
-- ✅ `42%202%2F3` decodes and displays as EU 42 2/3, never 42.67.
-- ✅ UTM parameters remain present with readable `size`.
-- ⚠️ A no-size visit after selecting EU 42 2/3 reused the stored selection and
-  redirected to `?size=42+2%2F3`. Fresh-browser fallback chips were not proven.
-- ✅ Repeating EU 38 displays the same successful saved-selection state.
-- ⚠️ Pre-launch deal hiding passed. No forced-unlock mechanism was supplied, so
-  post-launch deal rendering and product-click stock recheck remain untested.
-- ✅ Email copy promises no confirmation email and contains no form or script.
-- ⚠️ Real Klaviyo test sent to the only known locked internal recipient,
-  `reselllausanne@gmail.com`. Two additional internal addresses were not known.
+- ✅ Email keeps the same copy and layout, with five range buttons.
+- ✅ Production `?size=36-37.5` shows “36–37.5” and hides deals. Visible cards: 0.
+- ✅ QA `?bfcm_preview_deals=1` shows 59 cards for 36, 36 2/3, 36.5, 37, 37.5.
+- ✅ Production `?size=38` stays exact: label “38”, active sizes “38”, deals hidden.
+- ✅ Email links do not include `bfcm_preview_deals`.
+- ⚠️ `data-confirm-endpoint` is empty, so the coded POST `{ size, size_range, sizes, label }` does not leave the browser yet.
 
-Klaviyo:
+Klaviyo template: `U78AYV`.
+Range test campaign: `01M76BJEM7S5NEFNYHTXTWSHTB`, sent only to `reselllausanne@gmail.com`.
 
-- Template: `[BFCM 2026] 02 — Choix pointure landing privée`
-- Template ID: `U78AYV`
-- Test campaign ID: `01M768WTR8NK8FDX741VSQRJSR`
-- Test audience: locked list `W2mNct`, one verified recipient
-
-Artifacts:
-
-- Source and generated links: `bfcm/sizeEmail.ts`
-- Mapping: `bfcm/size-email-links.csv`
-- Automated checks: `bfcm/sizeEmail.test.ts`
-- Safe test sender: `scripts/send-bfcm-size-email-test.ts`
+Mapping: `bfcm/size-email-links.csv`.

@@ -7,6 +7,7 @@ const KLAVIYO_BASE = "https://a.klaviyo.com/api/";
 const TEST_LIST_ID = "W2mNct";
 const TEST_RECIPIENT = "reselllausanne@gmail.com";
 const TEMPLATE_NAME = "[BFCM 2026] 02 — Choix pointure landing privée";
+const TEMPLATE_ID = "U78AYV";
 
 const key = process.env.KLAVIYO_PRIVATE_API_KEY;
 if (!key) throw new Error("KLAVIYO_PRIVATE_API_KEY is required");
@@ -43,14 +44,14 @@ async function main() {
     throw new Error(`SAFETY STOP: unexpected audience ${JSON.stringify(emails)}`);
   }
 
-  const template = await klaviyo("templates/", {
-    method: "POST",
+  const template = await klaviyo(`templates/${TEMPLATE_ID}/`, {
+    method: "PATCH",
     body: JSON.stringify({
       data: {
         type: "template",
+        id: TEMPLATE_ID,
         attributes: {
           name: TEMPLATE_NAME,
-          editor_type: "CODE",
           html: renderBf2026SizeEmailHtml(),
           text: renderBf2026SizeEmailText(),
         },
