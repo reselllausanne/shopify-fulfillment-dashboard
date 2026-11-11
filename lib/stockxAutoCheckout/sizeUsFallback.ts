@@ -85,6 +85,11 @@ export function convertEuToUs(
     genderHint?: string | null;
     /** StockX urlKey. Women's footwear slugs end in `-w` even when the Galaxus title omits "Women's". */
     slug?: string | null;
+    /**
+     * Shopify "sizeEU" is just the variant label and may already be US. A plain number that
+     * cannot be an adult EU size (< 20) and has no chart hit is taken as the US size itself.
+     */
+    assumeUsIfSmall?: boolean;
   }
 ): string | null {
   const eu = normalizeEu(sizeEU);
@@ -94,13 +99,12 @@ export function convertEuToUs(
   const brand = opts?.brand || inferBrandFromTitle(opts?.title) || null;
   const genderSource = [opts?.genderHint, opts?.title, opts?.slug].filter(Boolean).join(" ");
   const chart = getChart(brand, genderSource || null, sizeEU);
-  if (!chart) return null;
   const key = euKey(eu);
-  const index = chart.sizes.EU.findIndex((entry) => euKey(entry) === key);
-  if (index < 0 || index >= chart.sizes.US.length) return null;
-  const us = chart.sizes.US[index];
-  if (!us) return null;
-  const usStr = String(us).trim();
+  const index = chart ? chart.sizes.EU.findIndex((entry) => euKey(entry) === key) : -1;
+  const us = chart && index >= 0 && index < chart.sizes.US.length ? chart.sizes.US[index] : null;
+  const alreadyUs = !us && opts?.assumeUsIfSmall && /^\d{1,2}(\.5)?$/.test(eu) && Number(eu) < 20 ? eu : null;
+  if (!us && !alreadyUs) return null;
+  const usStr = String(us ?? alreadyUs).trim();
   // StockX women's footwear deep-links use "8W" not "8" (buy URL ?size=8W).
   const gender = normalizeGender(genderSource, sizeEU);
   if (gender === "women" && /^\d+(\.\d+)?$/.test(usStr)) return `${usStr}W`;

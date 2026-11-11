@@ -39,11 +39,14 @@ import {
   REPORT_FILE,
   STATUS_FILE,
   appendEvent,
+  clearHalt,
   haltBuyer,
   isHalted,
   isOn,
   loadReduced,
+  readEvents,
   readHalt,
+  type LedgerEvent,
   renderReport,
   writeJsonAtomic,
 } from "@/lib/stockxBuyer/ledger";
@@ -490,6 +493,60 @@ async function reconcileShopifyInflight(rt: Runtime, inflight: Awaited<ReturnTyp
   }
 }
 
+const HEAL_AFTER_MS = 20 * 60_000;
+
+/**
+ * Unified-halt self heal (paid_no_number). A halt must never idle the buyer for hours.
+ * - Shopify job: StockX list readable + 0 unlinked buys after 20 min = never paid → release job, clear halt.
+ * - >=1 unlinked buy = money may be spent → stay halted (human links it).
+ * - Galaxus job: night-buyer owns the check; once its halt file is gone, clear ours.
+ * Returns true when the halt was cleared.
+ */
+export async function healBuyerHalt(rt: Runtime): Promise<boolean> {
+  const reason = (await readHalt()) ?? "";
+  if (!/paid_no_number/i.test(reason)) return false;
+  const pending = [...rt.states.values()].filter((s) => s.status === "needs_review" && s.reason === "paid_no_number");
+  if (!pending.length) {
+    await clearHalt();
+    log("halt healed: no paid_no_number job left in ledger");
+    return true;
+  }
+  for (const s of pending) {
+    if (s.source === "galaxus") {
+      if (await exists(NIGHT_HALT_FILE)) return false;
+      continue;
+    }
+    if (Date.now() - s.at < HEAL_AFTER_MS) return false;
+    const att = (await readEvents()).filter((e) => e.ev === "attempt" && e.key === s.key).pop() as
+      | Extract<LedgerEvent, { ev: "attempt" }>
+      | undefined;
+    let hits: Array<{ orderNumber: string }>;
+    try {
+      hits = await findUnlinkedStockxMatches(
+        {
+          shopifyOrderName: s.orderRef ?? "",
+          shopifyOrderId: "",
+          shopifyLineItemId: s.key.replace(/\D/g, ""),
+          shopifyCreatedAt: new Date((att?.t ?? s.at) - 3600_000).toISOString(),
+          title: s.title ?? "",
+          sku: null,
+          sizeEU: att?.sizeEU ?? null,
+          urlKeyHint: att?.slug ?? null,
+        },
+        { forceRefresh: true }
+      );
+    } catch {
+      return false;
+    }
+    if (hits.length) return false;
+    await appendEvent({ t: Date.now(), ev: "release", key: s.key, by: "paid_no_number_no_buy_found" });
+    rt.states.delete(s.key);
+    log(`halt healed: ${s.orderRef} never paid (0 StockX buys after 20 min) → released`);
+  }
+  await clearHalt();
+  return true;
+}
+
 async function writeStatus(rt: Runtime, extra: Record<string, unknown> = {}): Promise<void> {
   await writeJsonAtomic(STATUS_FILE, {
     pid: process.pid,
@@ -576,7 +633,6 @@ export async function runSupervisor(cfg: SupervisorConfig): Promise<void> {
   const reduced = await loadReduced();
   const rt = createRuntime(cfg, reduced.states);
   // Rebuild GOAT alert memory from the ledger notes.
-  const { readEvents } = await import("@/lib/stockxBuyer/ledger");
   for (const e of await readEvents()) {
     if (e.ev === "note" && e.msg.startsWith("goat_alert:")) {
       const i = e.msg.lastIndexOf(":");
@@ -596,6 +652,7 @@ export async function runSupervisor(cfg: SupervisorConfig): Promise<void> {
       if ((await isHalted()) || (await exists(NIGHT_HALT_FILE))) {
         log(`halted: ${(await readHalt()) ?? "night-buyer halt"}`);
         if (await autoHealHalt().catch(() => false)) continue;
+        if (!(await exists(NIGHT_HALT_FILE)) && (await healBuyerHalt(rt).catch(() => false))) continue;
         if (cfg.once) break;
         await writeStatus(rt);
         await sleep(60_000);

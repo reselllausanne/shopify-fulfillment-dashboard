@@ -1370,6 +1370,7 @@ export async function previewStockxCheckout(options: {
   const sizeUS = convertEuToUs(shopify.sizeEU, {
     title: shopify.title,
     brand: inferBrandFromTitle(shopify.title),
+    assumeUsIfSmall: true,
   });
   const productUrl = buildStockxBuyUrl(slug, sizeUS);
 
@@ -1811,6 +1812,7 @@ export async function runStockxAutoCheckoutForOrder(options: {
   const sizeUS = convertEuToUs(shopify.sizeEU, {
     title: shopify.title,
     brand: inferBrandFromTitle(shopify.title),
+    assumeUsIfSmall: true,
   });
   const productUrl = buildStockxBuyUrl(slug, sizeUS);
 
