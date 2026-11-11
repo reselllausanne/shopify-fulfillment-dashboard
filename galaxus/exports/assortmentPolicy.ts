@@ -594,7 +594,8 @@ export function galaxusDisabledSuppliers(): Set<string> {
   const raw = process.env.GALAXUS_DISABLED_SUPPLIERS;
   // rei: whole catalog off (2026-11-02). Jetson Orin Nano stays via assortment exception.
   // wel: WellPlayed whole catalog off (2026-11-09).
-  const list = raw === undefined ? "bwz,rei,wel" : raw;
+  // exl: Ex Libris whole catalog off (2026-11-11) — also skipped in scrape cron + master/specs builders.
+  const list = raw === undefined ? "bwz,rei,wel,exl" : raw;
   return new Set(
     list
       .split(",")

@@ -3,6 +3,7 @@ import {
   buildStxSizePriceMedianIndex,
   galaxusAssortmentBlockReason,
   galaxusAssortmentBlockReasonForCandidate,
+  galaxusDisabledSuppliers,
 } from "@/galaxus/exports/assortmentPolicy";
 
 describe("galaxusAssortmentBlockReason", () => {
@@ -352,6 +353,19 @@ describe("galaxusAssortmentBlockReason", () => {
       galaxusAssortmentBlockReason({ providerKey: "BWZ_1", title: "2er-Pack Bodys langarm", sizeRaw: "62/68" })
     ).toBe("supplier_disabled");
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
+  });
+
+  it("delists every Ex Libris (EXL) row by default", () => {
+    delete process.env.GALAXUS_DISABLED_SUPPLIERS;
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "EXL_123",
+        supplierVariantId: "exl_123",
+        title: "Random book",
+        brand: "Ex Libris",
+      })
+    ).toBe("supplier_disabled");
+    expect(galaxusDisabledSuppliers().has("exl")).toBe(true);
   });
 
   it("delists every REI row by default except the Jetson", () => {

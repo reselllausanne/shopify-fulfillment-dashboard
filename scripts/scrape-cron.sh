@@ -23,14 +23,15 @@
 #   Single-shop via API (examples from vps-patch scripts):
 #     0 4 * * * /opt/resell/scripts/scrape-cron.sh tus >> /opt/resell/scrape-tus-cron.log 2>&1
 #
-#   SCRAPER_CRON_SKIP is read from the cron shell env, NOT from .env (default: rei).
+#   SCRAPER_CRON_SKIP is read from the cron shell env, NOT from .env (default: rei,exl).
 #   So bwz/wrk run in the shared batch even when .env lists them.
-#   EXL/FAN run on shared cron (fire-and-forget API). Optional detached: run-*-detached.sh.
+#   FAN runs on shared cron (fire-and-forget API). Optional detached: run-*-detached.sh.
+#   EXL skipped by default (Galaxus delisted 2026-11-11).
 #   Shops on shared cron (when in SCRAPER_SHOPS and not skipped): haw, alt, ven, bwz, wrk, wel, …
 #   Galaxus feed push after scrape is automatic when variants_upserted > 0.
 #
 # Env:
-#   SCRAPER_CRON_SKIP=rei,fan   — comma/space keys skipped when no shop arg (default: rei)
+#   SCRAPER_CRON_SKIP=rei,exl,fan   — comma/space keys skipped when no shop arg (default: rei,exl)
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/opt/resell}"
@@ -71,8 +72,8 @@ if [ -n "$SHOP" ]; then
   exit 0
 fi
 
-# No arg: all SCRAPER_SHOPS keys except SCRAPER_CRON_SKIP (default rei).
-SKIP_RAW="${SCRAPER_CRON_SKIP:-rei}"
+# No arg: all SCRAPER_SHOPS keys except SCRAPER_CRON_SKIP (default rei,exl).
+SKIP_RAW="${SCRAPER_CRON_SKIP:-rei,exl}"
 SKIP=$(echo "$SKIP_RAW" | tr '[:upper:]' '[:lower:]' | tr ', ' '\n' | tr -s '\n' | grep -v '^$' || true)
 SHOPS_RAW=$(grep -m1 '^SCRAPER_SHOPS=' .env | cut -d= -f2- | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//')
 KEYS=$(echo "$SHOPS_RAW" | tr ',' '\n' | while IFS= read -r entry; do
