@@ -31,7 +31,8 @@ Créé le 11.11.2026 à la demande du fondateur. Mettre à jour à chaque nouvel
 - 96 % de la dépense sur des requêtes hors marque. 98 % sur le réseau Search (F).
 - 77 % des conversions août à octobre viennent de produits qui n'avaient jamais converti. Un filtre sur l'historique retire donc la source des ventes (F).
 - La hausse du nombre de produits avec impressions (9 k vers 16 k, semaine du 27.07) date d'avant Explorer (07.08) (F).
-- Quasi-expérience Explorer (07.08 au 10.11), produits équivalents, par marque. Conversions pour 1 000 produits, restés en main contre touchés : Nike 4,9 / 0,9. Adidas 3,7 / 0,8. Jordan 3,1 / 0,3. New Balance 1,8 / 0,0. Asics 1,4 / 1,8. Explorer + Long Tail : 1 484 CHF de coût, 2 223 de valeur, ROAS 1,5 (F). Limites dans le fichier (I pour la conclusion « Explorer net négatif »).
+- [RETIRÉ, biaisé : voir ads_05 §11] Quasi-expérience Explorer (07.08 au 10.11), produits équivalents, par marque. Conversions pour 1 000 produits, restés en main contre touchés : Nike 4,9 / 0,9. Adidas 3,7 / 0,8. Jordan 3,1 / 0,3. New Balance 1,8 / 0,0. Asics 1,4 / 1,8. Explorer + Long Tail : 1 484 CHF de coût, 2 223 de valeur, ROAS 1,5 (F). Limites dans le fichier (I pour la conclusion « Explorer net négatif »).
+- Étude par lot corrigée du biais de sélection (ads_08) : Explorer fait passer les produits avec impressions de 20 % à 56 %, coûte ≈ 4 fois plus par produit, conversions identiques (0,3 pour 1 000 produits sur 4 semaines, effectifs faibles). Pas de preuve qu'Explorer détruise des conversions ; pas de preuve qu'il en crée.
 - Mécanisme : les produits « sous-exposés » vont dans `long_tail_all` (≈ 7 300 modèles), exclus de l'arbre main, ≈ 4 impressions chacun (F, code et tables).
 - Cibles tROAS : octobre 3,79 à 4,5. Le 10.11 : budgets doublés et cible 3,6, par le compte du fondateur (F).
 - Du 20.10 au 10.11 : ROAS 2,6. Du 8 au 10.11 : 0,5 à 1,1 avec 1 à 2 conversions par jour. Cause non expliquée.
@@ -44,7 +45,7 @@ Créé le 11.11.2026 à la demande du fondateur. Mettre à jour à chaque nouvel
 1. Retirer Explorer et Long Tail : arrêter les campagnes `Explorer | *`, retirer les labels `long_tail_all`, `explorer_active`, `_nike/_adidas/_jordan` du feed supplémentaire. Coût estimé : ≈ 30 CHF par jour au maximum pour ≈ 9 000 produits (I). À faire après décision, pas pendant le Black Friday sans accord.
 2. Exclure les termes de marque de PMax et les rediriger vers Search et Shopping (Decathlon). Chez nous, 96 % de la dépense est hors marque : à mesurer avant tout (non fait).
 3. Gestion de la saisonnalité par label et exclusion hors saison. Pour Noël toute l'année : vérifier d'abord quels produits (le titre ne montre rien). Les étiquettes de saison se posent dans `custom_label_*`. La fonction « ajustement de saisonnalité » de Google ne sert pas à exclure : 1 à 7 jours, ajuste le taux de conversion.
-4. Score de voisinage pour les produits sans historique : taux de conversion par marque × catégorie × tranche de prix, appliqué aux produits sans historique, comparé au choix d'Explorer. Lecture seule, à lancer sur demande.
+4. Score de voisinage (marque | type | sous-type | modèle) testé : sur 7 293 produits existant au 07.08, le score ne prédit PAS les conversions (quintile bas 37 conv./1 000, haut 4,0 ; autres scores aussi non monotones). Pas utilisable en l'état. Manque probable : prix, nouveautés, effet d'exposition. Voir ads_07.
 5. Mesurer l'incrémentalité (Conversion Lift par zone géographique de Google, ou un test à zones appariées) avant d'ajouter du budget. Besoin d'un budget plus élevé.
 6. Vérifier le tracking (Simprosys) et les commandes Shopify du 8 au 10.11.
 
@@ -58,6 +59,10 @@ Créé le 11.11.2026 à la demande du fondateur. Mettre à jour à chaque nouvel
 - Google Ads Help : custom labels (jusqu'à 5, 24 à 48 h de délai), filtre d'inventaire par label.
 
 ## 6. Erreurs déjà faites, ne pas répéter
+
+- 11.11 : j'ai annoncé « Explorer net négatif, ≈ 55 conversions attendues contre 7 » : biais de sélection (Explorer ne prend que des produits sans impression ni conversion avant le lot ; les non touchés incluent ceux qui ont converti avant). Corrigé dans ads_05 §11 et ads_08.
+- 11.11 : j'ai appelé « produits sans historique » des produits en fait créés après le 07.08 pour 17 854 sur 30 552. Toujours vérifier l'âge du produit (Shopify createdAt).
+- 11.11 : bug de script (ids numériques écrasés) avant correction : ne publier un résultat qu'après contrôle croisé SQL.
 
 - La cible tROAS de Nike n'était pas 5 pendant 10 semaines. Elle était de 3,79 à 4,5 en octobre.
 - Les changements de budget ne réinitialisent pas l'apprentissage. La règle des 20 % par étape n'est pas une règle de pro.

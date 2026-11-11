@@ -183,3 +183,23 @@ Lecture (I) : à taux égal aux non touchés de la même marque, les 5 marques a
 Mécanisme (F, code + tables) : les produits « sous-exposés » après 10 jours sont garés dans `long_tail_all` (≈ 7 300 modèles). Ce label les exclut de l'arbre main. Long Tail Shopping leur donne ≈ 4 impressions par produit. Ils quittent donc main, où 82 % des produits équivalents obtiennent des impressions.
 
 Limites : (1) la sélection Explorer n'est pas aléatoire mais pseudo-aléatoire par marque ; (2) les non touchés incluent des produits avec ventes Shopify 365 j, qu'Explorer exclut, ce qui biaise contre Explorer ; (3) les produits Explorer restent en main moins longtemps ; (4) échantillons Asics et NB petits ; (5) conversions rares (146 sur 22 k), l'ordre de grandeur est solide, pas la décimale.
+
+## 11. Correction du §10 : biais de sélection (F, `ads_08_explorer_event_study.md`)
+
+Le §10 est biaisé. Explorer ne choisit que des produits avec 0 impression sur 30 jours et 0 conversion Ads avant la date du lot. Les produits « non touchés » du §10 incluent des produits qui ont reçu des impressions et converti avant cette date. L'écart 6,6 contre 0,8 conversions pour 1 000 produits ne mesure donc pas l'effet d'Explorer. La conclusion « ≈ 55 conversions attendues, ≈ 7 observées » est retirée.
+
+Étude refaite par lot (`calculs/ads_08_explorer_event_study.mjs`). Pour chaque lot à la date T : traités = produits du lot qui respectent la règle à T ; contrôles = produits éligibles à T selon la même règle (âge Shopify ≥ 30 jours, 0 impression sur 4 semaines complètes, 0 conversion avant T, en stock) et non choisis. Résultat : toutes campagnes, 4 semaines complètes après la semaine de T.
+
+| | traités | contrôles |
+|---|---|---|
+| produit-lots | 8 762 | 198 332 |
+| % avec impressions | 56 % | 20 % |
+| conversions pour 1 000 produits (4 semaines) | 0,3 | 0,3 |
+| coût pour 1 000 produits | ≈ 63 CHF | ≈ 16,5 CHF |
+| valeur pour 1 000 produits | ≈ 72 CHF | ≈ 38 CHF |
+
+Lecture : Explorer obtient 2,8 fois plus de produits avec impressions et coûte ≈ 4 fois plus par produit, sans conversion supplémentaire détectable. Les effectifs sont petits (≈ 2,6 conversions chez les traités, ≈ 60 chez les contrôles) : on ne peut pas exclure un effet faible, ni dans un sens, ni dans l'autre. Le coût supplémentaire d'Explorer sur la fenêtre mesurée est ≈ 400 CHF.
+
+Limites : état courant du stock (produits ensuite purgés exclus), fenêtre de 4 semaines (les lots récents sont tronqués), règle « une seule campagne source » non reproduite, sélection pseudo-aléatoire non vérifiée, aucun contrôle sur ce que Long Tail aurait fait sur 3 mois.
+
+Autres faits trouvés en vérifiant : (1) du catalogue Shopify actuel, 18 479 produits datent d'avant le 08.07, 35 233 du 08.07 au 06.08, 44 809 depuis le 07.08 (F, `productsCount`). Les produits « zéro historique » sont donc surtout des produits récents. (2) 45 % des produits du catalogue courant de `ads_shopping_product_current` (≈ 50 k sur ≈ 96 k) n'existent pas dans la liste Shopify de 98 521 produits : cause non établie (produits supprimés encore dans l'état courant, ou autre).
