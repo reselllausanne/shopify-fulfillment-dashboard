@@ -189,6 +189,8 @@ export type BuildOpts = {
   only?: Set<string> | null;
   /** Hard cap on Shopify API loads per call for UNLINKED orders (the ones that need a buy). */
   maxApiLoads?: number;
+  /** Scan budget while no job is ready yet (initial cache warm-up). */
+  maxApiLoadsWhenEmpty?: number;
   /** Extra budget for already-linked orders (multi-line check). Low priority. */
   maxLinkedApiLoads?: number;
   /** Stop scanning once this many jobs are ready, so buying starts fast. */
@@ -230,6 +232,8 @@ export async function buildShopifyJobs(opts: BuildOpts): Promise<ShopifyJob[]> {
   let apiLoads = 0;
   let linkedLoads = 0;
   const maxLoads = opts.maxApiLoads ?? 12;
+  // Nothing ready yet: keep scanning (cache warm-up) up to this many loads instead of idling.
+  const maxLoadsWhenEmpty = Math.max(maxLoads, opts.maxApiLoadsWhenEmpty ?? 60);
   const maxLinked = opts.maxLinkedApiLoads ?? 4;
   const stopAfter = opts.stopAfterJobs ?? Number.POSITIVE_INFINITY;
   let cacheDirty = false;
@@ -249,7 +253,8 @@ export async function buildShopifyJobs(opts: BuildOpts): Promise<ShopifyJob[]> {
       ? cache[orderName]!.lines
       : undefined;
     if (!lines) {
-      if (isLinked ? linkedLoads >= maxLinked : apiLoads >= maxLoads) continue;
+      const cap = jobs.length ? maxLoads : maxLoadsWhenEmpty;
+      if (isLinked ? linkedLoads >= maxLinked : apiLoads >= cap) continue;
       if (isLinked) linkedLoads += 1;
       else apiLoads += 1;
       try {

@@ -33,6 +33,22 @@ if [ -f /app/.data/night-buyer.on ]; then
   ) &
 fi
 
+# Unified StockX buyer (Shopify + Galaxus): runs while .data/stockx-buyer/buyer.on exists.
+# Kill switch = delete it. Halt file .data/stockx-buyer/buyer.halt pauses it. See docs/STOCKX-BUYER.md.
+if [ -f /app/.data/stockx-buyer/buyer.on ]; then
+  (
+    sleep 45
+    while [ -f /app/.data/stockx-buyer/buyer.on ]; do
+      STOCKX_PROXY_PIN="${STOCKX_PROXY_PIN:-1}" \
+      STOCKX_BROWSER_PROXY_MODE="${STOCKX_BROWSER_PROXY_MODE:-on_fail}" \
+      STOCKX_PROXY_FILE="${STOCKX_PROXY_FILE:-/app/.data/lemonprime-ch-sticky.txt}" \
+      DISPLAY="${DISPLAY:-:99}" \
+      npx tsx scripts/stockx-buyer.ts run >>/app/.data/stockx-buyer.log 2>&1
+      sleep 20
+    done
+  ) &
+fi
+
 if [ $# -gt 0 ]; then
   exec "$@"
 else
