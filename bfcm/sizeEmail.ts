@@ -114,9 +114,6 @@ a{color:inherit}
 <tr><td class="pad" style="padding:8px 34px 30px;background:#FFFFFF;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${sizeRows()}</table>
 </td></tr>
-<tr><td class="pad" style="padding:20px 38px;background:#F4F3EE;">
-<p style="margin:0;font:700 13px/20px Arial,Helvetica,sans-serif;color:#101010;">Une pointure = une sélection exacte.</p>
-</td></tr>
 <tr><td class="pad" style="padding:24px 38px 30px;background:#FFFFFF;">
 <p style="margin:0 0 8px;font:400 11px/17px Arial,Helvetica,sans-serif;color:#74746E;">Tu reçois cet email parce que tu es abonné à Resell Lausanne.</p>
 <p style="margin:0 0 10px;font:400 11px/17px Arial,Helvetica,sans-serif;color:#74746E;">{{ organization.full_address }}</p>
@@ -142,8 +139,6 @@ Réserve ton accès en un clic.
 Ta sélection sera enregistrée. Les deals restent secrets jusqu’au jour J.
 
 ${links}
-
-Une pointure = une sélection exacte.
 
 Tu reçois cet email parce que tu es abonné à Resell Lausanne.
 {{ organization.full_address }}

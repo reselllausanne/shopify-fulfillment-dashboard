@@ -62,6 +62,7 @@ describe("BFCM exact-size email", () => {
       renderBf2026SizeEmailHtml() + renderBf2026SizeEmailText();
     expect(output).not.toMatch(/<script|<form|confirme ta taille/i);
     expect(output).not.toMatch(/mail de confirmation|email de confirmation/i);
+    expect(output).not.toContain("Une pointure = une sélection exacte");
     expect(output).not.toContain("/collections/black-friday");
     expect(output).not.toContain("filter.v.option.size");
   });
