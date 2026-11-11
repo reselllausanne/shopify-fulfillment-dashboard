@@ -1874,7 +1874,34 @@ export async function runStockxAutoCheckoutForOrder(options: {
     }
     await dismissNoise(page);
 
-    const sized = await selectSizeEuOrUs(page, shopify.sizeEU, sizeUS);
+    let sized = await selectSizeEuOrUs(page, shopify.sizeEU, sizeUS);
+    // Picker click failed but we know the US size: use the proven checkout deep-link
+    // (/buy/<slug>?size=US, same as the Galaxus path). No size/lanes there = fails below, never a wrong buy.
+    let viaDeepLink = false;
+    if (!sized.ok && sizeUS) {
+      const tiles = await page
+        .evaluate(() => {
+          const out: string[] = [];
+          for (const n of Array.from(document.querySelectorAll("button,li,div[role=button],div[role=option]"))) {
+            const t = (n.textContent || "").replace(/\s+/g, " ").trim();
+            if (t && t.length <= 24) out.push(t);
+          }
+          return Array.from(new Set(out)).slice(0, 40).join(" | ");
+        })
+        .catch(() => "");
+      console.warn(`[STOCKX-SIZE] picker miss ${shopify.orderName} eu=${shopify.sizeEU} us=${sizeUS} url=${page.url()} tiles=${tiles}`);
+      await page
+        .goto(buildStockxCheckoutBuyUrl(slug, sizeUS), { waitUntil: "domcontentloaded", timeout: 45_000 })
+        .catch(() => undefined);
+      await page.waitForTimeout(3500);
+      await dismissNoise(page);
+      const body = await page.locator("body").innerText().catch(() => "");
+      if (/\/buy\//i.test(page.url()) && !/(?:Taille|Size)\s*[:：]?\s*(?:Tout|All)\b/i.test(body)) {
+        sized = { ok: true, used: "US" };
+        viaDeepLink = true;
+        console.warn(`[STOCKX-SIZE] deep-link fallback ${shopify.orderName} us=${sizeUS}`);
+      }
+    }
     if (!sized.ok) {
       return fail("size_us_map", {
         buyUrl: productUrl,
@@ -1882,9 +1909,11 @@ export async function runStockxAutoCheckoutForOrder(options: {
       });
     }
 
-    await page.waitForTimeout(1000);
-    if (!(await clickBuyNow(page))) {
-      return fail("bot_fail", { detail: "Buy Now not found" });
+    if (!viaDeepLink) {
+      await page.waitForTimeout(1000);
+      if (!(await clickBuyNow(page))) {
+        return fail("bot_fail", { detail: "Buy Now not found" });
+      }
     }
     await page.waitForTimeout(4500);
     await dismissNoise(page);
