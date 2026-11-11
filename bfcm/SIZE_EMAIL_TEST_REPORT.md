@@ -10,6 +10,7 @@ Run: 11 November 2026, Europe/Zurich. Updated after live range landing.
 - ⚠️ `data-confirm-endpoint` is empty, so the coded POST `{ size, size_range, sizes, label }` does not leave the browser yet.
 
 Klaviyo template: `U78AYV`.
-Range test campaign: `01M76BJEM7S5NEFNYHTXTWSHTB`, sent only to `reselllausanne@gmail.com`.
+Range test campaign: `01M76CE47CZ870K7VXSG5ZFYM3`, sent only to `reselllausanne@gmail.com`.
+Each link now carries `email={{ person.email|urlencode }}` after `size`.
 
 Mapping: `bfcm/size-email-links.csv`.
