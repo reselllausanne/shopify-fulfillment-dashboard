@@ -499,7 +499,7 @@ export async function resolvePair(
   if (!order || !line) return { ok: false, status: "needs_review", reason: "order_or_line_missing" };
   const nb = isClearlyNotStockxBuyable({ title: line.productName, sku: line.supplierSku });
   if (nb.notBuyable) return { ok: false, status: "not_stockx", reason: nb.label ?? "not_stockx" };
-  const r = await resolveGalaxusStxBuyCandidate({ order, line, allowNonStxLines: true });
+  const r = await resolveGalaxusStxBuyCandidate({ order, line });
   if (r.ok) return r;
   const notStockx = ["not_stx_line", "warehouse_stock_hint"].includes(r.reason);
   return { ok: false, status: notStockx ? "not_stockx" : "needs_review", reason: r.reason };
