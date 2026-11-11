@@ -35,6 +35,20 @@ vi.mock("@/galaxus/kickdb/client", async (importOriginal) => {
   };
 });
 
+// Production refuses images whose dimensions are unverified (IMAGE_DIMENSIONS_UNVERIFIED) and
+// would probe over the network. These tests cover GTIN/size handling, not image compliance
+// (see imageResolver tests), so treat the fixture images as already compliant.
+vi.mock("@/galaxus/kickdb/imageResolver", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/galaxus/kickdb/imageResolver")>();
+  return {
+    ...actual,
+    resolveCanonicalKickdbImageList: (product: any) =>
+      [product?.image, ...(Array.isArray(product?.gallery) ? product.gallery : [])].filter(
+        (url, index, all): url is string => typeof url === "string" && all.indexOf(url) === index
+      ),
+  };
+});
+
 vi.mock("@/galaxus/stx/variantPriceLanes", () => ({
   allowsStxStandardImport: vi.fn().mockReturnValue(false),
   stxProductAskMedian: vi.fn().mockReturnValue(100),

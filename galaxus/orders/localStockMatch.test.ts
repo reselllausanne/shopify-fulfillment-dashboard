@@ -27,9 +27,16 @@ describe("resolveGalaxusLocalStockCostChf", () => {
 
   it("returns Bape tee hard COGS 35", () => {
     const r = resolveGalaxusLocalStockCostChf({
-      productName: "BAPE Color Camo Big Ape Head Tee White",
+      productName: "BAPE Big Ape Head Tee White",
     });
     expect(r?.costChf).toBe(35);
+  });
+
+  it("does not give Bape hard COGS to non-warehouse Bape tees (allowlist only)", () => {
+    const r = resolveGalaxusLocalStockCostChf({
+      productName: "BAPE Color Camo Big Ape Head Tee White",
+    });
+    expect(r?.costChf).toBeUndefined();
   });
 
   it("returns Audemars x Travis tee hard COGS 40", () => {
