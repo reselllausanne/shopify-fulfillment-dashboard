@@ -25,7 +25,7 @@ import {
 } from "@/lib/stockxCheckout";
 import { buildStockxBuyUrl } from "@/lib/stockxAutoCheckout/sizeUsFallback";
 import { detectShopifyExpress } from "@/lib/stockxAutoCheckout/detectShopifyExpress";
-import { MAX_ALL_IN_CHF, type StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
+import { SHOPIFY_MAX_ALL_IN_CHF, type StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
 import type { BrowserContext, Page } from "playwright";
 
 /** Sit on CF then abort — never rotate through 20 stickies. */
@@ -345,7 +345,7 @@ export async function runShopifyBatchBuy(options: {
   maxAllInChf?: number;
 }): Promise<ShopifyBatchBuySummary> {
   const dryRun = options.confirmLive === true ? false : options.dryRun !== false;
-  const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
+  const maxAllInChf = Math.min(SHOPIFY_MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? SHOPIFY_MAX_ALL_IN_CHF));
 
   const out: ShopifyBatchBuyItemResult[] = [];
   let bought = 0;

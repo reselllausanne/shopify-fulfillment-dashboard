@@ -60,6 +60,7 @@ import {
 import { isClearlyNotStockxBuyable } from "@/lib/stockxAutoCheckout/nonStockxBuyable";
 import {
   MAX_ALL_IN_CHF,
+  SHOPIFY_MAX_ALL_IN_CHF,
   type StockxDesiredLane,
   type StockxLaneCard,
   type StockxLaneLabel,
@@ -1353,7 +1354,7 @@ export async function previewStockxCheckout(options: {
   /** Force lane; default from Shopify Express detection. */
   desiredLane?: StockxDesiredLane | null;
 }): Promise<StockxCheckoutPreview> {
-  const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
+  const maxAllInChf = Math.min(SHOPIFY_MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? SHOPIFY_MAX_ALL_IN_CHF));
   const shopify = await loadShopifyLine(options.orderName, options.lineItemId);
   const shopifyExpress = detectShopifyExpress({
     deliveryMode: shopify.deliveryMode,
@@ -1641,7 +1642,7 @@ export async function runStockxAutoCheckoutForOrder(options: {
    */
   allowRebuyOfCancelled?: boolean;
 }): Promise<StockxAutoCheckoutResult> {
-  const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
+  const maxAllInChf = Math.min(SHOPIFY_MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? SHOPIFY_MAX_ALL_IN_CHF));
   let shopify: ShopifyLineCtx;
   try {
     shopify = await loadShopifyLine(options.orderName, options.lineItemId);
