@@ -36,6 +36,9 @@
  *   REI allowlist exempt (curated prior sales — Jetson / GB10 / etc. sit above the fashion cap).
  *   LEGO kind is NOT price-cap exempt (Monday 2026-10-26 rollback closed the weekend Klimt hole).
  *   GALAXUS_PRICE_OUTLIER_FILTER=1 also blocks STX asks far above brand retail.
+ * - Unknown kind (2026-11-11): the classifier no longer falls back to Sneakers for non-footwear
+ *   suppliers (HAW toys/condoms, ALT appliances, VEN batteries, EXL toys…); kind "unknown" is
+ *   only kept for FASHION_UNKNOWN_KIND_SUPPLIERS, everything else is non_fashion.
  * - Per-SKU fashion / supplier-disabled holes: galaxusAssortmentExceptions.ts (Tali mail dump).
  *
  * Master + offer skip blocked rows; stock feed pushes QuantityOnStock=0 to delist.

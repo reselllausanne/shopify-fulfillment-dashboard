@@ -284,6 +284,7 @@ export function buildGalaxusAlternativeMasterRows(
       description: product.description,
       category: product.category,
       brand: product.brand,
+      supplierKey: String(product.providerKey ?? "").split("_")[0].toLowerCase() || null,
     });
     const description = resolveGalaxusDescription({
       description: product.description,
