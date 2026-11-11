@@ -101,4 +101,4 @@ Créé le 11.11.2026 à la demande du fondateur. Mettre à jour à chaque nouvel
 
 - Possible : oui, via import de conversions par clic (gclid) ou conversions améliorées (email haché), action **secondaire** d'abord. Code déjà en place : `tracking/adapters/googleAdsSecondary.ts`, `adsanalytics/google/conversionUploads.ts`, plan G4/G5 dans `docs/tracking/TRACKING-PLAN.md` (valeur = CM2 bornée à 0, observation 4-8 semaines, puis expérience 50/50). Rien d'envoyé à Google (G4 verrouillé) (F).
 - Bloquants (F) : gclid sur 18 % des achats seulement et depuis le 15.10 ; coûts complets exigés ≥ 90 % ; Simprosys reste la seule conversion principale, admin inaccessible ; remboursements non renvoyés.
-- Plafond du gain (H) : POAS pondéré actuel ≈ 0,72 (valeur Google supposée incrémentale). Une meilleure allocation par marge le fait passer à ≈ 0,8-0,85, soit ≈ +1 à 2 k par mois pour 14 k de dépense. Ne rend pas la pub rentable à elle seule.
+- Plafond du gain (H) : POAS pondéré actuel ≈ 0,70 (valeur Google supposée incrémentale). Une meilleure allocation par marge le fait passer à ≈ 0,8, soit ≈ +1 à 2 k par mois pour 14 k de dépense. Ne rend pas la pub rentable à elle seule.
