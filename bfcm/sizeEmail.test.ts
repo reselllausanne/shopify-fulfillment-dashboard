@@ -30,10 +30,11 @@ describe("BFCM range email", () => {
 
   it("keeps the range parameter first and leaves preview unlock off", () => {
     expect(bf2026SizeUrl("36-37.5")).toBe(
-      "https://www.resell-lausanne.ch/pages/black-friday?size=36-37.5&utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_size&utm_content=size_36-37.5",
+      "https://www.resell-lausanne.ch/pages/black-friday?size=36-37.5&email={{ person.email|urlencode }}&utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_size&utm_content=size_36-37.5",
     );
     expect(bf2026SizeUrl("42-43.5")).toContain("?size=42-43.5&");
     expect(bf2026SizeUrl("44-46")).not.toContain("bfcm_preview_deals");
+    expect(renderBf2026SizeEmailHtml().match(/person\.email\|urlencode/g)).toHaveLength(5);
   });
 
   it("renders one button per range", () => {

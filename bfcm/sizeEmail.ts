@@ -38,6 +38,7 @@ export type Bf2026EmailSizeRange =
 export function bf2026SizeUrl(size: Bf2026EmailSizeRange): string {
   return (
     `${LANDING_URL}?size=${size}` +
+    "&email={{ person.email|urlencode }}" +
     "&utm_source=email" +
     "&utm_medium=bfcm" +
     "&utm_campaign=bfcm_2026_size" +

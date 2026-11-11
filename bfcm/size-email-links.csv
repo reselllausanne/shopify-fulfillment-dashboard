@@ -1,6 +1,6 @@
 label,url
-36–37.5,https://www.resell-lausanne.ch/pages/black-friday?size=36-37.5&utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_size&utm_content=size_36-37.5
-38–39.5,https://www.resell-lausanne.ch/pages/black-friday?size=38-39.5&utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_size&utm_content=size_38-39.5
-40–41.5,https://www.resell-lausanne.ch/pages/black-friday?size=40-41.5&utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_size&utm_content=size_40-41.5
-42–43.5,https://www.resell-lausanne.ch/pages/black-friday?size=42-43.5&utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_size&utm_content=size_42-43.5
-44–46,https://www.resell-lausanne.ch/pages/black-friday?size=44-46&utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_size&utm_content=size_44-46
+36–37.5,https://www.resell-lausanne.ch/pages/black-friday?size=36-37.5&email={{ person.email|urlencode }}&utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_size&utm_content=size_36-37.5
+38–39.5,https://www.resell-lausanne.ch/pages/black-friday?size=38-39.5&email={{ person.email|urlencode }}&utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_size&utm_content=size_38-39.5
+40–41.5,https://www.resell-lausanne.ch/pages/black-friday?size=40-41.5&email={{ person.email|urlencode }}&utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_size&utm_content=size_40-41.5
+42–43.5,https://www.resell-lausanne.ch/pages/black-friday?size=42-43.5&email={{ person.email|urlencode }}&utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_size&utm_content=size_42-43.5
+44–46,https://www.resell-lausanne.ch/pages/black-friday?size=44-46&email={{ person.email|urlencode }}&utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_size&utm_content=size_44-46
