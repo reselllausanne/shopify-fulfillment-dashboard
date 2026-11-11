@@ -40,7 +40,7 @@ export function shouldOmitWelPokemonFromGalaxusFeed(input: {
 }
 
 export async function loadWelCardOmitProviderKeys(): Promise<Set<string>> {
-  // Full scan over SupplierVariant (no index serves the ILIKE).
+  // Served by partial index SupplierVariant_wel_providerKey_idx (same ILIKE predicate; ~9k rows).
   // - Under nightly load the default statement_timeout killed master/specs rebuilds (Nov 4).
   // - Prisma interactive transaction has a 5s default timeout which also killed it (Nov 5).
   // Fix: use a plain connection with SET statement_timeout via a raw session-level command.

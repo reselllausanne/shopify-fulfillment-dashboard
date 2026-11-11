@@ -9,6 +9,7 @@ import { enqueueOpsBackgroundJob } from "@/galaxus/ops/enqueueOpsBackgroundJob";
 import { runOpsJob } from "@/galaxus/ops/jobRunner";
 import { OPS_SNAPSHOT_REBUILD_JOB } from "@/galaxus/ops/opsBackgroundJobs";
 import { reconcileDeletedKeysByBucket } from "@/galaxus/exports/snapshotDeleteReconcile";
+import { applySnapshotDiff } from "@/galaxus/exports/snapshotDiffApply";
 import {
   clearSnapshotLocalCache,
   readSnapshotLocalCache,
@@ -217,6 +218,33 @@ async function bulkReplaceSnapshotRows(params: {
   }
 }
 
+/**
+ * Diff-apply (default) writes only changed rows and never empties the tables, so the snapshot
+ * stays valid during the rebuild. Set GALAXUS_FEED_SNAPSHOT_FULL_REBUILD=1 for the legacy
+ * invalidate → delete-all → reinsert path.
+ */
+export function useDiffSnapshotRebuild(): boolean {
+  return String(process.env.GALAXUS_FEED_SNAPSHOT_FULL_REBUILD ?? "").trim() !== "1";
+}
+
+async function persistSnapshotRows(params: {
+  table: "stock" | "offer";
+  headers: string[];
+  rows: Array<Record<string, string>>;
+  exportStartedAt: Date;
+}): Promise<void> {
+  if (!useDiffSnapshotRebuild()) {
+    await bulkReplaceSnapshotRows(params);
+    return;
+  }
+  const result = await applySnapshotDiff({
+    table: params.table === "stock" ? "GalaxusFeedStockSnapshot" : "GalaxusFeedOfferSnapshot",
+    rows: params.rows,
+    exportStartedAt: params.exportStartedAt,
+  });
+  console.info("[GALAXUS][FEED][SNAPSHOT] diff applied", { table: params.table, ...result });
+}
+
 /** Clear `rebuiltAt` so the snapshot path is skipped and exports fall back to live. */
 export async function invalidateFeedSnapshot(): Promise<void> {
   await (prisma as any).galaxusFeedSnapshotMeta.updateMany({
@@ -277,7 +305,10 @@ export async function rebuildFeedSnapshotFromExports(origin: string): Promise<{
 }> {
   const startedAt = Date.now();
 
-  console.info("[GALAXUS][FEED][SNAPSHOT] rebuild phase", { phase: "export-stock" });
+  const diffMode = useDiffSnapshotRebuild();
+  console.info("[GALAXUS][FEED][SNAPSHOT] rebuild phase", { phase: "export-stock", diffMode });
+  // Patches written after this instant are fresher than the export; diff-apply leaves them be.
+  const stockExportStartedAt = new Date();
   let stockCsv = await fetchExportCsv(origin, "/api/galaxus/export/stock?all=1");
   const stockParsed = parseCsvToRows(stockCsv);
   stockCsv = "";
@@ -287,16 +318,17 @@ export async function rebuildFeedSnapshotFromExports(origin: string): Promise<{
     throw new Error(`Refusing to rebuild snapshot from empty export (stock=0)`);
   }
 
-  // Invalidate before wiping. The rebuild is delete-then-insert across two tables and
-  // cannot be one transaction at this row count, so a crash mid-rebuild would otherwise
-  // leave truncated tables still flagged ready by the previous run's `rebuiltAt` —
-  // and a truncated offer CSV delists every product missing from it.
-  await invalidateFeedSnapshot();
+  // Legacy path only: delete-then-insert across two tables cannot be one transaction at this
+  // row count, so a crash mid-rebuild would leave truncated tables still flagged ready by the
+  // previous run's `rebuiltAt` — and a truncated offer CSV delists every product missing from
+  // it. Diff-apply never truncates, so the snapshot can stay valid (patches + readers keep working).
+  if (!diffMode) await invalidateFeedSnapshot();
 
-  await bulkReplaceSnapshotRows({
+  await persistSnapshotRows({
     table: "stock",
     headers: [...GALAXUS_STOCK_CSV_HEADERS],
     rows: stockParsed.rows,
+    exportStartedAt: stockExportStartedAt,
   });
   stockParsed.rows.length = 0;
   maybeExposeGc();
@@ -305,6 +337,7 @@ export async function rebuildFeedSnapshotFromExports(origin: string): Promise<{
     phase: "export-offer",
     stockRowsPersisted: stockRowCount,
   });
+  const offerExportStartedAt = new Date();
   let offerCsv = await fetchExportCsv(origin, "/api/galaxus/export/offer?all=1");
   const offerParsed = parseCsvToRows(offerCsv);
   offerCsv = "";
@@ -318,18 +351,26 @@ export async function rebuildFeedSnapshotFromExports(origin: string): Promise<{
     );
   }
 
-  await bulkReplaceSnapshotRows({
+  await persistSnapshotRows({
     table: "offer",
     headers: offerHeaders,
     rows: offerParsed.rows,
+    exportStartedAt: offerExportStartedAt,
   });
   offerParsed.rows.length = 0;
   maybeExposeGc();
 
-  await assertSnapshotRowCounts({
-    stockExpected: stockRowCount,
-    offerExpected: offerRowCount,
-  });
+  try {
+    await assertSnapshotRowCounts({
+      stockExpected: stockRowCount,
+      offerExpected: offerRowCount,
+    });
+  } catch (err) {
+    // Diff mode keeps the snapshot valid throughout; a failed count check must still take it
+    // out of service (the legacy path is already invalid at this point).
+    if (diffMode) await invalidateFeedSnapshot().catch(() => undefined);
+    throw err;
+  }
 
   const now = new Date();
   await (prisma as any).galaxusFeedSnapshotMeta.upsert({
