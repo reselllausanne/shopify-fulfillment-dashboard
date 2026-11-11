@@ -824,28 +824,41 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
  * STX_{gtin} and no other variant owns that key.
  */
 export async function promotePendingStxMappingsThatAlreadyHaveGtin(now = new Date()): Promise<number> {
-  const updated = await prisma.$executeRaw`
-    UPDATE "VariantMapping" AS m
-    SET
-      "gtin" = v."gtin",
-      "providerKey" = v."providerKey",
-      "status" = 'SUPPLIER_GTIN',
-      "updatedAt" = ${now}
-    FROM "SupplierVariant" AS v
-    WHERE m."supplierVariantId" = v."supplierVariantId"
-      AND m."status" = 'PENDING_GTIN'
-      AND (m."gtin" IS NULL OR btrim(m."gtin") = '')
-      AND v."supplierVariantId" LIKE 'stx_%'
-      AND v."gtin" ~ '^[0-9]{8}$|^[0-9]{12,14}$'
-      AND v."providerKey" = 'STX_' || v."gtin"
-      AND NOT EXISTS (
-        SELECT 1
-        FROM "SupplierVariant" AS other
-        WHERE other."providerKey" = v."providerKey"
-          AND other."supplierVariantId" <> v."supplierVariantId"
+  let total = 0;
+  // Hard stop so a logic bug cannot spin. 2_000 * 500 covers the historical backlog.
+  for (let batch = 0; batch < 2000; batch++) {
+    const updated = await prisma.$executeRaw`
+      WITH todo AS (
+        SELECT m."id", v."gtin" AS gtin, v."providerKey" AS provider_key
+        FROM "VariantMapping" AS m
+        JOIN "SupplierVariant" AS v ON v."supplierVariantId" = m."supplierVariantId"
+        WHERE m."status" = 'PENDING_GTIN'
+          AND (m."gtin" IS NULL OR btrim(m."gtin") = '')
+          AND v."supplierVariantId" LIKE 'stx_%'
+          AND v."gtin" ~ '^[0-9]{8}$|^[0-9]{12,14}$'
+          AND v."providerKey" = 'STX_' || v."gtin"
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "SupplierVariant" AS other
+            WHERE other."providerKey" = v."providerKey"
+              AND other."supplierVariantId" <> v."supplierVariantId"
+          )
+        LIMIT 500
       )
-  `;
-  return Number(updated) || 0;
+      UPDATE "VariantMapping" AS m
+      SET
+        "gtin" = todo.gtin,
+        "providerKey" = todo.provider_key,
+        "status" = 'SUPPLIER_GTIN',
+        "updatedAt" = ${now}
+      FROM todo
+      WHERE m."id" = todo."id"
+    `;
+    const n = Number(updated) || 0;
+    total += n;
+    if (n < 500) break;
+  }
+  return total;
 }
 
 export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Promise<StxSyncResult> {
