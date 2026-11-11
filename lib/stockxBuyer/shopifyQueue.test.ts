@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/app/lib/prisma", () => ({ prisma: {} }));
 
-import { normName, orderIsBuyable, skuCandidates } from "@/lib/stockxBuyer/shopifyQueue";
+import { EMPTY_LINES_TTL_MS, cacheEntryFresh, normName, orderIsBuyable, skuCandidates } from "@/lib/stockxBuyer/shopifyQueue";
 
 describe("skuCandidates", () => {
   it("tries the full colour-coded style id first, then shorter prefixes", () => {
@@ -34,5 +34,17 @@ describe("normName", () => {
   it("adds the hash", () => {
     expect(normName("7661")).toBe("#7661");
     expect(normName("#7661")).toBe("#7661");
+  });
+});
+
+describe("cacheEntryFresh", () => {
+  const line = { lineItemId: "1", title: "t", sku: "s", sizeEU: "42", express: false, skip: false, saleChf: 1 };
+  it("non-empty cache never expires (lines do not change after the sale)", () => {
+    expect(cacheEntryFresh({ at: 0, lines: [line] }, 10 * EMPTY_LINES_TTL_MS)).toBe(true);
+  });
+  it("empty cache expires so fulfilled orders are not re-fetched every cycle but not forgotten", () => {
+    expect(cacheEntryFresh({ at: 0, lines: [] }, 1000)).toBe(true);
+    expect(cacheEntryFresh({ at: 0, lines: [] }, EMPTY_LINES_TTL_MS + 1)).toBe(false);
+    expect(cacheEntryFresh(undefined, 0)).toBe(false);
   });
 });

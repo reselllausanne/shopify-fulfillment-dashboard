@@ -135,12 +135,25 @@ async function fetchLines(orderName: string): Promise<CachedLine[]> {
   });
 }
 
+/** An order with zero lines (fulfilled/removed) is re-checked after this, not every cycle. */
+export const EMPTY_LINES_TTL_MS = 6 * 3600_000;
+
+/** Pure: is the cached entry usable right now? Non-empty never expires; empty expires. */
+export function cacheEntryFresh(
+  hit: { at: number; lines: unknown[] } | undefined,
+  now: number
+): hit is { at: number; lines: CachedLine[] } {
+  if (!hit) return false;
+  if (hit.lines.length) return true;
+  return now - hit.at < EMPTY_LINES_TTL_MS;
+}
+
 /** Lines for an order, from cache when present. Throws on API failure (caller skips order this cycle). */
 export async function loadOrderLines(orderName: string, cache: Cache): Promise<CachedLine[]> {
   const hit = cache[orderName];
-  if (hit && hit.lines.length) return hit.lines;
+  if (cacheEntryFresh(hit, Date.now())) return hit.lines;
   const lines = await fetchLines(orderName);
-  if (lines.length) cache[orderName] = { at: Date.now(), lines };
+  cache[orderName] = { at: Date.now(), lines };
   return lines;
 }
 
@@ -165,8 +178,12 @@ export type BuildOpts = {
   since: Date;
   /** Restrict to these order names (#7661). */
   only?: Set<string> | null;
-  /** Hard cap on Shopify API loads per call, to keep each cycle short. */
+  /** Hard cap on Shopify API loads per call for UNLINKED orders (the ones that need a buy). */
   maxApiLoads?: number;
+  /** Extra budget for already-linked orders (multi-line check). Low priority. */
+  maxLinkedApiLoads?: number;
+  /** Stop scanning once this many jobs are ready, so buying starts fast. */
+  stopAfterJobs?: number;
   log?: (msg: string) => void;
 };
 
@@ -202,17 +219,30 @@ export async function buildShopifyJobs(opts: BuildOpts): Promise<ShopifyJob[]> {
 
   const jobs: ShopifyJob[] = [];
   let apiLoads = 0;
-  const maxLoads = opts.maxApiLoads ?? 25;
+  let linkedLoads = 0;
+  const maxLoads = opts.maxApiLoads ?? 12;
+  const maxLinked = opts.maxLinkedApiLoads ?? 4;
+  const stopAfter = opts.stopAfterJobs ?? Number.POSITIVE_INFINITY;
   let cacheDirty = false;
 
-  for (const order of orders) {
-    if (!orderIsBuyable(order)) continue;
+  // Unlinked orders first (they need a buy). Linked ones only for the multi-line check.
+  const buyable = orders.filter(orderIsBuyable);
+  const ordered = [
+    ...buyable.filter((o) => !linkedNames.has(o.orderName)),
+    ...buyable.filter((o) => linkedNames.has(o.orderName)),
+  ];
+
+  for (const order of ordered) {
+    if (jobs.length >= stopAfter) break;
     const orderName = normName(order.orderName);
-    let lines = cache[orderName]?.lines;
-    if (!lines?.length) {
-      // Order with zero links and no cached lines needs one API call; throttle per cycle.
-      if (apiLoads >= maxLoads) continue;
-      apiLoads += 1;
+    const isLinked = linkedNames.has(order.orderName);
+    let lines: CachedLine[] | undefined = cacheEntryFresh(cache[orderName], Date.now())
+      ? cache[orderName]!.lines
+      : undefined;
+    if (!lines) {
+      if (isLinked ? linkedLoads >= maxLinked : apiLoads >= maxLoads) continue;
+      if (isLinked) linkedLoads += 1;
+      else apiLoads += 1;
       try {
         lines = await loadOrderLines(orderName, cache);
         cacheDirty = true;
@@ -221,10 +251,7 @@ export async function buildShopifyJobs(opts: BuildOpts): Promise<ShopifyJob[]> {
         continue;
       }
     }
-    // Fully linked single-line orders drop out without any per-line DB hit.
-    if (linkedNames.has(order.orderName) && lines.length === 1 && lines[0]?.lineItemId) {
-      if (await lineAlreadyBought(lines[0].lineItemId)) continue;
-    }
+    if (!lines.length) continue;
     for (const line of lines) {
       if (line.skip) continue;
       const nb = isClearlyNotStockxBuyable({ title: line.title, sku: line.sku });
@@ -293,7 +320,7 @@ export async function buildCancelRebuyJobs(opts: {
     });
     if (!order || order.cancelledAt || !orderIsBuyable(order)) continue;
     const sku = m.shopifySku ?? "";
-    const sizeEU = m.shopifySizeEU ?? "";
+    const sizeEU = String(m.shopifySizeEU ?? "").replace(/^EU\s*/i, "").trim();
     if (!sku || !sizeEU) continue;
     const slug = await urlKeyForSku(sku);
     if (!slug) continue;

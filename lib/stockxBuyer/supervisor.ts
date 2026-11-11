@@ -520,12 +520,18 @@ export async function runCycle(rt: Runtime): Promise<CycleResult> {
       log(`rebuy sweep failed ${e?.message || e}`);
       return [];
     });
+    if (cfg.onlyOrders) rt.rebuyJobs = rt.rebuyJobs.filter((j) => cfg.onlyOrders!.has(j.orderName));
     if (rt.rebuyJobs.length) log(`rebuy sweep: ${rt.rebuyJobs.length} cancelled pair(s) to rebuy`);
   }
 
   if (cfg.shopify) {
     rt.phase = "shopify-queue";
-    const open = await buildShopifyJobs({ since: cfg.shopifySince, only: cfg.onlyOrders, log });
+    const open = await buildShopifyJobs({
+      since: cfg.shopifySince,
+      only: cfg.onlyOrders,
+      log,
+      stopAfterJobs: cfg.batchSize * 3,
+    });
     const all = [...rt.rebuyJobs, ...open].filter((j) => !stateBlocks(rt.states.get(j.key), Date.now()));
     shopifyQueue = all.length;
     // Rebuys rank with Express: the customer is already waiting.
