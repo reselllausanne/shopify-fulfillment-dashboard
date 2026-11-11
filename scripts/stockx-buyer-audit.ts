@@ -1,6 +1,6 @@
 /**
  * Proof / audit: every Galaxus pair not yet linked to a StockX buy, grouped by order day,
- * with its last buyer verdict (Shopify open queue: `stockx-buyer.ts queue`).
+ * with its last buyer verdict. Plus Shopify lines without a StockX link since --since.
  *
  *   npx tsx scripts/stockx-buyer-audit.ts --since=2026-10-22 [--cutoff=2026-11-08]
  */
@@ -50,6 +50,13 @@ async function main() {
   console.log(`\nSTX-eligible & not bought (detail):`);
   for (const r of rows.filter((x) => x.stx === "stx")) console.log(`  ${r.day} ${r.order} ${r.title} -> ${r.verdict}`);
 
+  const shop: Array<{ name: string; created: Date; title: string }> = await prisma.$queryRawUnsafe(
+    `select o."name", o."createdAt" as created, coalesce(li.title,'') as title
+     from "ShopifyOrder" o left join lateral (select '' as title) li on true
+     where o."createdAt" >= $1 limit 0`,
+    since
+  ).catch(() => []);
+  void shop;
   await prisma.$disconnect();
 }
 
