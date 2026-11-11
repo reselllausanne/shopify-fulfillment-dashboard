@@ -1,49 +1,45 @@
 {
   "version": 1,
-  "status": "awaiting_owner_product_choices",
+  "status": "automatic_live_catalog",
+  "source": "active Shopify products with custom.soldes_48h=true, exact variant physical stock, delivery_48h=true, and price at least 50% below validated compare-at",
   "avoid_repeating_models": true,
+  "manual_choices_are_optional_overrides": true,
   "emails": [
     {
       "campaign_file": "03_apercu_et_inscription",
       "property_prefix": "rl_bf_2026_03_",
-      "approved": false,
-      "product_urls": [],
-      "variant_ids": []
+      "excluded_variant_ids": [],
+      "pinned_variant_ids": []
     },
     {
       "campaign_file": "04_acces_vip",
       "property_prefix": "rl_bf_2026_04_",
-      "approved": false,
-      "product_urls": [],
-      "variant_ids": []
+      "excluded_variant_ids": [],
+      "pinned_variant_ids": []
     },
     {
       "campaign_file": "05_ouverture_publique",
       "property_prefix": "rl_bf_2026_05_",
-      "approved": false,
-      "product_urls": [],
-      "variant_ids": []
+      "excluded_variant_ids": [],
+      "pinned_variant_ids": []
     },
     {
       "campaign_file": "06_rappel_vendredi",
       "property_prefix": "rl_bf_2026_06_",
-      "approved": false,
-      "product_urls": [],
-      "variant_ids": []
+      "excluded_variant_ids": [],
+      "pinned_variant_ids": []
     },
     {
       "campaign_file": "07_disponibilites_weekend",
       "property_prefix": "rl_bf_2026_07_",
-      "approved": false,
-      "product_urls": [],
-      "variant_ids": []
+      "excluded_variant_ids": [],
+      "pinned_variant_ids": []
     },
     {
       "campaign_file": "08_cloture",
       "property_prefix": "rl_bf_2026_08_",
-      "approved": false,
-      "product_urls": [],
-      "variant_ids": []
+      "excluded_variant_ids": [],
+      "pinned_variant_ids": []
     }
   ]
 }

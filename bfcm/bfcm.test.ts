@@ -21,6 +21,7 @@ import {
   profileIdentity,
   releaseHold,
   retainExistingHolds,
+  selectAutomaticOffers,
   selectEditorialOffers,
   selectionHistoryEventAllowed,
   serviceMessageAllowed,
@@ -141,6 +142,30 @@ describe("editorial selection", () => {
         variant_ids: [],
       }),
     ).toEqual({ status: "awaiting_selection", items: [] });
+  });
+
+  it("automatically selects all eligible live-sale variants without an allow-list", () => {
+    expect(
+      selectAutomaticOffers(catalog, ["42"]).items.map(
+        (item) => item.variant_id,
+      ),
+    ).toEqual(["a42", "b42"]);
+    expect(
+      selectAutomaticOffers(catalog, ["42.5"]).items.map(
+        (item) => item.variant_id,
+      ),
+    ).toEqual(["c42h"]);
+    expect(selectAutomaticOffers(catalog, ["42 2/3"]).items).toEqual([]);
+    expect(
+      selectAutomaticOffers(catalog, ["42"], [], {
+        excluded_variant_ids: ["a42"],
+      }).items.map((item) => item.variant_id),
+    ).toEqual(["b42"]);
+    expect(
+      selectAutomaticOffers(catalog, ["42"], [], {
+        pinned_variant_ids: ["b42"],
+      }).items.map((item) => item.variant_id),
+    ).toEqual(["b42", "a42"]);
   });
 
   it("filters exact size before model dedupe and avoids prior models", () => {

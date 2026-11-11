@@ -28,6 +28,13 @@ export type EditorialSelection = {
   variant_ids: readonly string[];
 };
 
+export type AutomaticSelectionOverrides = {
+  /** Emergency/editorial deny-list. Auto selection works when all lists are empty. */
+  excluded_variant_ids?: readonly string[];
+  /** Optional priority; variants remain subject to every stock/price/size guard. */
+  pinned_variant_ids?: readonly string[];
+};
+
 export type OfferSelectionStatus =
   | "matched"
   | "generic"
@@ -108,7 +115,79 @@ export function offerModelKey(variant: OfferVariant): string {
   return new URL(variant.url).pathname;
 }
 
+function rankAutomaticOffers(
+  variants: readonly OfferVariant[],
+  pinnedVariantIds: ReadonlySet<string>,
+): OfferVariant[] {
+  return [...variants].sort((left, right) => {
+    const leftPinned = pinnedVariantIds.has(left.variant_id) ? 1 : 0;
+    const rightPinned = pinnedVariantIds.has(right.variant_id) ? 1 : 0;
+    if (leftPinned !== rightPinned) return rightPinned - leftPinned;
+    if (left.available_local_quantity !== right.available_local_quantity) {
+      return right.available_local_quantity - left.available_local_quantity;
+    }
+    const leftDiscount =
+      left.reference_price_chf > 0
+        ? left.sale_price_chf / left.reference_price_chf
+        : 1;
+    const rightDiscount =
+      right.reference_price_chf > 0
+        ? right.sale_price_chf / right.reference_price_chf
+        : 1;
+    if (leftDiscount !== rightDiscount) return leftDiscount - rightDiscount;
+    return left.variant_id.localeCompare(right.variant_id);
+  });
+}
+
 /**
+ * Default production selector. Catalog comes from live Shopify sale variants
+ * crossed with physical-location inventory. No owner allow-list is required.
+ */
+export function selectAutomaticOffers(
+  catalog: readonly OfferVariant[],
+  requestedSizes: readonly unknown[],
+  previouslyShownModels: readonly string[] = [],
+  overrides: AutomaticSelectionOverrides = {},
+  limit = 3,
+): OfferSelection {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 10) {
+    throw new Error("Invalid offer limit");
+  }
+  const sizes = explicitSizes(requestedSizes);
+  if (requestedSizes.length > 0 && sizes.length === 0) {
+    return { status: "empty", items: [] };
+  }
+  const excluded = new Set(overrides.excluded_variant_ids ?? []);
+  const pinned = new Set(overrides.pinned_variant_ids ?? []);
+  const oldModels = new Set(previouslyShownModels);
+  const currentModels = new Set<string>();
+  const items: OfferVariant[] = [];
+  const candidates = rankAutomaticOffers(
+    catalog.filter(
+      (variant) =>
+        eligibleVariant(variant) &&
+        !excluded.has(variant.variant_id) &&
+        (sizes.length === 0 ||
+          sizes.includes(canonicalSize(variant.size_eu) as string)),
+    ),
+    pinned,
+  );
+
+  for (const variant of candidates) {
+    const model = offerModelKey(variant);
+    if (oldModels.has(model) || currentModels.has(model)) continue;
+    currentModels.add(model);
+    items.push(variant);
+    if (items.length === limit) break;
+  }
+  return {
+    status: items.length === 0 ? "empty" : sizes.length ? "matched" : "generic",
+    items,
+  };
+}
+
+/**
+ * Optional curated mode. Automatic selection is the default production mode.
  * Crosses owner-approved variants with exact size and verified local inventory.
  * Models already shown to this profile stay out. Preview GETs must not populate
  * `previouslyShownModels`; only actual campaign delivery may do that.
