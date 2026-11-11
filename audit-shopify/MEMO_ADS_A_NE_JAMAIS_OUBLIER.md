@@ -24,7 +24,12 @@ Créé le 11.11.2026 à la demande du fondateur. Mettre à jour à chaque nouvel
 
 ## 3. Faits mesurés qui comptent (voir `analyses/ads_05_explorer_diagnostic.md`)
 
-- Seuil de rentabilité en ROAS Google ≈ 3,5 à 3,9 (contribution avant pub 40,3 CHF par commande) (F).
+- [CORRIGÉ 11.11 soir] Seuil de rentabilité en ROAS Google : **4,7 à 5,1** (août-octobre, contribution 45,6 CHF par commande, valeur Google 214,6 par conversion). 3,3 à 3,9 seulement si la pub était créditée de toutes les commandes, y compris direct/organique (borne la plus généreuse). Un tROAS de 3,6 à 4,5 est sous l'équilibre sauf dans ce cas (F, calcul ; voir `analyses/ads_09_marge_bid.md` §0).
+- ROAS marginal (élasticité jour 2026 0,52 à 0,68, ROAS moyen 4,3) ≈ 2,3 à 3,0, soit ≈ 0,45 à 0,5 CHF de contribution par CHF dépensé. Observationnel, borne haute (F/I, ads_09 §2.1).
+- Budget doublé le 10.11 : la dépense n'a pas bougé (296/284/320 CHF par jour). ROAS 3 jours 0,82 : le plus bas de 2026 (0,6 % des fenêtres ≤ 1,0). Commandes Shopify 5,3/j contre 7,8/j ; conversions Google 1,2/j contre 4,4/j (F, ads_09 §2.2). Baisse Google > baisse Shopify : tracking à vérifier en premier.
+- POAS par marque (août-octobre, borne haute) : Nike 0,76 ; Adidas 0,59 ; Jordan 0,83 ; New Balance 0,66 ; On 0,50 ; Asics 0,59 ; UGG 0,32 (ROAS 1,01) ; Fear of God 1,04 ; Supreme 1,10. ROAS d'équilibre par marque : 3,2 à 6,3 (F, ads_09 §3).
+- Enchère sur la marge : Google ne propose pas de stratégie « maximiser le profit ». L'optimisation sur le profit brut (cible profit tROAS) est en bêta dans certains comptes, PMax et Shopping standard. Sinon : envoyer le profit comme valeur de conversion. Règles de valeur de conversion : audience, lieu, appareil seulement, pas par produit. Ajustements de conversion lus par l'enchère dans les 7 jours seulement (F, sources dans ads_09 §4).
+- Lewis & Wong : la valeur d'une impression est son effet incrémental ; exige de randomiser les enchères (inapplicable dans PMax). On approche par tests géographiques/Conversion Lift (F).
 - Dépense 2025 : 1,2 à 2,8 k par mois, ROAS 10 à 17. 2026 : 7 à 15 k par mois, ROAS 3,1 à 6,8. Conversions presque stables (mai 171, octobre 184) (F).
 - De mai à octobre : +6,7 k de pub pour +1,5 k de valeur (F).
 - Part d'impressions Nike 79 %, Adidas 83 %, Jordan 79 %, `all` 85 %. 0 % de budget perdu, 15 à 21 % perdus en classement (F).
@@ -70,6 +75,7 @@ Créé le 11.11.2026 à la demande du fondateur. Mettre à jour à chaque nouvel
 
 - 11.11 : j'ai annoncé « Explorer net négatif, ≈ 55 conversions attendues contre 7 » : biais de sélection (Explorer ne prend que des produits sans impression ni conversion avant le lot ; les non touchés incluent ceux qui ont converti avant). Corrigé dans ads_05 §11 et ads_08.
 - 11.11 : j'ai appelé « produits sans historique » des produits en fait créés après le 07.08 pour 17 854 sur 30 552. Toujours vérifier l'âge du produit (Shopify createdAt).
+- 11.11 : j'ai donné un seuil de ROAS de 3,5 à 3,9 comme « équilibre » sans dire qu'il suppose que la pub cause toutes les commandes. Corrigé : 4,7 à 5,1.
 - 11.11 : bug de script (ids numériques écrasés) avant correction : ne publier un résultat qu'après contrôle croisé SQL.
 
 - La cible tROAS de Nike n'était pas 5 pendant 10 semaines. Elle était de 3,79 à 4,5 en octobre.
