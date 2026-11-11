@@ -189,6 +189,16 @@ export const GALAXUS_POLICY_EXCEPTIONS: GalaxusPolicyException[] = [
     active: true,
   },
   {
+    id: "hard_remove_alt_haw_ven_wrk_fan_bae_bwz",
+    title: "ALT / HAW / VEN / WRK / FAN / BAE / BWZ (+EXL) removed from ALL Galaxus feeds",
+    gates: ["supplier_disabled"],
+    reason: "policy",
+    note: "2026-11-11: Galaxus flagged wrong category paths (Hot Wheels as Sneakers). Not used before next year: default GALAXUS_DISABLED_SUPPLIERS now bwz,rei,wel,exl,alt,haw,ven,wrk,fan,bae; master/specs builders, alternatives, snapshot streams and the COPY dump skip them (hardRemovedSuppliers.ts). Scraped data stays in DB. Re-enable: drop keys from the disabled default + GALAXUS_HARD_REMOVE_CANDIDATES + dump script regex, then rebuild snapshots.",
+    addedAt: "2026-11-11",
+    reviewAt: "2027-01-15",
+    active: true,
+  },
+  {
     id: "hobby_toy_delist",
     title: "Hobby / toy sweep (TCG, games, dolls, fidget, helmets, ASUS, …)",
     gates: ["fashion_only"],

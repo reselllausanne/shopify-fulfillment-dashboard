@@ -24,7 +24,12 @@ fi
 NETWORK="${GALAXUS_COPY_DOCKER_NETWORK:-resell_default}"
 PSQL_IMAGE="${GALAXUS_COPY_PSQL_IMAGE:-postgres:16-alpine}"
 
-echo "[dump-master-specs-csv] out=$OUT_DIR network=$NETWORK"
+# Hard-removed suppliers (galaxus/exports/hardRemovedSuppliers.ts) must never reach the CSV,
+# even if the snapshot still holds old rows (rebuild failed / not yet run). Keep in sync.
+# Override: GALAXUS_HARD_REMOVED_REGEX='^$' to disable.
+HARD_REMOVED_RE="${GALAXUS_HARD_REMOVED_REGEX:-^(ALT|HAW|EXL|VEN|WRK|FAN|BAE|BWZ)_}"
+
+echo "[dump-master-specs-csv] out=$OUT_DIR network=$NETWORK hard_removed_re=$HARD_REMOVED_RE"
 
 docker run --rm --network "$NETWORK" -v "$OUT_DIR:/out" "$PSQL_IMAGE" \
   psql "$URL" -v ON_ERROR_STOP=1 \
@@ -45,6 +50,7 @@ docker run --rm --network "$NETWORK" -v "$OUT_DIR:/out" "$PSQL_IMAGE" \
       \"rowJson\"->>'ImageUrl_1' AS \"ImageUrl_1\",
       \"rowJson\"->>'ImageUrl_2' AS \"ImageUrl_2\"
     FROM \"GalaxusFeedMasterSnapshot\"
+    WHERE \"providerKey\" !~ '$HARD_REMOVED_RE'
     ORDER BY \"providerKey\"
   ) TO '/out/ProductData_resell_lausanne.csv' WITH (FORMAT csv, HEADER true)"
 
@@ -57,6 +63,7 @@ docker run --rm --network "$NETWORK" -v "$OUT_DIR:/out" "$PSQL_IMAGE" \
       COALESCE(\"rowJson\"->>'SpecificationKey', \"specificationKey\") AS \"SpecificationKey\",
       COALESCE(\"rowJson\"->>'SpecificationValue', '') AS \"SpecificationValue\"
     FROM \"GalaxusFeedSpecsSnapshot\"
+    WHERE \"providerKey\" !~ '$HARD_REMOVED_RE'
     ORDER BY \"providerKey\", \"specificationKey\"
   ) TO '/out/SpecificationData_resell_lausanne.csv' WITH (FORMAT csv, HEADER true)"
 

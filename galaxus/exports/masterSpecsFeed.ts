@@ -25,20 +25,21 @@ import { buildGalaxusSizeSpecRow } from "@/galaxus/exports/sizeSpecifications";
 import { buildLightingSpecRows } from "@/galaxus/exports/lightingSpecs";
 import { extractKickdbClassificationSignals } from "@/galaxus/kickdb/classificationSignals";
 import { parseSupplierKeyFromVariantId } from "@/galaxus/exports/supplierKey";
-import { galaxusDisabledSuppliers } from "@/galaxus/exports/assortmentPolicy";
+import {
+  galaxusHardRemovedSuppliers,
+  isHardRemovedProviderKey,
+} from "@/galaxus/exports/hardRemovedSuppliers";
 import { attachAvailableStock } from "@/inventory/availableStock";
 
-/** EXL (and any future hard-remove suppliers) stay out of master/specs rebuilds, not only stock/offer. */
+/** Hard-removed suppliers (see hardRemovedSuppliers.ts) stay out of master/specs, not only stock/offer. */
 function skipDisabledSupplierInMasterSpecs(
   providerKey: string | null | undefined,
   supplierVariantId: string | null | undefined
 ): boolean {
-  const disabled = galaxusDisabledSuppliers();
-  if (!disabled.has("exl")) return false;
-  const pk = String(providerKey ?? "").trim().toUpperCase();
-  if (pk.startsWith("EXL_")) return true;
-  const sk = parseSupplierKeyFromVariantId(String(supplierVariantId ?? ""));
-  return sk === "exl";
+  const removed = galaxusHardRemovedSuppliers();
+  if (removed.size === 0) return false;
+  if (isHardRemovedProviderKey(providerKey, removed)) return true;
+  return removed.has(parseSupplierKeyFromVariantId(String(supplierVariantId ?? "")) ?? "");
 }
 import {
   isPhysicalMergeEnabled,
@@ -513,6 +514,7 @@ export async function buildMasterSpecsFeedExport(params: {
     });
     const { exportable } = filterAlternativeProducts({
       alternatives,
+      galaxusHardRemove: true,
       normalByGtin,
       normalByProviderKey,
     });
