@@ -149,5 +149,14 @@ export async function lockOperatorRestockPrice(input: {
     warnings.push(`express_price metafield failed: ${err?.message ?? err}`);
   }
 
+  try {
+    const { syncProductSoldes48hForVariant } = await import(
+      "@/shopify/inventory/productSoldes48hMetafield"
+    );
+    await syncProductSoldes48hForVariant(input.variantId, [], warnings);
+  } catch (err: any) {
+    warnings.push(`soldes_48h metafield failed: ${err?.message ?? err}`);
+  }
+
   return { locked: true, warnings };
 }

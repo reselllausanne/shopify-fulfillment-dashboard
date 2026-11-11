@@ -1,10 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockedGraphQL = vi.hoisted(() => vi.fn());
-const mockedQueryRaw = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/shopifyAdmin", () => ({ shopifyGraphQL: mockedGraphQL }));
-vi.mock("@/app/lib/prisma", () => ({ prisma: { $queryRaw: mockedQueryRaw } }));
 
 import {
   syncProductSoldes48hMetafield,
@@ -13,12 +11,29 @@ import {
 
 const PID = "gid://shopify/Product/10";
 
-function productState(soldes: string | null, delivery48hValues: Array<string | null>) {
+type VariantFixture = {
+  delivery?: string | null;
+  price?: string;
+  compare?: string | null;
+};
+
+function productState(
+  soldes: string | null,
+  variants: VariantFixture[],
+  tags: string[] = []
+) {
   return {
     data: {
       product: {
+        tags,
         soldes: soldes == null ? null : { value: soldes },
-        variants: { nodes: delivery48hValues.map((v) => ({ delivery48h: v == null ? null : { value: v } })) },
+        variants: {
+          nodes: variants.map((v) => ({
+            price: v.price ?? "100.00",
+            compareAtPrice: v.compare === undefined ? null : v.compare,
+            delivery48h: v.delivery == null ? null : { value: v.delivery },
+          })),
+        },
       },
     },
     errors: undefined,
@@ -28,13 +43,19 @@ function productState(soldes: string | null, delivery48hValues: Array<string | n
 describe("syncProductSoldes48hMetafield", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("clears soldes_48h=true when no variant is on delivery_48h (sold out)", async () => {
+  it("clears soldes_48h when reprice drops the reduction, even if delivery_48h stays", async () => {
     mockedGraphQL
-      .mockResolvedValueOnce(productState("true", [null, "false", null]))
-      .mockResolvedValueOnce({ data: { metafieldsSet: { userErrors: [] } } });
+      .mockResolvedValueOnce(
+        productState("true", [{ delivery: "true", price: "129.00", compare: null }], ["soldes-48h"])
+      )
+      .mockResolvedValueOnce({ data: { metafieldsSet: { userErrors: [] } } })
+      .mockResolvedValueOnce({ data: { tagsRemove: { userErrors: [] } } });
     const changes: string[] = [];
     await syncProductSoldes48hMetafield(PID, changes);
-    expect(changes).toEqual(["Shopify product soldes_48h=false (any variant delivery_48h)"]);
+    expect(changes).toEqual([
+      "Shopify product soldes_48h=false (warehouse sale compare-at)",
+      "Shopify tag soldes-48h removed",
+    ]);
     const setCall = mockedGraphQL.mock.calls.find((c) => String(c[0]).includes("metafieldsSet"));
     expect(setCall?.[1]?.metafields?.[0]).toMatchObject({
       ownerId: PID,
@@ -43,19 +64,44 @@ describe("syncProductSoldes48hMetafield", () => {
       type: "boolean",
       value: "false",
     });
+    const tagCall = mockedGraphQL.mock.calls.find((c) => String(c[0]).includes("tagsRemove"));
+    expect(tagCall?.[1]).toMatchObject({ id: PID, tags: ["soldes-48h"] });
   });
 
-  it("sets soldes_48h=true when a variant is on delivery_48h", async () => {
+  it("clears soldes_48h when no variant is on delivery_48h (sold out)", async () => {
     mockedGraphQL
-      .mockResolvedValueOnce(productState("false", ["false", "true"]))
+      .mockResolvedValueOnce(
+        productState("true", [
+          { delivery: null, price: "90.00", compare: "140.00" },
+          { delivery: "false", price: "90.00", compare: "140.00" },
+        ])
+      )
       .mockResolvedValueOnce({ data: { metafieldsSet: { userErrors: [] } } });
     const changes: string[] = [];
     await syncProductSoldes48hMetafield(PID, changes);
-    expect(changes).toEqual(["Shopify product soldes_48h=true (any variant delivery_48h)"]);
+    expect(changes).toEqual(["Shopify product soldes_48h=false (warehouse sale compare-at)"]);
+  });
+
+  it("sets soldes_48h=true when an in-stock warehouse size is really discounted", async () => {
+    mockedGraphQL
+      .mockResolvedValueOnce(
+        productState("false", [
+          { delivery: "false", price: "90.00", compare: "90.00" },
+          { delivery: "true", price: "90.00", compare: "140.00" },
+        ])
+      )
+      .mockResolvedValueOnce({ data: { metafieldsSet: { userErrors: [] } } });
+    const changes: string[] = [];
+    await syncProductSoldes48hMetafield(PID, changes);
+    expect(changes).toEqual(["Shopify product soldes_48h=true (warehouse sale compare-at)"]);
+    const setCall = mockedGraphQL.mock.calls.find((c) => String(c[0]).includes("metafieldsSet"));
+    expect(setCall?.[1]?.metafields?.[0]).toMatchObject({ value: "true" });
   });
 
   it("no write when already consistent (idempotent)", async () => {
-    mockedGraphQL.mockResolvedValueOnce(productState("false", [null, "false"]));
+    mockedGraphQL.mockResolvedValueOnce(
+      productState("false", [{ delivery: null, price: "100.00", compare: null }])
+    );
     const changes: string[] = [];
     await syncProductSoldes48hMetafield(PID, changes);
     expect(changes).toHaveLength(0);
@@ -73,28 +119,54 @@ describe("syncProductSoldes48hMetafield", () => {
 describe("reconcileProductSoldes48hMetafields", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("clears stale trues (0 physical), keeps in-stock soldes, dry-run makes no writes", async () => {
+  it("clears repriced in-stock products, keeps a size that is still discounted", async () => {
     mockedGraphQL.mockResolvedValueOnce({
       data: {
         products: {
           pageInfo: { hasNextPage: false, endCursor: null },
           nodes: [
-            { id: "gid://shopify/Product/1", handle: "stale-a", soldes: { value: "true" }, variants: { nodes: [{ id: "gid://shopify/ProductVariant/11" }] } },
-            { id: "gid://shopify/Product/2", handle: "live-b", soldes: { value: "true" }, variants: { nodes: [{ id: "gid://shopify/ProductVariant/22" }] } },
+            {
+              id: "gid://shopify/Product/1",
+              handle: "repriced-a",
+              tags: ["soldes-48h"],
+              soldes: { value: "true" },
+              variants: {
+                nodes: [
+                  {
+                    id: "gid://shopify/ProductVariant/11",
+                    availableForSale: true,
+                    price: "129.00",
+                    compareAtPrice: null,
+                  },
+                ],
+              },
+            },
+            {
+              id: "gid://shopify/Product/2",
+              handle: "live-b",
+              tags: [],
+              soldes: { value: "true" },
+              variants: {
+                nodes: [
+                  {
+                    id: "gid://shopify/ProductVariant/22",
+                    availableForSale: true,
+                    price: "90.00",
+                    compareAtPrice: "140.00",
+                  },
+                ],
+              },
+            },
           ],
         },
       },
       errors: undefined,
     });
-    // Product 1 → 0 physical (stale), Product 2 → 3 physical (keep)
-    mockedQueryRaw
-      .mockResolvedValueOnce([{ qty: 0 }])
-      .mockResolvedValueOnce([{ qty: 3 }]);
 
     const res = await reconcileProductSoldes48hMetafields({ dryRun: true });
     expect(res.scanned).toBe(2);
     expect(res.cleared).toBe(1);
-    expect(res.sample).toEqual(["stale-a"]);
+    expect(res.sample).toEqual(["repriced-a"]);
     expect(mockedGraphQL.mock.calls.some((c) => String(c[0]).includes("metafieldsSet"))).toBe(false);
   });
 });
