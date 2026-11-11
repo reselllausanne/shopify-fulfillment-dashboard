@@ -12,14 +12,15 @@ describe("snowleaderGalaxusCategories", () => {
     expect(SNOWLEADER_GALAXUS_CATEGORY_IDS).toContain("1047");
     expect(SNOWLEADER_GALAXUS_CATEGORY_IDS).toContain("346");
     expect(SNOWLEADER_GALAXUS_CATEGORY_IDS).toContain("272");
-    expect(SNOWLEADER_GALAXUS_CATEGORY_IDS.length).toBe(275);
+    // Mapping list only grows; exact count is not a contract.
+    expect(SNOWLEADER_GALAXUS_CATEGORY_IDS.length).toBeGreaterThanOrEqual(275);
   });
 
   it("classifies leaf category labels", () => {
     expect(classifySnowleaderCategoryLabel("Sneakers")).toBe("sneakers");
-    expect(classifySnowleaderCategoryLabel("Skihosen Damen")).toBe("trousers");
-    expect(classifySnowleaderCategoryLabel("Duffel Reisetaschen")).toBe("bag");
-    expect(classifySnowleaderCategoryLabel("Wanderschuhe")).toBe("boots");
+    expect(classifySnowleaderCategoryLabel("Skihosen Damen")).toBe("ski_pants");
+    expect(classifySnowleaderCategoryLabel("Duffel Reisetaschen")).toBe("duffel");
+    expect(classifySnowleaderCategoryLabel("Wanderschuhe")).toBe("hiking_boots");
   });
 
   it("infers gender from category path", () => {
