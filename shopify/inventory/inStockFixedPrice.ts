@@ -14,9 +14,11 @@ export const ESSENTIALS_SELL_CHF = 59;
 /** Essentials express metafield price (CHF). Never overwritten by StockX. */
 export const ESSENTIALS_EXPRESS_CHF = 89;
 
-/** Light Heather + FW24 Black hoodies — retail 129, express 169, never 59/89 lane. */
+/** Light Heather + FW24 Black hoodies — Shopify shelf 129, express 169. */
 export const ESSENTIALS_HOODIE_SELL_CHF = 129;
 export const ESSENTIALS_HOODIE_EXPRESS_CHF = 169;
+/** Galaxus invoice. Sync job writes this, never the Shopify 129. */
+export const ESSENTIALS_HOODIE_GALAXUS_EX_VAT_CHF = 69;
 
 /** Audemars × Travis in-stock Shopify sell price (CHF). Never overwritten by StockX. */
 export const AUDEMARS_TRAVIS_SELL_CHF = 89;
@@ -41,6 +43,8 @@ export type InStockFixedPriceConfig = {
   sellChf?: number;
   /** Shopify custom.express_price when this lane is listed (Essentials = 89). */
   expressChf?: number;
+  /** Galaxus invoice ex VAT. Shopify shelf stays sellChf. The sync job must not copy sellChf here. */
+  galaxusExVatChf?: number;
 };
 
 export type InStockFixedPriceRule = InStockFixedPriceConfig & {
@@ -63,8 +67,9 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     costChf: ESSENTIALS_HOODIE_COST_CHF,
     sellChf: ESSENTIALS_HOODIE_SELL_CHF,
     expressChf: ESSENTIALS_HOODIE_EXPRESS_CHF,
+    galaxusExVatChf: ESSENTIALS_HOODIE_GALAXUS_EX_VAT_CHF,
     label: "Essential Hoodie (in stock)",
-    matchReason: "Essential Hoodie (fixed 129/169, cost 42)",
+    matchReason: "Essential Hoodie (Shopify 129, Galaxus 69)",
     productIds: [
       "15139794682242", // Fleece Hoodie Light Heather Gray
       "15139794616706", // Fleece Hoodie (FW24) Black
@@ -222,6 +227,7 @@ export function resolveInStockFixedPrice(input: {
     matchReason: rule.matchReason,
     sellChf: rule.sellChf,
     expressChf: rule.expressChf,
+    galaxusExVatChf: rule.galaxusExVatChf,
   };
 }
 

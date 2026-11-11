@@ -433,18 +433,24 @@ export async function convergeVariant(
       }
     }
 
-    if (stxRow && sell != null && sell > 0) {
+    // Shopify shelf is `sell`. Galaxus invoice is separate so the job cannot
+    // copy the 129 shelf price back over a 69 wholesale lock.
+    const galaxusExVat =
+      fixedPriceRule.galaxusExVatChf != null && fixedPriceRule.galaxusExVatChf > 0
+        ? fixedPriceRule.galaxusExVatChf
+        : sell;
+    if (stxRow && galaxusExVat != null && galaxusExVat > 0) {
       const needDbUpdate =
         isSoldesLock ||
         !stxRow.manualLock ||
-        toNumber(stxRow.manualPrice) !== sell ||
+        toNumber(stxRow.manualPrice) !== galaxusExVat ||
         String(stxRow.manualNote ?? "") !== wantNote;
       if (needDbUpdate) {
         await prisma.supplierVariant.update({
           where: { id: stxRow.id },
           data: {
             manualLock: true,
-            manualPrice: sell,
+            manualPrice: galaxusExVat,
             manualStock: null,
             manualUpdatedAt: new Date(),
             manualNote: wantNote,
@@ -452,8 +458,8 @@ export async function convergeVariant(
         });
         changes.push(
           isSoldesLock
-            ? `soldes lock → ${wantNote} ${sell.toFixed(2)}`
-            : `DB fixed-price lock manualPrice=${sell.toFixed(2)}`
+            ? `soldes lock → ${wantNote} galaxus=${galaxusExVat.toFixed(2)}`
+            : `DB fixed-price lock galaxusExVat=${galaxusExVat.toFixed(2)}`
         );
       }
     }
