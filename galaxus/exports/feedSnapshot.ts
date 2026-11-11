@@ -8,6 +8,7 @@ import { skipGalaxusFeedValidationForTrigger } from "@/galaxus/feedExecutor";
 import { enqueueOpsBackgroundJob } from "@/galaxus/ops/enqueueOpsBackgroundJob";
 import { runOpsJob } from "@/galaxus/ops/jobRunner";
 import { OPS_SNAPSHOT_REBUILD_JOB } from "@/galaxus/ops/opsBackgroundJobs";
+import { reconcileDeletedKeysByBucket } from "@/galaxus/exports/snapshotDeleteReconcile";
 import {
   clearSnapshotLocalCache,
   readSnapshotLocalCache,
@@ -521,13 +522,29 @@ async function loadSnapshotCsv(scope: "stock" | "offer"): Promise<{ csv: string;
     // (or drift) — reconcile with a key-only pull, and full-reload if that is not enough.
     const dbCount: number = await withTransientDbRetry<number>("snapshot-count", () => model.count());
     if (rows.size !== dbCount) {
-      const keyRows: Array<{ providerKey: string }> = await withTransientDbRetry(
-        "snapshot-key-pull",
-        () => model.findMany({ select: { providerKey: true } })
-      );
-      const keep = new Set(keyRows.map((row) => row.providerKey));
-      for (const key of rows.keys()) {
-        if (!keep.has(key)) rows.delete(key);
+      // Cheap path first: per-prefix counts (~200 KB) → pull keys only for buckets that differ.
+      // Falls back to the full key pull (~45 MB) if it is not applicable or errors.
+      let reconciled = null as Awaited<ReturnType<typeof reconcileDeletedKeysByBucket>>;
+      try {
+        reconciled = await reconcileDeletedKeysByBucket(
+          scope === "stock" ? "GalaxusFeedStockSnapshot" : "GalaxusFeedOfferSnapshot",
+          rows
+        );
+      } catch (err: any) {
+        console.warn("[GALAXUS][FEED][SNAPSHOT] bucket reconcile failed — full key pull", {
+          scope,
+          error: err?.message ?? String(err),
+        });
+      }
+      if (reconciled === null && rows.size !== dbCount) {
+        const keyRows: Array<{ providerKey: string }> = await withTransientDbRetry(
+          "snapshot-key-pull",
+          () => model.findMany({ select: { providerKey: true } })
+        );
+        const keep = new Set(keyRows.map((row) => row.providerKey));
+        for (const key of Array.from(rows.keys())) {
+          if (!keep.has(key)) rows.delete(key);
+        }
       }
       cacheMutated = true;
       if (rows.size !== dbCount) {

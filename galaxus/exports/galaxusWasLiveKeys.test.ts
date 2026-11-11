@@ -6,6 +6,7 @@ vi.mock("@/app/lib/prisma", () => ({
 }));
 
 import {
+  DELIST_SCOPE_MAX_KEYS,
   loadGalaxusDelistZeroEligibleKeys,
   shouldEmitGalaxusDelistZero,
 } from "@/galaxus/exports/galaxusWasLiveKeys";
@@ -46,6 +47,58 @@ describe("loadGalaxusDelistZeroEligibleKeys", () => {
 
     const keys = await loadGalaxusDelistZeroEligibleKeys();
     expect(Array.from(keys).sort()).toEqual(["A", "C", "D"]);
+  });
+
+  it("scoped lookup: same per-key answer as the full load, bound to the given keys", async () => {
+    const seen: Array<{ sql: string; values: unknown[] }> = [];
+    queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = sqlText(strings);
+      seen.push({ sql, values });
+      if (sql.includes('FROM "ChannelListingState"')) {
+        // CLS live: A (not zeroed), B (already zeroed in snapshot)
+        return [{ providerKey: "A" }, { providerKey: "B" }];
+      }
+      if (sql.includes('FROM "GalaxusFeedStockSnapshot"')) return [{ providerKey: "B" }];
+      throw new Error(`unexpected sql: ${sql}`);
+    });
+
+    const set = await loadGalaxusDelistZeroEligibleKeys([" A ", "B", "C", "A", ""]);
+    expect(seen).toHaveLength(2);
+    for (const call of seen) {
+      expect(call.sql).toMatch(/ANY\(\?::text\[\]\)/);
+      expect(call.sql).not.toMatch(/JOIN/i);
+      expect(call.values[0]).toEqual(["A", "B", "C"]);
+    }
+    expect(set.has("A")).toBe(true); // live, not zeroed → emit zero
+    expect(set.has("B")).toBe(false); // already zeroed → skip
+    expect(set.has("C")).toBe(false); // in scope, not live in CLS → skip (same as full load)
+    expect(set.has("OUT_OF_SCOPE")).toBe(true); // outside scope → fail open (emit zero)
+    expect(shouldEmitGalaxusDelistZero("OUT_OF_SCOPE", set)).toBe(true);
+    expect(shouldEmitGalaxusDelistZero("B", set)).toBe(false);
+  });
+
+  it("scope larger than the cap falls back to the two full scans", async () => {
+    const statements: string[] = [];
+    queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      statements.push(sqlText(strings));
+      return [];
+    });
+    const many = Array.from({ length: DELIST_SCOPE_MAX_KEYS + 1 }, (_, i) => `K${i}`);
+    await loadGalaxusDelistZeroEligibleKeys(many);
+    expect(statements).toHaveLength(2);
+    for (const sql of statements) expect(sql).not.toMatch(/ANY\(/);
+  });
+
+  it("empty / null scope keeps the full-scan behaviour", async () => {
+    const statements: string[] = [];
+    queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      statements.push(sqlText(strings));
+      return [];
+    });
+    await loadGalaxusDelistZeroEligibleKeys(null);
+    await loadGalaxusDelistZeroEligibleKeys([]);
+    expect(statements).toHaveLength(4);
+    for (const sql of statements) expect(sql).not.toMatch(/ANY\(/);
   });
 
   it("never joins the two tables in one statement (planner nested-loop regression)", async () => {
