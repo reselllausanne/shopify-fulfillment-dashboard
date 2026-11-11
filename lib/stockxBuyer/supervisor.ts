@@ -10,6 +10,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
+import { galaxusDelayCutoff } from "@/lib/stockxBuyer/delayCutoff";
 import {
   HALT_FILE as NIGHT_HALT_FILE,
   acquireSingleInstanceLock,
@@ -353,11 +354,20 @@ async function shopifyPhase(rt: Runtime, ordered: ShopifyJob[]): Promise<number>
   return batch.length;
 }
 
+/** Static --until and the rolling N-day delay: the earlier bound wins. */
+function effectiveGalaxusUntil(staticUntil: Date | null): Date | null {
+  const delayDays = Number(process.env.STOCKX_BUYER_GALAXUS_DELAY_DAYS ?? "2");
+  const startsOn = new Date(`${(process.env.STOCKX_BUYER_GALAXUS_DELAY_START || "2026-11-12").trim()}T00:00:00+01:00`);
+  const delay = galaxusDelayCutoff(new Date(), delayDays, Number.isFinite(startsOn.getTime()) ? startsOn : null);
+  if (!delay) return staticUntil;
+  return staticUntil && staticUntil.getTime() < delay.getTime() ? staticUntil : delay;
+}
+
 async function galaxusPhase(rt: Runtime): Promise<number> {
   const night = await loadNightState();
   const queue = await buildNightQueue({
     since: rt.cfg.galaxusSince,
-    until: rt.cfg.galaxusUntil,
+    until: effectiveGalaxusUntil(rt.cfg.galaxusUntil),
     skipOrders: rt.cfg.skipGalaxusOrders,
   });
   const todo = queue.filter((p) => !nightStateBlocks(night[pairKey(p)], Date.now()));
