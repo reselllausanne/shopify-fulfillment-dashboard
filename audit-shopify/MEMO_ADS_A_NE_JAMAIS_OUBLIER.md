@@ -1,0 +1,79 @@
+# MEMO ADS : à relire avant toute réponse ou action sur Google Ads
+
+Créé le 11.11.2026 à la demande du fondateur. Mettre à jour à chaque nouvelle consigne. Statut des affirmations : F = fait mesuré, D = déclaration du fondateur, I = interprétation, H = hypothèse. Pas de H présentée comme un fait.
+
+## 1. Règles de travail imposées par le fondateur
+
+- Faits chiffrés, pas d'hypothèses. « Les pros ne font pas ça. » Si une affirmation n'a pas de donnée, le dire.
+- Ne jamais affirmer qu'une source inaccessible a été consultée.
+- Production en lecture seule : aucune modification de prix, budgets, campagnes, feed, site, comptes. Le fondateur applique lui-même (D).
+- Pas de navigateur ouvert sauf demande explicite.
+- Ne jamais toucher aux automations StockX/GOAT (chemins d'achat de production).
+- Réponses en français très court (style « caveman »). Code et commits en langage normal.
+- Rien n'est vrai tant que ce n'est pas vérifié : plusieurs erreurs déjà corrigées (voir §6).
+- Pas de changement de structure Ads avant le Black Friday (27.11) sans accord : on veut une mesure propre. Décision du fondateur.
+
+## 2. Objectifs du fondateur
+
+- Scaler Resell Lausanne autant que Galaxus (D).
+- Comprendre pourquoi le ROAS Google Ads a chuté et ce qui aide ou nuit (D).
+- Objectif d'Explorer à l'origine : nettoyer des campagnes où 90 % des produits ne convertissent jamais et n'ont même pas de vue, et donner une chance aux produits sans impression (D).
+- Il veut pouvoir régler un groupe de produits avec « un % de dépense en plus » (D). Pas de levier natif en PMax : seulement budget et tROAS par campagne.
+- Il veut le cas le plus proche possible : gros catalogue, revendeur, données chiffrées, sources moins orientées vente de service (D).
+- Il veut essayer de contacter le responsable Ads de Decathlon (D). Questions préparées : voir §7.
+
+## 3. Faits mesurés qui comptent (voir `analyses/ads_05_explorer_diagnostic.md`)
+
+- Seuil de rentabilité en ROAS Google ≈ 3,5 à 3,9 (contribution avant pub 40,3 CHF par commande) (F).
+- Dépense 2025 : 1,2 à 2,8 k par mois, ROAS 10 à 17. 2026 : 7 à 15 k par mois, ROAS 3,1 à 6,8. Conversions presque stables (mai 171, octobre 184) (F).
+- De mai à octobre : +6,7 k de pub pour +1,5 k de valeur (F).
+- Part d'impressions Nike 79 %, Adidas 83 %, Jordan 79 %, `all` 85 %. 0 % de budget perdu, 15 à 21 % perdus en classement (F).
+- 96 % de la dépense sur des requêtes hors marque. 98 % sur le réseau Search (F).
+- 77 % des conversions août à octobre viennent de produits qui n'avaient jamais converti. Un filtre sur l'historique retire donc la source des ventes (F).
+- La hausse du nombre de produits avec impressions (9 k vers 16 k, semaine du 27.07) date d'avant Explorer (07.08) (F).
+- Quasi-expérience Explorer (07.08 au 10.11), produits équivalents, par marque. Conversions pour 1 000 produits, restés en main contre touchés : Nike 4,9 / 0,9. Adidas 3,7 / 0,8. Jordan 3,1 / 0,3. New Balance 1,8 / 0,0. Asics 1,4 / 1,8. Explorer + Long Tail : 1 484 CHF de coût, 2 223 de valeur, ROAS 1,5 (F). Limites dans le fichier (I pour la conclusion « Explorer net négatif »).
+- Mécanisme : les produits « sous-exposés » vont dans `long_tail_all` (≈ 7 300 modèles), exclus de l'arbre main, ≈ 4 impressions chacun (F, code et tables).
+- Cibles tROAS : octobre 3,79 à 4,5. Le 10.11 : budgets doublés et cible 3,6, par le compte du fondateur (F).
+- Du 20.10 au 10.11 : ROAS 2,6. Du 8 au 10.11 : 0,5 à 1,1 avec 1 à 2 conversions par jour. Cause non expliquée.
+- UGG : saisonnier, part d'impressions 10 %, perte de classement 85 %. Le fondateur veut couper UGG tant que les revendeurs en ont, et faire un blog et du SEO UGG (D, à décider).
+- Aucune campagne New Balance n'existe. NB est dans `all` (F).
+- Titres avec mots de Noël : environ 25 CHF de dépense de mai à novembre (F, regex sur le titre, grossier). Produits hiver : 371 CHF en septembre, 722 en octobre (en saison). Ce n'est pas un levier de volume sur ce critère.
+
+## 4. Pistes retenues (à valider par le fondateur, rien n'est appliqué)
+
+1. Retirer Explorer et Long Tail : arrêter les campagnes `Explorer | *`, retirer les labels `long_tail_all`, `explorer_active`, `_nike/_adidas/_jordan` du feed supplémentaire. Coût estimé : ≈ 30 CHF par jour au maximum pour ≈ 9 000 produits (I). À faire après décision, pas pendant le Black Friday sans accord.
+2. Exclure les termes de marque de PMax et les rediriger vers Search et Shopping (Decathlon). Chez nous, 96 % de la dépense est hors marque : à mesurer avant tout (non fait).
+3. Gestion de la saisonnalité par label et exclusion hors saison. Pour Noël toute l'année : vérifier d'abord quels produits (le titre ne montre rien). Les étiquettes de saison se posent dans `custom_label_*`. La fonction « ajustement de saisonnalité » de Google ne sert pas à exclure : 1 à 7 jours, ajuste le taux de conversion.
+4. Score de voisinage pour les produits sans historique : taux de conversion par marque × catégorie × tranche de prix, appliqué aux produits sans historique, comparé au choix d'Explorer. Lecture seule, à lancer sur demande.
+5. Mesurer l'incrémentalité (Conversion Lift par zone géographique de Google, ou un test à zones appariées) avant d'ajouter du budget. Besoin d'un budget plus élevé.
+6. Vérifier le tracking (Simprosys) et les commandes Shopify du 8 au 10.11.
+
+## 5. Sources déjà vues
+
+- Test aléatoire de zombies (28 jours, un seul compte) : ROAS 5,55 contre 6,40 pour le groupe laissé en place ([Psyberware](https://www.psyberware.com/blog/zombie-sku-campaign-fails-the-test)).
+- eBay, vraie expérience de terrain à grande échelle : les annonces sur le mot de marque n'ont aucun effet mesurable (99,5 % du trafic remplacé par l'organique). Sur le hors marque, effet seulement sur les nouveaux utilisateurs et les rares acheteurs. Les acheteurs fréquents font l'essentiel des ventes attribuées mais ne sont pas influencés. Retour sur investissement à court terme négatif ([NBER](https://www.nber.org/system/files/working_papers/w20171/w20171.pdf)).
+- Optmyzr, 24 702 campagnes PMax : trop de campagnes nuit (30 conversions par mois pour fonctionner, ≈ 300 pour bien optimiser) ([étude](https://www.optmyzr.com/blog/performance-max-study/)).
+- Measured, plus de 50 tests d'incrémentalité : le hors marque est plus incrémental que le brand shopping, PMax entre les deux. Un détaillant a vu Google s'attribuer 4 fois plus de conversions que causées ([Measured](https://www.measured.com/blog/how-does-googles-pmax-stack-up-against-standard-shopping/)).
+- smec (vendeur de logiciel, résultats non contrôlés) : Decathlon +22 % de revenu et +52 % de ROAS (4 campagnes : marques propres haut, moyen, bas potentiel, marques tierces ; terme de marque exclu de PMax). Plus de 50 % de la valeur de Decathlon vient de produits à 1 ou 2 conversions. Karaca, River Island, Tennis Point : mêmes limites.
+- Google Ads Help : custom labels (jusqu'à 5, 24 à 48 h de délai), filtre d'inventaire par label.
+
+## 6. Erreurs déjà faites, ne pas répéter
+
+- La cible tROAS de Nike n'était pas 5 pendant 10 semaines. Elle était de 3,79 à 4,5 en octobre.
+- Les changements de budget ne réinitialisent pas l'apprentissage. La règle des 20 % par étape n'est pas une règle de pro.
+- Le plafond de CPC n'explique pas le faible nombre d'impressions des lots de marque.
+- Pas de campagne New Balance.
+- Ne pas présenter comme un fait ce qui est une lecture de données observées sans témoin.
+
+## 7. Questions pour le responsable Ads de Decathlon
+
+1. Combien de conversions par mois par campagne ? Quel tROAS par niveau ?
+2. Produits sans historique : dans quel niveau au départ, avec quel budget et quel tROAS ?
+3. Critère et fréquence de passage d'un niveau à l'autre ?
+4. Répartition de la dépense entre PMax, Shopping et Search marque ?
+5. Part de produits visibles, part exclue, et selon quel critère ?
+6. Délai de patience avant de juger un changement de structure ?
+7. Tests avec groupe témoin, ou seulement comparaisons année sur année ?
+8. Mesure de la marge : ROAS Google ou marge après pub ?
+9. Exclusion du terme de marque de PMax : quel effet mesuré sur les ventes totales ?
+10. Pilotage de la saisonnalité : quelles règles (label, dates, automatique) ?

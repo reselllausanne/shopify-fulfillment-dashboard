@@ -88,3 +88,4 @@
 | 23:20 | Retour dirigeant : Decathlon = retours (D), Oct −22 % = retrait non-sneakers (D, mais données : −3 k sur −43 k), TVA Galaxus S1 non corrigée (décision dirigeant) ; part NER/STX calculée en DB + banque | NER 197,3 k / StockX 378,9 k / autres 59,4 k ; NER payé 95,3 k au 30.09 vs dû 139,3 k ; plan : compte NER séparé |
 | 23:30 | Correction dirigeant : les 20 k sont son épargne personnelle, pas un prêt | Apport de l'exploitant (2851), pas de remboursement ; règle de plan retirée |
 | 17:50 | `analyses/ads_05_explorer_diagnostic.md` : fonctionnement Explorer lu dans le code, résultats DB, dépense marginale | Explorer ≈ 0,7 k CHF, 3 conversions, pas la cause ; dilution : produits avec impressions 11 k → 40 k, +6,7 k pub mai→oct pour +1,5 k valeur déclarée |
+- 16:50 MEMO_ADS_A_NE_JAMAIS_OUBLIER.md créé (règles, faits, pistes, sources, erreurs). À relire avant toute action Ads.
