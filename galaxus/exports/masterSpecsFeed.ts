@@ -25,7 +25,21 @@ import { buildGalaxusSizeSpecRow } from "@/galaxus/exports/sizeSpecifications";
 import { buildLightingSpecRows } from "@/galaxus/exports/lightingSpecs";
 import { extractKickdbClassificationSignals } from "@/galaxus/kickdb/classificationSignals";
 import { parseSupplierKeyFromVariantId } from "@/galaxus/exports/supplierKey";
+import { galaxusDisabledSuppliers } from "@/galaxus/exports/assortmentPolicy";
 import { attachAvailableStock } from "@/inventory/availableStock";
+
+/** EXL (and any future hard-remove suppliers) stay out of master/specs rebuilds, not only stock/offer. */
+function skipDisabledSupplierInMasterSpecs(
+  providerKey: string | null | undefined,
+  supplierVariantId: string | null | undefined
+): boolean {
+  const disabled = galaxusDisabledSuppliers();
+  if (!disabled.has("exl")) return false;
+  const pk = String(providerKey ?? "").trim().toUpperCase();
+  if (pk.startsWith("EXL_")) return true;
+  const sk = parseSupplierKeyFromVariantId(String(supplierVariantId ?? ""));
+  return sk === "exl";
+}
 import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
@@ -161,6 +175,8 @@ export function buildMasterRowsFromCandidates(
     const supplierVariant = candidate.variant as any;
     const product = candidate.product as any;
     const providerKey = candidate.providerKey ?? "";
+    const earlySupplierVariantId = String(supplierVariant?.supplierVariantId ?? "");
+    if (skipDisabledSupplierInMasterSpecs(providerKey, earlySupplierVariantId)) continue;
     const sellPrice = Number(candidate.sellPriceExVat);
     if (!Number.isFinite(sellPrice) || sellPrice <= 0) continue;
 
@@ -325,6 +341,7 @@ export function buildSpecsRowsFromCandidates(exportCandidates: FeedExportCandida
     const product = candidate.product as any;
     const providerKey = candidate.providerKey;
     if (!providerKey) continue;
+    if (skipDisabledSupplierInMasterSpecs(providerKey, variant?.supplierVariantId)) continue;
     const traits = product?.traitsJson ?? null;
     const specSignals = extractKickdbClassificationSignals((product as any)?.rawJson ?? null);
     const specSupplierKey = parseSupplierKeyFromVariantId(String(variant?.supplierVariantId ?? ""));

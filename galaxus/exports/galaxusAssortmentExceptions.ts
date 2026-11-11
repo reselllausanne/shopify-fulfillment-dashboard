@@ -179,6 +179,16 @@ export const GALAXUS_POLICY_EXCEPTIONS: GalaxusPolicyException[] = [
     active: true,
   },
   {
+    id: "exl_delist",
+    title: "Ex Libris (EXL) whole supplier delisted",
+    gates: ["supplier_disabled"],
+    reason: "policy",
+    note: "2026-11-11: add exl to GALAXUS_DISABLED_SUPPLIERS default (bwz,rei,wel,exl). Stock zeros + offer omit; master/specs builders skip EXL; scrape-cron SCRAPER_CRON_SKIP default includes exl. Re-enable: remove exl from disabled default + SCRAPER_CRON_SKIP + master skip.",
+    addedAt: "2026-11-11",
+    reviewAt: "2026-12-15",
+    active: true,
+  },
+  {
     id: "hobby_toy_delist",
     title: "Hobby / toy sweep (TCG, games, dolls, fidget, helmets, ASUS, …)",
     gates: ["fashion_only"],
