@@ -455,13 +455,13 @@ export async function recoverWithPolling(
 
 /**
  * Halt text starts with an ISO timestamp. Inflight marker already gone (cleared after the
- * 6 min recovery polling) → the halt would stay forever. After 10 min, if the StockX buying
+ * 6 min recovery polling) → the halt would stay forever. After 20 min, if the StockX buying
  * list shows no unlinked buy since the halt (-15 min), nothing was paid: clear. Any unlinked
  * buy in the window keeps the halt (needs a human to link it).
  */
 async function healHaltWithoutInflight(halted: string): Promise<boolean> {
   const ts = Date.parse(halted.trim().slice(0, 24));
-  if (!Number.isFinite(ts) || Date.now() - ts < 10 * 60_000) return false;
+  if (!Number.isFinite(ts) || Date.now() - ts < 20 * 60_000) return false;
   let token: string | null = null;
   try {
     token = await readGalaxusStockxToken();
