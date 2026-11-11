@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { bussignyWarehouseLocationId } from "@/galaxus/warehouse/delivery48h";
 import { cleanGtin, gtinCandidates } from "@/shopify/restock/gtinNormalize";
 
 /**
@@ -59,6 +60,8 @@ export type PhysicalStockRow = {
   /** Highest-priority (lowest number) location holding stock. Bussigny=1 wins. */
   preferredLocationId: string | null;
   preferredLocationName: string | null;
+  /** Units at Warehouse Bussigny (1030) only. Omitted by loaders that do not split locations. */
+  bussignyQty?: number;
 };
 
 export type PhysicalLocationStockRow = {
@@ -93,15 +96,29 @@ export async function loadPhysicalMirrorStockByGtin(gtins: string[]): Promise<Ph
   // candidates) makes Postgres cancel with statement_timeout (57014) during the
   // nightly master build. Each GTIN is distinct and grouped independently, so
   // querying in batches and concatenating rows is byte-identical to one query.
-  const rows: Array<{ gtin: string; qty: bigint; loc_id: string | null; loc_name: string | null }> = [];
+  const bussignyId = bussignyWarehouseLocationId();
+  const rows: Array<{
+    gtin: string;
+    qty: bigint;
+    bussigny_qty: bigint | null;
+    loc_id: string | null;
+    loc_name: string | null;
+  }> = [];
   for (let offset = 0; offset < candidates.length; offset += PHYSICAL_GTIN_QUERY_CHUNK_SIZE) {
     const chunk = candidates.slice(offset, offset + PHYSICAL_GTIN_QUERY_CHUNK_SIZE);
     const chunkRows = await prisma.$queryRaw<
-      Array<{ gtin: string; qty: bigint; loc_id: string | null; loc_name: string | null }>
+      Array<{
+        gtin: string;
+        qty: bigint;
+        bussigny_qty: bigint | null;
+        loc_id: string | null;
+        loc_name: string | null;
+      }>
     >`
       SELECT
         s."gtin"                                       AS gtin,
         SUM(s."available")::bigint                     AS qty,
+        SUM(s."available") FILTER (WHERE s."locationId" = ${bussignyId})::bigint AS bussigny_qty,
         (ARRAY_AGG(s."locationId"   ORDER BY s."priority" ASC))[1] AS loc_id,
         (ARRAY_AGG(s."locationName" ORDER BY s."priority" ASC))[1] AS loc_name
       FROM "public"."ShopifyVariantLocationStock" s
@@ -116,7 +133,13 @@ export async function loadPhysicalMirrorStockByGtin(gtins: string[]): Promise<Ph
   // Merge padded aliases under one norm key so dual-stored rows never double-count.
   const byNorm = new Map<
     string,
-    { qty: number; preferredLocationId: string | null; preferredLocationName: string | null; storeGtins: string[] }
+    {
+      qty: number;
+      bussignyQty: number;
+      preferredLocationId: string | null;
+      preferredLocationName: string | null;
+      storeGtins: string[];
+    }
   >();
   for (const r of rows) {
     const stored = String(r.gtin ?? "").trim();
@@ -124,10 +147,12 @@ export async function loadPhysicalMirrorStockByGtin(gtins: string[]): Promise<Ph
     if (!stored || qty <= 0) continue;
     const norm = gtinNormKey(stored);
     if (!norm) continue;
+    const bussignyQty = Math.max(0, Number(r.bussigny_qty ?? 0) || 0);
     const existing = byNorm.get(norm);
     if (!existing) {
       byNorm.set(norm, {
         qty,
+        bussignyQty,
         preferredLocationId: r.loc_id,
         preferredLocationName: r.loc_name,
         storeGtins: [stored],
@@ -135,6 +160,7 @@ export async function loadPhysicalMirrorStockByGtin(gtins: string[]): Promise<Ph
       continue;
     }
     existing.qty += qty;
+    existing.bussignyQty += bussignyQty;
     existing.storeGtins.push(stored);
   }
 
@@ -143,6 +169,7 @@ export async function loadPhysicalMirrorStockByGtin(gtins: string[]): Promise<Ph
     if (!row || row.qty <= 0) continue;
     const entry: PhysicalStockRow = {
       qty: row.qty,
+      bussignyQty: row.bussignyQty,
       preferredLocationId: row.preferredLocationId,
       preferredLocationName: row.preferredLocationName,
     };

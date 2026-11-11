@@ -58,7 +58,7 @@ export function isGalaxusStxSupplierLine(line: {
   return false;
 }
 
-/** Golden / GLD dropship — warehouse Poland, not StockX, not Swiss direct delivery. */
+/** Golden / GLD dropship — not StockX. Stock file country is Switzerland. */
 export function isGalaxusGldSupplierLine(line: {
   supplierPid?: string | null;
   supplierVariantId?: string | null;

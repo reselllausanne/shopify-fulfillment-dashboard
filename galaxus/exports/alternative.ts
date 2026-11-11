@@ -333,8 +333,9 @@ export function buildGalaxusAlternativeStockRows(products: AlternativeProductRec
       ...moqFields,
       TradeUnit: "",
       LogisticUnit: "",
-      WarehouseCountry: "Poland",
+      WarehouseCountry: "Switzerland",
       DirectDeliverySupported: "1",
+      DeliveryRouteId: "",
     });
   }
   return rows;
