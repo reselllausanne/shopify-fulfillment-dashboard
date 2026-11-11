@@ -454,6 +454,41 @@ export async function recoverWithPolling(
 }
 
 /**
+ * Halt text starts with an ISO timestamp. Inflight marker already gone (cleared after the
+ * 6 min recovery polling) → the halt would stay forever. After 20 min, if the StockX buying
+ * list shows no unlinked buy since the halt (-15 min), nothing was paid: clear. Any unlinked
+ * buy in the window keeps the halt (needs a human to link it).
+ */
+async function healHaltWithoutInflight(halted: string): Promise<boolean> {
+  const ts = Date.parse(halted.trim().slice(0, 24));
+  if (!Number.isFinite(ts) || Date.now() - ts < 20 * 60_000) return false;
+  let token: string | null = null;
+  try {
+    token = await readGalaxusStockxToken();
+  } catch {
+    return false;
+  }
+  if (!token) return false;
+  let nodes: StockxBuyingNodeLike[];
+  try {
+    nodes = (await fetchRecentStockxBuyingOrders(token, { first: 30, maxPages: 1, state: "PENDING" })) as StockxBuyingNodeLike[];
+  } catch {
+    return false;
+  }
+  if (!nodes.length) return false; // unreadable list ≠ proof of no buy
+  for (const n of nodes) {
+    const num = String(n.orderNumber ?? "").trim();
+    if (!num) continue;
+    const when = Date.parse(String(n.purchaseDate ?? n.creationDate ?? ""));
+    if (Number.isFinite(when) && when < ts - 15 * 60_000) continue;
+    if (!(await isLinkedAnywhere(num))) return false;
+  }
+  console.warn("[NIGHT-BUYER] auto-heal: no inflight, no unlinked StockX buy since halt — clearing");
+  await fs.rm(HALT_FILE, { force: true });
+  return true;
+}
+
+/**
  * While halted for "paid without number" / inflight: try to link the fresh buy by itself.
  * 1 unlinked candidate = link, clear halt. 0 candidates after 30 min with a readable
  * StockX list = never paid, clear halt. Anything else stays halted.
@@ -462,7 +497,7 @@ export async function autoHealHalt(): Promise<boolean> {
   const halted = await fs.readFile(HALT_FILE, "utf8").catch(() => "");
   if (!/paid without number|inflight/i.test(halted)) return false;
   const inflight = await readJson<null | { key: string; startedAt: number; candidate: GalaxusBuyCandidate }>(INFLIGHT_FILE, null);
-  if (!inflight) return false;
+  if (!inflight) return healHaltWithoutInflight(halted);
   const unitIndex = Number(String(inflight.key).split(":")[1] ?? 0) || 0;
   let hits: Array<{ orderNumber: string; amount: number | null }>;
   try {
