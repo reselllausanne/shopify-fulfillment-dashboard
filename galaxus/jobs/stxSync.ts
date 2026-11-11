@@ -823,7 +823,41 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
  * Copy the variant barcode onto the mapping when the provider key already is
  * STX_{gtin} and no other variant owns that key.
  */
-export async function promotePendingStxMappingsThatAlreadyHaveGtin(now = new Date()): Promise<number> {
+/**
+ * The refresh itself already upserts SUPPLIER_GTIN mappings for every row it writes with a
+ * barcode, so this sweep only repairs backlog / out-of-band writes. Its query scans all ~525k
+ * PENDING_GTIN mappings with one SupplierVariant index probe each (~42 s cold, ~5 s warm,
+ * 200 MB of reads) and returns nothing once the backlog is drained — yet it ran at the start of
+ * EVERY refresh. Re-sweep only after this interval, or immediately while a sweep still finds work.
+ */
+export const PROMOTE_PENDING_SWEEP_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let lastPromoteSweepAtMs = 0;
+let lastPromoteSweepFoundWork = true;
+
+export function __resetPromotePendingSweepThrottle(): void {
+  lastPromoteSweepAtMs = 0;
+  lastPromoteSweepFoundWork = true;
+}
+
+export async function promotePendingStxMappingsThatAlreadyHaveGtin(
+  now = new Date(),
+  opts: { force?: boolean } = {}
+): Promise<number> {
+  const nowMs = now.getTime();
+  if (
+    !opts.force &&
+    !lastPromoteSweepFoundWork &&
+    nowMs - lastPromoteSweepAtMs < PROMOTE_PENDING_SWEEP_MIN_INTERVAL_MS
+  ) {
+    return 0;
+  }
+  const total = await sweepPromotePendingStxMappings(now);
+  lastPromoteSweepAtMs = nowMs;
+  lastPromoteSweepFoundWork = total > 0;
+  return total;
+}
+
+async function sweepPromotePendingStxMappings(now: Date): Promise<number> {
   let total = 0;
   // Hard stop so a logic bug cannot spin. 2_000 * 500 covers the historical backlog.
   for (let batch = 0; batch < 2000; batch++) {
