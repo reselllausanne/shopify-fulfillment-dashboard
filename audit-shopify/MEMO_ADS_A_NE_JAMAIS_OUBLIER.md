@@ -38,7 +38,8 @@ Créé le 11.11.2026 à la demande du fondateur. Mettre à jour à chaque nouvel
 - Du 20.10 au 10.11 : ROAS 2,6. Du 8 au 10.11 : 0,5 à 1,1 avec 1 à 2 conversions par jour. Cause non expliquée.
 - UGG : saisonnier, part d'impressions 10 %, perte de classement 85 %. Le fondateur veut couper UGG tant que les revendeurs en ont, et faire un blog et du SEO UGG (D, à décider).
 - Aucune campagne New Balance n'existe. NB est dans `all` (F).
-- Titres avec mots de Noël : environ 25 CHF de dépense de mai à novembre (F, regex sur le titre, grossier). Produits hiver : 371 CHF en septembre, 722 en octobre (en saison). Ce n'est pas un levier de volume sur ce critère.
+- Saisonnalité par modèles (F, regex titre/marque : UGG, boots, Timberland, puffer, fleece... ; slides, sandales, shorts...). Hiver : janvier 1 765 CHF ROAS 7,4 ; février 933 ROAS 3,6 ; mars 419 ROAS 2,2 ; avril à août 23-70 CHF par mois ; septembre 371 ROAS 1,2 ; octobre 717 ROAS 2,1. Été : juillet 707 ROAS 5,3 ; août 809 ROAS 3,6 ; septembre 485 ROAS 3,2 ; octobre 302 ROAS 2,2. Perte nette estimée sous le seuil 3,7 : ≈ 560 CHF (hiver sept.-oct.) + ≈ 200 CHF (été sept.-nov.). Levier petit en CHF. Les titres avec Noël : ≈ 25 CHF de mai à novembre.
+- Retrait : « 50 000 produits Ads absents de Shopify » était un bug de script (2 sur 95 919 en réalité).
 
 ## 4. Pistes retenues (à valider par le fondateur, rien n'est appliqué)
 
