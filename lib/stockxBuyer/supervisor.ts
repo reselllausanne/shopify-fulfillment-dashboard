@@ -117,7 +117,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SupervisorC
     ),
     onlyOrders: null,
     batchSize: Math.floor(num(env.STOCKX_BUYER_BATCH, 5)),
-    galaxusPerCycle: Math.floor(num(env.STOCKX_BUYER_GALAXUS_PER_CYCLE, 12)),
+    galaxusPerCycle: Math.floor(num(env.STOCKX_BUYER_GALAXUS_PER_CYCLE, 16)),
     maxAllInChf: num(env.STOCKX_BUYER_MAX_ALL_IN_CHF, 1_000_000),
     idleMs: num(env.STOCKX_BUYER_IDLE_MS, 60_000),
     rebuyEveryMs: num(env.STOCKX_BUYER_REBUY_EVERY_MS, 15 * 60_000),
@@ -364,8 +364,13 @@ async function galaxusPhase(rt: Runtime): Promise<number> {
   if (!todo.length) return 0;
   log(`galaxus queue=${queue.length} todo=${todo.length}`);
   let done = 0;
+  // Browser attempts are the scarce resource. Non-StockX lines are an instant verdict:
+  // they must not eat the per-cycle slots (278 todo were 90 % non-StockX = 20+ cycles).
+  let browserTried = 0;
+  let handled = 0;
   const isOnSup = async () => rt.cfg.once || (await isOn());
-  for (const pair of todo.slice(0, rt.cfg.galaxusPerCycle)) {
+  for (const pair of todo) {
+    if (browserTried >= rt.cfg.galaxusPerCycle || handled >= 400) break;
     if (!(await isOnSup()) || (await isHalted()) || (await exists(NIGHT_HALT_FILE))) break;
     const key = jobKey("galaxus", { orderRef: pair.galaxusOrderId, lineId: pair.lineId, unitIndex: pair.unitIndex });
     rt.phase = `galaxus:${pair.galaxusOrderId}:${pair.unitIndex}`;
@@ -384,8 +389,11 @@ async function galaxusPhase(rt: Runtime): Promise<number> {
     await processPair(pair, night, { isOn: isOnSup });
     await saveNightState(night);
     done += 1;
+    handled += 1;
     const after = night[pairKey(pair)];
     if (after && after !== before) await mirrorGalaxus(rt, pair, key, after);
+    if (after?.status === "not_stockx") continue;
+    browserTried += 1;
     await sleep(2_500);
   }
   await closeGalaxusSession().catch(() => undefined);
