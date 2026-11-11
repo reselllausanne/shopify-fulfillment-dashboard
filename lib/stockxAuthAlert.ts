@@ -82,7 +82,7 @@ function loginPageBaseUrl(): string {
   return raw.replace(/\/+$/, "");
 }
 
-async function postSlack(text: string): Promise<boolean> {
+export async function postSlack(text: string): Promise<boolean> {
   const webhook =
     process.env.STOCKX_ALERT_SLACK_WEBHOOK_URL?.trim() ||
     process.env.GALAXUS_ALERT_SLACK_WEBHOOK_URL?.trim() ||

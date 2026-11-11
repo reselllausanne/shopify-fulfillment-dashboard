@@ -190,6 +190,11 @@ async function writeState(state: StoredState): Promise<void> {
 }
 
 async function dismissNoise(page: Page) {
+  const profile = page.getByText(/Profile error occurred/i).first();
+  if (await profile.isVisible({ timeout: 400 }).catch(() => false)) {
+    await page.getByRole("button", { name: /^OK$/ }).first().click().catch(() => undefined);
+    await page.waitForTimeout(300);
+  }
   for (const name of [/Close Location Selector/i, /J.accepte/i, /Accept All/i, /Tout accepter/i, /Got it/i]) {
     const btn = page.getByRole("button", { name }).first();
     if (await btn.isVisible({ timeout: 700 }).catch(() => false)) {
@@ -227,7 +232,8 @@ async function selectSizeEuOrUs(
       ).test(body) && !/(?:Taille|Size)\s*[:：]?\s*(?:Tout|All)\b/i.test(body);
     };
     const buyReady = page.getByRole("button", { name: /Acheter maintenant|Buy Now|Buy$/i }).first();
-    if (urlSized(page.url()) && (await buyReady.isVisible({ timeout: 2500 }).catch(() => false))) {
+    await dismissNoise(page);
+    if (urlSized(page.url())) {
       return { ok: true, used: "US" };
     }
     if ((await sizeAlreadyLocked()) && (await buyReady.isVisible({ timeout: 1500 }).catch(() => false))) {
@@ -276,21 +282,20 @@ async function selectSizeEuOrUs(
           }
         }
       }
-      // DOM evaluate fallback — find exact letter tile even if not a <button>.
+      // DOM evaluate fallback. Apparel tiles are often a plain div/span, not a button.
       const clicked = await page
         .evaluate(
           `({ letter }) => {
             const re = new RegExp("^(US\\\\s*)?" + letter + "$", "i");
-            const nodes = Array.from(
-              document.querySelectorAll("button,div[role=button],div[role=option],label,li,a,span")
-            );
-            for (const n of nodes) {
-              const t = (n.textContent || "").replace(/\\s+/g, " ").trim();
-              if (!re.test(t)) continue;
-              n.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-              return true;
-            }
-            return false;
+            const nodes = Array.from(document.querySelectorAll("button,a,div,span,li,label,p"));
+            const hits = nodes.filter((n) => re.test(((n.textContent || "").replace(/\\s+/g, " ").trim())));
+            hits.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
+            const n = hits[0];
+            if (!n) return false;
+            const el = n;
+            if (typeof el.click === "function") el.click();
+            el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+            return true;
           }`,
           { letter }
         )
@@ -320,6 +325,31 @@ async function selectSizeEuOrUs(
     ) {
       return { ok: true, used: "US" };
     }
+    const dropdownLocked = async () => {
+      const fromSelect = await page.locator("select").first().inputValue().catch(() => "");
+      if (new RegExp(`^${letter}$`, "i").test(fromSelect.trim())) return true;
+      const combo = await page.getByRole("combobox").first().innerText().catch(() => "");
+      return new RegExp(`^${letter}$`, "i").test(combo.trim());
+    };
+    if (
+      (await dropdownLocked()) &&
+      (await buyReady.isVisible({ timeout: 2000 }).catch(() => false))
+    ) {
+      return { ok: true, used: "US" };
+    }
+    const sample = await page
+      .evaluate(
+        `() => {
+          const out = [];
+          for (const n of document.querySelectorAll("button,div,span,li,a,p")) {
+            const t = (n.textContent || "").replace(/\\s+/g, " ").trim();
+            if (t && t.length <= 14) out.push(t);
+          }
+          return Array.from(new Set(out)).slice(0, 50).join(" | ");
+        }`
+      )
+      .catch(() => "");
+    console.log(`[STOCKX-SIZE] apparel miss letter=${letter} url=${page.url()} tiles=${sample}`);
     // Fall through — may still be numeric EU on rare listings.
   }
   // One-size / OS accessories — no size picker; Buy Now already sized.
@@ -1340,6 +1370,7 @@ export async function previewStockxCheckout(options: {
   const sizeUS = convertEuToUs(shopify.sizeEU, {
     title: shopify.title,
     brand: inferBrandFromTitle(shopify.title),
+    assumeUsIfSmall: true,
   });
   const productUrl = buildStockxBuyUrl(slug, sizeUS);
 
@@ -1652,6 +1683,19 @@ export async function runStockxAutoCheckoutForOrder(options: {
     return { kind: "skipped", reason: "physical_stock", needsHuman: nh };
   }
 
+  {
+    // Manual GOAT hold (e.g. #7707 Jordan 1 Swarovski): never buy on StockX, even with a slug.
+    const hold = isClearlyNotStockxBuyable({ title: shopify.title, sku: shopify.sku });
+    if (hold.notBuyable && String(hold.label ?? "").startsWith("goat_")) {
+      const nh = needsHumanBase(shopify, {
+        reason: "non_stockx",
+        desiredLane: "STANDARD",
+        detail: hold.label ?? null,
+      });
+      return { kind: "skipped", reason: "non_stockx", detail: hold.label ?? null, needsHuman: nh };
+    }
+  }
+
   let rebuyOfCancelled = false;
   if (shopify.shopifyLineItemId) {
     const existing = await prisma.orderMatch.findUnique({
@@ -1768,6 +1812,7 @@ export async function runStockxAutoCheckoutForOrder(options: {
   const sizeUS = convertEuToUs(shopify.sizeEU, {
     title: shopify.title,
     brand: inferBrandFromTitle(shopify.title),
+    assumeUsIfSmall: true,
   });
   const productUrl = buildStockxBuyUrl(slug, sizeUS);
 

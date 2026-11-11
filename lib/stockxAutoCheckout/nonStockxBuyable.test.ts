@@ -42,3 +42,21 @@ describe("classifySlugMissingOutcome", () => {
     );
   });
 });
+
+describe("manual GOAT hold", () => {
+  it("#7707 Jordan 1 Swarovski stays blocked even when a StockX slug exists", () => {
+    const hit = isClearlyNotStockxBuyable({
+      title: "Air Jordan 1 Retro High OG Swarovski",
+      sku: "HF6248-002-43",
+    });
+    expect(hit.notBuyable).toBe(true);
+    expect(hit.label).toBe("goat_jordan_swarovski");
+  });
+
+  it("plain Jordan 1 is not held", () => {
+    expect(
+      isClearlyNotStockxBuyable({ title: "Air Jordan 1 Retro High OG Chicago", sku: "DZ5485-612" })
+        .notBuyable
+    ).toBe(false);
+  });
+});

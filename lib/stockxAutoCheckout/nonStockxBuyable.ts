@@ -14,6 +14,18 @@ export type NonStockxBuyableLine = {
   productId?: string | null;
 };
 
+/**
+ * Manual hold: buy elsewhere, never StockX. Checked before the plausible-sneaker
+ * short-circuit so a Jordan title cannot override it.
+ * 2026-11-10: #7707 Jordan 1 Swarovski → GOAT, cheaper.
+ */
+const MANUAL_GOAT_HOLD: ReadonlyArray<{ re: RegExp; label: string }> = [
+  {
+    re: /HF6248-002|\bjordan\b[\s\S]{0,50}\bswarovski\b|\bswarovski\b[\s\S]{0,50}\bjordan\b/i,
+    label: "goat_jordan_swarovski",
+  },
+];
+
 /** Strong StockX signals — never auto-skip even if a denylist token overlaps. */
 const STOCKX_PLAUSIBLE_RE =
   /\b(hobby\s*box|booster\s*box|blaster\s*box|elite\s*trainer|trading\s*cards?|\btcg\b|panini|topps|pokemon|pokémon|lego\b|dunk|jordan|yeezy|air\s*(?:max|force|jordan)|samba|gazelle|campus|superstar|sneaker|new\s*balance|asics|salomon|gel[-\s]?lyte|ultraboost|handball\s*spezial)\b/i;
@@ -50,6 +62,11 @@ export function isClearlyNotStockxBuyable(line: NonStockxBuyableLine): {
   notBuyable: boolean;
   label?: string;
 } {
+  const hay = `${line.title ?? ""} ${line.sku ?? ""}`;
+  for (const p of MANUAL_GOAT_HOLD) {
+    if (p.re.test(hay)) return { notBuyable: true, label: p.label };
+  }
+
   if (isStockxPlausibleWithoutSlug(line)) {
     return { notBuyable: false };
   }
@@ -63,7 +80,6 @@ export function isClearlyNotStockxBuyable(line: NonStockxBuyableLine): {
     return { notBuyable: true, label: `excluded:${excl.keyword}` };
   }
 
-  const hay = `${line.title ?? ""} ${line.sku ?? ""}`;
   for (const p of NON_STOCKX_PATTERNS) {
     if (p.re.test(hay)) return { notBuyable: true, label: p.label };
   }

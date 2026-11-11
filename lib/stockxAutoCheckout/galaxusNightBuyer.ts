@@ -485,7 +485,7 @@ export async function autoHealHalt(): Promise<boolean> {
   return true;
 }
 
-async function resolvePair(
+export async function resolvePair(
   pair: NightPair
 ): Promise<
   | { ok: true; candidate: GalaxusBuyCandidate }
@@ -559,8 +559,11 @@ export const MAX_TRIES = Number(process.env.NIGHT_BUYER_MAX_TRIES || 6);
 
 export async function processPair(
   pair: NightPair,
-  state: Record<string, PairState>
+  state: Record<string, PairState>,
+  opts?: { isOn?: () => Promise<boolean> }
 ): Promise<void> {
+  const isOn =
+    opts?.isOn ?? (() => fs.stat(ON_FILE).then(() => true).catch(() => false));
   const key = pairKey(pair);
   const base = { title: pair.productName, orderId: pair.galaxusOrderId, at: Date.now() };
   const resolved = await resolvePair(pair);
@@ -575,7 +578,7 @@ export async function processPair(
   let lastReason = "";
   let lastDetail: string | null = null;
   for (let attempt = 1; attempt <= MAX_TRIES; attempt += 1) {
-    if (!(await fs.stat(ON_FILE).then(() => true).catch(() => false))) return;
+    if (!(await isOn())) return;
     const startedAt = Date.now();
     await writeJson(INFLIGHT_FILE, { key, startedAt, candidate });
     let result: GalaxusAutoCheckoutResult;
