@@ -168,6 +168,29 @@ describe("editorial selection", () => {
     ).toEqual(["b42", "a42"]);
   });
 
+  it("reuses live size-matched models only after unseen models are exhausted", () => {
+    expect(
+      selectAutomaticOffers(catalog, ["42"], ["model-a"]).items.map(
+        (item) => item.variant_id,
+      ),
+    ).toEqual(["b42", "a42"]);
+    expect(
+      selectAutomaticOffers(
+        catalog,
+        ["42"],
+        ["model-a", "model-b"],
+      ).items.map((item) => item.variant_id),
+    ).toEqual(["a42", "b42"]);
+    expect(
+      selectAutomaticOffers(
+        catalog,
+        ["42"],
+        ["model-a", "model-b"],
+        { reuse_when_exhausted: false },
+      ).items,
+    ).toEqual([]);
+  });
+
   it("filters exact size before model dedupe and avoids prior models", () => {
     expect(
       selectEditorialOffers(catalog, ["42"], selection).items.map(

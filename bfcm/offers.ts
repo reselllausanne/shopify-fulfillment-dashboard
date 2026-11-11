@@ -33,6 +33,11 @@ export type AutomaticSelectionOverrides = {
   excluded_variant_ids?: readonly string[];
   /** Optional priority; variants remain subject to every stock/price/size guard. */
   pinned_variant_ids?: readonly string[];
+  /**
+   * Once every matching model was already shown, reuse the best live models
+   * instead of rendering an empty product grid. Defaults to true.
+   */
+  reuse_when_exhausted?: boolean;
 };
 
 export type OfferSelectionStatus =
@@ -180,6 +185,20 @@ export function selectAutomaticOffers(
     items.push(variant);
     if (items.length === limit) break;
   }
+
+  if (
+    items.length < limit &&
+    overrides.reuse_when_exhausted !== false
+  ) {
+    for (const variant of candidates) {
+      const model = offerModelKey(variant);
+      if (!oldModels.has(model) || currentModels.has(model)) continue;
+      currentModels.add(model);
+      items.push(variant);
+      if (items.length === limit) break;
+    }
+  }
+
   return {
     status: items.length === 0 ? "empty" : sizes.length ? "matched" : "generic",
     items,

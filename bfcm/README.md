@@ -22,9 +22,11 @@ This directory encodes policy only:
 - an exact EU size and public image
 
 `selectAutomaticOffers` matches the confirmed profile size, rotates models
-already delivered to that profile, then ranks remaining stock. `selections.json`
-contains optional pin/exclude overrides only. No manual allow-list is required.
-Demo products are never substituted.
+already delivered to that profile, then ranks remaining stock. When every
+matching model was already shown, it reuses the best variants that are still
+live instead of leaving later emails without product cards. Unseen models
+always rank first. `selections.json` contains optional pin/exclude overrides
+only. No manual allow-list is required. Demo products are never substituted.
 
 Not connected:
 
