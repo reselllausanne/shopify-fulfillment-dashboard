@@ -597,7 +597,8 @@ export async function bulkUpdateSupplierVariants(
             ${laneChanged} OR
             (t."gtin" IS NULL AND vals."gtin" IS NOT NULL) OR
             (t."providerKey" IS NULL AND vals."providerKey" IS NOT NULL) OR
-            (vals."supplierSku" IS NOT NULL AND t."supplierSku" IS DISTINCT FROM vals."supplierSku")
+            (vals."supplierSku" IS NOT NULL AND t."supplierSku" IS DISTINCT FROM vals."supplierSku") OR
+            vals."lanesEvaluated"
           )
           THEN ${now}
           ELSE t."lastSyncAt"
@@ -622,7 +623,8 @@ export async function bulkUpdateSupplierVariants(
           ${laneChanged} OR
           (t."gtin" IS NULL AND vals."gtin" IS NOT NULL) OR
           (t."providerKey" IS NULL AND vals."providerKey" IS NOT NULL) OR
-          (vals."supplierSku" IS NOT NULL AND t."supplierSku" IS DISTINCT FROM vals."supplierSku")
+            (vals."supplierSku" IS NOT NULL AND t."supplierSku" IS DISTINCT FROM vals."supplierSku") OR
+            vals."lanesEvaluated"
         )
       RETURNING 1
     )

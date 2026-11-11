@@ -230,11 +230,19 @@ export async function attachAvailableStock<T extends SupplierVariantLike>(
   const ledgerWindowHours = supplierLedgerWindowHours();
   if (ledgerWindowHours > 0) {
     const windowStart = new Date(now.getTime() - ledgerWindowHours * 3_600_000);
-    const windowed = new Map<string, Date | null>(
-      [...deltas.entries()]
-        .filter(([id, delta]) => delta !== 0 && isWindowedLedgerSupplierVariantId(id))
-        .map(([id]) => [id, windowStart])
-    );
+    const windowedIds = [...deltas.entries()]
+      .filter(([id, delta]) => delta !== 0 && isWindowedLedgerSupplierVariantId(id))
+      .map(([id]) => id);
+    // Supplier stock already includes sales from before the last confirm.
+    // Only subtract sales after that confirm, and never look back more than the window.
+    const lastSyncWindowed = await loadLastSyncAtBySupplierVariantId(windowedIds);
+    const windowed = new Map<string, Date | null>();
+    for (const id of windowedIds) {
+      const syncedAt = lastSyncWindowed.get(id) ?? null;
+      const start =
+        syncedAt && syncedAt.getTime() > windowStart.getTime() ? syncedAt : windowStart;
+      windowed.set(id, start);
+    }
     for (const [id, delta] of await loadDeltasSinceLastSync(windowed)) {
       deltas.set(id, delta);
     }
