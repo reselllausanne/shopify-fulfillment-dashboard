@@ -25,6 +25,7 @@ export const GALAXUS_STOCK_CSV_HEADERS = [
   "LogisticUnit",
   "WarehouseCountry",
   "DirectDeliverySupported",
+  "DeliveryRouteId",
 ] as const;
 
 const SNAPSHOT_META_ID = "default";
@@ -162,7 +163,7 @@ export async function getFeedSnapshotMeta() {
  * rebuilt earlier still carry rows the new rules drop, so uploads fall back to live.
  */
 /** Bump when assortment/pricing rules change so uploads skip stale snapshots until rebuild. */
-export const GALAXUS_FEED_RULES_CHANGED_AT = new Date("2026-10-27T18:00:00Z");
+export const GALAXUS_FEED_RULES_CHANGED_AT = new Date("2026-11-10T22:00:00Z");
 
 export async function isFeedSnapshotReady(scope: "stock" | "offer"): Promise<boolean> {
   const meta = await getFeedSnapshotMeta();

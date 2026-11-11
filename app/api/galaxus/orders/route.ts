@@ -15,6 +15,15 @@ import {
   shouldResolveCatalogSku,
 } from "@/galaxus/orders/orderListSearch";
 import { listOpenDirectDeliveryOrderIds } from "@/galaxus/orders/openDirectDeliveryIds";
+import { isGalaxus48hShipLocation } from "@/galaxus/warehouse/delivery48h";
+import {
+  isLocalStockMatchRow,
+  parseLocalStockLocationFromMatch,
+} from "@/galaxus/orders/localStockMatch";
+import {
+  buildPhysicalStockByGtinMap,
+  resolvePhysicalStockForGtin,
+} from "@/shopify/inventory/orderLinePhysicalStock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -192,6 +201,7 @@ export async function GET(request: Request) {
     // Old SQL only counted GalaxusStockxMatch rows → STX-linked-via-units showed 0/N on left list.
     const linkedCountByOrderId = new Map<string, number>();
     const needsBuyCountByOrderId = new Map<string, number>();
+    const shipAsap48hLineCountByOrderId = new Map<string, number>();
     if (includeLinked && orderIds.length > 0) {
       try {
         const orderRefs = orders.map((o) => o.galaxusOrderId).filter(Boolean);
@@ -208,6 +218,7 @@ export async function GET(request: Request) {
               supplierSku: true,
               supplierVariantId: true,
               providerKey: true,
+              warehouseMarkedShippedAt: true,
             },
           }),
           prismaAny.galaxusStockxMatch?.findMany
@@ -221,6 +232,9 @@ export async function GET(request: Request) {
                     unitIndex: true,
                     stockxOrderId: true,
                     stockxOrderNumber: true,
+                    matchType: true,
+                    stockxStatus: true,
+                    matchReasons: true,
                     stockxAmount: true,
                     stockxCurrencyCode: true,
                     stockxAwb: true,
@@ -283,6 +297,32 @@ export async function GET(request: Request) {
         }
         for (const [id, count] of computed.needsBuy) {
           needsBuyCountByOrderId.set(id, count);
+        }
+        try {
+          const physicalByGtin = await buildPhysicalStockByGtinMap(
+            lines.map((line) => line.gtin)
+          );
+          const reservedByLineId = new Map<string, { locationId: string | null; locationName: string }>();
+          for (const match of Array.isArray(stockxMatches) ? stockxMatches : []) {
+            if (!isLocalStockMatchRow(match)) continue;
+            const lineId = String(match.galaxusOrderLineId ?? "").trim();
+            if (!lineId || reservedByLineId.has(lineId)) continue;
+            const loc = parseLocalStockLocationFromMatch(match);
+            if (loc) reservedByLineId.set(lineId, loc);
+          }
+          for (const line of lines) {
+            if (line.warehouseMarkedShippedAt) continue;
+            const live = resolvePhysicalStockForGtin(line.gtin, physicalByGtin);
+            const reserved = reservedByLineId.get(line.id);
+            if (!isGalaxus48hShipLocation(live) && !isGalaxus48hShipLocation(reserved)) continue;
+            const orderId = line.orderId;
+            shipAsap48hLineCountByOrderId.set(
+              orderId,
+              (shipAsap48hLineCountByOrderId.get(orderId) ?? 0) + 1
+            );
+          }
+        } catch (err) {
+          console.error("[GALAXUS][ORDERS] 48h Bussigny flags failed:", err);
         }
       } catch {
         // If tables aren't available yet, just skip linked counts.
@@ -379,6 +419,8 @@ export async function GET(request: Request) {
         fulfilledCount,
         linkedCount,
         needsBuyCount,
+        shipAsap48h: (shipAsap48hLineCountByOrderId.get(order.id) ?? 0) > 0,
+        shipAsap48hLineCount: shipAsap48hLineCountByOrderId.get(order.id) ?? 0,
         warehouseLinesShipped,
         warehouseOpenLineCount,
         fulfillmentState,

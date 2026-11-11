@@ -57,6 +57,8 @@ import {
   FEED_VARIANT_SELECT_GATE_NO_IMAGES,
 } from "@/galaxus/exports/variantImagePresence";
 import { isGalaxusGldSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
+import { galaxusStockWarehouseFields } from "@/galaxus/warehouse/delivery48h";
+import { GALAXUS_STOCK_CSV_HEADERS } from "@/galaxus/exports/feedSnapshot";
 import {
   loadGalaxusStockEvidence,
   resolveGalaxusEvidenceStock,
@@ -121,8 +123,9 @@ function buildForceZeroStockRow(
     ),
     TradeUnit: "",
     LogisticUnit: "",
-    WarehouseCountry: "Poland",
+    WarehouseCountry: "Switzerland",
     DirectDeliverySupported: "0",
+    DeliveryRouteId: "",
   };
 }
 
@@ -155,18 +158,7 @@ export async function GET(request: Request) {
   const mappingsWhere = buildFeedMappingsWhere(supplier, all);
   const providerKeyFilter = providerKeys.length > 0 ? { providerKey: { in: providerKeys } } : null;
 
-  const headers = [
-    "ProviderKey",
-    "QuantityOnStock",
-    "RestockTime",
-    "RestockDate",
-    "MinimumOrderQuantity",
-    "OrderQuantitySteps",
-    "TradeUnit",
-    "LogisticUnit",
-    "WarehouseCountry",
-    "DirectDeliverySupported",
-  ];
+  const headers = [...GALAXUS_STOCK_CSV_HEADERS];
 
   const rows: ExportRow[] = [];
   const skippedProviderKeys: string[] = [];
@@ -425,15 +417,14 @@ export async function GET(request: Request) {
   let evidenceStockRows = 0;
   let evidenceStockPositive = 0;
 
-  // Phase 2 — physical mirror merge (flag-gated). Preload physical qty per GTIN
-  // once so the row loop stays O(1) per candidate. When the flag is off we
-  // skip the DB roundtrip entirely (zero-cost when disabled).
+  // Physical mirror: merge into dropship qty only when RESOLVER_MERGE_PHYSICAL is on.
+  // Bussigny 48h route always reads the same map so 1030 on-hand is not flag-gated.
   const mergePhysical = isPhysicalMergeEnabled();
   let physicalByGtin: PhysicalStockMap = new Map();
-  if (mergePhysical) {
-    const gtins = exportCandidates
-      .map((c: any) => String(c?.mapping?.gtin ?? "").trim())
-      .filter((g: string) => g.length > 0);
+  const gtins = exportCandidates
+    .map((c: any) => String(c?.mapping?.gtin ?? "").trim())
+    .filter((g: string) => g.length > 0);
+  if (gtins.length > 0) {
     physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
   }
 
@@ -561,6 +552,13 @@ export async function GET(request: Request) {
       }
     }
 
+    // Bussigny (1030) on-hand is the 48h route. One ProviderKey cannot promise
+    // 48h and dropship at once, so that row publishes Bussigny qty only.
+    const warehouseFields = galaxusStockWarehouseFields(Number(physical?.bussignyQty ?? 0));
+    if (warehouseFields.ship48h && warehouseFields.quantity != null) {
+      stock = warehouseFields.quantity;
+    }
+
     if (!Number.isFinite(stock) || stock < 0) {
       return;
     }
@@ -579,12 +577,14 @@ export async function GET(request: Request) {
       return;
     }
 
-    const moq = resolveGalaxusStockMoq({
-      supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
-      supplierVariantId,
-      providerKey,
-      manualNote: variant?.manualNote ?? null,
-    });
+    const moq = warehouseFields.ship48h
+      ? { minimumOrderQuantity: 1, orderQuantitySteps: 1 }
+      : resolveGalaxusStockMoq({
+          supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
+          supplierVariantId,
+          providerKey,
+          manualNote: variant?.manualNote ?? null,
+        });
     // GLD (and any MOQ>1 supplier): do not list variants that cannot fill a min order.
     // Also omit literal 0 — never push zero-stock rows (master/offer already gated).
     if (!meetsGalaxusStockMoq(stock, moq) || stock <= 0) {
@@ -594,7 +594,11 @@ export async function GET(request: Request) {
     let restockDate = "";
     let restockTime = "";
     const gtin = String(candidate?.mapping?.gtin ?? "").trim();
-    if (isStx && gtin && stxEtaByGtin.has(gtin)) {
+    // 48h route is in-stock only. RestockTime is a backorder signal when qty hits 0.
+    if (warehouseFields.ship48h) {
+      restockDate = "";
+      restockTime = "";
+    } else if (isStx && gtin && stxEtaByGtin.has(gtin)) {
       const range = stxEtaByGtin.get(gtin)!;
       const minPlusOne = addDays(range.min, 1);
       const maxPlusOne = addDays(range.max, 1);
@@ -627,14 +631,17 @@ export async function GET(request: Request) {
       ...moqFields,
       TradeUnit: "",
       LogisticUnit: "",
-      WarehouseCountry: isStx ? "Switzerland" : "Poland",
-      // GLD: no DD. STX standard dropship: no DD (warehouse delivery only).
-      DirectDeliverySupported: resolveGalaxusDirectDeliverySupported({
-        isGld,
-        isStx,
-        deliveryType,
-        hasPhysicalStock,
-      }),
+      WarehouseCountry: warehouseFields.warehouseCountry,
+      // GLD: no DD. STX standard dropship: no DD. Bussigny 48h ships direct.
+      DirectDeliverySupported: warehouseFields.ship48h
+        ? "1"
+        : resolveGalaxusDirectDeliverySupported({
+            isGld,
+            isStx,
+            deliveryType,
+            hasPhysicalStock,
+          }),
+      DeliveryRouteId: warehouseFields.deliveryRouteId,
     });
   });
     let finalRows = rows;

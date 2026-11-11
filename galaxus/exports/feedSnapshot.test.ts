@@ -21,6 +21,7 @@ describe("feedSnapshot", () => {
         LogisticUnit: "",
         WarehouseCountry: "Switzerland",
         DirectDeliverySupported: "1",
+        DeliveryRouteId: "",
       },
     ];
     const csv = toCsv([...GALAXUS_STOCK_CSV_HEADERS], rows);
