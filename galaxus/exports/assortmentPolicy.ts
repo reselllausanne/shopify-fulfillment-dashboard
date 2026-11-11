@@ -598,7 +598,9 @@ export function galaxusDisabledSuppliers(): Set<string> {
   // rei: whole catalog off (2026-11-02). Jetson Orin Nano stays via assortment exception.
   // wel: WellPlayed whole catalog off (2026-11-09).
   // exl: Ex Libris whole catalog off (2026-11-11) — also skipped in scrape cron + master/specs builders.
-  const list = raw === undefined ? "bwz,rei,wel,exl" : raw;
+  // alt haw ven wrk fan bae (2026-11-11): removed with bwz/exl from ALL feeds incl. master/specs
+  // (see hardRemovedSuppliers.ts) — wrong categories reported by Galaxus, unused until next year.
+  const list = raw === undefined ? "bwz,rei,wel,exl,alt,haw,ven,wrk,fan,bae" : raw;
   return new Set(
     list
       .split(",")

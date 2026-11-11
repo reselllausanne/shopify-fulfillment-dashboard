@@ -22,6 +22,7 @@ import {
 } from "@/galaxus/exports/masterSpecsFeed";
 import { loadStxFeedGateProviderKeys } from "@/galaxus/exports/stxFeedGate";
 import { withTransientDbRetry } from "@/galaxus/exports/transientDbRetry";
+import { galaxusHardRemovedSuppliers, isHardRemovedProviderKey } from "@/galaxus/exports/hardRemovedSuppliers";
 import { MasterSpecsDiffWriter } from "@/galaxus/exports/masterSpecsDiffApply";
 import { useDiffSnapshotRebuild } from "@/galaxus/exports/snapshotDiffApply";
 import { loadWelCardOmitProviderKeys } from "@/galaxus/exports/welFeedOmit";
@@ -408,6 +409,7 @@ export async function rebuildMasterSpecsSnapshot(params?: {
     });
     const { exportable } = filterAlternativeProducts({
       alternatives,
+      galaxusHardRemove: true,
       normalByGtin,
       normalByProviderKey,
     });
@@ -683,12 +685,17 @@ export async function streamMasterCsvFromSnapshot(
   const headers = meta?.masterHeaders ?? [...MASTER_CSV_HEADERS];
   const writer = await openCsvWriter(path, headers);
   const skipSet = options.skipProviderKeys;
+  const hardRemoved = galaxusHardRemovedSuppliers();
   let skipped = 0;
   const pending: CsvRow[] = [];
   try {
     for await (const row of iterateMasterRowsFromSnapshot()) {
       const providerKey = String(row.ProviderKey ?? "").trim();
-      if (skipSet && providerKey && skipSet.has(providerKey)) {
+      // Snapshot rows of hard-removed suppliers may predate the removal (until the next rebuild).
+      if (
+        (skipSet && providerKey && skipSet.has(providerKey)) ||
+        isHardRemovedProviderKey(providerKey, hardRemoved)
+      ) {
         skipped += 1;
         continue;
       }
@@ -731,12 +738,17 @@ export async function streamSpecsCsvFromSnapshot(
   const headers = meta?.specsHeaders ?? [...SPECS_CSV_HEADERS];
   const writer = await openCsvWriter(path, headers);
   const skipSet = options.skipProviderKeys;
+  const hardRemoved = galaxusHardRemovedSuppliers();
   let skipped = 0;
   const pending: CsvRow[] = [];
   try {
     for await (const row of iterateSpecsRowsFromSnapshot()) {
       const providerKey = String(row.ProviderKey ?? "").trim();
-      if (skipSet && providerKey && skipSet.has(providerKey)) {
+      // Snapshot rows of hard-removed suppliers may predate the removal (until the next rebuild).
+      if (
+        (skipSet && providerKey && skipSet.has(providerKey)) ||
+        isHardRemovedProviderKey(providerKey, hardRemoved)
+      ) {
         skipped += 1;
         continue;
       }

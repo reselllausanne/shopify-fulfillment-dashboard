@@ -11,6 +11,7 @@ import {
 } from "@/galaxus/exports/productClassification";
 import { buildGalaxusSizeSpecRow } from "@/galaxus/exports/sizeSpecifications";
 import { galaxusAssortmentBlockReason } from "@/galaxus/exports/assortmentPolicy";
+import { isHardRemovedProviderKey } from "@/galaxus/exports/hardRemovedSuppliers";
 import {
   formatGalaxusStockMoqFields,
   meetsGalaxusStockMoq,
@@ -230,6 +231,8 @@ export function filterAlternativeProducts(params: {
   normalByProviderKey: Map<string, number>;
   /** Galaxus feeds only — Decathlon must not inherit the Galaxus assortment rules. */
   galaxusAssortmentPolicy?: boolean;
+  /** Galaxus master/specs: drop hard-removed suppliers (alt, fan, exl, …) entirely. */
+  galaxusHardRemove?: boolean;
 }) {
   const exportable: AlternativeProductRecord[] = [];
   const excluded: Array<{
@@ -240,6 +243,10 @@ export function filterAlternativeProducts(params: {
 
   for (const product of params.alternatives) {
     if (!validateGtin(String(product.gtin ?? "").trim())) {
+      continue;
+    }
+    if (params.galaxusHardRemove && isHardRemovedProviderKey(product.providerKey)) {
+      excluded.push({ product, reason: "ASSORTMENT_POLICY" });
       continue;
     }
     if (params.galaxusAssortmentPolicy && alternativeAssortmentBlockReason(product)) {

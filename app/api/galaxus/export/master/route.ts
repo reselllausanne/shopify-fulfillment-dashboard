@@ -566,6 +566,7 @@ export async function GET(request: Request) {
     });
     const { exportable } = filterAlternativeProducts({
       alternatives,
+      galaxusHardRemove: true,
       normalByGtin,
       normalByProviderKey,
     });
