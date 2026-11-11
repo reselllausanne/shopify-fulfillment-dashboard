@@ -35,7 +35,8 @@ fi
 
 # Unified StockX buyer (Shopify + Galaxus): runs while .data/stockx-buyer/buyer.on exists.
 # Kill switch = delete it. Halt file .data/stockx-buyer/buyer.halt pauses it. See docs/STOCKX-BUYER.md.
-if [ -f /app/.data/stockx-buyer/buyer.on ]; then
+# Web container only ($# = 0 -> npm start). Workers share /app/.data: a loop per worker = lock fight + CPU churn + random Chrome host.
+if [ $# -eq 0 ] && [ -f /app/.data/stockx-buyer/buyer.on ]; then
   (
     sleep 45
     while [ -f /app/.data/stockx-buyer/buyer.on ]; do

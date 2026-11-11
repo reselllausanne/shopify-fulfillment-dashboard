@@ -572,6 +572,12 @@ export async function runCycle(rt: Runtime): Promise<CycleResult> {
   let galaxusTried = 0;
   let shopifyQueue = 0;
 
+  // Pick up manual `release` events written by the control CLI while we run.
+  if (!cfg.dryRun) {
+    const fresh = await loadReduced().catch(() => null);
+    if (fresh) for (const k of [...rt.states.keys()]) if (!fresh.states.has(k)) rt.states.delete(k);
+  }
+
   if (cfg.rebuy && now - rt.lastRebuyAt > cfg.rebuyEveryMs) {
     rt.lastRebuyAt = now;
     rt.phase = "rebuy-sweep";
