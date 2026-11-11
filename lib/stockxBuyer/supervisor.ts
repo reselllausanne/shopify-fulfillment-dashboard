@@ -530,7 +530,8 @@ export async function healBuyerHalt(rt: Runtime): Promise<boolean> {
           shopifyCreatedAt: new Date((att?.t ?? s.at) - 3600_000).toISOString(),
           title: s.title ?? "",
           sku: null,
-          sizeEU: att?.sizeEU ?? null,
+          // Size-agnostic on purpose: a missed match here = release = rebuy = double buy.
+          sizeEU: null,
           urlKeyHint: att?.slug ?? null,
         },
         { forceRefresh: true }
