@@ -127,3 +127,28 @@ Lecture (I) : règle « dépense ≥ 25 CHF et 0 vente en 90 j » = 62 produits,
 Documentation Google (consultée 05.11) : pour une campagne établie, changer budget ou cible n'ouvre pas de phase d'apprentissage ; la performance converge en 1 à 2 cycles de conversion (support.google.com/google-ads/answer/13020501). Retire l'argument « le budget a relancé l'apprentissage ». 84 % de nos conversions arrivent sous 1 jour (`ads_02`) : deux semaines suffisent pour lire un changement.
 
 UGG, ventes Shopify (lignes `lines_with_match.csv`) : oct. 2024 12, nov. 2024 54, déc. 2024 110, janv. 2025 41 ; oct. 2025 4, nov. 2025 44, déc. 2025 90, janv. 2026 52 ; sept. 2026 6, oct. 2026 9. Recherches « ugg » Suisse (Ahrefs) nov. 2025 vs nov. 2024 : −17 % ; déc. : −16 %. Nos ventes : −19 % et −18 %. Publicité UGG : janv. 2026 925 CHF, ROAS 6,8, conversion 3,2 % ; sept.-oct. 2026 conversion 0,1-0,25 %.
+
+## 9. Historique des modifications Google Ads (13.10 → 11.11.2026) et correction du tROAS (11.11)
+
+Source : API Google Ads, `change_event` (lecture seule, 30 jours maximum, `calculs/ads_gaql_readonly.ts`). Tous les événements portent le compte `reselllausanne@gmail.com` ; clients : web, application mobile, et API (10.11).
+
+| Date | Campagne | Modification |
+|---|---|---|
+| 13.10 | Nike, Adidas | tROAS 3,79 → 4,1 |
+| 15.10 | all | tROAS 3,79 → 4,09 ; budget 60 → 63 |
+| 23.10 | vêtements | budget 102 → 50 |
+| 23.10 | UGG, Adidas | UGG tROAS 3,9 → 5 ; Adidas 4,1 → 4,2 |
+| 27.10 | Long Tail, all | budget Long Tail 17 → 27 ; all 63 → 70 |
+| 27.10 | Nike, Adidas, Jordan | Nike 4,1 → 4,4 → 3,9 ; Adidas 4,2 → 4,5 → 3,9 ; Jordan 6 → 5 |
+| 03.11 | vêtements, Explorer Long Tail | vêtements tROAS 3,9 → 5 ; Explorer Long Tail budget 42 → 20 |
+| 08.11 | UGG | tROAS 5 → 4 |
+| 10.11 11:42 (API) | Nike, Adidas, all, vêtements, Jordan, UGG | tROAS → 3,6 (Nike, Adidas, all, UGG) et 3,8 (vêtements, Jordan) |
+| 10.11 20:54 (API) | all, Adidas, Jordan, UGG | budget all 70 → 140, Adidas 102 → 150, Jordan 42 → 90 ; UGG mise en pause |
+
+État au 11.11 : tROAS 3,6 (Nike, Adidas, all) et 3,8 (vêtements, Jordan) ; budgets Nike 255, Adidas 150, all 140, Jordan 90, vêtements 50 CHF/jour.
+
+Correction : la cible tROAS de 5 était celle des relevés du 08-29.08 seulement. En octobre, les cibles étaient de 3,8 à 4,5. Le ROAS livré (3,1-3,9) est cohérent avec la cible fixée. La date de baisse de la cible entre le 29.08 et le 13.10 n'est pas lisible (historique API limité à 30 jours ; visible dans l'historique des modifications de l'interface).
+
+Relation empirique coût de pub par commande Shopify / ROAS Google mensuel : ROAS 5,0 ↔ 31 CHF ; 3,9 ↔ 39 ; 3,5 ↔ 34 ; 3,1-3,3 ↔ 44. La contribution avant pub est de 40,3 CHF par commande : le seuil de rentabilité en ROAS Google est ≈ 3,5-3,9.
+
+Quotidien (F, `ads_campaign_daily`) du 20.10 au 10.11 : 7 494 CHF, 19 559 CHF de valeur, ROAS 2,6. 08-10.11 : 0,5 à 1,1, 1 à 2 conversions par jour.
