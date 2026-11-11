@@ -16,6 +16,7 @@ import {
   buildPhysicalStockByGtinMap,
 } from "@/shopify/inventory/orderLinePhysicalStock";
 import { isLegoStxProduct } from "@/galaxus/stx/legoProduct";
+import { pickGalaxusDbBuyForDisplay } from "@/lib/stockxAutoCheckout/galaxusDbBuyDisplay";
 import {
   ensureLocalStockMatchesForOrder,
   mergeReservedPhysicalStockOntoLines,
@@ -149,14 +150,29 @@ function enrichGalaxusOrderLine(
   sizeByGtin: Record<string, string>,
   sizeRawByGtin: Record<string, string>,
   productNameByGtin: Record<string, string>,
-  catalogPriceByGtin: Record<string, number> = {}
+  catalogPriceByGtin: Record<string, number> = {},
+  stxLanesByGtin: Record<string, { standard: number | null; express: number | null }> = {}
 ) {
   const gtin = String(line?.gtin ?? "").trim();
   const nameFromGtin = gtin ? productNameByGtin[gtin] ?? "" : "";
   const sizeFromGtin = gtin ? sizeByGtin[gtin] ?? "" : "";
   const skuFromGtin = gtin ? skuByGtin[gtin] ?? "" : "";
   const sizeRawFromMap = gtin ? sizeRawByGtin[gtin] ?? "" : "";
-  const catalogPrice = gtin ? catalogPriceByGtin[gtin] ?? null : null;
+  let catalogPrice = gtin ? catalogPriceByGtin[gtin] ?? null : null;
+  let stxBuyLane: "standard" | "express" | null = null;
+  const stxLanes = gtin ? stxLanesByGtin[gtin] : undefined;
+  if (stxLanes) {
+    // Show the lane the buyer would take, not a 1-ask express outlier.
+    const pick = pickGalaxusDbBuyForDisplay(
+      toPositiveNumber(line?.unitNetPrice),
+      stxLanes.standard,
+      stxLanes.express
+    );
+    if (pick) {
+      catalogPrice = pick.chf;
+      stxBuyLane = pick.lane;
+    }
+  }
 
   const desc = line.description ? String(line.description).trim() : "";
   const rawName = line.productName ? String(line.productName).trim() : "";
@@ -178,12 +194,35 @@ function enrichGalaxusOrderLine(
   const sizeRaw =
     (sizeRawFromMap && String(sizeRawFromMap).trim()) || (line.size ? String(line.size).trim() : null) || null;
 
-  return { ...line, productName, size, supplierSku, styleSku, offerSupplierSku, sizeRaw, catalogPrice };
+  return { ...line, productName, size, supplierSku, styleSku, offerSupplierSku, sizeRaw, catalogPrice, stxBuyLane };
 }
 
 function toPositiveNumber(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** STX non-LEGO variant with both lane prices (LEGO keeps standard-first display). */
+function selectStxDisplayLanes(mapping: any): { standard: number | null; express: number | null } | null {
+  const supplierVariant = mapping?.supplierVariant ?? null;
+  if (!supplierVariant) return null;
+  const providerKey = String(supplierVariant?.providerKey ?? "").trim().toUpperCase();
+  const supplierVariantId = String(supplierVariant?.supplierVariantId ?? "").trim().toLowerCase();
+  if (!(providerKey.startsWith("STX_") || supplierVariantId.startsWith("stx_"))) return null;
+  const kickdbProduct = mapping?.kickdbVariant?.product ?? null;
+  const supplierName = String(supplierVariant?.supplierProductName ?? "").trim();
+  if (
+    isLegoStxProduct({
+      slug: kickdbProduct?.urlKey ?? null,
+      name: kickdbProduct?.name ?? supplierName,
+    })
+  ) {
+    return null;
+  }
+  const standard = toPositiveNumber(supplierVariant?.standardBuyPrice);
+  const express = toPositiveNumber(supplierVariant?.expressBuyPrice);
+  if (standard == null && express == null) return null;
+  return { standard, express };
 }
 
 function selectCatalogDisplayBuyPrice(mapping: any): number | null {
@@ -375,6 +414,7 @@ export async function GET(
     const sizeRawByGtin: Record<string, string> = {};
     const productNameByGtin: Record<string, string> = {};
     const catalogPriceByGtin: Record<string, number> = {};
+    const stxLanesByGtin: Record<string, { standard: number | null; express: number | null }> = {};
     const mappings = Array.isArray(mappingsRaw) ? mappingsRaw : [];
     if (mappings.length > 0) {
       const supplierKeyFromPid = (pid?: string | null): string | null => {
@@ -455,6 +495,8 @@ export async function GET(
         if (catalogPriceByGtin[canon] == null) {
           const p = selectCatalogDisplayBuyPrice(mapping);
           if (p != null && Number.isFinite(p) && p > 0) catalogPriceByGtin[canon] = p;
+          const lanes = selectStxDisplayLanes(mapping);
+          if (lanes) stxLanesByGtin[canon] = lanes;
         }
       }
     }
@@ -473,7 +515,15 @@ export async function GET(
     };
 
     const enrichedLines = (orderRow.lines ?? []).map((line: any) =>
-      enrichGalaxusOrderLine(line, skuByGtin, sizeByGtin, sizeRawByGtin, productNameByGtin, catalogPriceByGtin)
+      enrichGalaxusOrderLine(
+        line,
+        skuByGtin,
+        sizeByGtin,
+        sizeRawByGtin,
+        productNameByGtin,
+        catalogPriceByGtin,
+        stxLanesByGtin
+      )
     );
     const physicalStockByGtin = await buildPhysicalStockByGtinMap(
       enrichedLines.map((line: { gtin?: string | null }) => line.gtin)
