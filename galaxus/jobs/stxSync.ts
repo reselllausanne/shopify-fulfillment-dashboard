@@ -825,10 +825,11 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
  */
 export async function promotePendingStxMappingsThatAlreadyHaveGtin(now = new Date()): Promise<number> {
   let total = 0;
-  for (;;) {
+  // Hard stop so a logic bug cannot spin. 2_000 * 500 covers the historical backlog.
+  for (let batch = 0; batch < 2000; batch++) {
     const updated = await prisma.$executeRaw`
       WITH todo AS (
-        SELECT m."id"
+        SELECT m."id", v."gtin" AS gtin, v."providerKey" AS provider_key
         FROM "VariantMapping" AS m
         JOIN "SupplierVariant" AS v ON v."supplierVariantId" = m."supplierVariantId"
         WHERE m."status" = 'PENDING_GTIN'
@@ -846,14 +847,12 @@ export async function promotePendingStxMappingsThatAlreadyHaveGtin(now = new Dat
       )
       UPDATE "VariantMapping" AS m
       SET
-        "gtin" = v."gtin",
-        "providerKey" = v."providerKey",
+        "gtin" = todo.gtin,
+        "providerKey" = todo.provider_key,
         "status" = 'SUPPLIER_GTIN',
         "updatedAt" = ${now}
-      FROM "SupplierVariant" AS v
-      JOIN todo ON true
+      FROM todo
       WHERE m."id" = todo."id"
-        AND v."supplierVariantId" = m."supplierVariantId"
     `;
     const n = Number(updated) || 0;
     total += n;
