@@ -8,7 +8,7 @@ import {
   pickGoatVariant,
 } from "@/lib/stockxBuyer/goatWatch";
 
-const model = { usdChf: 0.8, shipUsd: 25, vat: 0.081, minSavingChf: 15, minSavingPct: 0.08 };
+const model = { usdChf: 0.8, shipUsd: 25, vat: 0.081, minSavingChf: 30, minSavingPct: 0.12 };
 
 describe("goatWatch", () => {
   it("all-in = (ask + ship) * fx * (1 + vat)", () => {
@@ -50,5 +50,10 @@ describe("goatWatch", () => {
 
   it("env model falls back to defaults on junk", () => {
     expect(goatCostModelFromEnv({ GOAT_USD_CHF: "abc" } as unknown as NodeJS.ProcessEnv).usdChf).toBe(0.8);
+  });
+
+  it("marginal 8% / 30 CHF GOAT gaps do not delay a customer order", () => {
+    // Nike Air Max 97 case seen live: StockX 377 vs GOAT ~347.
+    expect(compareGoat({ stockxAllInChf: 377.4, askUsd: 376, model: goatCostModelFromEnv({} as unknown as NodeJS.ProcessEnv) }).kind).toBe("stockx_ok");
   });
 });

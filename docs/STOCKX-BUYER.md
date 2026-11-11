@@ -28,8 +28,8 @@ MCP: `scripts/stockx-buyer-mcp.ts`.
 
 Before each buy, KicksDB `/goat/products` gives the lowest ask (USD, US size). All-in estimate =
 `(ask + GOAT_SHIP_USD) * GOAT_USD_CHF * (1 + GOAT_IMPORT_VAT)`. If it beats the StockX all-in by
-`GOAT_MIN_SAVING_CHF` (15) and `GOAT_MIN_SAVING_PCT` (8%): Slack alert, StockX buy of that pair
-pauses `GOAT_HOLD_MINUTES` (45), then resumes by itself. `buyer_hold` blocks it for good.
+`GOAT_MIN_SAVING_CHF` (30) and `GOAT_MIN_SAVING_PCT` (12%): Slack alert, StockX buy of that pair
+pauses `GOAT_HOLD_MINUTES` (30), then resumes by itself. `buyer_hold` blocks it for good.
 The buyer never buys on GOAT.
 
 ## Failure learning

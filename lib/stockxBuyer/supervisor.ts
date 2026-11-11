@@ -119,7 +119,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SupervisorC
     idleMs: num(env.STOCKX_BUYER_IDLE_MS, 60_000),
     rebuyEveryMs: num(env.STOCKX_BUYER_REBUY_EVERY_MS, 15 * 60_000),
     goatWatch: bool(env.STOCKX_BUYER_GOAT_WATCH, true),
-    goatHoldMs: num(env.GOAT_HOLD_MINUTES, 45) * 60_000,
+    goatHoldMs: num(env.GOAT_HOLD_MINUTES, 30) * 60_000,
   };
 }
 

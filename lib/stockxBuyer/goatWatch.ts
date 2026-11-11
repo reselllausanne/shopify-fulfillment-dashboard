@@ -48,8 +48,8 @@ export function goatCostModelFromEnv(env: NodeJS.ProcessEnv = process.env): Goat
     usdChf: n(env.GOAT_USD_CHF, 0.8),
     shipUsd: n(env.GOAT_SHIP_USD, 25),
     vat: n(env.GOAT_IMPORT_VAT, 0.081),
-    minSavingChf: n(env.GOAT_MIN_SAVING_CHF, 15),
-    minSavingPct: n(env.GOAT_MIN_SAVING_PCT, 0.08),
+    minSavingChf: n(env.GOAT_MIN_SAVING_CHF, 30),
+    minSavingPct: n(env.GOAT_MIN_SAVING_PCT, 0.12),
   };
 }
 
@@ -193,7 +193,7 @@ export function goatAlertText(input: {
   holdMinutes?: number;
 }): string {
   const v = input.verdict;
-  const holdMinutes = input.holdMinutes ?? 45;
+  const holdMinutes = input.holdMinutes ?? 30;
   return (
     `GOAT moins cher: ${input.orderRef} ${input.title} EU ${input.sizeEU}${input.sizeUs ? ` (US ${input.sizeUs})` : ""}\n` +
     `StockX ~${v.stockxChf} CHF vs GOAT ~${v.goatChf} CHF (ask ${v.askUsd} USD + ship + TVA). ` +
