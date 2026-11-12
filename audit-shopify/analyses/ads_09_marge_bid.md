@@ -122,3 +122,10 @@ select date::text d, round(sum(cost_micros)/1e6,2) cost, round(sum(conversion_va
 -- commandes Shopify par jour
 select ("createdAt" at time zone 'Europe/Zurich')::date d, count(*) orders, round(sum("totalSalesChf")) sales from "ShopifyOrder" where "createdAt" >= '2026-10-20' group by 1 order by 1;
 ```
+
+## Erratum 2026-11-12 : coûts fixes du stock propre
+
+F : `shopify/inventory/inStockFixedPrice.ts` fixe un coût unitaire par ligne de stock propre (tee/shorts Essentials 26, hoodie 42, Bape 35, Audemars x Travis 40, boxers Supreme 20 ; valeurs du dirigeant au 2026-08-23). `resolveOrderMatchCost` (`app/utils/matching.ts`) les applique à la lecture ; la DB garde 0 sur les lignes historiques (83 lignes `ESSENTIAL_STOCK` à coût stocké 0 depuis août, coût code total 2 865 CHF pour 7 362 CHF de revenu).
+F : le P&L `fin_05` en intègre une partie (coût moyen 18,9 par ligne Essentials contre 27,6 attendu).
+I : sous-estimation résiduelle des coûts août-octobre ≈ 0,5 à 1,5 k (≈ −3 % de contribution). Fear of God (POAS 1,04) et Supreme (1,10, boxers) sont les plus touchés : leur POAS réel est probablement ≈ 0,7 à 1,0. **Plus aucune marque n'est clairement au-dessus de 1.**
+F : 61 lignes `PHYSICAL_STOCK` (6 775 CHF de revenu) ont un coût stocké 0 (« déjà expensé » par conception) ; 23 autres ont un coût réel moyen de 134 CHF. Leur coût d'origine n'est pas dans la DB (36 lots seulement).
