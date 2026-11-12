@@ -10,18 +10,35 @@ import { STX_SUPPLIER_VARIANT_WHERE } from "@/galaxus/supplier/supplierKeyGuards
 import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 import { resolveKickdbSlugForGtin } from "@/shopify/restock/resolveKickdbSlugForGtin";
 import {
-  calcPhysicalLiquidationSellPrice,
   calcShopifySellPrice,
   calcShopifyTouchPrice,
 } from "@/shopify/pricing/calcShopifySellPrice";
 
 export type PhysicalRestockPricing = {
+  /** StockX Buy Now ask, CHF, before our fees. */
   stockxRaw: number | null;
   cost: number | null;
+  /** Storefront compare-at. Same number as `stockxRaw` (raw Buy Now). */
   compareAt: number | null;
+  /** `warehouseHalfBuyNowPrice(stockxRaw)`. */
   sellPrice: number | null;
+  /** Normal site price after the pair sells (`calcShopifySellPrice`). */
+  siteSellPrice: number | null;
   source: string;
+  /** Landed SupplierVariant.price (CHF) when an stx row existed. Often list×1.1065+ship. */
+  storedBuyPrice: number | null;
 };
+
+/**
+ * Warehouse shelf sell: half the StockX Buy Now ask, floored to the nearest 0.50 CHF.
+ * `Math.floor(buyNow * 0.5 * 2) / 2`. Returns null when the result is not a positive price.
+ */
+export function warehouseHalfBuyNowPrice(buyNowChf: number): number | null {
+  if (!Number.isFinite(buyNowChf) || buyNowChf <= 0) return null;
+  const sale = Math.floor(buyNowChf * 0.5 * 2) / 2;
+  if (!(sale > 0)) return null;
+  return sale;
+}
 
 async function resolveProductContextForGtin(gtin: string): Promise<{
   handle: string | null;
@@ -120,13 +137,14 @@ export type PhysicalRestockPricingContext = {
 };
 
 /**
- * Physical restock pricing:
- * - cost = calc_touch_price(stockx raw)
- * - compareAt = calcShopifySellPrice(stockx raw)
- * - sell = cost − 30% (LIQUIDATION_DISCOUNT_PCT)
+ * Physical warehouse pricing:
+ * - compareAt = StockX Buy Now ask (CHF, before fees) — not landed cost, not site sell
+ * - sell = Buy Now / 2, floored to 0.50 CHF
+ * - siteSellPrice = calcShopifySellPrice — used only after the pair is sold
  *
- * Ask resolution order: stx DB row by GTIN → KickDB live by GTIN → KickDB
- * live by slug + EU size (KickDB barcode coverage is unreliable).
+ * Ask resolution order: stored stx lane (derive raw ask from landed price) →
+ * KickDB live by GTIN → KickDB live by slug + EU size. A fresher KickDB ask
+ * does not replace a stored stx row.
  */
 export async function resolvePhysicalRestockPricing(
   gtin: string,
@@ -138,7 +156,9 @@ export async function resolvePhysicalRestockPricing(
     cost: null,
     compareAt: null,
     sellPrice: null,
+    siteSellPrice: null,
     source: "none",
+    storedBuyPrice: null,
   };
   if (!cleanGtin) return empty;
 
@@ -151,10 +171,12 @@ export async function resolvePhysicalRestockPricing(
   const sizeEu = String(context.sizeEu ?? "").trim() || null;
   let stockxRaw: number | null = null;
   let source = "none";
+  let storedBuyPrice: number | null = null;
 
+  const gtinLookup = gtinCandidates(cleanGtin);
   const stxRow = await prisma.supplierVariant.findFirst({
     where: {
-      gtin: cleanGtin,
+      gtin: { in: gtinLookup.length > 0 ? gtinLookup : [cleanGtin] },
       ...STX_SUPPLIER_VARIANT_WHERE,
     },
     select: { price: true, supplierProductName: true, deliveryType: true, supplierBrand: true },
@@ -164,6 +186,7 @@ export async function resolvePhysicalRestockPricing(
   if (stxRow?.price) {
     const buy = Number(stxRow.price);
     if (Number.isFinite(buy) && buy > 0) {
+      storedBuyPrice = buy;
       stockxRaw = deriveStockxRawAskFromStoredBuyPrice(buy, {
         slug: ctx.slug,
         urlKey: ctx.handle,
@@ -183,7 +206,7 @@ export async function resolvePhysicalRestockPricing(
     }
   }
 
-  if (!stockxRaw) return empty;
+  if (!stockxRaw) return { ...empty, storedBuyPrice };
 
   const isExpress = String(stxRow?.deliveryType ?? "").startsWith("express_");
   const category = undefined;
@@ -192,14 +215,23 @@ export async function resolvePhysicalRestockPricing(
     productHandle: ctx.handle,
     productCategory: category,
   });
-  const compareAt = calcShopifySellPrice({
+  const siteSellPrice = calcShopifySellPrice({
     stockxRaw,
     productHandle: ctx.handle,
     productName: ctx.name ?? stxRow?.supplierProductName,
     brand: ctx.brand ?? stxRow?.supplierBrand,
     isExpress,
   });
-  const sellPrice = cost != null ? calcPhysicalLiquidationSellPrice(cost) : null;
+  const compareAt = stockxRaw;
+  const sellPrice = warehouseHalfBuyNowPrice(stockxRaw);
 
-  return { stockxRaw, cost, compareAt, sellPrice, source };
+  return {
+    stockxRaw,
+    cost,
+    compareAt,
+    sellPrice,
+    siteSellPrice,
+    source,
+    storedBuyPrice,
+  };
 }

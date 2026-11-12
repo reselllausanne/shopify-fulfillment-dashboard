@@ -19,8 +19,13 @@ vi.mock("@/galaxus/kickdb/client", async (importOriginal) => {
   };
 });
 
+import { prisma } from "@/app/lib/prisma";
+import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
 import { fetchStockxProductByIdOrSlugRaw } from "@/galaxus/kickdb/client";
-import { resolvePhysicalRestockPricing } from "@/shopify/restock/physicalRestockPricing";
+import {
+  resolvePhysicalRestockPricing,
+  warehouseHalfBuyNowPrice,
+} from "@/shopify/restock/physicalRestockPricing";
 
 const mockedFetch = fetchStockxProductByIdOrSlugRaw as unknown as ReturnType<typeof vi.fn>;
 
@@ -43,6 +48,22 @@ function liveProductNoGtins() {
   };
 }
 
+describe("warehouseHalfBuyNowPrice", () => {
+  it("floors half the Buy Now ask to 0.50 CHF", () => {
+    expect(warehouseHalfBuyNowPrice(217)).toBe(108.5);
+    expect(warehouseHalfBuyNowPrice(200)).toBe(100);
+    expect(warehouseHalfBuyNowPrice(99)).toBe(49.5);
+    expect(warehouseHalfBuyNowPrice(100.4)).toBe(50);
+    expect(warehouseHalfBuyNowPrice(1)).toBe(0.5);
+  });
+
+  it("skips a non-positive result", () => {
+    expect(warehouseHalfBuyNowPrice(0)).toBeNull();
+    expect(warehouseHalfBuyNowPrice(0.4)).toBeNull();
+    expect(warehouseHalfBuyNowPrice(Number.NaN)).toBeNull();
+  });
+});
+
 describe("resolvePhysicalRestockPricing — slug + EU size fallback", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -57,9 +78,9 @@ describe("resolvePhysicalRestockPricing — slug + EU size fallback", () => {
 
     expect(pricing.source).toBe("kickdb-live-size");
     expect(pricing.stockxRaw).toBe(120);
-    expect(pricing.compareAt).toBeGreaterThan(0);
-    expect(pricing.sellPrice).toBeGreaterThan(0);
-    expect(pricing.sellPrice!).toBeLessThan(pricing.compareAt!);
+    expect(pricing.compareAt).toBe(120);
+    expect(pricing.sellPrice).toBe(60);
+    expect(pricing.siteSellPrice).toBeGreaterThan(120);
   });
 
   it("returns none without sizeEu when GTIN matches nothing on KickDB", async () => {
@@ -100,5 +121,41 @@ describe("resolvePhysicalRestockPricing — slug + EU size fallback", () => {
 
     expect(pricing.source).toBe("kickdb-live");
     expect(pricing.stockxRaw).toBe(130);
+    expect(pricing.compareAt).toBe(130);
+    expect(pricing.sellPrice).toBe(65);
+  });
+
+  it("prefers stored stx Buy Now over a fresher KickDB lowest_ask", async () => {
+    const stored = estimatedStockxBuyChfFromList(200, 20);
+    (prisma.kickDBVariant.findFirst as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      product: { urlKey: "air-jordan-1", name: "Air Jordan 1", brand: "Nike" },
+    });
+    (prisma.supplierVariant.findFirst as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      price: stored,
+      supplierProductName: "Air Jordan 1",
+      deliveryType: null,
+      supplierBrand: "Nike",
+    });
+    mockedFetch.mockResolvedValue({
+      product: {
+        slug: "air-jordan-1",
+        title: "Air Jordan 1",
+        brand: "Nike",
+        variants: [{ id: "v", gtin: SCANNED_GTIN, lowest_ask: 999 }],
+      },
+    });
+
+    const pricing = await resolvePhysicalRestockPricing(SCANNED_GTIN, {
+      slug: "air-jordan-1",
+      sizeEu: "42",
+    });
+
+    expect(pricing.source).toBe("stx-db");
+    expect(pricing.storedBuyPrice).toBe(stored);
+    expect(pricing.stockxRaw).toBeGreaterThan(199);
+    expect(pricing.stockxRaw).toBeLessThan(201);
+    expect(pricing.compareAt).toBe(pricing.stockxRaw);
+    expect(pricing.sellPrice).toBe(warehouseHalfBuyNowPrice(pricing.stockxRaw!));
+    expect(mockedFetch).not.toHaveBeenCalled();
   });
 });

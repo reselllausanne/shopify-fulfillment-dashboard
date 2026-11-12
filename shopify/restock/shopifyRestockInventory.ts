@@ -1061,10 +1061,10 @@ export async function restockShopifyVariantByGtin(input: {
       warnings.push(`Operator price lock failed: ${err?.message ?? err}`);
     }
   } else if (!dryRun && quantity > 0) {
-    const { isLiquidationPhysicalLocation } = await import("@/shopify/inventory/locationConfig");
-    if (!isLiquidationPhysicalLocation(locationId)) {
+    const { isPhysicalWarehouseLocation } = await import("@/shopify/inventory/locationConfig");
+    if (!isPhysicalWarehouseLocation(locationId)) {
       actions.push(
-        `Non-liquidation location (${locationName ?? locationId}) — liquidation pricing skipped`
+        `Non-warehouse location (${locationName ?? locationId}) — warehouse pricing skipped`
       );
     } else {
       try {

@@ -114,32 +114,33 @@ describe("applyLiquidationSaleDisplay — hard gate on pricing", () => {
 
   it("liq ok: price written + price_locked + DB manualLock", async () => {
     mockedPricing.mockResolvedValue({
-      stockxRaw: 120,
-      cost: 185.6,
-      compareAt: 219,
-      sellPrice: 129.9,
-      source: "kickdb-live-size",
+      stockxRaw: 217,
+      cost: 260.11,
+      compareAt: 217,
+      sellPrice: 108.5,
+      siteSellPrice: 400,
+      source: "stx-db",
     });
 
     const result = await applyLiquidationSaleDisplay({ gtin: GTIN, variant: VARIANT });
 
     expect(result.applied).toBe(true);
-    expect(result.salePrice).toBe(129.9);
-    expect(result.referencePrice).toBe(219);
+    expect(result.salePrice).toBe(108.5);
+    expect(result.referencePrice).toBe(217);
     expect(mockedSalePrice).toHaveBeenCalledWith(
-      expect.objectContaining({ salePrice: 129.9, compareAtPrice: 219 })
+      expect.objectContaining({ salePrice: 108.5, compareAtPrice: 217 })
     );
     // price_locked read + write via GraphQL
     expect(mockedGraphQL).toHaveBeenCalled();
     expect(mockedStxUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ manualLock: true, manualPrice: 129.9 }),
+        data: expect.objectContaining({ manualLock: true, manualPrice: 108.5 }),
       })
     );
     expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", true);
     expect(mockedExpressSync).toHaveBeenCalledWith({
       variantId: "gid://shopify/ProductVariant/1",
-      liquidationPriceChf: 129.9,
+      liquidationPriceChf: 108.5,
     });
   });
 

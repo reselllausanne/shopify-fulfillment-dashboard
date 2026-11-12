@@ -17,6 +17,7 @@ import { syncProductSoldes48hMetafield } from "@/shopify/inventory/productSoldes
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 import {
   buildLiquidationReleaseData,
+  isPhysicalLiquidationLockNote,
   releaseStaleLiquidationLocks,
   type StaleLiquidationSweepResult,
 } from "@/shopify/inventory/staleLiquidationLocks";
@@ -24,14 +25,18 @@ import {
 /**
  * Phase 4 — convergence engine.
  *
- * Liquidation pricing on Shopify:
- *   - Owned physical qty > 0 across LIQUIDATION_LOCATION_IDS (Bussigny + Lab + COLD BIEN)
- *     with an existing manualLock → warehouse soldes scan
- *   - Antica physical stock is NOT part of liquidation lane
- *   - Chemin (online) is the StockX dropship pool, not owned stock → never liquidation
+ * Warehouse pricing on Shopify (physical stock):
+ *   - compareAt = StockX Buy Now. Sell = Buy Now / 2 (0.50 CHF floor).
+ *   - `custom.price_locked` + physical qty > 0 → leave that price. Do not write
+ *     `calcPhysicalLiquidationSellPrice` (cost × 0.70) or a fresh Buy Now/2.
+ *   - Physical qty 0 and the pair was a liquidation lock → clear price_locked,
+ *     delivery_48h, soldes_48h, and set `calcShopifySellPrice` (compareAt cleared).
+ *   - Decathlon offer lane is still Bussigny + Lab + COLD BIEN. Antica is a
+ *     warehouse shelf for this price lock (physical qty) but not that feed.
+ *   - Chemin (online) is the StockX dropship pool, not owned stock.
  *
- * After a paid web sale, post-sale passes afterWebSale — revert to dropship only when
- * liquidation-lane stock hits 0; partial sales keep liquidation on remaining units.
+ * After a paid web sale, post-sale passes afterWebSale — exit the lock only when
+ * physical stock hits 0; partial sales keep the locked warehouse price.
  *
  * custom.delivery_48h (variant) drives the soldes-48h smart collection and
  * storefront 48h delivery UI. Set only with a REAL liquidation lock
@@ -139,19 +144,23 @@ async function syncBussignyDelivery48h(
   gtin: string,
   liquidationLockActive: boolean,
   changes: string[],
-  warnings: string[]
+  warnings: string[],
+  physicalQty = 0,
+  forceWhileRestock = false
 ): Promise<void> {
   if (!shopifyVariant?.variantId) return;
   try {
-    const liquidationQty = await getBussignyQtyForGtin(gtin);
+    const laneQty = await getBussignyQtyForGtin(gtin);
+    const held = Math.max(physicalQty, laneQty);
     // Flag only when the liquidation lock is real: qty alone must not mark a
     // pair as 48h/soldes when its price was never actually changed.
-    const want48h = liquidationQty > 0 && liquidationLockActive;
+    // Any warehouse shelf counts (Bussigny, Antica, Lab, COLD BIEN).
+    const want48h = liquidationLockActive && (held > 0 || forceWhileRestock);
     const has48h = await readShopifyDelivery48h(shopifyVariant.variantId);
     if (has48h !== want48h) {
       await writeShopifyDelivery48h(shopifyVariant.variantId, want48h);
       changes.push(
-        `Shopify delivery_48h=${want48h ? "true" : "false"} (liquidation qty=${liquidationQty}, lock=${liquidationLockActive ? "locked" : "none"})`
+        `Shopify delivery_48h=${want48h ? "true" : "false"} (physical qty=${held}, lock=${liquidationLockActive ? "locked" : "none"})`
       );
     }
   } catch (err: any) {
@@ -649,6 +658,8 @@ export async function convergeVariant(
   const pricing = await resolvePhysicalRestockPricing(cleanGtin);
   const referencePrice = pricing.compareAt;
   const liqPrice = pricing.sellPrice;
+  const siteSellPrice =
+    pricing.siteSellPrice != null && pricing.siteSellPrice > 0 ? pricing.siteSellPrice : null;
   const hasLiquidationPricing =
     referencePrice != null &&
     referencePrice > 0 &&
@@ -674,6 +685,8 @@ export async function convergeVariant(
     looksLikeLiquidationPrice,
   });
 
+  let preserveLockedPhysicalPrice = false;
+
   if (desired === "liquidation") {
     const lockNote = String(stxRow?.manualNote ?? "");
     const operatorFixed = isRestockFixedPriceNote(lockNote);
@@ -694,9 +707,26 @@ export async function convergeVariant(
       warnings.push(`no StockX liquidation pricing (${pricing.source})`);
     }
 
-    if (hasTargetPricing) {
+    let shopifyLocked = false;
+    if (!useOperatorPrice && shopifyVariant?.variantId) {
+      try {
+        shopifyLocked = await readShopifyPriceLocked(shopifyVariant.variantId);
+      } catch (err: any) {
+        warnings.push(`Shopify price_locked read failed: ${err?.message ?? err}`);
+      }
+    }
+    // Locked warehouse price stays until the physical unit is gone. Do not
+    // replace it with cost×0.70 or a freshly computed Buy Now/2.
+    const leaveLockedPrice =
+      shopifyLocked &&
+      (physicalQty > 0 || bussignyQty > 0 || Boolean(options.postPhysicalRestock));
+
+    if (leaveLockedPrice) {
+      preserveLockedPhysicalPrice = true;
+      changes.push("Shopify price left locked (physical liquidation price_locked)");
+    } else if (hasTargetPricing) {
       // DB side: manualLock=true + manualPrice. Operator restock:fixed-price
-      // keeps the typed sell; formula soldes writes StockX −30%.
+      // keeps the typed sell; formula writes Buy Now / 2.
       if (stxRow) {
         const keepNote = useOperatorPrice
           ? lockNote
@@ -780,8 +810,9 @@ export async function convergeVariant(
         "postPhysicalRestock set but desired=dropship — skipping dropship revert (unexpected)"
       );
     } else {
-    // Bussigny empty → clear Shopify-lane liquidation lock even if other warehouses still hold stock.
-    // Never wipe operator Galaxus liquidation notes (e.g. mq2-liquidation) — those are feed prices, not Bussigny soldes.
+    // Physical qty 0 → clear the warehouse lock and restore calcShopifySellPrice.
+    // Antica is outside the Decathlon lane; a remaining unit there still keeps the lock.
+    // Never wipe operator Galaxus liquidation notes (e.g. mq2-liquidation) — those are feed prices, not warehouse soldes.
     const note = String(stxRow?.manualNote ?? "");
     const preserveGalaxusLiquidation = /mq2-liquidation/i.test(note) || /galaxus-liquidation/i.test(note);
     // JMoney / Money Kickz fixed retail — never clear on Bussigny=0 / web sale.
@@ -791,7 +822,31 @@ export async function convergeVariant(
     const preserveManualLock =
       preserveGalaxusLiquidation || preserveJmoneyLock || preserveFixedStockLock;
     const hadDbLiquidation = Boolean(stxRow?.manualLock);
-    if (
+    let shopifyLocked = false;
+    if (shopifyVariant?.variantId) {
+      try {
+        shopifyLocked = await readShopifyPriceLocked(shopifyVariant.variantId);
+      } catch (err: any) {
+        warnings.push(`Shopify price_locked read failed: ${err?.message ?? err}`);
+      }
+    }
+    const keepPhysicalPriceLock =
+      physicalQty > 0 &&
+      !preserveJmoneyLock &&
+      !preserveFixedStockLock &&
+      (shopifyLocked || isPhysicalLiquidationLockNote(note));
+    if (keepPhysicalPriceLock) {
+      preserveLockedPhysicalPrice = true;
+      changes.push("Shopify price left locked (physical stock > 0, price_locked)");
+      if (shopifyVariant?.variantId && !shopifyLocked) {
+        try {
+          await writeShopifyPriceLocked(shopifyVariant.variantId, true);
+          changes.push("Shopify price_locked=true (physical stock remains)");
+        } catch (err: any) {
+          warnings.push(`Shopify price_locked write failed: ${err?.message ?? err}`);
+        }
+      }
+    } else if (
       stxRow &&
       !preserveManualLock &&
       (hadDbLiquidation || stxRow.manualPrice !== null || stxRow.manualStock !== null)
@@ -817,14 +872,9 @@ export async function convergeVariant(
       warnings.push(`preserved in-stock fixed-price lock (${note || "named"})`);
     }
 
-    if (shopifyVariant?.variantId && shopifyVariant.productId) {
+    if (!keepPhysicalPriceLock && shopifyVariant?.variantId && shopifyVariant.productId) {
       try {
-        let isLocked = false;
-        try {
-          isLocked = await readShopifyPriceLocked(shopifyVariant.variantId);
-        } catch (err: any) {
-          warnings.push(`Shopify price_locked read failed: ${err?.message ?? err}`);
-        }
+        const isLocked = shopifyLocked;
 
         // Keep JMoney Kickz / in-stock fixed retail through post-sale / dropship converge.
         if (preserveJmoneyLock || preserveFixedStockLock || (isLocked && preserveManualLock)) {
@@ -837,8 +887,7 @@ export async function convergeVariant(
         } else {
         const currentPrice = toNumber(shopifyVariant.price);
         const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
-        const dropshipPrice =
-          referencePrice != null && referencePrice > 0 ? referencePrice : null;
+        const dropshipPrice = siteSellPrice;
         const looksLikeLiquidation =
           currentPrice != null &&
           currentCompareAt != null &&
@@ -876,11 +925,28 @@ export async function convergeVariant(
           changes.push("Shopify price_locked=false");
         }
 
-        // Post-sale full liquidation exit: unlock flags + clear sale badge
-        // (compareAt) here. Live KickDB upsert owns market price + Chemin stock.
-        // Clearing compareAt immediately avoids a stuck Sale badge when upsert
-        // is skipped or fails after unlock.
-        if (exitingLiquidationLaneAfterSale) {
+        // Sold / physical qty 0: unlock + normal site price (calcShopifySellPrice),
+        // compareAt cleared. Same shelf outcome as a liquidation pair leaving soldes.
+        if (exitingLiquidationLaneAfterSale && dropshipPrice != null && needsPriceRevert) {
+          const priceDiffers =
+            currentPrice == null || Math.abs(currentPrice - dropshipPrice) > 0.005;
+          const compareStillSet = currentCompareAt != null && currentCompareAt > 0;
+          if (priceDiffers || compareStillSet || isLocked) {
+            try {
+              await writeShopifyVariantPrice({
+                productId: shopifyVariant.productId,
+                variantId: shopifyVariant.variantId,
+                price: dropshipPrice,
+                compareAtPrice: null,
+              });
+              changes.push(
+                `Shopify reverted to site price=${dropshipPrice.toFixed(2)} (calcShopifySellPrice), compareAt cleared`
+              );
+            } catch (err: any) {
+              warnings.push(`liquidation exit site price failed: ${err?.message ?? err}`);
+            }
+          }
+        } else if (exitingLiquidationLaneAfterSale) {
           if (needsPriceRevert) {
             const compareStillSet = currentCompareAt != null && currentCompareAt > 0;
             if (compareStillSet && currentPrice != null && currentPrice > 0) {
@@ -920,7 +986,7 @@ export async function convergeVariant(
               compareAtPrice: null,
             });
             changes.push(
-              `Shopify reverted to dropship price=${dropshipPrice.toFixed(2)}, compareAt cleared`
+              `Shopify reverted to site price=${dropshipPrice.toFixed(2)} (calcShopifySellPrice), compareAt cleared`
             );
           }
         } else if (needsPriceRevert) {
@@ -969,10 +1035,19 @@ export async function convergeVariant(
     }
   }
 
-  // Liquidation state is real only when the DB manual lock backs it (desired
-  // already requires Bussigny qty > 0 + manualLock). Dropship always clears.
-  const liquidationLockActive = desired === "liquidation";
-  await syncBussignyDelivery48h(shopifyVariant, cleanGtin, liquidationLockActive, changes, warnings);
+  // 48h stays while the warehouse lock is real (lane stock, or any physical
+  // shelf including Antica). Physical qty 0 clears delivery_48h; soldes_48h
+  // follows once compare-at is gone.
+  const liquidationLockActive = desired === "liquidation" || preserveLockedPhysicalPrice;
+  await syncBussignyDelivery48h(
+    shopifyVariant,
+    cleanGtin,
+    liquidationLockActive,
+    changes,
+    warnings,
+    physicalQty,
+    Boolean(options.postPhysicalRestock) && desired === "liquidation"
+  );
 
   // Exact variant only: physical inventory enables express; every other size
   // clears it. Do not let a product's StockX express lane mark sibling sizes.

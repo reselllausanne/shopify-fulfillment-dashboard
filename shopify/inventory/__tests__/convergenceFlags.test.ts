@@ -469,6 +469,108 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
     expect(result.changes.some((c) => c.includes("169"))).toBe(false);
   });
 
+  it("price_locked + physical stock does not overwrite the shelf price", async () => {
+    mockedGraphQL.mockResolvedValue({
+      data: {
+        productVariant: { metafield: { value: "true" } },
+        metafieldsSet: { userErrors: [] },
+        productVariantsBulkUpdate: { userErrors: [] },
+      },
+      errors: undefined,
+    });
+    mockedFindVariant.mockResolvedValue({
+      match: variantDetail({ price: 99, compareAtPrice: 200, onSale: true }),
+      ambiguous: false,
+      rawMatches: [],
+    });
+    mockedStxFindFirst.mockResolvedValue({
+      id: "sv-1",
+      supplierVariantId: "stx_v375",
+      price: 241.3,
+      manualLock: true,
+      manualPrice: 99,
+      manualStock: null,
+      manualNote: "restock:liquidation compareAt=200.00",
+    });
+    mockedPricing.mockResolvedValue({
+      stockxRaw: 200,
+      cost: 241.3,
+      compareAt: 200,
+      sellPrice: 50,
+      siteSellPrice: 360,
+      source: "stx-db",
+    });
+
+    const result = await convergeVariant(GTIN);
+
+    expect(result.desired).toBe("liquidation");
+    expect(result.changes.some((c) => c.includes("left locked"))).toBe(true);
+    expect(prisma.supplierVariant.update).not.toHaveBeenCalled();
+    const priceWrites = mockedGraphQL.mock.calls.filter((call) => {
+      const vars = call[1] as { variants?: Array<{ price?: string }> } | undefined;
+      return vars?.variants?.[0]?.price != null;
+    });
+    expect(priceWrites).toHaveLength(0);
+    expect(result.changes.some((c) => c.includes("50.00"))).toBe(false);
+  });
+
+  it("physical stock 0 + liquidation lock unlocks and sets calcShopifySellPrice", async () => {
+    mockedMirror.mockResolvedValue(new Map());
+    mockedQueryRaw.mockResolvedValue([{ available: 0 }]);
+    mockedRead48h.mockResolvedValue(true);
+    mockedGraphQL.mockResolvedValue({
+      data: {
+        productVariant: { metafield: { value: "true" } },
+        metafieldsSet: { userErrors: [] },
+        productVariantsBulkUpdate: { userErrors: [] },
+      },
+      errors: undefined,
+    });
+    mockedFindVariant.mockResolvedValue({
+      match: variantDetail({ price: 99, compareAtPrice: 200, onSale: true }),
+      ambiguous: false,
+      rawMatches: [],
+    });
+    mockedStxFindFirst.mockResolvedValue({
+      id: "sv-1",
+      supplierVariantId: "stx_v375",
+      price: 241.3,
+      manualLock: true,
+      manualPrice: 99,
+      manualStock: null,
+      manualNote: "restock:liquidation compareAt=200.00",
+      lastSyncAt: new Date(),
+    });
+    mockedPricing.mockResolvedValue({
+      stockxRaw: 200,
+      cost: 241.3,
+      compareAt: 200,
+      sellPrice: 100,
+      siteSellPrice: 349,
+      source: "stx-db",
+    });
+
+    const result = await convergeVariant(GTIN, { afterWebSale: true });
+
+    expect(result.desired).toBe("dropship");
+    expect(result.changes.some((c) => c.includes("calcShopifySellPrice"))).toBe(true);
+    expect(result.changes.some((c) => c.includes("price_locked=false"))).toBe(true);
+    const priceWrites = mockedGraphQL.mock.calls.filter((call) => {
+      const vars = call[1] as { variants?: Array<{ price?: string; compareAtPrice?: string | null }> } | undefined;
+      return vars?.variants?.[0]?.price != null;
+    });
+    expect(priceWrites.some((call) => {
+      const vars = call[1] as { variants?: Array<{ price?: string; compareAtPrice?: string | null }> };
+      return vars?.variants?.[0]?.price === "349.00" && vars?.variants?.[0]?.compareAtPrice == null;
+    })).toBe(true);
+    expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", false);
+    const unlocks = mockedGraphQL.mock.calls.filter((call) => {
+      const vars = call[1] as { metafields?: Array<{ key?: string; value?: string }> } | undefined;
+      return vars?.metafields?.some((m) => m.key === "price_locked" && m.value === "false");
+    });
+    expect(unlocks.length).toBeGreaterThan(0);
+  });
+
   it("afterWebSale + liquidation lane stock remains + soldes price → stays liquidation", async () => {
     mockedMirror.mockResolvedValue(new Map([[GTIN, { qty: 1 }]]));
     mockedQueryRaw.mockResolvedValue([{ available: 1 }]);

@@ -335,8 +335,10 @@ function readLiquidationDiscountPct(): number {
 }
 
 /**
- * Physical liquidation sell on Shopify: **cost minus 30%** (default).
- * compareAt = calcShopifySellPrice(stockx raw) is applied separately.
+ * Old physical liquidation sell: cost × 0.70 (default 30% off).
+ * Warehouse shelf no longer uses this. In-stock physical price is
+ * `warehouseHalfBuyNowPrice` (Buy Now / 2). Convergence must not write this
+ * over a `price_locked` variant that still has physical stock.
  */
 export function calcPhysicalLiquidationSellPrice(costChf: number): number | null {
   if (!Number.isFinite(costChf) || costChf <= 0) return null;
