@@ -16,6 +16,11 @@ export const DEFAULT_JOBS: Array<{
    * 17h web request that kills the :6543 pooler.
    */
   { jobKey: "stx-refresh", intervalMs: 1 * HOUR_MS, enabled: true },
+  /**
+   * KickDB direct refresh for Galaxus STX hot sellers (recent sales).
+   * ~5×/day so winter movers track StockX asks without waiting for full catalog rotate.
+   */
+  { jobKey: "stx-hot-refresh", intervalMs: Math.round((24 / 5) * HOUR_MS), enabled: true },
   /** Golden (GLD) assortment price/stock refresh. */
   { jobKey: "gld-refresh", intervalMs: 10 * HOUR_MS, enabled: true },
   { jobKey: "edi-in", intervalMs: 1 * HOUR_MS, enabled: false }, // owned by worker-galaxus-edi (5min direct / 12:05 warehouse)

@@ -123,6 +123,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, data, stxMode });
     }
 
+    if (action === "stx-hot-refresh") {
+      const data = await runOpsTick(origin, {
+        force: true,
+        only: ["stx-hot-refresh"],
+      });
+      return NextResponse.json({ ok: true, accepted: true, data }, { status: 202 });
+    }
+
     if (action === "gld-refresh") {
       // Enqueues ops-background worker (see tick executeJob) — never runs Golden fetch on web.
       const data = await runOpsTick(origin, {

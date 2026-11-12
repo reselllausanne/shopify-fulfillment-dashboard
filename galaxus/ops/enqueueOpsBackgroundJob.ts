@@ -5,6 +5,7 @@ import {
   OPS_IMAGE_SYNC_JOB,
   OPS_MASTER_SPECS_SNAPSHOT_REBUILD_JOB,
   OPS_SNAPSHOT_REBUILD_JOB,
+  OPS_STX_HOT_REFRESH_JOB,
   OPS_STX_REFRESH_JOB,
 } from "@/galaxus/ops/opsBackgroundJobs";
 
@@ -13,7 +14,8 @@ export type OpsBackgroundJobType =
   | typeof OPS_SNAPSHOT_REBUILD_JOB
   | typeof OPS_MASTER_SPECS_SNAPSHOT_REBUILD_JOB
   | typeof OPS_GLD_REFRESH_JOB
-  | typeof OPS_STX_REFRESH_JOB;
+  | typeof OPS_STX_REFRESH_JOB
+  | typeof OPS_STX_HOT_REFRESH_JOB;
 
 export async function countQueuedOpsJobs(jobType: string): Promise<number> {
   return (prisma as any).galaxusJobQueue.count({

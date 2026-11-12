@@ -13,6 +13,7 @@ import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { runEdiInPipeline } from "./orderPipeline";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
 import { startGldRefreshAsync } from "@/galaxus/ops/gldRefreshPush";
+import { startStxHotRefreshAsync } from "@/galaxus/ops/stxHotRefreshPush";
 import { startStxRefreshAsync } from "@/galaxus/ops/stxRefreshPush";
 import type { OpsJobKey } from "./types";
 import { runInventoryReconciliation, runMultiChannelStockSync } from "@/inventory/sync";
@@ -119,6 +120,19 @@ async function executeJob(jobKey: OpsJobKey, origin: string, tickOptions?: OpsTi
       return { enqueued: true, accepted: true, mode };
     });
   }
+  if (jobKey === "stx-hot-refresh") {
+    // Small KickDB set (recent Galaxus STX sales) — still off web.
+    return runOpsJob(jobKey, async () => {
+      const started = await startStxHotRefreshAsync();
+      if (!started.ok) {
+        if (started.status === 409) {
+          return { enqueued: false, skipped: "already_queued" as const };
+        }
+        throw new Error(started.error ?? "Failed to enqueue stx-hot-refresh");
+      }
+      return { enqueued: true, accepted: true };
+    });
+  }
   if (jobKey === "gld-refresh") {
     // Heavy Golden fetch — enqueue ops-background worker; never run on web.
     return runOpsJob(jobKey, async () => {
@@ -172,7 +186,7 @@ async function executeJob(jobKey: OpsJobKey, origin: string, tickOptions?: OpsTi
 }
 
 /** Enqueue-only jobs — must run before heavy inline work so cron --max-time 600s cannot starve them. */
-const ENQUEUE_FIRST_JOBS: OpsJobKey[] = ["stx-refresh", "gld-refresh"];
+const ENQUEUE_FIRST_JOBS: OpsJobKey[] = ["stx-hot-refresh", "stx-refresh", "gld-refresh"];
 
 type JobDefRow = {
   jobKey: string;

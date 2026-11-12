@@ -4,5 +4,7 @@ export const OPS_SNAPSHOT_REBUILD_JOB = "ops-feed-snapshot-rebuild";
 export const OPS_GLD_REFRESH_JOB = "ops-gld-refresh";
 /** StockX/KickDB price+stock shard — never run on web (was 17h on :6543 pooler). */
 export const OPS_STX_REFRESH_JOB = "ops-stx-refresh";
+/** KickDB refresh for recently sold Galaxus STX products (~5×/day). */
+export const OPS_STX_HOT_REFRESH_JOB = "ops-stx-hot-refresh";
 /** Master+specs snapshot rebuild — heavy; off web/feed worker. */
 export const OPS_MASTER_SPECS_SNAPSHOT_REBUILD_JOB = "ops-master-specs-snapshot-rebuild";
