@@ -41,8 +41,6 @@ describe("Galaxus STX locked margin", () => {
     delete process.env.GALAXUS_STX_DIRECT_DELIVERY_SHIPPING_CHF;
     delete process.env.GALAXUS_STX_PRICE_BUMP_CHF;
     delete process.env.GALAXUS_STX_PRICE_SURCHARGE_CHF;
-    // Isolate locked formula from winter brand default (ugg:20).
-    process.env.GALAXUS_STX_BRAND_PRICE_BUMP = "";
     delete process.env.GALAXUS_GLD_TARGET_NET_MARGIN;
     delete process.env.GALAXUS_GLD_SHIP_EUR;
     delete process.env.GALAXUS_GLD_SHIP_PAIRS;
@@ -93,19 +91,6 @@ describe("Galaxus STX locked margin", () => {
         deliveryType: "express_expedited",
       })
     ).toBe(115.85);
-  });
-
-  it("adds temporary UGG winter brand bump after lock", () => {
-    delete process.env.GALAXUS_STX_BRAND_PRICE_BUMP; // default ugg:20
-    expect(calcGalaxusStxSellFromSourceCost(160.53)).toBe(184.87);
-    expect(calcGalaxusStxSellFromSourceCost(160.53, { brand: "UGG" })).toBe(204.87);
-    expect(
-      resolveGalaxusSellExVatForChannel(160.53, "stx", new Set(), { brand: "Ugg" })
-    ).toBe(204.87);
-    process.env.GALAXUS_STX_BRAND_PRICE_BUMP = "ugg:25";
-    expect(calcGalaxusStxSellFromSourceCost(160.53, { brand: "UGG" })).toBe(209.87);
-    process.env.GALAXUS_STX_BRAND_PRICE_BUMP = "";
-    expect(calcGalaxusStxSellFromSourceCost(160.53, { brand: "UGG" })).toBe(184.87);
   });
 
   it("does not apply STX margin to ner (zero-margin supplier)", () => {

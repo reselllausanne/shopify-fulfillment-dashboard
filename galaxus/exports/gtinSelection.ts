@@ -235,7 +235,6 @@ function tryBuildVariantCandidate(
     sellPriceExVat = resolveGalaxusSellExVatForChannel(buyPrice, supplierKey, partnerKeysLower, {
       deliveryType: variant?.deliveryType ?? null,
       shippingPerPairChf: bwzShip,
-      brand: variant?.supplierBrand ?? product?.brand ?? null,
     });
   }
 
