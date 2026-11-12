@@ -56,20 +56,13 @@ export function galaxusStxLockedDenom(): number {
 
 /**
  * Locked STX Galaxus sell (ex-VAT listing floor) from source buy cost.
- * Optional brand bump (winter UGG etc.) applied after the locked denominator.
  */
-export function calcGalaxusStxSellFromSourceCost(
-  sourceCostChf: number,
-  opts?: { brand?: string | null }
-): number | null {
+export function calcGalaxusStxSellFromSourceCost(sourceCostChf: number): number | null {
   const C = Number(sourceCostChf);
   if (!Number.isFinite(C) || C <= 0) return null;
   const denom = galaxusStxLockedDenom();
   if (!(denom > 0)) return null;
-  const locked = ceilToCentime((C + GALAXUS_STX_FIXED_BOX_AND_SHIPPING_CHF) / denom);
-  // Global GALAXUS_STX_PRICE_BUMP_CHF stays ignored (lock). Brand winter cushion only.
-  const brandBump = resolveStxBrandPriceBumpChf(opts?.brand);
-  return brandBump > 0 ? ceilToCentime(locked + brandBump) : locked;
+  return ceilToCentime((C + GALAXUS_STX_FIXED_BOX_AND_SHIPPING_CHF) / denom);
 }
 const DEFAULT_TARGET_MARGIN_KEYS = [
   "GALAXUS_TARGET_MARGIN",
@@ -217,36 +210,6 @@ export function resolveStxGalaxusPriceBumpChf(): number {
   const raw = readNumberEnv(STX_PRICE_BUMP_KEYS, STX_DEFAULT_PRICE_BUMP);
   if (!Number.isFinite(raw) || raw < 0) return STX_DEFAULT_PRICE_BUMP;
   return raw;
-}
-
-/**
- * Temporary brand cushions after locked STX sell (winter spike / Galaxus price lag).
- * Env `GALAXUS_STX_BRAND_PRICE_BUMP`:
- *   - unset → default `ugg:20` (winter 2026)
- *   - "" → none
- *   - `ugg:20,nike:5` → per-brand CHF added after lock
- */
-export function resolveStxBrandPriceBumpChf(brand?: string | null): number {
-  const raw = process.env.GALAXUS_STX_BRAND_PRICE_BUMP;
-  const list = raw === undefined ? "ugg:20" : raw;
-  const brandNorm = String(brand ?? "")
-    .trim()
-    .toLowerCase();
-  if (!brandNorm || !list.trim()) return 0;
-  let bump = 0;
-  for (const part of list.split(/[,;\s]+/)) {
-    const token = part.trim();
-    if (!token) continue;
-    const colon = token.lastIndexOf(":");
-    if (colon <= 0) continue;
-    const key = token.slice(0, colon).trim().toLowerCase();
-    const value = Number.parseFloat(token.slice(colon + 1));
-    if (!key || !Number.isFinite(value) || value <= 0) continue;
-    if (brandNorm === key || brandNorm.includes(key)) {
-      bump = Math.max(bump, value);
-    }
-  }
-  return bump;
 }
 
 export function isGldGalaxusSupplierKey(supplierKey: string | null | undefined): boolean {
@@ -421,8 +384,6 @@ export type ResolveGalaxusSellOptions = {
    * Null/omit → default ship CHF 2 (dims not scraped yet).
    */
   shippingPerPairChf?: number | null;
-  /** Supplier / KickDB brand — drives temporary STX brand bump (e.g. UGG winter). */
-  brand?: string | null;
 };
 
 /**
@@ -436,7 +397,7 @@ export type ResolveGalaxusSellOptions = {
  * - BWZ: (buy + ship) / (1 − ≥15% net). Default ship CHF 2 until parcel class known;
  *   then Swiss Post: standard 12 (or 21 if >10 kg), bulky 30. Unshippable rows are stock-zeroed at scrape.
  * - STX (locked v2026-09-19): (buy + 1.60) / (1 − 0 − 0.023 − 0 − 0.10), ceil centime
- *   Same for standard + express. Optional brand CHF bump after lock (default ugg:20).
+ *   Same for standard + express. No bump after denominator.
  */
 export function resolveGalaxusSellExVatForChannel(
   buyPriceExVatCHF: number,
@@ -465,7 +426,8 @@ export function resolveGalaxusSellExVatForChannel(
   }
 
   if (isStxGalaxusSupplierKey(supplierKey)) {
-    const locked = calcGalaxusStxSellFromSourceCost(buyPriceExVatCHF, { brand: options?.brand });
+    void options;
+    const locked = calcGalaxusStxSellFromSourceCost(buyPriceExVatCHF);
     if (locked == null) {
       throw new Error("buyPriceExVatCHF must be > 0");
     }
