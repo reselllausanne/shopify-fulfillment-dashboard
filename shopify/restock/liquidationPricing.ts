@@ -69,9 +69,11 @@ async function writeShopifyPriceLocked(variantId: string, locked: boolean): Prom
 }
 
 /**
- * Physical stock restock → storefront sale badge:
- * compareAt = calcShopifySellPrice(stockx raw) — normal website listing.
- * price = calc_touch_price(stockx raw) − 30% (liquidation).
+ * Physical warehouse stock → locked sale badge:
+ * compareAt = StockX Buy Now ask (CHF, before fees).
+ * price = Buy Now / 2, floored to 0.50 CHF.
+ * Metafields the storefront already reads: variant `custom.price_locked`,
+ * variant `custom.delivery_48h`, product `custom.soldes_48h`.
  */
 export async function applyLiquidationSaleDisplay(input: {
   gtin: string;
@@ -116,15 +118,9 @@ export async function applyLiquidationSaleDisplay(input: {
     slug: input.slug ?? null,
     sizeEu: input.sizeEu ?? null,
   });
+  // compareAt is the raw Buy Now. sellPrice is already Buy Now / 2 (0.50 floor).
   const reference = pricing.compareAt;
-
-  // Sale price: 50 % of the normal reference price → shows "-50 %" badge on site.
-  // compareAt stays as the full normal price (calcShopifySellPrice).
-  // Falls back to cost-based formula if STX price unavailable.
-  const salePrice =
-    reference != null && reference > 0
-      ? Math.floor(reference * 0.5 * 2) / 2 // round down to nearest 0.50 CHF
-      : pricing.sellPrice;
+  const salePrice = pricing.sellPrice;
 
   if (!reference || reference <= 0 || !salePrice || salePrice <= 0) {
     warnings.push(

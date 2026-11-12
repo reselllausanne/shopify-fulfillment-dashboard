@@ -75,10 +75,11 @@ export const PHYSICAL_LOCATIONS = LOCATIONS.filter((l) => l.sourceType === "phys
 export const ONLINE_LOCATION: LocationConfig = CHEMIN_ONLINE;
 
 /**
- * Physical locations whose owned stock participates in the liquidation /
- * soldes 48h lane (drives manualLock, delivery_48h + soldes collection). Antica is a
- * physical location but not part of liquidation. Chemin (online) is dropship
- * and never eligible.
+ * Physical locations whose owned stock participates in the Decathlon liquidation
+ * offer lane. Antica is a physical shelf but is not published on that feed.
+ * Chemin (online) is dropship and never eligible.
+ * Shopify warehouse pricing (Buy Now / 2) uses every physical location — see
+ * `isPhysicalWarehouseLocation`.
  */
 export const LIQUIDATION_LOCATION_IDS: string[] = [
   loc("SHOPIFY_LOC_BUSSIGNY", "gid://shopify/Location/111267971458", "Warehouse Bussigny", "physical", 1).id,
@@ -88,10 +89,16 @@ export const LIQUIDATION_LOCATION_IDS: string[] = [
 
 const LIQUIDATION_LOCATION_ID_SET = new Set(LIQUIDATION_LOCATION_IDS);
 
-/** Bussigny / Lab / COLD BIEN — physical restock locations that get liquidation pricing. */
+/** Bussigny / Lab / COLD BIEN — Decathlon physical-offer locations. */
 export function isLiquidationPhysicalLocation(locationId: string | null | undefined): boolean {
   const id = String(locationId ?? "").trim();
   return id.length > 0 && LIQUIDATION_LOCATION_ID_SET.has(id);
+}
+
+/** Bussigny / Antica / THE LAB / COLD BIEN. Warehouse Buy Now/2 pricing. */
+export function isPhysicalWarehouseLocation(locationId: string | null | undefined): boolean {
+  const id = String(locationId ?? "").trim();
+  return id.length > 0 && PHYSICAL_LOCATIONS.some((l) => l.id === id);
 }
 
 const BY_ID = new Map(LOCATIONS.map((l) => [l.id, l]));

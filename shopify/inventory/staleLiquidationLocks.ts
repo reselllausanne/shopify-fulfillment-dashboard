@@ -1,11 +1,21 @@
 import { prisma } from "@/app/lib/prisma";
 import { LIQUIDATION_LOCATION_IDS } from "@/shopify/inventory/locationConfig";
 
+const ANTICA_LOCATION_ID =
+  (process.env.SHOPIFY_LOC_ANTICA ?? "").trim() || "gid://shopify/Location/111267217794";
+
+/** Bussigny, Antica, THE LAB, COLD BIEN. A lock stays while any of these still hold the pair. */
+function warehouseLocationIds(): string[] {
+  const ids = [...LIQUIDATION_LOCATION_IDS];
+  if (!ids.includes(ANTICA_LOCATION_ID)) ids.push(ANTICA_LOCATION_ID);
+  return ids;
+}
+
 /**
  * Physical-stock liquidation locks (`restock:liquidation …` from the scan /
  * backfill path, `phase4:liquidation …` from convergence). They price an owned
- * pair below StockX buy, so they are only valid while that pair is still on a
- * liquidation-lane shelf. Operator Galaxus liquidation (`mq2-liquidation`,
+ * pair below the StockX Buy Now ask, so they are only valid while that pair is
+ * still on a warehouse shelf (Bussigny, Antica, THE LAB, COLD BIEN). Operator Galaxus liquidation (`mq2-liquidation`,
  * `galaxus-liquidation`), JMoney and in-stock fixed-price locks are not matched.
  */
 const PHYSICAL_LIQUIDATION_NOTE_RE = /^\s*(restock|phase4):liquidation/i;
@@ -111,13 +121,14 @@ export async function releaseStaleLiquidationLocks(
   options: { dryRun?: boolean } = {}
 ): Promise<StaleLiquidationSweepResult> {
   const dryRun = Boolean(options.dryRun);
+  const locationIds = warehouseLocationIds();
 
   // Empty mirror (wipe / failed sync) would read as "everything sold" — never act on it.
   const mirrorRows = await prisma.$queryRaw<Array<{ n: bigint }>>`
     SELECT COUNT(*)::bigint AS n
     FROM "public"."ShopifyVariantLocationStock" s
     WHERE s."sourceType" = 'physical'
-      AND s."locationId" = ANY(${LIQUIDATION_LOCATION_IDS}::text[])
+      AND s."locationId" = ANY(${locationIds}::text[])
       AND s."available" > 0
   `;
   if (Number(mirrorRows[0]?.n ?? 0) === 0) {
@@ -141,7 +152,7 @@ export async function releaseStaleLiquidationLocks(
         SELECT SUM(s."available")::int
         FROM "public"."ShopifyVariantLocationStock" s
         WHERE s."sourceType" = 'physical'
-          AND s."locationId" = ANY(${LIQUIDATION_LOCATION_IDS}::text[])
+          AND s."locationId" = ANY(${locationIds}::text[])
           AND s."available" > 0
           AND NULLIF(LTRIM(s."gtin", '0'), '') IN (
             NULLIF(LTRIM(sv."gtin", '0'), ''),

@@ -35,7 +35,7 @@ import { prisma } from "@/app/lib/prisma";
 import { releasePhysicalLiquidationLocksBeforeDetach } from "@/shopify/inventory/staleLiquidationLocks";
 import { isManualOnlyGtin } from "@/shopify/inventory/manualOnlyGtins";
 import { convergeVariant } from "@/shopify/inventory/convergence";
-import { isLiquidationPhysicalLocation } from "@/shopify/inventory/locationConfig";
+import { isPhysicalWarehouseLocation } from "@/shopify/inventory/locationConfig";
 import { cleanGtin, gtinCandidates, gtinEquals } from "@/shopify/restock/gtinNormalize";
 import {
   findExistingShopifyProductForCatalogIdentifier,
@@ -56,7 +56,7 @@ async function runPostRestockConvergence(
   locationId?: string | null
 ): Promise<void> {
   if (dryRun || isManualOnlyGtin(gtin)) return;
-  const postPhysicalRestock = isLiquidationPhysicalLocation(locationId);
+  const postPhysicalRestock = isPhysicalWarehouseLocation(locationId);
   try {
     // Mirror may lag — convergeVariant reads ShopifyVariantLocationStock.
     // Force a single-GTIN convergence; if mirror still 0, next cron retries.
