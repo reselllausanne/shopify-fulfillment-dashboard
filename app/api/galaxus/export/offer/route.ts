@@ -311,7 +311,9 @@ export async function GET(request: Request) {
     if (isStx && !lockedFinalExVat && Number.isFinite(priceValue) && priceValue > 0) {
       const buy = parseNumber(variant?.price);
       if (buy != null && buy > 0 && priceValue < buy) {
-        const floor = calcGalaxusStxSellFromSourceCost(buy);
+        const floor = calcGalaxusStxSellFromSourceCost(buy, {
+          brand: variant?.supplierBrand ?? product?.brand ?? null,
+        });
         priceValue = floor != null && floor >= buy ? floor : buy;
       }
     }
