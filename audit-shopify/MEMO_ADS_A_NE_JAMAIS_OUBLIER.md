@@ -116,3 +116,13 @@ Créé le 11.11.2026 à la demande du fondateur. Mettre à jour à chaque nouvel
 - 94 % des fiches produit avec impressions n'ont aucun clic.
 - Chute impressions 14.9 (−27 % en 1 semaine) : cause non tranchée. Dates de commits thème ≠ dates de mise en ligne.
 - Détail : analyses/seo_01_requetes_pages_ads_changements.md. Key GSC : ~/secrets/gsc-cloudsearch.json (hors repo).
+
+## 11. SEO causes et état technique (12.11)
+
+- API Search Console : pas de rapport Pages/Crawl stats ; Inspection d'URL oui (marche avec le compte de service). PSI sans clé : quota épuisé.
+- Chute 14.9 : requêtes à position stable perdent aussi −44 % ; marque inchangée. Pas de désindexation de masse (78 % des fiches perdantes encore indexées). Cause non tranchée. Core update Google 10.11 en cours.
+- Balisage : fils d'Ariane et Produit présents partout ; 4/229 erreurs breadcrumb, 7/229 erreurs Produit (sans offre). La chute 30k→5k des « éléments valides » = moins d'URL explorées, pas de panne.
+- 15 % des fiches du sitemap (échantillon 80) « explorées, non indexées ».
+- SEO convertit surtout la marque : 61 % des commandes SEO atterrissent sur l'accueil. 33–54 commandes SEO/mois.
+- Ne pas faire : reconstruire des pages pour les requêtes génériques avant la fin du core update (~fin nov).
+- Détail : analyses/seo_02_causes_indexation_conversion.md.
