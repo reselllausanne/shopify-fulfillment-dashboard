@@ -20,6 +20,7 @@ describe("feedSnapshot", () => {
         TradeUnit: "",
         LogisticUnit: "",
         WarehouseCountry: "Switzerland",
+        WarehouseId: "",
         DirectDeliverySupported: "1",
         DeliveryRouteId: "",
       },

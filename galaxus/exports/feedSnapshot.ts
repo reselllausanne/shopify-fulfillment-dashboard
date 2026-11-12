@@ -28,6 +28,7 @@ export const GALAXUS_STOCK_CSV_HEADERS = [
   "TradeUnit",
   "LogisticUnit",
   "WarehouseCountry",
+  "WarehouseId",
   "DirectDeliverySupported",
   "DeliveryRouteId",
 ] as const;
