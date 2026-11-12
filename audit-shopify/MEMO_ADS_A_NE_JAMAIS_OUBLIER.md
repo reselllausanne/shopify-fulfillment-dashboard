@@ -108,3 +108,11 @@ Créé le 11.11.2026 à la demande du fondateur. Mettre à jour à chaque nouvel
 - F : compte de service `cloudsearch@ahref-1781776977607` (clé JSON hors repo : `~/secrets/gsc-cloudsearch.json`, chmod 600), propriété `sc-domain:resell-lausanne.ch`, niveau `siteFullUser` ; portée utilisée `webmasters.readonly`. Scripts : `calculs/gsc_probe.mjs`, `calculs/gsc_01_export.mjs`. Ne jamais afficher ni commiter la clé.
 - F : historique du 2025-07-20 au 2026-11-10 (479 jours, 49 541 clics, 2,99 M d'impressions). Clics par mois : août 2025 1 223 ; mars 2026 3 579 ; août 2026 5 727 ; septembre 5 391 ; octobre 4 422. Pages et requêtes détaillées dans `donnees_brutes/gsc/` (git-ignoré, 50 000 lignes chacune, tronquées).
 - F : requêtes listées : 25 240 clics, dont 4 384 sur des requêtes « resell » (17 %). « resell lausanne » 3 459 clics, position 1,04. Types de pages (clics) : produits 12 933, collections 11 113, /en/ 8 741, /de/ 8 045.
+
+## 10. SEO × Ads (12.11)
+
+- GSC 90 j (2.8→1.11) : ~15,5k clics organiques. Gain max théorique requêtes pos 4-20 → pos 3 ≈ +620 clics/mois (≈ 270 CHF de clics payés équivalents). Se joue sur ~12 pages collection.
+- Cannibalisation payé/organique : 984 CHF sur 90 j (termes classés ≤ 3). Faible. Marque : ROAS Ads 17,3, incrémentalité non testée.
+- 94 % des fiches produit avec impressions n'ont aucun clic.
+- Chute impressions 14.9 (−27 % en 1 semaine) : cause non tranchée. Dates de commits thème ≠ dates de mise en ligne.
+- Détail : analyses/seo_01_requetes_pages_ads_changements.md. Key GSC : ~/secrets/gsc-cloudsearch.json (hors repo).

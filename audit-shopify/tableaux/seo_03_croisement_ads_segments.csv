@@ -1,0 +1,6 @@
+seg,termes,cost,clicks,conv,val,g_clk,roas,cpa,part_cout_%
+0 marque (resell*),182,1167.94,2959,71.56,20182.18,859.0,17.28,16.32,4.23
+1 organique position ≤ 3,7650,983.7,2405,17.28,4344.49,381.0,4.42,56.94,3.56
+2 organique position 4-10,23042,6904.16,15504,128.96,21750.84,2899.0,3.15,53.54,25.0
+3 organique position > 10,12568,4583.74,10689,81.74,16145.81,361.0,3.52,56.07,16.6
+5 absent de Search Console (aucune impression organique),328668,13980.2,32353,233.8,51465.86,0.0,3.68,59.79,50.62

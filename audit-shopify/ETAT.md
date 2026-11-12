@@ -94,3 +94,4 @@
 - 00:50 cash_01 : leviers mensuels chiffrés, bilan fixes (bank), probe gclid Shopify (journey sans query string), tables banque DB vides. Memo non modifié.
 - 15:20 erratum ads_09 : coûts fixes stock propre dans le code (inStockFixedPrice.ts), POAS FoG/Supreme surestimé.
 - 15:45 Search Console accessible (sc-domain:resell-lausanne.ch). Export gsc_01 : jour en tableaux, pages/requêtes en donnees_brutes (git-ignoré).
+- 17:10 seo_01 : carte pages/requêtes GSC, croisement GSC×Ads (termes), détection de changements (ruptures, chute 14.9, anomalie 26.10). Organique petit canal (~5,2k clics/mois), cannibalisation payé/organique faible (984 CHF/90 j). Voir analyses/seo_01_requetes_pages_ads_changements.md.
