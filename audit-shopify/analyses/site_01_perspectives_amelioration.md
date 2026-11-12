@@ -9,7 +9,9 @@ Montants en CHF. Contribution moyenne par commande 45,6 (médiane 40,4), 374 com
 - F : Google (Search Status Dashboard, via recherche web) date le spam update de septembre du 24 sept au 8 oct. Il commence 10 jours après la chute.
 - F : pendant ces deux semaines les impressions sont plates (58 167, 58 783, 59 350 par semaine). Pas de seconde baisse.
 - I : ce spam update n'explique pas la chute du 14 sept. Il ne l'exclut pas pour la suite : on ne voit rien dans nos données.
-- D : des sites tiers signalent une volatilité « non confirmée » vers le 15 sept. Non vérifié, non confirmé par Google.
+- F (source tierce, vérifiée le 12 nov) : Search Engine Roundtable, repris par le suivi SBG, signale une volatilité « non confirmée » dès le 15 sept, avec un pic le 19 sept d'après Semrush Sensor. Google n'a rien confirmé. Autres signalements tiers non confirmés : 23–24 sept, 30 sept, 16 oct, 20–21 oct, 24–25 oct, 27 oct.
+- F : nos séries quotidiennes hors marque : impressions 6 026 (13 sept), 5 002 (14 sept), 4 049 (15 sept), 3 430 (17 sept) ; position moyenne 9,5 → 10,9 le 15 sept, retour à 9,5 le 19. Collections : 3 964 → 3 422 → 2 655.
+- I : la date de notre marche (14–15 sept) coïncide avec le signalement tiers du 15 sept. Elle coïncide aussi avec les commits SEO DE du 10–13 sept (dates de commit, pas de mise en ligne). Deux candidats, aucune preuve de causalité. Le DE a moins baissé que le reste (−18 %), ce qui va contre la piste thème.
 
 ## 2. Message de l'autre agent (thèmes baseline `#189546496386` du 31 oct, candidat `#189859070338`, live)
 
@@ -39,7 +41,7 @@ Chiffres de contribution : ordres de grandeur, H pour toute estimation de volume
 |---|---|---|---|---|
 | 1 | Réduire les remboursements (8,5 % du brut, 108 commandes négatives en 3 mois) en alignant le délai affiché et le réel | Promesse standard 5–10 j.o. tenue dans 24,8 % des cas, express 2–5 j.o. dans 4,2 % ; 24 remboursements 2026 citent le retard (cx_01) | +1,3k (plafond 2,6k si moitié) | moyenne |
 | 2 | Plafonner la dépense Google à 180–250 CHF/jour | ROAS d'équilibre 4,7–5,1, ROAS marginal estimé 2,3–3,0 (ads_09) | +1,2 à +2,1k | moyenne (observationnel) |
-| 3 | Hausse de prix +3 % ciblée | Positif tant que la perte de volume < 12 % (cash_01) | +2,4k | faible : élasticité non mesurée |
+| 3 | ~~Hausse de prix +3 %~~ | Écarté par le dirigeant le 12 nov (prix déjà baissés) | — | — |
 | 4 | Plancher de prix (15 % des commandes à contribution négative) | cash_01 | +0,7k | moyenne |
 | 5 | Choix de la taille | Seuls 10 % des visiteurs de fiche choisissent une taille ; trafic 82 % mobile, conversion mobile 0,19 % (cx_01) | +10 % de conversion ≈ +37 commandes ≈ +1,7k, H | faible : non mesurable par A/B |
 | 6 | Checkout : validation des localités suisses | 18 % de finalisation des sessions mobiles en checkout (pixel sous-estimé de ≈ 29 %) | +0,1 à +0,5k (cx_01 : 1–6k/an) | moyenne |
@@ -62,3 +64,10 @@ Ce qui n'est PAS prioritaire :
 - Pas de Core Web Vitals mesurés (PSI sans clé épuisé, pas de CrUX). Le site est à 82 % mobile : la vitesse mobile reste un angle mort.
 - Je ne connais pas le thème effectivement publié le 12 nov ni les contenus des thèmes baseline/candidat.
 - Les estimations du tableau §3 viennent de calculs antérieurs (ads_09, cash_01, cx_01) ou d'hypothèses signalées H. Rien n'est un résultat d'expérience.
+
+## 5. Vitesse du site (12 nov, demande du dirigeant)
+
+- F : aucune mesure de vitesse obtenue. PageSpeed Insights sans clé : quota du jour épuisé (429). Avec le jeton du compte de service : 403 « scopes insuffisants » (l'API n'est pas autorisée pour ce compte). Besoin : une clé API Google avec l'API PageSpeed Insights activée, ou un Lighthouse local.
+- F (captures Search Console du 12 nov) : rapport Core Web Vitals mobile : 0 URL « médiocre », 2 531 « à améliorer », 74 « bonnes » ; bureau : 0 médiocre, 2 605 à améliorer, 0 bonne. Aucune URL n'est passée en « médiocre » sur toute la période 14 août → 12 nov.
+- I : les 2 500 URL « à améliorer » signifient LCP/INP/CLS entre « bon » et « médiocre ». Leur nombre suit le volume d'URL explorées (pic 16 sept, creux 25 oct), pas une dégradation.
+- I : la vitesse est un signal de classement mineur. Elle n'a aucune raison de faire −27 % en 1 jour. Elle peut peser sur la conversion mobile (82 % du trafic, 0,19 %). Non mesurée.

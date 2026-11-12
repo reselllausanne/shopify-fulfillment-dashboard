@@ -39,3 +39,6 @@ Risque de signe contraire (F) : 211 lignes de stock propre à coût 0 cachent �
 2. Backfill des coûts des lignes de stock propre et des retours revendus (suivi par lot).
 3. Analyser les 108 commandes remboursées (taille, délai, marque, paiement).
 4. Comparer la contribution par franc de capital Galaxus vs Shopify (pas encore fait).
+
+
+> 12 nov : levier « +3 % de prix » écarté par le dirigeant (les prix viennent d'être baissés). Ne pas le compter dans le total.

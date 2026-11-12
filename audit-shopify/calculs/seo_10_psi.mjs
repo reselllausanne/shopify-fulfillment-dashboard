@@ -1,0 +1,6 @@
+// PageSpeed Insights + CrUX via jeton du compte de service (lecture seule). Usage: GSC_KEY=... node seo_10_psi.mjs url [mobile|desktop]
+import { token } from "./gsc_lib.mjs";
+const [url, strat = "mobile"] = process.argv.slice(2); const t = await token();
+const r = await fetch(`https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=${strat}&category=performance`, { headers: { authorization: `Bearer ${t}` } });
+const j = await r.json(); console.log(r.status, JSON.stringify(j.error ?? { ok: true }).slice(0, 500));
+if (j.lighthouseResult) { const a = j.lighthouseResult.audits; console.log(JSON.stringify({ perf: j.lighthouseResult.categories.performance.score, lcp: a["largest-contentful-paint"].displayValue, tbt: a["total-blocking-time"].displayValue, cls: a["cumulative-layout-shift"].displayValue, ttfb: a["server-response-time"]?.displayValue, field: j.loadingExperience?.metrics && Object.fromEntries(Object.entries(j.loadingExperience.metrics).map(([k, v]) => [k, [v.percentile, v.category]])), origin: j.originLoadingExperience?.metrics && Object.fromEntries(Object.entries(j.originLoadingExperience.metrics).map(([k, v]) => [k, [v.percentile, v.category]])) })); }

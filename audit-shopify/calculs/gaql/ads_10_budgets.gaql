@@ -1,0 +1,1 @@
+SELECT campaign.name, campaign.status, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.maximize_conversion_value.target_roas, campaign_budget.amount_micros, campaign_budget.explicitly_shared, metrics.cost_micros, metrics.conversions_value, segments.date FROM campaign WHERE segments.date DURING LAST_7_DAYS AND campaign.status = 'ENABLED'

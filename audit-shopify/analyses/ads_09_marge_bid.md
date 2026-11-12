@@ -129,3 +129,19 @@ F : `shopify/inventory/inStockFixedPrice.ts` fixe un coût unitaire par ligne de
 F : le P&L `fin_05` en intègre une partie (coût moyen 18,9 par ligne Essentials contre 27,6 attendu).
 I : sous-estimation résiduelle des coûts août-octobre ≈ 0,5 à 1,5 k (≈ −3 % de contribution). Fear of God (POAS 1,04) et Supreme (1,10, boxers) sont les plus touchés : leur POAS réel est probablement ≈ 0,7 à 1,0. **Plus aucune marque n'est clairement au-dessus de 1.**
 F : 61 lignes `PHYSICAL_STOCK` (6 775 CHF de revenu) ont un coût stocké 0 (« déjà expensé » par conception) ; 23 autres ont un coût réel moyen de 134 CHF. Leur coût d'origine n'est pas dans la DB (36 lots seulement).
+
+
+## Addendum 12 nov : dépense et budgets au 11 nov (GAQL lecture seule, 7 derniers jours)
+
+| Campagne PMax | Dépense/j | Budget/j | ROAS 7 j | tROAS cible |
+|---|---|---|---|---|
+| Nike PM Feed Only | 91 | 255 | 2,42 | 4,0 |
+| Perf-max-vetements | 58 | 50 | 1,02 | 4,0 |
+| Adidas PM Feed only | 46 | 150 | 2,02 | 4,0 |
+| all | 41 | 140 | 2,86 | 4,0 |
+| Jordan PM Feed Only | 23 | 90 | 9,62 | 4,0 |
+| Total | 260 | 685 | ≈ 2,7 | |
+
+- F : dépense actuelle ≈ 260 CHF/jour, déjà dans la zone 180–250 visée. Les budgets (685/j) sont très au-dessus de la dépense : seul « vêtements » est limité par son budget. Doubler le budget le 10 nov n'a donc rien changé. Le levier réel de dépense est le tROAS cible (4,0), pas le budget.
+- F : UGG et les campagnes Shopping Long Tail/Explorer ne dépensent plus depuis fin octobre.
+- H : les 7 derniers jours incluent l'anomalie de suivi possible du 8–10 nov. Ne pas décider sur ce ROAS (2,7) avant la vérification de la balise de conversion.
