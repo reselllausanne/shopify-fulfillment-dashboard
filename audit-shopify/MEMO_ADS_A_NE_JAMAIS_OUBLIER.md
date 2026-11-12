@@ -102,3 +102,9 @@ Créé le 11.11.2026 à la demande du fondateur. Mettre à jour à chaque nouvel
 - Possible : oui, via import de conversions par clic (gclid) ou conversions améliorées (email haché), action **secondaire** d'abord. Code déjà en place : `tracking/adapters/googleAdsSecondary.ts`, `adsanalytics/google/conversionUploads.ts`, plan G4/G5 dans `docs/tracking/TRACKING-PLAN.md` (valeur = CM2 bornée à 0, observation 4-8 semaines, puis expérience 50/50). Rien d'envoyé à Google (G4 verrouillé) (F).
 - Bloquants (F) : gclid sur 18 % des achats seulement et depuis le 15.10 ; coûts complets exigés ≥ 90 % ; Simprosys reste la seule conversion principale, admin inaccessible ; remboursements non renvoyés.
 - Plafond du gain (H) : POAS pondéré actuel ≈ 0,70 (valeur Google supposée incrémentale). Une meilleure allocation par marge le fait passer à ≈ 0,8, soit ≈ +1 à 2 k par mois pour 14 k de dépense. Ne rend pas la pub rentable à elle seule.
+
+## 9. Search Console (12.11) : accès obtenu
+
+- F : compte de service `cloudsearch@ahref-1781776977607` (clé JSON hors repo : `~/secrets/gsc-cloudsearch.json`, chmod 600), propriété `sc-domain:resell-lausanne.ch`, niveau `siteFullUser` ; portée utilisée `webmasters.readonly`. Scripts : `calculs/gsc_probe.mjs`, `calculs/gsc_01_export.mjs`. Ne jamais afficher ni commiter la clé.
+- F : historique du 2025-07-20 au 2026-11-10 (479 jours, 49 541 clics, 2,99 M d'impressions). Clics par mois : août 2025 1 223 ; mars 2026 3 579 ; août 2026 5 727 ; septembre 5 391 ; octobre 4 422. Pages et requêtes détaillées dans `donnees_brutes/gsc/` (git-ignoré, 50 000 lignes chacune, tronquées).
+- F : requêtes listées : 25 240 clics, dont 4 384 sur des requêtes « resell » (17 %). « resell lausanne » 3 459 clics, position 1,04. Types de pages (clics) : produits 12 933, collections 11 113, /en/ 8 741, /de/ 8 045.
