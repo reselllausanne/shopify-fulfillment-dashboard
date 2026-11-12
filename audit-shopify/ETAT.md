@@ -96,3 +96,4 @@
 - 15:45 Search Console accessible (sc-domain:resell-lausanne.ch). Export gsc_01 : jour en tableaux, pages/requêtes en donnees_brutes (git-ignoré).
 - 17:10 seo_01 : carte pages/requêtes GSC, croisement GSC×Ads (termes), détection de changements (ruptures, chute 14.9, anomalie 26.10). Organique petit canal (~5,2k clics/mois), cannibalisation payé/organique faible (984 CHF/90 j). Voir analyses/seo_01_requetes_pages_ads_changements.md.
 - 18:10 seo_02 : Inspection d'URL (229 URL), décomposition chute 14.9, conversions SEO par canal/landing, collections Shopify (217). Pas de panne de balisage trouvée ; chute surtout visibilité hors marque. Nouveau core update Google 10.11. Voir analyses/seo_02_causes_indexation_conversion.md.
+- 18:50 site_01 : spam update vs chute 14.9, lecture message autre agent (thèmes), perspectives d'amélioration chiffrées. Voir analyses/site_01_perspectives_amelioration.md.
