@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  GALAXUS_BUSSIGNY_WAREHOUSE_GLN,
   GALAXUS_DELIVERY_ROUTE_48H,
-  GALAXUS_WAREHOUSE_COUNTRY,
+  GALAXUS_WAREHOUSE_COUNTRY_CH,
   galaxusStockWarehouseFields,
   isGalaxus48hShipLocation,
 } from "@/galaxus/warehouse/delivery48h";
 
 describe("galaxus 48h Bussigny warehouse", () => {
-  it("puts on-hand Bussigny qty on the 48h route and Switzerland", () => {
+  it("puts on-hand Bussigny qty on the route GLN", () => {
     expect(galaxusStockWarehouseFields(2)).toEqual({
-      warehouseCountry: GALAXUS_WAREHOUSE_COUNTRY,
+      warehouseCountry: GALAXUS_WAREHOUSE_COUNTRY_CH,
+      warehouseId: GALAXUS_BUSSIGNY_WAREHOUSE_GLN,
       deliveryRouteId: GALAXUS_DELIVERY_ROUTE_48H,
       ship48h: true,
       quantity: 2,
@@ -19,6 +21,7 @@ describe("galaxus 48h Bussigny warehouse", () => {
   it("keeps Switzerland and the default route when Bussigny is empty", () => {
     expect(galaxusStockWarehouseFields(0)).toEqual({
       warehouseCountry: "Switzerland",
+      warehouseId: "",
       deliveryRouteId: "",
       ship48h: false,
       quantity: null,

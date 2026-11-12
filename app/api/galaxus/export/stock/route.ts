@@ -124,6 +124,7 @@ function buildForceZeroStockRow(
     TradeUnit: "",
     LogisticUnit: "",
     WarehouseCountry: "Switzerland",
+    WarehouseId: "",
     DirectDeliverySupported: "0",
     DeliveryRouteId: "",
   };
@@ -645,6 +646,7 @@ export async function GET(request: Request) {
       TradeUnit: "",
       LogisticUnit: "",
       WarehouseCountry: warehouseFields.warehouseCountry,
+      WarehouseId: warehouseFields.warehouseId,
       // GLD: no DD. STX standard dropship: no DD. Bussigny 48h ships direct.
       DirectDeliverySupported: warehouseFields.ship48h
         ? "1"

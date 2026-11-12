@@ -4,12 +4,21 @@ import { BUSSIGNY_LOCATION_NAME_MATCH } from "@/shopify/orders/physicalFulfillme
 /** Galaxus stock CSV country. Account warehouse address is Switzerland. */
 export const GALAXUS_WAREHOUSE_COUNTRY = "Switzerland";
 
+/** ISO country for the Bussigny route. Stage 1 stock spec wants a 2-letter code. */
+export const GALAXUS_WAREHOUSE_COUNTRY_CH = "CH";
+
 /**
  * Partner Portal shipping route for Bussigny (1030) on-hand stock.
  * Delivery time on that route is 2 working days (~48h). Empty on every other row
  * so those offers stay on the default route.
  */
 export const GALAXUS_DELIVERY_ROUTE_48H = "7609999696817";
+
+/**
+ * GLN on that route (Chemin de Bas-de-Plan 6). Galaxus matches offers to the
+ * route through stock column WarehouseId, not DeliveryRouteId.
+ */
+export const GALAXUS_BUSSIGNY_WAREHOUSE_GLN = "7609999696800";
 
 export function bussignyWarehouseLocationId(): string {
   return (
@@ -33,6 +42,7 @@ export function isGalaxus48hShipLocation(
  */
 export function galaxusStockWarehouseFields(bussignyQty: number): {
   warehouseCountry: string;
+  warehouseId: string;
   deliveryRouteId: string;
   ship48h: boolean;
   quantity: number | null;
@@ -40,7 +50,8 @@ export function galaxusStockWarehouseFields(bussignyQty: number): {
   const qty = Math.floor(Number(bussignyQty));
   const ship48h = Number.isFinite(qty) && qty > 0;
   return {
-    warehouseCountry: GALAXUS_WAREHOUSE_COUNTRY,
+    warehouseCountry: ship48h ? GALAXUS_WAREHOUSE_COUNTRY_CH : GALAXUS_WAREHOUSE_COUNTRY,
+    warehouseId: ship48h ? GALAXUS_BUSSIGNY_WAREHOUSE_GLN : "",
     deliveryRouteId: ship48h ? GALAXUS_DELIVERY_ROUTE_48H : "",
     ship48h,
     quantity: ship48h ? qty : null,
