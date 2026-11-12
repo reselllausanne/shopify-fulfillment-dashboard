@@ -5,6 +5,7 @@ import { rebuildMasterSpecsSnapshot } from "@/galaxus/exports/masterSpecsSnapsho
 import { MASTER_SPECS_REBUILD_JOB_NAME } from "@/galaxus/exports/masterSpecsSnapshotAsync";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
 import { runStockPriceSync } from "@/galaxus/jobs/stockSync";
+import { runStxHotSellersRefresh } from "@/galaxus/jobs/stxHotSellersRefresh";
 import { runStxPriceStockRefresh, runStxSync } from "@/galaxus/jobs/stxSync";
 import { claimJob, completeJob, failJob } from "@/galaxus/jobs/queue";
 import { runOpsJob } from "@/galaxus/ops/jobRunner";
@@ -14,6 +15,7 @@ import {
   OPS_IMAGE_SYNC_JOB,
   OPS_MASTER_SPECS_SNAPSHOT_REBUILD_JOB,
   OPS_SNAPSHOT_REBUILD_JOB,
+  OPS_STX_HOT_REFRESH_JOB,
   OPS_STX_REFRESH_JOB,
 } from "@/galaxus/ops/opsBackgroundJobs";
 
@@ -23,6 +25,7 @@ async function run() {
   const workerId = process.env.WORKER_ID || `${os.hostname()}-${process.pid}`;
   const pollMs = Math.max(Number(process.env.WORKER_POLL_MS ?? "3000"), 500);
   const jobTypes = [
+    OPS_STX_HOT_REFRESH_JOB,
     OPS_STX_REFRESH_JOB,
     OPS_IMAGE_SYNC_JOB,
     OPS_SNAPSHOT_REBUILD_JOB,
@@ -49,7 +52,9 @@ async function run() {
           typeof payload.origin === "string" && payload.origin.trim()
             ? payload.origin.trim()
             : defaultOrigin;
-        if (jobType === OPS_STX_REFRESH_JOB) {
+        if (jobType === OPS_STX_HOT_REFRESH_JOB) {
+          await runOpsJob("stx-hot-refresh", () => runStxHotSellersRefresh());
+        } else if (jobType === OPS_STX_REFRESH_JOB) {
           const mode = payload.stxRefreshMode === "full" ? "full" : "price";
           await runOpsJob("stx-refresh", () =>
             mode === "full" ? runStxSync() : runStxPriceStockRefresh()

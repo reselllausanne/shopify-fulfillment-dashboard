@@ -1,6 +1,7 @@
 export type OpsJobKey =
   | "partner-stock-sync"
   | "stx-refresh"
+  | "stx-hot-refresh"
   | "gld-refresh"
   | "edi-in"
   | "image-sync"
