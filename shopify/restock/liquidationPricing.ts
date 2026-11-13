@@ -70,8 +70,8 @@ async function writeShopifyPriceLocked(variantId: string, locked: boolean): Prom
 
 /**
  * Physical warehouse stock → locked sale badge:
- * compareAt = StockX Buy Now AFTER fees (CHF): stored stx landed price,
- * or raw KickDB ask × STX multiplier + 20 CHF.
+ * compareAt = StockX Buy Now AFTER fees (CHF), recalculated each call from KickDB:
+ * raw ask × STX multiplier + 20 CHF. Stored stx price only if KickDB has no ask.
  * price = Buy Now after fees / 2, floored to 0.50 CHF.
  * Metafields the storefront already reads: variant `custom.price_locked`,
  * variant `custom.delivery_48h`, product `custom.soldes_48h`.

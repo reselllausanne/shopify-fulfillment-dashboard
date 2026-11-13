@@ -138,7 +138,7 @@ describe("resolvePhysicalRestockPricing — slug + EU size fallback", () => {
     expect(pricing.sellPrice).toBe(warehouseHalfBuyNowPrice(afterFees));
   });
 
-  it("prefers stored stx Buy Now over a fresher KickDB lowest_ask", async () => {
+  it("recalculates from KickDB on every call; stored stx price does not win", async () => {
     const stored = estimatedStockxBuyChfFromList(200, 20);
     (prisma.kickDBVariant.findFirst as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       product: { urlKey: "air-jordan-1", name: "Air Jordan 1", brand: "Nike" },
@@ -163,19 +163,44 @@ describe("resolvePhysicalRestockPricing — slug + EU size fallback", () => {
       sizeEu: "42",
     });
 
-    expect(pricing.source).toBe("stx-db");
+    const afterFees = Math.round(stxSourceCostChfFromRaw(999) * 100) / 100;
+    expect(pricing.source).toBe("kickdb-live");
+    expect(pricing.stockxRaw).toBe(999);
     expect(pricing.storedBuyPrice).toBe(stored);
-    // Stored landed price used as-is: not re-derived to a raw ask, not re-fed.
-    expect(pricing.buyNowAfterFees).toBe(stored);
-    expect(pricing.compareAt).toBe(stored);
-    expect(pricing.sellPrice).toBe(warehouseHalfBuyNowPrice(stored));
-    expect(mockedFetch).not.toHaveBeenCalled();
+    expect(pricing.buyNowAfterFees).toBe(afterFees);
+    expect(pricing.compareAt).toBe(afterFees);
+    expect(pricing.compareAt).not.toBe(stored);
+    expect(pricing.sellPrice).toBe(warehouseHalfBuyNowPrice(afterFees));
+    expect(mockedFetch).toHaveBeenCalled();
   });
 
-  it("EU 40 examples: stored checkout total drives compareAt + half, not the raw ask", async () => {
-    for (const [stored, compareAt, sale] of [
-      [76.81, 76.81, 38],
-      [96.13, 96.13, 48],
+  it("falls back to stored landed price when KickDB returns no ask", async () => {
+    const stored = 90.82;
+    (prisma.supplierVariant.findFirst as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      price: stored,
+      supplierProductName: "Pair",
+      deliveryType: null,
+      supplierBrand: "Nike",
+    });
+    mockedFetch.mockResolvedValue({
+      product: { slug: "pair", title: "Pair", variants: [] },
+    });
+
+    const pricing = await resolvePhysicalRestockPricing(SCANNED_GTIN, {
+      slug: "pair",
+      sizeEu: "40",
+    });
+
+    expect(pricing.source).toBe("stx-db");
+    expect(pricing.stockxRaw).toBeNull();
+    expect(pricing.compareAt).toBe(stored);
+    expect(pricing.sellPrice).toBe(warehouseHalfBuyNowPrice(stored));
+  });
+
+  it("EU 40: live KickDB ask after fees, half, stale stored ignored", async () => {
+    for (const [raw, stored] of [
+      [51, 90.82],
+      [70, 96.35],
     ] as const) {
       (prisma.supplierVariant.findFirst as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         price: stored,
@@ -183,14 +208,25 @@ describe("resolvePhysicalRestockPricing — slug + EU size fallback", () => {
         deliveryType: null,
         supplierBrand: "Nike",
       });
+      mockedFetch.mockResolvedValueOnce({
+        product: {
+          slug: "pair",
+          title: "Pair",
+          brand: "Nike",
+          variants: [{ id: "v40", size_eu: "40", gtin: SCANNED_GTIN, lowest_ask: raw }],
+        },
+      });
+
       const pricing = await resolvePhysicalRestockPricing(SCANNED_GTIN, {
         slug: "pair",
         sizeEu: "40",
       });
+      const afterFees = Math.round(stxSourceCostChfFromRaw(raw) * 100) / 100;
+      expect(pricing.source).toBe("kickdb-live");
+      expect(pricing.stockxRaw).toBe(raw);
       expect(pricing.storedBuyPrice).toBe(stored);
-      expect(pricing.compareAt).toBe(compareAt);
-      expect(pricing.sellPrice).toBe(sale);
+      expect(pricing.compareAt).toBe(afterFees);
+      expect(pricing.sellPrice).toBe(warehouseHalfBuyNowPrice(afterFees));
     }
-    expect(mockedFetch).not.toHaveBeenCalled();
   });
 });

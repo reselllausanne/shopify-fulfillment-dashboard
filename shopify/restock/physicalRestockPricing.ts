@@ -15,12 +15,9 @@ import {
 } from "@/shopify/pricing/calcShopifySellPrice";
 
 export type PhysicalRestockPricing = {
-  /**
-   * Raw StockX ask, CHF, before fees. Only used for the normal site price.
-   * Null when the price came from a stored stx row (landed price is used as-is).
-   */
+  /** Raw StockX ask, CHF, before fees. From KickDB on this call. Null on stored fallback. */
   stockxRaw: number | null;
-  /** Buy Now AFTER fees (CHF): stored landed stx price, or `calcShopifyTouchPrice(raw)`. */
+  /** Buy Now AFTER fees (CHF): `calcShopifyTouchPrice(raw)` from KickDB, else stored landed price. */
   buyNowAfterFees: number | null;
   cost: number | null;
   /** Storefront compare-at. Same number as `buyNowAfterFees`. */
@@ -146,16 +143,15 @@ export type PhysicalRestockPricingContext = {
 };
 
 /**
- * Physical warehouse pricing:
- * - Buy Now (reference) = price AFTER fees:
- *   - stx row exists → `SupplierVariant.price` as-is (already landed)
- *   - else raw KickDB ask → `calcShopifyTouchPrice` (raw × STX multiplier + 20 CHF)
+ * Physical warehouse pricing. Recalculated on every call from KickDB (CHF):
+ * - raw ask = KickDB live (GTIN, else slug + EU size)
+ * - Buy Now after fees = `calcShopifyTouchPrice` (raw × STX multiplier + 20 CHF)
  * - compareAt = that Buy Now after fees
  * - sell = Buy Now after fees / 2, floored to 0.50 CHF
  * - siteSellPrice = calcShopifySellPrice — used only after the pair is sold
  *
- * Resolution order: stored stx lane → KickDB live by GTIN → KickDB live by
- * slug + EU size. A fresher KickDB ask does not replace a stored stx row.
+ * Stored `SupplierVariant.price` is not the sale anchor. It is only a fallback
+ * when this call gets no KickDB ask. A stored row never blocks the live ask.
  */
 export async function resolvePhysicalRestockPricing(
   gtin: string,
@@ -199,15 +195,11 @@ export async function resolvePhysicalRestockPricing(
 
   if (stxRow?.price) {
     const buy = Number(stxRow.price);
-    if (Number.isFinite(buy) && buy > 0) {
-      // Stored stx price is already landed (after fees). Use as-is.
-      storedBuyPrice = buy;
-      buyNowAfterFees = round2(buy);
-      source = "stx-db";
-    }
+    if (Number.isFinite(buy) && buy > 0) storedBuyPrice = buy;
   }
 
-  if (buyNowAfterFees == null && ctx.slug) {
+  // Every call: live KickDB ask, then fees. Stored price does not win.
+  if (ctx.slug) {
     const live = await resolveStockxRawFromKickdbLive(cleanGtin, ctx.slug, sizeEu);
     if (live.stockxRaw) {
       stockxRaw = live.stockxRaw;
@@ -217,13 +209,18 @@ export async function resolvePhysicalRestockPricing(
     }
   }
 
-  if (buyNowAfterFees == null && stockxRaw) {
+  if (stockxRaw) {
     const touch = calcShopifyTouchPrice({
       stockxRaw,
       productHandle: ctx.handle,
       productCategory: undefined,
     });
     if (touch != null && touch > 0) buyNowAfterFees = round2(touch);
+  }
+
+  if (buyNowAfterFees == null && storedBuyPrice != null) {
+    buyNowAfterFees = round2(storedBuyPrice);
+    source = "stx-db";
   }
 
   if (buyNowAfterFees == null || buyNowAfterFees <= 0) return { ...empty, storedBuyPrice };
