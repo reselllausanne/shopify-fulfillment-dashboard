@@ -1,7 +1,7 @@
 /**
- * Reprice every in-stock warehouse variant to StockX Buy Now / 2.
+ * Reprice every in-stock warehouse variant to StockX Buy Now (after fees) / 2.
  *
- * compareAt = raw Buy Now (CHF, before fees)
+ * compareAt = Buy Now after fees (stored stx landed price, or raw ask × multiplier + 20 CHF)
  * price     = Math.floor(buyNow * 0.5 * 2) / 2
  * Locks: variant price_locked, variant delivery_48h, product soldes_48h
  *
@@ -182,8 +182,8 @@ type Row = {
 };
 
 async function main() {
-  console.log(`\n=== WAREHOUSE BUY NOW / 2 (execute=${EXECUTE}) ===`);
-  console.log("price = Math.floor(buyNow * 0.5 * 2) / 2 ; compareAt = buyNow");
+  console.log(`\n=== WAREHOUSE BUY NOW (AFTER FEES) / 2 (execute=${EXECUTE}) ===`);
+  console.log("buyNow = AFTER fees. price = Math.floor(buyNow * 0.5 * 2) / 2 ; compareAt = buyNow");
   console.log("Locations: Bussigny, Antica, THE LAB, COLD BIEN. Quantities untouched.\n");
 
   const phys = await loadPhysicalStockByVariant();
@@ -264,8 +264,8 @@ async function main() {
       });
       continue;
     }
-    if (pricing.compareAt !== pricing.stockxRaw) {
-      skipped.push({ gtin, title: label, reason: "compareAt is not raw Buy Now" });
+    if (pricing.compareAt !== pricing.buyNowAfterFees) {
+      skipped.push({ gtin, title: label, reason: "compareAt is not Buy Now after fees" });
       continue;
     }
 
@@ -286,7 +286,7 @@ async function main() {
           "VERIFY",
           `gtin=${gtin}`,
           `storedDbPrice=${pricing.storedBuyPrice}`,
-          `derivedBuyNow=${buyNow}`,
+          `buyNowAfterFees=${buyNow}`,
           `sale=${sale}`,
           `compareAt=${buyNow}`,
           `half=${warehouseHalfBuyNowPrice(buyNow)}`,

@@ -5,22 +5,27 @@ import {
 } from "@/galaxus/kickdb/client";
 import { extractBrand } from "@/galaxus/kickdb/extract";
 import { prisma } from "@/app/lib/prisma";
-import { deriveStockxRawAskFromStoredBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
 import { STX_SUPPLIER_VARIANT_WHERE } from "@/galaxus/supplier/supplierKeyGuards";
 import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 import { resolveKickdbSlugForGtin } from "@/shopify/restock/resolveKickdbSlugForGtin";
 import {
+  calcShopifySellFromSourceCost,
   calcShopifySellPrice,
   calcShopifyTouchPrice,
 } from "@/shopify/pricing/calcShopifySellPrice";
 
 export type PhysicalRestockPricing = {
-  /** StockX Buy Now ask, CHF, before our fees. */
+  /**
+   * Raw StockX ask, CHF, before fees. Only used for the normal site price.
+   * Null when the price came from a stored stx row (landed price is used as-is).
+   */
   stockxRaw: number | null;
+  /** Buy Now AFTER fees (CHF): stored landed stx price, or `calcShopifyTouchPrice(raw)`. */
+  buyNowAfterFees: number | null;
   cost: number | null;
-  /** Storefront compare-at. Same number as `stockxRaw` (raw Buy Now). */
+  /** Storefront compare-at. Same number as `buyNowAfterFees`. */
   compareAt: number | null;
-  /** `warehouseHalfBuyNowPrice(stockxRaw)`. */
+  /** `warehouseHalfBuyNowPrice(buyNowAfterFees)`. */
   sellPrice: number | null;
   /** Normal site price after the pair sells (`calcShopifySellPrice`). */
   siteSellPrice: number | null;
@@ -30,7 +35,7 @@ export type PhysicalRestockPricing = {
 };
 
 /**
- * Warehouse shelf sell: half the StockX Buy Now ask, floored to the nearest 0.50 CHF.
+ * Warehouse shelf sell: half the StockX Buy Now AFTER fees, floored to the nearest 0.50 CHF.
  * `Math.floor(buyNow * 0.5 * 2) / 2`. Returns null when the result is not a positive price.
  */
 export function warehouseHalfBuyNowPrice(buyNowChf: number): number | null {
@@ -67,6 +72,10 @@ async function resolveProductContextForGtin(gtin: string): Promise<{
   }
 
   return { handle: null, name: null, brand: null, slug: null };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 function priceFromKickdbVariant(variant: any): number | null {
@@ -138,13 +147,15 @@ export type PhysicalRestockPricingContext = {
 
 /**
  * Physical warehouse pricing:
- * - compareAt = StockX Buy Now ask (CHF, before fees) — not landed cost, not site sell
- * - sell = Buy Now / 2, floored to 0.50 CHF
+ * - Buy Now (reference) = price AFTER fees:
+ *   - stx row exists → `SupplierVariant.price` as-is (already landed)
+ *   - else raw KickDB ask → `calcShopifyTouchPrice` (raw × STX multiplier + 20 CHF)
+ * - compareAt = that Buy Now after fees
+ * - sell = Buy Now after fees / 2, floored to 0.50 CHF
  * - siteSellPrice = calcShopifySellPrice — used only after the pair is sold
  *
- * Ask resolution order: stored stx lane (derive raw ask from landed price) →
- * KickDB live by GTIN → KickDB live by slug + EU size. A fresher KickDB ask
- * does not replace a stored stx row.
+ * Resolution order: stored stx lane → KickDB live by GTIN → KickDB live by
+ * slug + EU size. A fresher KickDB ask does not replace a stored stx row.
  */
 export async function resolvePhysicalRestockPricing(
   gtin: string,
@@ -153,6 +164,7 @@ export async function resolvePhysicalRestockPricing(
   const cleanGtin = String(gtin ?? "").trim();
   const empty: PhysicalRestockPricing = {
     stockxRaw: null,
+    buyNowAfterFees: null,
     cost: null,
     compareAt: null,
     sellPrice: null,
@@ -183,20 +195,19 @@ export async function resolvePhysicalRestockPricing(
     orderBy: { updatedAt: "desc" },
   });
 
+  let buyNowAfterFees: number | null = null;
+
   if (stxRow?.price) {
     const buy = Number(stxRow.price);
     if (Number.isFinite(buy) && buy > 0) {
+      // Stored stx price is already landed (after fees). Use as-is.
       storedBuyPrice = buy;
-      stockxRaw = deriveStockxRawAskFromStoredBuyPrice(buy, {
-        slug: ctx.slug,
-        urlKey: ctx.handle,
-        name: ctx.name ?? stxRow.supplierProductName,
-      });
-      if (stockxRaw) source = "stx-db";
+      buyNowAfterFees = round2(buy);
+      source = "stx-db";
     }
   }
 
-  if (!stockxRaw && ctx.slug) {
+  if (buyNowAfterFees == null && ctx.slug) {
     const live = await resolveStockxRawFromKickdbLive(cleanGtin, ctx.slug, sizeEu);
     if (live.stockxRaw) {
       stockxRaw = live.stockxRaw;
@@ -206,27 +217,35 @@ export async function resolvePhysicalRestockPricing(
     }
   }
 
-  if (!stockxRaw) return { ...empty, storedBuyPrice };
+  if (buyNowAfterFees == null && stockxRaw) {
+    const touch = calcShopifyTouchPrice({
+      stockxRaw,
+      productHandle: ctx.handle,
+      productCategory: undefined,
+    });
+    if (touch != null && touch > 0) buyNowAfterFees = round2(touch);
+  }
+
+  if (buyNowAfterFees == null || buyNowAfterFees <= 0) return { ...empty, storedBuyPrice };
 
   const isExpress = String(stxRow?.deliveryType ?? "").startsWith("express_");
-  const category = undefined;
-  const cost = calcShopifyTouchPrice({
-    stockxRaw,
-    productHandle: ctx.handle,
-    productCategory: category,
-  });
-  const siteSellPrice = calcShopifySellPrice({
-    stockxRaw,
-    productHandle: ctx.handle,
-    productName: ctx.name ?? stxRow?.supplierProductName,
-    brand: ctx.brand ?? stxRow?.supplierBrand,
-    isExpress,
-  });
-  const compareAt = stockxRaw;
-  const sellPrice = warehouseHalfBuyNowPrice(stockxRaw);
+  const cost = buyNowAfterFees;
+  const siteSellPrice = stockxRaw
+    ? calcShopifySellPrice({
+        stockxRaw,
+        productHandle: ctx.handle,
+        productName: ctx.name ?? stxRow?.supplierProductName,
+        brand: ctx.brand ?? stxRow?.supplierBrand,
+        isExpress,
+      })
+    : // stx row: landed cost is the source cost; no raw ask to re-derive.
+      calcShopifySellFromSourceCost(buyNowAfterFees);
+  const compareAt = buyNowAfterFees;
+  const sellPrice = warehouseHalfBuyNowPrice(buyNowAfterFees);
 
   return {
     stockxRaw,
+    buyNowAfterFees,
     cost,
     compareAt,
     sellPrice,
