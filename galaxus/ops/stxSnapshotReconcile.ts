@@ -150,7 +150,12 @@ export async function runStxSnapshotReconcile(
   let patched = 0;
   for (const part of chunk(keys, cfg.chunkSize)) {
     try {
-      const res = await patchFeedSnapshotsForProviderKeys({ origin, providerKeys: part });
+      const res = await patchFeedSnapshotsForProviderKeys({
+        origin,
+        providerKeys: part,
+        // Never let a thin-ask/export blip remove a still-in-DB offer from the file.
+        deleteStale: false,
+      });
       patched += res.patched;
     } catch (err) {
       console.error("[stx-reconcile] patch chunk failed", {
