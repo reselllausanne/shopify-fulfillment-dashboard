@@ -16,6 +16,9 @@ describe("isStxOfferPriceMismatch", () => {
   it("flags the Phantom case (67.53 vs cost 253)", () => {
     expect(isStxOfferPriceMismatch(67.53, 253, cfg)).toBe(true);
   });
+  it("flags the Magia EU36.5 case (86.46 vs cost 267.86)", () => {
+    expect(isStxOfferPriceMismatch(86.46, 267.86, cfg)).toBe(true);
+  });
   it("tolerates sub-tolerance drift", () => {
     const sell = calcGalaxusStxSellFromSourceCost(100)!;
     expect(isStxOfferPriceMismatch(sell + 0.3, 100, cfg)).toBe(false);
