@@ -15,10 +15,10 @@ import { startFeedPushAsync } from "@/galaxus/ops/feedPipelineCore";
  * GalaxusFeedStockSnapshot rows stale (1833 STX offers were found under the locked floor, some
  * below cost). This job derives the truth from the DB instead of memory:
  *
- *   SupplierVariant changed AFTER its snapshot row (updatedAt) AND the snapshot disagrees
- *   with the locked formula (price) / with stock=0 (stock)  ->  patch those keys via the live
- *   export (which stamps snapshot.updatedAt = now, so a patched row leaves the candidate set
- *   until the DB changes again) and queue a stock-price push.
+ *   Offer: snap PurchasePrice disagrees with locked formula(SV.price) while in stock
+ *   (no updatedAt gate — ask spikes must reprice even if SV was already "fresh").
+ *   Stock: SV changed AFTER snap and DB stock is 0 while snap still advertises qty.
+ *   Then patch keys via live export + queue stock-price push.
  */
 
 export type StxReconcileConfig = {
@@ -82,7 +82,12 @@ async function queryKeys(
   return rows.map((r) => r.providerKey);
 }
 
-/** Offer snapshot price != locked formula(DB price), DB changed after the snapshot row. */
+/**
+ * Offer snapshot price != locked formula(DB price).
+ * Do NOT require sv.updatedAt > snap.updatedAt: after an ask spike the SV can stay
+ * untouched for days while Galaxus keeps re-uploading the old snap price (Magia
+ * EU 36.5 stuck at 86.46 from Nov 11 while buy rose to 267).
+ */
 export async function findStaleStxOfferKeys(cfg: StxReconcileConfig): Promise<string[]> {
   const denom = galaxusStxLockedDenom();
   const fixed = GALAXUS_STX_FIXED_BOX_AND_SHIPPING_CHF;
@@ -93,7 +98,6 @@ export async function findStaleStxOfferKeys(cfg: StxReconcileConfig): Promise<st
       FROM "GalaxusFeedOfferSnapshot" s
       JOIN "SupplierVariant" sv ON sv."providerKey" = s."providerKey"
       WHERE s."providerKey" LIKE 'STX\_%'
-        AND sv."updatedAt" > s."updatedAt"
         AND sv."manualLock" IS DISTINCT FROM true
         AND sv.price > 0
         AND sv.stock > 0
@@ -104,6 +108,10 @@ export async function findStaleStxOfferKeys(cfg: StxReconcileConfig): Promise<st
               ${cfg.absToleranceChf}::numeric,
               ${cfg.relTolerance}::numeric * ceil((sv.price + ${fixed}::numeric) / ${denom}::numeric * 100) / 100
             )
+      ORDER BY (
+        ceil((sv.price + ${fixed}::numeric) / ${denom}::numeric * 100) / 100
+        - (s."rowJson"->>'PurchasePriceExclVat_CHF')::numeric
+      ) DESC
       LIMIT ${cfg.maxKeys}`
   );
 }
@@ -185,7 +193,7 @@ export async function runStxSnapshotReconcile(
     durationMs: Date.now() - started,
   };
   if (keys.length > 0 && patched === 0) {
-    console.warn("[stx-reconcile] stale keys found but nothing patched (snapshot not ready?)", result);
+    console.warn("[stx-reconcile] stale keys found but nothing patched (empty snap tables or patch failed)", result);
   } else if (keys.length > 0) {
     console.warn("[stx-reconcile] repaired stale STX snapshot rows", result);
   } else {

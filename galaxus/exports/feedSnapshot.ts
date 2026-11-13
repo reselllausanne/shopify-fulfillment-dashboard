@@ -188,6 +188,17 @@ export async function isFeedSnapshotReady(scope: "stock" | "offer"): Promise<boo
   return Number(count) > 0;
 }
 
+/**
+ * Patch/upsert into existing stock+offer snapshot tables even when uploads must
+ * fall back to live (rules bump / age). Reconcile + stx-refresh patches were
+ * no-oping while RULES_CHANGED_AT > rebuiltAt, leaving Magia/Phantom etc. at
+ * stale PurchasePrice (86 CHF while StockX ask 260+).
+ */
+export async function canPatchFeedSnapshotTables(): Promise<boolean> {
+  const meta = await getFeedSnapshotMeta();
+  return Number(meta?.stockRowCount ?? 0) > 0 && Number(meta?.offerRowCount ?? 0) > 0;
+}
+
 export function shouldUseFeedSnapshotForTrigger(
   triggerSource?: string | null,
   scope?: "stock" | "offer"
@@ -433,8 +444,9 @@ export async function patchFeedSnapshotsForProviderKeys(params: {
   );
   if (keys.length === 0) return { patched: 0 };
 
-  const ready = (await isFeedSnapshotReady("stock")) && (await isFeedSnapshotReady("offer"));
-  if (!ready) return { patched: 0 };
+  // Patch into DB snap even when uploads are forced live (rules bump). Blocking
+  // patches here left underwater STX offers frozen until the next full rebuild.
+  if (!(await canPatchFeedSnapshotTables())) return { patched: 0 };
 
   const encoded = encodeURIComponent(keys.join(","));
   const [stockCsv, offerCsv] = await Promise.all([
