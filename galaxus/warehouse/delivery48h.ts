@@ -9,17 +9,31 @@ export const GALAXUS_WAREHOUSE_COUNTRY_CH = "CH";
 
 /**
  * Partner Portal shipping route for Bussigny (1030) on-hand stock.
- * Delivery time on that route is 2 working days (~48h). Empty on every other row
- * so those offers stay on the default route.
+ * Delivery time on that route is 2 working days (~48h).
  */
 export const GALAXUS_DELIVERY_ROUTE_48H = "7609999696817";
 
 /**
- * GLN printed on the route (Chemin de Bas-de-Plan 6). The portal "matching
- * offers" count did not move when WarehouseId was this GLN. It matches the
- * delivery route id itself.
+ * Route id for every offer that is not Bussigny on-hand stock. Empty = the
+ * default route in the Partner Portal (it has no id; it already holds all
+ * offers we have ever sent without a route id). If the portal route gets an id,
+ * put it here and every non-Bussigny offer follows.
  */
-export const GALAXUS_BUSSIGNY_WAREHOUSE_GLN = "7609999696800";
+export const GALAXUS_DEFAULT_DELIVERY_ROUTE_ID = "";
+
+/** Price file column carrying the route per ProviderKey. */
+export const GALAXUS_OFFER_ROUTE_HEADER = "DeliveryRouteId";
+
+/**
+ * Route id for one offer row. Same Bussigny qty source as the stock file, so
+ * price and stock files always agree on the route of a ProviderKey.
+ */
+export function galaxusDeliveryRouteIdForBussignyQty(bussignyQty: number): string {
+  const qty = Math.floor(Number(bussignyQty));
+  return Number.isFinite(qty) && qty > 0
+    ? GALAXUS_DELIVERY_ROUTE_48H
+    : GALAXUS_DEFAULT_DELIVERY_ROUTE_ID;
+}
 
 export function bussignyWarehouseLocationId(): string {
   return (
@@ -52,8 +66,9 @@ export function galaxusStockWarehouseFields(bussignyQty: number): {
   const ship48h = Number.isFinite(qty) && qty > 0;
   return {
     warehouseCountry: ship48h ? GALAXUS_WAREHOUSE_COUNTRY_CH : GALAXUS_WAREHOUSE_COUNTRY,
-    warehouseId: ship48h ? GALAXUS_DELIVERY_ROUTE_48H : "",
-    deliveryRouteId: ship48h ? GALAXUS_DELIVERY_ROUTE_48H : "",
+    // WarehouseId is a GLN/postcode per the wiki. Both routes share one warehouse, so blank.
+    warehouseId: "",
+    deliveryRouteId: galaxusDeliveryRouteIdForBussignyQty(qty),
     ship48h,
     quantity: ship48h ? qty : null,
   };

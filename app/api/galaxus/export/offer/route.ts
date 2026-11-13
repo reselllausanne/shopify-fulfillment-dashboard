@@ -48,6 +48,10 @@ import {
   FEED_VARIANT_SELECT_GATE_NO_IMAGES,
 } from "@/galaxus/exports/variantImagePresence";
 import {
+  galaxusDeliveryRouteIdForBussignyQty,
+  GALAXUS_OFFER_ROUTE_HEADER,
+} from "@/galaxus/warehouse/delivery48h";
+import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
   mergePhysicalWithDropship,
@@ -115,12 +119,13 @@ export async function GET(request: Request) {
     ? `SalesPriceExclVat_${currency}`
     : `PurchasePriceExclVat_${currency}`;
   const headers = isMerchant
-    ? ["ProviderKey", priceHeader, "VatRatePercentage"]
+    ? ["ProviderKey", priceHeader, "VatRatePercentage", GALAXUS_OFFER_ROUTE_HEADER]
     : [
         "ProviderKey",
         priceHeader,
         "SuggestedRetailPriceInclVat_CHF",
         "VatRatePercentage",
+        GALAXUS_OFFER_ROUTE_HEADER,
       ];
 
   const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
@@ -231,13 +236,12 @@ export async function GET(request: Request) {
   // feed so offer rows aren't skipped by the qty>0 gate when only physical
   // stock exists.
   const mergePhysical = isPhysicalMergeEnabled();
-  let physicalByGtin: PhysicalStockMap = new Map();
-  if (mergePhysical) {
-    const gtins = exportCandidates
-      .map((c: any) => String(c?.mapping?.gtin ?? "").trim())
-      .filter((g: string) => g.length > 0);
-    physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
-  }
+  // Mirror is always loaded: Bussigny qty picks the delivery route per row (same
+  // source as the stock file). Merging it into stock stays behind the flag.
+  const gtins = exportCandidates
+    .map((c: any) => String(c?.mapping?.gtin ?? "").trim())
+    .filter((g: string) => g.length > 0);
+  const physicalByGtin: PhysicalStockMap = await loadPhysicalMirrorStockByGtin(gtins);
 
   const stxSizeMedianIndex = buildStxSizePriceMedianIndex(exportCandidates);
 
@@ -415,11 +419,13 @@ export async function GET(request: Request) {
       continue;
     }
 
+    const routeId = galaxusDeliveryRouteIdForBussignyQty(Number(physical?.bussignyQty ?? 0));
     if (isMerchant) {
       rows.push({
         ProviderKey: providerKey,
         [priceHeader]: price,
         VatRatePercentage: vatRate ? String(vatRate * 100) : "8.1",
+        [GALAXUS_OFFER_ROUTE_HEADER]: routeId,
       });
       continue;
     }
@@ -429,6 +435,7 @@ export async function GET(request: Request) {
       [priceHeader]: price,
       SuggestedRetailPriceInclVat_CHF: suggestedRetailPriceInclVat,
       VatRatePercentage: vatRate ? String(vatRate * 100) : "8.1",
+      [GALAXUS_OFFER_ROUTE_HEADER]: routeId,
     });
   }
   let finalRows = rows;

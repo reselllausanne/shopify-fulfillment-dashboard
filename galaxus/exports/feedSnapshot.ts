@@ -3,6 +3,7 @@ import { prisma } from "@/app/lib/prisma";
 import { withTransientDbRetry } from "@/galaxus/exports/transientDbRetry";
 import { GALAXUS_PRICE_CURRENCY, GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { toCsv } from "@/galaxus/exports/csv";
+import { GALAXUS_OFFER_ROUTE_HEADER } from "@/galaxus/warehouse/delivery48h";
 import { runGalaxusExportGET } from "@/galaxus/ops/internalExportGet";
 import { skipGalaxusFeedValidationForTrigger } from "@/galaxus/feedExecutor";
 import { enqueueOpsBackgroundJob } from "@/galaxus/ops/enqueueOpsBackgroundJob";
@@ -98,8 +99,14 @@ export function defaultOfferCsvHeaders(): string[] {
     ? `SalesPriceExclVat_${currency}`
     : `PurchasePriceExclVat_${currency}`;
   return isMerchant
-    ? ["ProviderKey", priceHeader, "VatRatePercentage"]
-    : ["ProviderKey", priceHeader, "SuggestedRetailPriceInclVat_CHF", "VatRatePercentage"];
+    ? ["ProviderKey", priceHeader, "VatRatePercentage", GALAXUS_OFFER_ROUTE_HEADER]
+    : [
+        "ProviderKey",
+        priceHeader,
+        "SuggestedRetailPriceInclVat_CHF",
+        "VatRatePercentage",
+        GALAXUS_OFFER_ROUTE_HEADER,
+      ];
 }
 
 export function parseCsvToRows(csv: string): {
@@ -168,7 +175,7 @@ export async function getFeedSnapshotMeta() {
  * rebuilt earlier still carry rows the new rules drop, so uploads fall back to live.
  */
 /** Bump when assortment/pricing rules change so uploads skip stale snapshots until rebuild. */
-export const GALAXUS_FEED_RULES_CHANGED_AT = new Date("2026-11-11T13:30:00Z");
+export const GALAXUS_FEED_RULES_CHANGED_AT = new Date("2026-11-13T15:30:00Z");
 
 export async function isFeedSnapshotReady(scope: "stock" | "offer"): Promise<boolean> {
   const meta = await getFeedSnapshotMeta();
