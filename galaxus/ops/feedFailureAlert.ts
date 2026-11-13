@@ -189,6 +189,39 @@ export async function notifyGalaxusMasterSpecsFeedStale(params: {
   );
 }
 
+/**
+ * A partner feed (e.g. NER) is still receiving uploads but has not successfully IMPORTED in too
+ * long — its stock and delist are frozen, so Galaxus keeps selling delisted/sold-out items.
+ */
+export async function notifyPartnerFeedImportStale(params: {
+  partnerKey: string | null;
+  partnerName: string | null;
+  lastCompletedAt: string | null;
+  hoursSinceSuccess: number | null;
+}): Promise<{ sent: boolean; reason?: string }> {
+  const label = params.partnerKey || params.partnerName || "unknown";
+  const dedupeKey = `stale:partner-import:${label}`;
+  if (!shouldSendAlert(dedupeKey)) {
+    return { sent: false, reason: "deduped" };
+  }
+  const age =
+    params.hoursSinceSuccess == null ? "never / unknown" : `${params.hoursSinceSuccess}h ago`;
+  const text = [
+    ":warning: *Partner feed import STALE*",
+    `• partner: ${params.partnerName ?? "?"} (${params.partnerKey ?? "?"})`,
+    `• last successful import: ${params.lastCompletedAt ?? "none"} (${age})`,
+    `• at: ${new Date().toISOString()}`,
+    "",
+    "Uploads are arriving but not importing (killed by deploy / too slow / errors).",
+    "Stock + delist for this partner are FROZEN → Galaxus may oversell delisted items.",
+  ].join("\n");
+  return sendAlert(
+    dedupeKey,
+    `[Resell] Partner feed import STALE: ${label} (${age})`,
+    text
+  );
+}
+
 /** Crash-recovery circuit breaker tripped — stop blind OOM requeue loops. */
 export async function notifyGalaxusFeedCrashLoop(params: {
   scope: FeedScope;

@@ -9,6 +9,7 @@ import {
 import { pruneGalaxusJobRunPayloads } from "./jobRunRetention";
 import { runDbRetention } from "./dbRetention";
 import { ensureFeedSnapshotRebuild } from "./snapshotWatchdog";
+import { checkPartnerFeedImportHealth } from "./partnerFeedHealth";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { runEdiInPipeline } from "./orderPipeline";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
@@ -318,6 +319,16 @@ export async function runOpsTick(origin: string, options?: OpsTickOptions) {
     }
   } catch (err) {
     console.error("[galaxus][ops][tick] feed snapshot watchdog failed", err);
+  }
+
+  try {
+    // Partner feed (NER etc.) still uploading but not importing for >2d → stock/delist frozen.
+    const partnerFeedHealth = await checkPartnerFeedImportHealth();
+    if (partnerFeedHealth.stale.length > 0) {
+      console.warn("[galaxus][ops][tick] partner feed import stale", partnerFeedHealth.stale);
+    }
+  } catch (err) {
+    console.error("[galaxus][ops][tick] partner feed health check failed", err);
   }
 
   try {

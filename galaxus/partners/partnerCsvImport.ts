@@ -18,6 +18,15 @@ import { enqueueJob } from "@/galaxus/jobs/queue";
 
 const REQUIRED_HEADERS = ["providerKey", "sku", "size", "rawStock", "price"];
 
+/**
+ * Read-only `findMany` lookups (existing rows, remap backfill, mapping presence, gtin resolution)
+ * run once per chunk over the whole import — for NER's ~1.6M-row re-import that was ~13k chunks of
+ * 500, and the 4h runtime was mostly per-chunk Supabase round-trip latency. Reads can't hit the
+ * "one bad row kills the batch" hazard that forced the write batches small, so we page them far
+ * bigger. Write batch sizes below stay at their tuned values. Tunable without a deploy.
+ */
+const PARTNER_READ_CHUNK = Math.max(Number(process.env.GALAXUS_PARTNER_READ_CHUNK ?? 4000) || 0, 500);
+
 const PARTNER_PENDING_STATUSES = ["PENDING_ENRICH", "PENDING_GTIN", "AMBIGUOUS_GTIN"] as const;
 
 function httpsPrimaryImageUrl(url: string | null | undefined): string | null {
@@ -331,7 +340,7 @@ export async function runPartnerCsvImport(
         supplierSku: string | null;
       }
     >();
-    for (const batch of chunkArray(uniqueIds, 500)) {
+    for (const batch of chunkArray(uniqueIds, PARTNER_READ_CHUNK)) {
       const found = await prismaAny.supplierVariant.findMany({
         where: { supplierVariantId: { in: batch } },
         select: {
@@ -510,7 +519,7 @@ export async function runPartnerCsvImport(
     const remappedIdsMissingExisting = variantBulk
       .map((r) => r.supplierVariantId)
       .filter((id) => id && !existingById.has(id));
-    for (const batch of chunkArray([...new Set(remappedIdsMissingExisting)], 500)) {
+    for (const batch of chunkArray([...new Set(remappedIdsMissingExisting)], PARTNER_READ_CHUNK)) {
       if (batch.length === 0) continue;
       const found = await prismaAny.supplierVariant.findMany({
         where: { supplierVariantId: { in: batch } },
@@ -605,7 +614,7 @@ export async function runPartnerCsvImport(
     if (mappingUpserts.length > 0) {
       const mappingIds = [...mappingTargetIds];
       const present = new Set<string>();
-      for (const batch of chunkArray(mappingIds, 500)) {
+      for (const batch of chunkArray(mappingIds, PARTNER_READ_CHUNK)) {
         const found = await prismaAny.supplierVariant.findMany({
           where: { supplierVariantId: { in: batch } },
           select: { supplierVariantId: true },
@@ -645,7 +654,7 @@ export async function runPartnerCsvImport(
       resolutionIds.add(v.supplierVariantId);
     }
     const gtinBySupplierVariantId = new Map<string, string | null>();
-    for (const batch of chunkArray([...resolutionIds], 500)) {
+    for (const batch of chunkArray([...resolutionIds], PARTNER_READ_CHUNK)) {
       if (batch.length === 0) continue;
       const found = await prismaAny.supplierVariant.findMany({
         where: { supplierVariantId: { in: batch } },
