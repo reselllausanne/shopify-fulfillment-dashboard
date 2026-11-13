@@ -47,7 +47,6 @@ import {
   attachHasImageSignalToMappings,
   FEED_VARIANT_SELECT_GATE_NO_IMAGES,
 } from "@/galaxus/exports/variantImagePresence";
-import { galaxusStockWarehouseFields } from "@/galaxus/warehouse/delivery48h";
 import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
@@ -116,15 +115,12 @@ export async function GET(request: Request) {
     ? `SalesPriceExclVat_${currency}`
     : `PurchasePriceExclVat_${currency}`;
   const headers = isMerchant
-    ? ["ProviderKey", priceHeader, "VatRatePercentage", "WarehouseCountry", "WarehouseId", "DeliveryRouteId"]
+    ? ["ProviderKey", priceHeader, "VatRatePercentage"]
     : [
         "ProviderKey",
         priceHeader,
         "SuggestedRetailPriceInclVat_CHF",
         "VatRatePercentage",
-        "WarehouseCountry",
-        "WarehouseId",
-        "DeliveryRouteId",
       ];
 
   const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
@@ -236,10 +232,10 @@ export async function GET(request: Request) {
   // stock exists.
   const mergePhysical = isPhysicalMergeEnabled();
   let physicalByGtin: PhysicalStockMap = new Map();
-  const gtins = exportCandidates
-    .map((c: any) => String(c?.mapping?.gtin ?? "").trim())
-    .filter((g: string) => g.length > 0);
-  if (gtins.length > 0) {
+  if (mergePhysical) {
+    const gtins = exportCandidates
+      .map((c: any) => String(c?.mapping?.gtin ?? "").trim())
+      .filter((g: string) => g.length > 0);
     physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
   }
 
@@ -419,19 +415,11 @@ export async function GET(request: Request) {
       continue;
     }
 
-    const warehouseFields = galaxusStockWarehouseFields(Number(physical?.bussignyQty ?? 0));
-    const routeFields = {
-      WarehouseCountry: warehouseFields.warehouseCountry,
-      WarehouseId: warehouseFields.warehouseId,
-      DeliveryRouteId: warehouseFields.deliveryRouteId,
-    };
-
     if (isMerchant) {
       rows.push({
         ProviderKey: providerKey,
         [priceHeader]: price,
         VatRatePercentage: vatRate ? String(vatRate * 100) : "8.1",
-        ...routeFields,
       });
       continue;
     }
@@ -441,7 +429,6 @@ export async function GET(request: Request) {
       [priceHeader]: price,
       SuggestedRetailPriceInclVat_CHF: suggestedRetailPriceInclVat,
       VatRatePercentage: vatRate ? String(vatRate * 100) : "8.1",
-      ...routeFields,
     });
   }
   let finalRows = rows;
