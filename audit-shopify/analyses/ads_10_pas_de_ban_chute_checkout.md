@@ -19,7 +19,7 @@ Scripts : `calculs/gaql/ads_11_*.gaql` (via `ads_gaql_readonly.ts`), `calculs/ad
 
 - F : la valeur Ads par jour tombe de ≈ 1 000 CHF à ≈ 70–270 CHF ; ROAS 0,23 (11 nov) et 0,26 (12 nov).
 - F : deux sources de suivi indépendantes donnent les mêmes achats : « Google Shopping App Purchase » (WEBPAGE) et « GA4 purchase » (1,0 / 1,0 / 0,9 les 10–12 nov). Les événements en amont (vue, ajout panier, début paiement) sont stables.
-- F : côté Shopify, commandes par jour : 3 – 7 oct. : moyenne 9,6 (12, 10, 10, 10, 6) ; 8 – 13 nov. : moyenne 4,5 (7, 4, 5, 4, 3, 4). Commandes balisées `cpc` : ≈ 4,4/j → ≈ 2,2/j. Valeur moyenne par commande en baisse (106–180 CHF les 11–13 nov contre 190–300 avant).
+- F : côté Shopify, commandes par jour : 3 – 7 nov. : moyenne 9,6 (12, 10, 10, 10, 6) ; 8 – 13 nov. : moyenne 4,5 (7, 4, 5, 4, 3, 4). Commandes balisées `cpc` : ≈ 4,4/j → ≈ 2,2/j. Valeur moyenne par commande en baisse (106–180 CHF les 11–13 nov contre 190–300 avant).
 - I : ce n'est pas un bug de suivi. Les gens ajoutent au panier, commencent le paiement, puis n'achètent plus. La rupture se situe entre le début du paiement et l'achat, ou dans la décision au moment où le prix final apparaît.
 - F : pas d'explosion d'erreurs de paiement dans le pixel (1–6 alertes `PAYMENT_ERROR` par jour). Pas de panne de checkout visible.
 
