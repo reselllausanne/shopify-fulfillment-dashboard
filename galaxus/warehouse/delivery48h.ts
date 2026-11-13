@@ -15,8 +15,9 @@ export const GALAXUS_WAREHOUSE_COUNTRY_CH = "CH";
 export const GALAXUS_DELIVERY_ROUTE_48H = "7609999696817";
 
 /**
- * GLN on that route (Chemin de Bas-de-Plan 6). Galaxus matches offers to the
- * route through stock column WarehouseId, not DeliveryRouteId.
+ * GLN printed on the route (Chemin de Bas-de-Plan 6). The portal "matching
+ * offers" count did not move when WarehouseId was this GLN. It matches the
+ * delivery route id itself.
  */
 export const GALAXUS_BUSSIGNY_WAREHOUSE_GLN = "7609999696800";
 
@@ -51,7 +52,7 @@ export function galaxusStockWarehouseFields(bussignyQty: number): {
   const ship48h = Number.isFinite(qty) && qty > 0;
   return {
     warehouseCountry: ship48h ? GALAXUS_WAREHOUSE_COUNTRY_CH : GALAXUS_WAREHOUSE_COUNTRY,
-    warehouseId: ship48h ? GALAXUS_BUSSIGNY_WAREHOUSE_GLN : "",
+    warehouseId: ship48h ? GALAXUS_DELIVERY_ROUTE_48H : "",
     deliveryRouteId: ship48h ? GALAXUS_DELIVERY_ROUTE_48H : "",
     ship48h,
     quantity: ship48h ? qty : null,

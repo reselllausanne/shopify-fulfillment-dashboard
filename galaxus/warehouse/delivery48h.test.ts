@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  GALAXUS_BUSSIGNY_WAREHOUSE_GLN,
   GALAXUS_DELIVERY_ROUTE_48H,
   GALAXUS_WAREHOUSE_COUNTRY_CH,
   galaxusStockWarehouseFields,
@@ -8,10 +7,10 @@ import {
 } from "@/galaxus/warehouse/delivery48h";
 
 describe("galaxus 48h Bussigny warehouse", () => {
-  it("puts on-hand Bussigny qty on the route GLN", () => {
+  it("puts the delivery route id in WarehouseId", () => {
     expect(galaxusStockWarehouseFields(2)).toEqual({
       warehouseCountry: GALAXUS_WAREHOUSE_COUNTRY_CH,
-      warehouseId: GALAXUS_BUSSIGNY_WAREHOUSE_GLN,
+      warehouseId: GALAXUS_DELIVERY_ROUTE_48H,
       deliveryRouteId: GALAXUS_DELIVERY_ROUTE_48H,
       ship48h: true,
       quantity: 2,
