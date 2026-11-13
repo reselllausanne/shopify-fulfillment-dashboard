@@ -1,4 +1,5 @@
 import path from "path";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { parseCsv } from "@/app/lib/csv";
 import { normalizeSize, normalizeSku, parsePriceSafe, validateGtin } from "@/app/lib/normalize";
@@ -784,6 +785,7 @@ export async function runPartnerCsvImport(
   }
 
   let removedMissing = 0;
+  let delistedZeroed = 0;
   let removeSkipped = false;
   if (!dryRun && !errors.length && cleanPartnerKey && seenSupplierVariantIds.size > 0) {
     const existing = await prismaAny.supplierVariant.findMany({
@@ -810,15 +812,48 @@ export async function runPartnerCsvImport(
         maxRatio,
       });
     } else {
+      // Capture the delisted keys' providerKeys BEFORE deleting the rows. A hard delete alone
+      // removes the row from the export, so no QuantityOnStock=0 is ever emitted and Galaxus
+      // keeps selling the cached offer (the NER phantom-sale bug). So we assert 0 in the feed
+      // snapshot first; the end-of-import push then tells Galaxus to delist.
+      const missingProviderKeys = new Set<string>();
+      for (const batch of chunkArray(missing, PARTNER_READ_CHUNK)) {
+        const found = await prismaAny.supplierVariant.findMany({
+          where: { supplierVariantId: { in: batch } },
+          select: { providerKey: true },
+        });
+        for (const r of found) {
+          const pk = String(r.providerKey ?? "").trim();
+          if (pk) missingProviderKeys.add(pk);
+        }
+      }
       for (const batch of chunkArray(missing, 500)) {
         const res = await prismaAny.supplierVariant.deleteMany({
           where: { supplierVariantId: { in: batch } },
         });
         removedMissing += res.count ?? 0;
       }
+      for (const batch of chunkArray([...missingProviderKeys], 2000)) {
+        await prismaAny.$executeRaw(Prisma.sql`
+          UPDATE "GalaxusFeedStockSnapshot"
+          SET "rowJson" = jsonb_set("rowJson"::jsonb, '{QuantityOnStock}', '"0"'), "updatedAt" = now()
+          WHERE "providerKey" IN (${Prisma.join(batch)})
+            AND ("rowJson"->>'QuantityOnStock') IS DISTINCT FROM '0'`);
+        await prismaAny.galaxusFeedOfferSnapshot.deleteMany({
+          where: { providerKey: { in: batch } },
+        });
+      }
+      delistedZeroed = missingProviderKeys.size;
     }
   } else {
     removeSkipped = true;
+  }
+  if (delistedZeroed > 0 || removedMissing > 0) {
+    console.info("[PARTNER-IMPORT] delist-after-absence", {
+      partnerKey: cleanPartnerKey,
+      removedMissing,
+      delistedZeroed,
+    });
   }
 
   if (!dryRun && importedRows > 0 && ctx.origin) {
