@@ -1,7 +1,8 @@
 /**
- * Reprice every in-stock warehouse variant to StockX Buy Now / 2.
+ * Reprice every in-stock warehouse variant to StockX Buy Now (after fees) / 2.
  *
- * compareAt = raw Buy Now (CHF, before fees)
+ * compareAt = Buy Now after fees, recalculated each call from KickDB
+ *             (raw ask × multiplier + 20 CHF). Stored stx price only if KickDB misses.
  * price     = Math.floor(buyNow * 0.5 * 2) / 2
  * Locks: variant price_locked, variant delivery_48h, product soldes_48h
  *
@@ -182,8 +183,8 @@ type Row = {
 };
 
 async function main() {
-  console.log(`\n=== WAREHOUSE BUY NOW / 2 (execute=${EXECUTE}) ===`);
-  console.log("price = Math.floor(buyNow * 0.5 * 2) / 2 ; compareAt = buyNow");
+  console.log(`\n=== WAREHOUSE BUY NOW (AFTER FEES) / 2 (execute=${EXECUTE}) ===`);
+  console.log("buyNow = AFTER fees. price = Math.floor(buyNow * 0.5 * 2) / 2 ; compareAt = buyNow");
   console.log("Locations: Bussigny, Antica, THE LAB, COLD BIEN. Quantities untouched.\n");
 
   const phys = await loadPhysicalStockByVariant();
@@ -264,8 +265,8 @@ async function main() {
       });
       continue;
     }
-    if (pricing.compareAt !== pricing.stockxRaw) {
-      skipped.push({ gtin, title: label, reason: "compareAt is not raw Buy Now" });
+    if (pricing.compareAt !== pricing.buyNowAfterFees) {
+      skipped.push({ gtin, title: label, reason: "compareAt is not Buy Now after fees" });
       continue;
     }
 
@@ -279,14 +280,15 @@ async function main() {
       source: pricing.source,
     };
 
-    if (!verified && pricing.source === "stx-db" && pricing.storedBuyPrice != null) {
+    if (!verified && pricing.stockxRaw != null && pricing.source.startsWith("kickdb")) {
       verified = true;
       console.log(
         [
           "VERIFY",
           `gtin=${gtin}`,
-          `storedDbPrice=${pricing.storedBuyPrice}`,
-          `derivedBuyNow=${buyNow}`,
+          `kickdbRaw=${pricing.stockxRaw}`,
+          `storedDbPrice=${pricing.storedBuyPrice ?? "-"}`,
+          `buyNowAfterFees=${buyNow}`,
           `sale=${sale}`,
           `compareAt=${buyNow}`,
           `half=${warehouseHalfBuyNowPrice(buyNow)}`,
@@ -300,6 +302,7 @@ async function main() {
         (row.title ?? "").slice(0, 42),
         `qty=${hit.physicalQty}@${hit.locationNames.join(",") || "?"}`,
         `stored=${pricing.storedBuyPrice ?? "-"}`,
+        `raw=${pricing.stockxRaw ?? "-"}`,
         `buyNow=${buyNow}`,
         `sale=${sale}`,
         `compareAt=${buyNow}`,
@@ -369,7 +372,7 @@ async function main() {
     console.log("\nFailures:");
     for (const f of failures) console.log(`  ${f.gtin ?? "?"}  — ${f.error}`);
   }
-  if (!verified) console.log("\nVERIFY: no stx-db row with a stored price in this run");
+  if (!verified) console.log("\nVERIFY: no KickDB live ask in this run");
   if (!EXECUTE) console.log("\nDry-run only. Pass --execute to apply.\n");
 }
 

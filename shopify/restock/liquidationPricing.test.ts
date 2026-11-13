@@ -114,8 +114,9 @@ describe("applyLiquidationSaleDisplay — hard gate on pricing", () => {
 
   it("liq ok: price written + price_locked + DB manualLock", async () => {
     mockedPricing.mockResolvedValue({
-      stockxRaw: 217,
-      cost: 260.11,
+      stockxRaw: null,
+      buyNowAfterFees: 217,
+      cost: 217,
       compareAt: 217,
       sellPrice: 108.5,
       siteSellPrice: 400,
@@ -148,9 +149,10 @@ describe("applyLiquidationSaleDisplay — hard gate on pricing", () => {
     mockedStxFindFirst.mockResolvedValue(null);
     mockedPricing.mockResolvedValue({
       stockxRaw: 120,
-      cost: 185.6,
-      compareAt: 219,
-      sellPrice: 129.9,
+      buyNowAfterFees: 152.78,
+      cost: 152.78,
+      compareAt: 152.78,
+      sellPrice: 76,
       source: "kickdb-live-size",
     });
 
@@ -159,5 +161,25 @@ describe("applyLiquidationSaleDisplay — hard gate on pricing", () => {
     expect(result.applied).toBe(true);
     expect(result.warnings.join(" ")).toContain("No stx_ SupplierVariant");
     expect(mockedStxUpdate).not.toHaveBeenCalled();
+  });
+
+  it("writes compareAt = after-fees Buy Now and price = half of it", async () => {
+    mockedPricing.mockResolvedValue({
+      stockxRaw: null,
+      buyNowAfterFees: 76.81,
+      cost: 76.81,
+      compareAt: 76.81,
+      sellPrice: 38,
+      siteSellPrice: 120,
+      source: "stx-db",
+      storedBuyPrice: 76.81,
+    });
+
+    const result = await applyLiquidationSaleDisplay({ gtin: GTIN, variant: VARIANT });
+
+    expect(result.applied).toBe(true);
+    expect(mockedSalePrice).toHaveBeenCalledWith(
+      expect.objectContaining({ salePrice: 38, compareAtPrice: 76.81 })
+    );
   });
 });
