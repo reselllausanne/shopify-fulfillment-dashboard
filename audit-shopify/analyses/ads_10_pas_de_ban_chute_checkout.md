@@ -44,3 +44,49 @@ Scripts : `calculs/gaql/ads_11_*.gaql` (via `ads_gaql_readonly.ts`), `calculs/ad
 - Je ne vois pas la date de publication du thème, ni le prix exact vu au checkout.
 - Les débuts de paiement et achats Ads sont des conversions modélisées/attribuées : petits nombres (≈ 1 à 9 par jour), écarts bruités.
 - Pas de statut Merchant Center à jour.
+
+---
+
+## Addendum 13.11 soir : corrections et nouveaux faits
+
+### Corrections de ce qui précède
+- Retiré : « le prix express monte au checkout ». Dans les événements échantillonnés, prix express = prix standard. `auto_express_only` apparaît quand `expressPriceCents <= price` (`product-size-selection-modal.js`, `shippingLayout`). Le client ne voit pas de hausse. Lien avec la chute de conversion : non prouvé. (F : code. H : suite au verrouillage de formule v2026-11-09 et à des coûts express = standard.)
+- Corrigé : « diffusion normale » faux. Impressions Ads/jour : ~94k (sem. 28 sept) → ~25k (sem. 9 nov). Cause probable : tROAS 4.0 étrangle la dépense quand la conversion chute (budgets 685/j non atteints, dépense ≈ 260/j). Conséquence, pas cause. (F pour les chiffres, I pour le mécanisme.)
+
+### Merchant Center (API, lecture seule, `calculs/ads_12_merchant_statuts.ts`)
+- F : compte 669442699 sans problème de compte. 23 045 produits refusés sur 2,58 M (0,9 %), surtout images. 174 `price_mismatch`, 44 `landing_page_error`. Pas la cause.
+
+### Prix : le prix n'a pas bougé de façon notable (F)
+- 828 variantes vues avant (1–8 nov) et après (10–13 nov) : ratio médian 1,000 ; 232 baissent de plus de 3 %, 237 montent de plus de 3 %, 359 stables.
+- Médiane des prix vus : 293 (1.11) → 255 (13.11) ; effet de mix probable (I).
+- Exemple Jordan 4 Retro Fear (2024) EU 40.5 : coût DB `standardBuyPrice` 312,12 (synchro 13.11 02:36) ; `expressBuyPrice` 316,54. Formule : `ceil((312,12 + 14,5) / 0,68) = 481`. Correspond exactement au panier. (F)
+- Décomposition des 481 CHF : coût 312,1 + fixe 14,5 + pub 15 % (72,2) + CM2 12 % (57,7) + TVA/frais 2,1 % (10,1) + paiement 2,9 % (13,9).
+- Les 304 vus par l'utilisateur ne sont pas dans la DB. Coût DB = 312,12. Écart 8 CHF non expliqué (H : prix StockX affiché vs coût tout compris, ou moment différent).
+- La formule est proportionnelle : pub 15 % et CM2 12 % de la vente à tout niveau de prix. Réserve pub à 481 = 72 CHF ; à 169 CHF de vente = 25 CHF. Coût pub réel par commande : non recalculé ici.
+
+| Coût | Prix formule | Réserve pub 15 % | CM2 12 % |
+|---|---|---|---|
+| 100 | 169 | 25 | 20 |
+| 200 | 316 | 47 | 38 |
+| 312 | 481 | 72 | 58 |
+| 600 | 903 | 135 | 108 |
+
+### Nouvelle piste : le trou est au paiement (F)
+Sessions du pixel, 8–13 nov vs avant :
+
+| Période | Début checkout/j | Paiement soumis → achat |
+|---|---|---|
+| 25 oct–2 nov | 31,7 | 50/58 (86 %) |
+| 3–7 nov | 15,8 | 33/30 |
+| 8–13 nov | 32,7 | 21/46 (46 %) |
+
+Achats par type de paiement :
+
+| Période | Wallet/jour | Carte/jour | Offsite/jour |
+|---|---|---|---|
+| 25 oct–7 nov | 3,1 | ~0,6 | 2,1 |
+| 8–13 nov | 1,0 | 0,5 | 1,8 |
+
+- Offsite (Twint, PowerPay) stable. Wallets (Shopify Payments wallet, PayPal) −68 % : 6 observés contre ≈ 18,6 attendus (Poisson p ≈ 0,001).
+- Thème : `templates/cart.json` identique en taille (3087) sur MAIN 189546496386 et sur 188549300610, bloc `additional_checkout_buttons` présent dans les deux. Le thème ne ressemble pas à la cause (F pour la présence, pas testé en rendu).
+- À vérifier côté admin par l'utilisateur : Réglages → Paiements (Shopify Payments : Apple Pay, Google Pay, Shop Pay actifs ? alertes ?), Réglages → Domaines, test achat Apple Pay mobile. (R)
