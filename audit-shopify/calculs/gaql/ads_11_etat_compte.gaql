@@ -1,0 +1,1 @@
+SELECT customer.id, customer.status, customer.manager, customer.test_account, customer.currency_code FROM customer

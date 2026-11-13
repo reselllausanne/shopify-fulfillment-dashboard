@@ -1,0 +1,1 @@
+SELECT campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons, campaign.serving_status, segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value FROM campaign WHERE segments.date DURING LAST_14_DAYS AND campaign.advertising_channel_type != 'DISPLAY'

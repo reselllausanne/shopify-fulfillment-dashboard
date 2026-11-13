@@ -98,3 +98,4 @@
 - 18:10 seo_02 : Inspection d'URL (229 URL), décomposition chute 14.9, conversions SEO par canal/landing, collections Shopify (217). Pas de panne de balisage trouvée ; chute surtout visibilité hors marque. Nouveau core update Google 10.11. Voir analyses/seo_02_causes_indexation_conversion.md.
 - 18:50 site_01 : spam update vs chute 14.9, lecture message autre agent (thèmes), perspectives d'amélioration chiffrées. Voir analyses/site_01_perspectives_amelioration.md.
 - 19:10 verif volatilité 15.9 (SER/Semrush, tiers), budgets Ads 11.11 (dépense 260/j déjà), levier prix +3% écarté, vitesse non mesurée (PSI bloqué).
+- 13.11 : Ads pas de ban (ENABLED, diffusion normale). Achats chutent entre début de paiement et achat depuis le 8 nov (27 % → 7,6 %). Thème MAIN = 189546496386 modifié 13.11. Voir analyses/ads_10_pas_de_ban_chute_checkout.md.

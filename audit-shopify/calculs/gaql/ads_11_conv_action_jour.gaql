@@ -1,0 +1,1 @@
+SELECT segments.conversion_action_name, segments.date, metrics.conversions, metrics.conversions_value, metrics.all_conversions, metrics.all_conversions_value FROM customer WHERE segments.date DURING LAST_14_DAYS

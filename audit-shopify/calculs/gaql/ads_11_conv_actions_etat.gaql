@@ -1,0 +1,1 @@
+SELECT conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.primary_for_goal, conversion_action.tag_snippets FROM conversion_action
