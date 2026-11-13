@@ -51,9 +51,10 @@ describe("buildCustomerNarrative", () => {
     const n = buildCustomerNarrative(baseCase(), "SUPPLIER_CHANGE_DELAY");
     expect(n.subject).toContain("#9999");
     expect(n.greeting).toBe("Bonjour Alex,");
-    expect(n.headline).toBe("Ça prend plus de temps que prévu");
+    expect(n.headline).toBe("Plus de temps que prévu");
     expect(n.etaLine).toBe("Peut changer");
     expect(n.bodyParagraphs.join(" ")).toMatch(/plus de temps que prévu/i);
+    expect(n.bodyParagraphs.join(" ")).toMatch(/Vous n'avez rien à faire/);
     expect(n.bodyParagraphs.join(" ").toLowerCase()).not.toContain("stockx");
     expect(n.bodyParagraphs.join(" ")).not.toMatch(/autre vendeur|rembours/i);
     expect(n.shippingLabel).toBe("Standard");
@@ -61,19 +62,20 @@ describe("buildCustomerNarrative", () => {
 
   it("cancel says the seller did not ship and a replacement or refund follows", () => {
     const n = buildCustomerNarrative(baseCase(), "ORDER_CANCELED");
-    expect(n.headline).toBe("Le vendeur n'a pas pu expédier");
-    expect(n.bodyParagraphs.join(" ")).toMatch(/annulé/i);
-    expect(n.bodyParagraphs.join(" ")).toMatch(/remboursé/i);
+    expect(n.headline).toBe("Nous sommes désolés");
+    expect(n.statusLine).toBe("Le vendeur n'a pas pu expédier votre article.");
+    expect(n.bodyParagraphs.join(" ")).toMatch(/remboursement intégral/);
+    expect(n.bodyParagraphs.join(" ")).not.toMatch(/Cet achat est annulé/);
     expect(n.bodyParagraphs.join(" ").toLowerCase()).not.toContain("stockx");
     const de = buildCustomerNarrative(baseCase(), "ORDER_CANCELED", "de");
-    expect(de.headline).toBe("Verkäufer hat nicht verschickt");
+    expect(de.headline).toBe("Es tut uns leid");
     expect(de.bodyParagraphs.join(" ").toLowerCase()).not.toContain("stockx");
   });
 
   it("german delay mail uses the checkout language", () => {
     const n = buildCustomerNarrative(baseCase(), "SUPPLIER_CHANGE_DELAY", "de");
     expect(n.language).toBe("de");
-    expect(n.headline).toBe("Dauert länger als geplant");
+    expect(n.headline).toBe("Länger als erwartet");
     expect(n.greeting).toBe("Hallo Alex,");
     expect(n.bodyParagraphs.join(" ").toLowerCase()).not.toContain("stockx");
     expect(n.chrome.faqUrl).toContain("/de/pages/faq");
@@ -106,7 +108,7 @@ describe("delay mail HTML placement", () => {
     const greetingAt = html.indexOf("Bonjour Alex,");
     const etaAt = html.indexOf("Livraison");
     const imgAt = html.indexOf('width="200"');
-    const bodyAt = html.indexOf("On suit le dossier");
+    const bodyAt = html.indexOf("Nous suivons la situation");
     expect(greetingAt).toBeGreaterThan(0);
     expect(etaAt).toBeGreaterThan(greetingAt);
     expect(imgAt).toBeGreaterThan(etaAt);
