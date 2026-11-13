@@ -412,7 +412,15 @@ export function missingProviderKeys(
 export async function patchFeedSnapshotsForProviderKeys(params: {
   origin: string;
   providerKeys: string[];
+  /**
+   * When true (default) keys the live export no longer emits are deleted from the snapshot
+   * (a real gate change, e.g. hard-removed supplier). Pass false for the periodic reconcile:
+   * a transient thin-ask / export blip must only ever UPDATE a row, never remove a still-in-DB
+   * offer — otherwise the item silently leaves the file while Galaxus keeps selling it cached.
+   */
+  deleteStale?: boolean;
 }): Promise<{ patched: number }> {
+  const deleteStale = params.deleteStale !== false;
   const keys = Array.from(
     new Set(params.providerKeys.map((k) => String(k ?? "").trim()).filter(Boolean))
   );
@@ -453,8 +461,16 @@ export async function patchFeedSnapshotsForProviderKeys(params: {
 
   // Keys the live export no longer emits (newly gated / blocked) must leave the snapshot,
   // otherwise the stale row keeps the offer published until the next full rebuild.
-  const staleStock = missingProviderKeys(keys, stockParsed.rows);
-  const staleOffer = missingProviderKeys(keys, offerParsed.rows);
+  const staleStock = deleteStale ? missingProviderKeys(keys, stockParsed.rows) : [];
+  const staleOffer = deleteStale ? missingProviderKeys(keys, offerParsed.rows) : [];
+  if (!deleteStale) {
+    const skipped =
+      missingProviderKeys(keys, stockParsed.rows).length +
+      missingProviderKeys(keys, offerParsed.rows).length;
+    if (skipped > 0) {
+      console.info("[snapshot-patch] deleteStale=false, kept rows the export skipped", { skipped });
+    }
+  }
   if (staleStock.length > 0) {
     await withTransientDbRetry("snapshot-patch-stale-stock-delete", () =>
       prismaAny.galaxusFeedStockSnapshot.deleteMany({ where: { providerKey: { in: staleStock } } })
