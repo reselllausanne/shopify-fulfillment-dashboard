@@ -26,3 +26,12 @@ Limite : date de commit ≠ date d'application sur Shopify ; prix publiés par d
 ## Prix réellement affichés (13 nov, funnel_events × ChannelListingState × SupplierVariant.standardBuyPrice)
 3 615 variantes vues du 10 au 13 nov. Prix affiché médian / formule : 22 sept 1,162 ; 12 oct 1,002 ; 9 nov 1,001. Variantes à ±2 % de la formule : 9 nov 2 066 ; 12 oct 1 368 ; 22 sept 150. Mêmes variantes 16–22 oct vs 10–13 nov : ratio médian 1,000 (641 variantes).
 F : les prix en ligne sont au niveau 12 oct / 9 nov, pas au niveau 22 sept. Le revert du 9 nov (#393) rétablit la structure 15 % pub + 12 % CM2, soit le 19 sept (0,68), pas la structure « volume » du 22 sept (0,7895).
+
+## Rentabilité par période (estimation, formule supposée appliquée à toutes les lignes)
+Marge avant pub par commande : formule 22 sept = 0,16 × vente ; formule 12 oct = 0,13 × vente + 33 ; formule 9 nov = 0,27 × vente. Pub = dépense Google de la période.
+| Période | Commandes | Ventes | Pub | CPA | Marge après pub | Par jour |
+|---|---|---|---|---|---|---|
+| 28 sept–11 oct (22 sept) | 223 | 45 799 | 8 713 | 39 | −1 385 | −99 |
+| 12 oct–8 nov (12 oct) | 234 | 65 996 | 11 081 | 47 | +5 220 | +186 |
+| 9–13 nov (9 nov) | 22 | 3 956 | 1 454 | 66 | −386 | −77 |
+Hors retours, remboursements (246 / 882 / 0), frais fixes. Seuil de rentabilité d'une commande à formule 22 sept : vente = CPA / 0,16 (≈ 244 à CPA 39, 279 à CPA 44,7). LTV : taux de recommande non mesuré (base commandes = 2026 seulement).
