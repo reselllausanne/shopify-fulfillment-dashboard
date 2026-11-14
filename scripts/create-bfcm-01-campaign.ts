@@ -11,6 +11,8 @@ const LIST_ALL = "QNJ57e";
 const SEG_EXCLUDE = "Xv2cGF";
 const TEST_LIST = "W2mNct";
 const PREVIEW = process.argv.includes("--preview");
+// Per-profile props (rl_nov_2026_p*) are set on every mailable profile -> keep Liquid, do not bake.
+const LIQUID = process.argv.includes("--liquid");
 
 const H = {
   Authorization: `Klaviyo-API-Key ${process.env.KLAVIYO_PRIVATE_API_KEY}`,
@@ -37,6 +39,7 @@ const CARDS: Record<string, string> = {
 const esc = (s: string) => s.replace(/&/g, "&amp;");
 
 function bake(src: string, html: boolean): string {
+  if (LIQUID) return src;
   let out = src.replace(/\{% if person\|lookup:'rl_nov_2026_p[123]_ready'[^%]*%\}/g, "");
   out = out.replace(/\{% endif %\}/g, "");
   out = out.replace(/\{\{ person\|lookup:'(rl_nov_2026_p[123]_[a-z]+)'\|default:'' \}\}/g, (_m, k: string) => {
