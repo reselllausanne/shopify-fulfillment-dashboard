@@ -102,3 +102,4 @@
 - 13.11 soir : corrections (express, diffusion). Merchant OK. Prix stables (ratio médian 1,000). Prix 481 = formule (312,12+14,5)/0,68. Chute concentrée sur wallets (−68 %), offsite stable. Voir ads_10 addendum.
 - 13.11 nuit : Merchant price competitiveness : prix médian +49 % vs benchmark, 91 % des lignes > +10 %. Voir analyses/ads_11_prix_vs_benchmark_merchant.md.
 - 14.11 : Trends CH (−0 à −48 % selon marque), gradient prix/impressions Shopping (−20 % à −64 %), conv/clic ÷2 partout. Voir analyses/ads_12_demande_et_gradient_prix.md.
+- 14.11 : long terme. 5 jours à 22 commandes déjà vu (fév, juin, juil). Rupture réelle 12–13 oct (16→8 cmd/j, CVR 0,9→0,5 %), avant thème/fonction du 14. Formule 12 oct +6 à +24 % vs 22 sept ; 9 nov +16 %. Voir ads_13_long_terme_prix_formules.md.
