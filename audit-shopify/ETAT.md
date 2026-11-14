@@ -104,3 +104,4 @@
 - 14.11 : Trends CH (−0 à −48 % selon marque), gradient prix/impressions Shopping (−20 % à −64 %), conv/clic ÷2 partout. Voir analyses/ads_12_demande_et_gradient_prix.md.
 - 14.11 : long terme. 5 jours à 22 commandes déjà vu (fév, juin, juil). Rupture réelle 12–13 oct (16→8 cmd/j, CVR 0,9→0,5 %), avant thème/fonction du 14. Formule 12 oct +6 à +24 % vs 22 sept ; 9 nov +16 %. Voir ads_13_long_terme_prix_formules.md.
 - 14.11 : recommande 8,1 % (marché chaussures ~12 %). Pic fin sept = paires 100-199 CHF Nike/Adidas, à perte après pub à CPA 39. Perte 100-199 = trafic ; perte 200+ = CVR. Voir cash_02_recommande_segments_prix.md.
+- 14.11 : tri campagne all (90 j) : 80 % du coût sur 8 828 produits sans conv ; New Balance/Onitsuka stables, ASICS/Saucony/Hoka/Salomon pas. Voir ads_14_campagne_all_tri.md.

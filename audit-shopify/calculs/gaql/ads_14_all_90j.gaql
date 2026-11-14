@@ -1,0 +1,1 @@
+SELECT campaign.name, segments.product_item_id, segments.product_title, segments.product_brand, segments.product_type_l1, segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value FROM shopping_performance_view WHERE campaign.name = 'all' AND segments.date BETWEEN '2026-08-15' AND '2026-11-13'
