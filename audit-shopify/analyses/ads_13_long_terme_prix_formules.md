@@ -22,3 +22,7 @@ Changements datés : formule prix 12 oct (#99), thème AB PDP et fonction Cart T
 | 312 | 414 | 439 (+6 %) | 481 (+16 %) |
 Variations vs formule 22 sept.
 Limite : date de commit ≠ date d'application sur Shopify ; prix publiés par date non disponibles.
+
+## Prix réellement affichés (13 nov, funnel_events × ChannelListingState × SupplierVariant.standardBuyPrice)
+3 615 variantes vues du 10 au 13 nov. Prix affiché médian / formule : 22 sept 1,162 ; 12 oct 1,002 ; 9 nov 1,001. Variantes à ±2 % de la formule : 9 nov 2 066 ; 12 oct 1 368 ; 22 sept 150. Mêmes variantes 16–22 oct vs 10–13 nov : ratio médian 1,000 (641 variantes).
+F : les prix en ligne sont au niveau 12 oct / 9 nov, pas au niveau 22 sept. Le revert du 9 nov (#393) rétablit la structure 15 % pub + 12 % CM2, soit le 19 sept (0,68), pas la structure « volume » du 22 sept (0,7895).
