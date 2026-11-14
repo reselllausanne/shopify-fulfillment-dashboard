@@ -1,0 +1,1 @@
+SELECT segments.product_item_id, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value FROM shopping_performance_view WHERE segments.date BETWEEN '2026-10-31' AND '2026-11-13'

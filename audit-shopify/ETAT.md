@@ -101,3 +101,4 @@
 - 13.11 : Ads pas de ban (ENABLED, diffusion normale). Achats chutent entre début de paiement et achat depuis le 8 nov (27 % → 7,6 %). Thème MAIN = 189546496386 modifié 13.11. Voir analyses/ads_10_pas_de_ban_chute_checkout.md.
 - 13.11 soir : corrections (express, diffusion). Merchant OK. Prix stables (ratio médian 1,000). Prix 481 = formule (312,12+14,5)/0,68. Chute concentrée sur wallets (−68 %), offsite stable. Voir ads_10 addendum.
 - 13.11 nuit : Merchant price competitiveness : prix médian +49 % vs benchmark, 91 % des lignes > +10 %. Voir analyses/ads_11_prix_vs_benchmark_merchant.md.
+- 14.11 : Trends CH (−0 à −48 % selon marque), gradient prix/impressions Shopping (−20 % à −64 %), conv/clic ÷2 partout. Voir analyses/ads_12_demande_et_gradient_prix.md.
