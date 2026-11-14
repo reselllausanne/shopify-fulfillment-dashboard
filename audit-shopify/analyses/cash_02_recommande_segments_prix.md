@@ -36,3 +36,9 @@ Conversions récentes sous-estimées (délai). Petits nombres sur 300+.
 Faits (Shopify Admin API) : 375 clients recommandeurs. Délai médian avant 2e commande 41 jours (≤ 7 j : 17 % ; 8–30 j : 28 % ; 31–90 j : 19 % ; > 90 j : 35 %). 59 % rachètent la même marque. Panier médian 1re 209 CHF, 2e 208 CHF. Nouveaux clients par mois : ≈ 300 (août 389, sept 296, oct 303).
 Checkouts abandonnés avec email depuis le 14 oct : 120 (74 du 14 oct–31 oct, 45 en nov). Consentement marketing : 13 abonnés sur 120. Aucun travail LTV ni remarketing (déclaré par l'utilisateur).
 Estimation I : +7 points de recommande sur 300 nouveaux clients/mois = ≈ 21 commandes/mois ; contribution sans pub 0,16 × 208 = 33 CHF (formule 22 sept) à 0,27 × 208 = 56 CHF (formule 9 nov), soit ≈ 700–1 200 CHF/mois. Relance de panier abandonné à 8 % de reprise sur 120/mois ≈ 10 commandes ≈ 330–550 CHF/mois. Total ≈ 1–1,8 k CHF/mois, hypothèses non testées.
+
+## Coût d'acquisition : d'où il vient (14.11)
+CPA = CPC / CVR. CPC Ads stable toute l'année (0,39–0,60 CHF). CVR 1,2–1,3 % (janv., août) → 0,92 % (5 oct.) → 0,55 % (sem. du 12 oct.) → 0,47–0,62 % ensuite. CPA ≈ 38 → 80 : tout vient du CVR.
+Campagnes 17 oct–13 nov (coût, conv, ROAS) : Nike 3 224, 47,0, 4,02 ; Adidas 1 760, 22,7, 3,00 ; Perf-max-vetements 1 492, 21,7, 2,42 ; all 1 222, 13,1, 2,30 ; Long Tail CH 692, 2,0, 0,84 ; Jordan 505, 5,4, 3,95 ; UGG 498, 4,3, 1,99 ; Explorer Long Tail 302, 1,0 ; Explorer Adidas 69, 0 ; Explorer Nike 52, 0 ; Explorer Jordan 37, 1,0. Total 9 852, 118,1 conv, ROAS 2,92.
+ROAS de rentabilité = 1 / marge avant pub : 3,7 (formule 9 nov, 27 %) ; 6,25 (formule 22 sept, 16 %). Campagnes sous 3,7 : 6 087 CHF (62 % de la dépense).
+Offres ≥ 3 clics sans conversion : 28–39 % de la dépense (signal faible, 3 clics à 1 % de CVR sans achat = 97 % de probabilité).
