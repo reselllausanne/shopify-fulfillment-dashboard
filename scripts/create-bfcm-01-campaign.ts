@@ -74,8 +74,8 @@ async function k(path: string, init: RequestInit) {
         channel: "email",
         label: name,
         content: {
-          subject: "On ressort les hoodies ?",
-          preview_text: "UGG, Essentials, ASICS : nos favoris pour les journées plus fraîches.",
+          subject: "Les paires du moment pour l’hiver",
+          preview_text: "Timberland, Salomon, Jordan : ce qui part le plus en ce moment.",
           from_email: "Contact@resell-lausanne.ch",
           from_label: "Resell Lausanne",
           reply_to_email: "Contact@resell-lausanne.ch",

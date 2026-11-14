@@ -4,7 +4,7 @@ import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 
 const Q = `query($cursor:String){orders(first:100,after:$cursor,query:"created_at:>=2025-01-01 -status:cancelled",sortKey:CREATED_AT){pageInfo{hasNextPage endCursor}nodes{createdAt email customer{email}lineItems(first:30){nodes{title variantTitle product{productType tags}}}}}}`;
 
-type Row = { size: string; at: string; title: string; kids: boolean };
+type Row = { size: string; at: string; title: string; kids: boolean; women: boolean };
 const SHOE = /^(?:EU\s*)?(3[4-9]|4[0-9])(?:[.,]5| 1\/3| 2\/3)?$/i;
 
 (async () => {
@@ -25,22 +25,26 @@ const SHOE = /^(?:EU\s*)?(3[4-9]|4[0-9])(?:[.,]5| 1\/3| 2\/3)?$/i;
         if (!SHOE.test(size)) continue;
         const kids = /kids|\(gs\)|\(ps\)|\(td\)|enfant|\bgs\b|toddler|junior/i.test(`${li.title} ${(li.product?.tags || []).join(" ")}`);
         const arr = byEmail.get(email) ?? [];
-        arr.push({ size: size.replace(/^EU\s*/i, ""), at: n.createdAt, title: li.title, kids });
+        const women = /women|\(w\)|wmns/i.test(li.title);
+        arr.push({ size: size.replace(/^EU\s*/i, ""), at: n.createdAt, title: li.title, kids, women });
         byEmail.set(email, arr);
       }
     }
     if (!o.pageInfo.hasNextPage) break;
     cursor = o.pageInfo.endCursor;
   }
-  const out: Record<string, { size: string; n: number; kidsOnly: boolean }> = {};
+  const out: Record<string, { gender: "m" | "w" | "u"; sureSize: string | null; n: number }> = {};
   for (const [email, rows] of byEmail) {
     const adult = rows.filter((x) => !x.kids);
-    const use = adult.length ? adult : rows;
+    const women = adult.filter((x) => x.women).length;
+    const men = adult.length - women;
+    const gender = adult.length === 0 ? "w" : women > 0 && men === 0 ? "w" : men > 0 && women === 0 ? "m" : "u";
     const c = new Map<string, number>();
-    for (const x of use) c.set(x.size, (c.get(x.size) || 0) + 1);
-    const best = [...c.entries()].sort((a, b) => b[1] - a[1] || (use.findLast((x) => x.size === b[0])!.at > use.findLast((x) => x.size === a[0])!.at ? 1 : -1))[0];
-    out[email] = { size: best[0], n: use.length, kidsOnly: adult.length === 0 };
+    for (const x of adult) c.set(x.size, (c.get(x.size) || 0) + 1);
+    const top = [...c.entries()].sort((a, b) => b[1] - a[1])[0];
+    const sure = top && adult.length >= 2 && top[1] / adult.length >= 0.75 ? top[0] : null;
+    out[email] = { gender, sureSize: sure, n: adult.length };
   }
   writeFileSync("/tmp/bfcm-sizes.json", JSON.stringify(out));
-  console.log(JSON.stringify({ orders, customersWithShoeSize: Object.keys(out).length, kidsOnly: Object.values(out).filter((v) => v.kidsOnly).length }));
+  console.log(JSON.stringify({ orders, customers: Object.keys(out).length, sure: Object.values(out).filter((v) => v.sureSize).length, m: Object.values(out).filter((v) => v.gender==="m").length, w: Object.values(out).filter((v) => v.gender==="w").length, u: Object.values(out).filter((v) => v.gender==="u").length }));
 })();
