@@ -31,3 +31,8 @@ Conversions récentes sous-estimées (délai). Petits nombres sur 300+.
 - Tranche 100–199 : la perte vient du trafic (clics ÷2), CVR stable.
 - Tranche 200+ : la perte vient surtout du CVR.
 - Marge après pub par commande (formule 22 sept, CPA 39) : 0,16 × vente − 39 → 150 CHF : −15 ; 250 : +1 ; 400 : +25. Le volume de fin sept était dominé par des paires à perte après pub.
+
+## Potentiel LTV / remarketing (14.11, estimation)
+Faits (Shopify Admin API) : 375 clients recommandeurs. Délai médian avant 2e commande 41 jours (≤ 7 j : 17 % ; 8–30 j : 28 % ; 31–90 j : 19 % ; > 90 j : 35 %). 59 % rachètent la même marque. Panier médian 1re 209 CHF, 2e 208 CHF. Nouveaux clients par mois : ≈ 300 (août 389, sept 296, oct 303).
+Checkouts abandonnés avec email depuis le 14 oct : 120 (74 du 14 oct–31 oct, 45 en nov). Consentement marketing : 13 abonnés sur 120. Aucun travail LTV ni remarketing (déclaré par l'utilisateur).
+Estimation I : +7 points de recommande sur 300 nouveaux clients/mois = ≈ 21 commandes/mois ; contribution sans pub 0,16 × 208 = 33 CHF (formule 22 sept) à 0,27 × 208 = 56 CHF (formule 9 nov), soit ≈ 700–1 200 CHF/mois. Relance de panier abandonné à 8 % de reprise sur 120/mois ≈ 10 commandes ≈ 330–550 CHF/mois. Total ≈ 1–1,8 k CHF/mois, hypothèses non testées.
