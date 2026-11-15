@@ -1546,6 +1546,7 @@ model VariantMapping {
 
   @@index([kickdbVariantId])
   @@index([supplierKey, status])
+  @@index([gtin])
   @@schema("public")
 }
 

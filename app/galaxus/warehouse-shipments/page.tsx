@@ -265,7 +265,6 @@ export default function GalaxusWarehouseShipmentsPage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string>("");
   const [labelResult, setLabelResult] = useState<string>("");
-  const [scanInput, setScanInput] = useState("");
   const [scanResult, setScanResult] = useState("");
   const [replaceDrafts, setReplaceDrafts] = useState(true);
   const [trackingHint, setTrackingHint] = useState("");
@@ -413,7 +412,7 @@ export default function GalaxusWarehouseShipmentsPage() {
     setCreatedShipment(null);
     setResult("");
     setLabelResult("");
-    setScanInput("");
+    if (scanInputRef.current) scanInputRef.current.value = "";
     setScanResult("");
     if (selectedOrderId) void loadEligibility(selectedOrderId);
   }, [selectedOrderId]);
@@ -499,6 +498,10 @@ export default function GalaxusWarehouseShipmentsPage() {
     setSelectedLines({});
   };
 
+  const clearScanInput = () => {
+    if (scanInputRef.current) scanInputRef.current.value = "";
+  };
+
   const focusScanInput = () => {
     requestAnimationFrame(() => {
       const el = scanInputRef.current;
@@ -513,7 +516,7 @@ export default function GalaxusWarehouseShipmentsPage() {
     const cleaned = normalizeGtinKey(raw);
     if (!cleaned) {
       setError("Scan a GTIN to select a line.");
-      setScanInput("");
+      clearScanInput();
       focusScanInput();
       return;
     }
@@ -543,7 +546,7 @@ export default function GalaxusWarehouseShipmentsPage() {
 
     if (matches.length === 0) {
       setError(`No remaining line found for GTIN ${cleaned}.`);
-      setScanInput("");
+      clearScanInput();
       focusScanInput();
       return;
     }
@@ -579,7 +582,7 @@ export default function GalaxusWarehouseShipmentsPage() {
     const size = displaySize(target.line);
     const label = target.order.orderNumber ?? target.order.galaxusOrderId;
     setScanResult(`Added ${title} (${size}) from order ${label}.`);
-    setScanInput("");
+    clearScanInput();
     focusScanInput();
   };
 
@@ -1119,24 +1122,22 @@ export default function GalaxusWarehouseShipmentsPage() {
               ref={scanInputRef}
               className="border rounded px-2 py-1 text-xs w-56"
               placeholder="Scan GTIN to add line"
-              value={scanInput}
               autoFocus
-              onChange={(e) => {
-                setScanInput(e.target.value);
+              onChange={() => {
                 if (error?.includes("GTIN")) setError(null);
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
-                  scanAndSelect(scanInput);
+                  scanAndSelect(e.currentTarget.value);
                 }
               }}
             />
             <button
               type="button"
               className="px-3 py-1.5 rounded bg-gray-900 text-white text-xs disabled:opacity-50"
-              onClick={() => scanAndSelect(scanInput)}
-              disabled={!scanInput.trim() || busy !== null}
+              onClick={() => scanAndSelect(scanInputRef.current?.value ?? "")}
+              disabled={busy !== null}
             >
               Add by GTIN
             </button>

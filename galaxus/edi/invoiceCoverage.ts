@@ -81,6 +81,56 @@ export async function getInvoicedQuantitiesByOrderLineId(
   return map;
 }
 
+type InvoiceLineRef = {
+  id: string;
+  orderId: string;
+  lineNumber?: number | null;
+  buyerPid?: string | null;
+  supplierPid?: string | null;
+  gtin?: string | null;
+};
+
+/**
+ * One INVO query for many orders. Same matching rules as
+ * `getInvoicedQuantitiesByOrderLineId`.
+ */
+export async function getInvoicedQuantitiesByLineForOrders(
+  lines: InvoiceLineRef[]
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  const orderIds = Array.from(new Set(lines.map((line) => line.orderId).filter(Boolean)));
+  if (orderIds.length === 0) return result;
+
+  const files = await prisma.galaxusEdiFile.findMany({
+    where: {
+      direction: "OUT",
+      docType: "INVO",
+      status: "uploaded",
+      orderId: { in: orderIds },
+    },
+    select: { orderId: true, payloadJson: true },
+  });
+
+  const linesByOrder = new Map<string, GalaxusOrderLine[]>();
+  for (const line of lines) {
+    const list = linesByOrder.get(line.orderId) ?? [];
+    list.push(line as GalaxusOrderLine);
+    linesByOrder.set(line.orderId, list);
+  }
+
+  for (const file of files) {
+    const orderId = file.orderId;
+    if (!orderId) continue;
+    const orderLines = linesByOrder.get(orderId) ?? [];
+    for (const item of extractItems(file.payloadJson)) {
+      const lineId = matchPayloadItemToOrderLineId(item, orderLines);
+      if (!lineId) continue;
+      result.set(lineId, (result.get(lineId) ?? 0) + toQty(item.quantity));
+    }
+  }
+  return result;
+}
+
 function orderedQty(line: GalaxusOrderLine): number {
   const n = Number(line.quantity);
   return Number.isFinite(n) ? n : 0;

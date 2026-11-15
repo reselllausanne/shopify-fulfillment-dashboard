@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { getInvoicedQuantitiesByOrderLineId } from "@/galaxus/edi/invoiceCoverage";
+import { getInvoicedQuantitiesByLineForOrders } from "@/galaxus/edi/invoiceCoverage";
 import { resolveOrderLineProductKey } from "@/galaxus/supplier/providerKey";
 import { dedupeById } from "@/galaxus/_lib/dedupeById";
+import { filterOrdersToOpenLines } from "@/galaxus/warehouse/eligibleRemaining";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -228,43 +229,37 @@ export async function GET(request: Request) {
     );
     const orderIds = ordersWithAnchor.map((o) => o.id);
 
-    const invoiceCoverage: Record<string, { ordered: number; invoiced: number }> = {};
-    await Promise.all(
-      ordersWithAnchor.map(async (order) => {
-        const lines = order.lines.map((line) => ({
-          id: line.id,
-          quantity: line.quantity,
-          lineNumber: line.lineNumber,
-          buyerPid: line.buyerPid,
-          supplierPid: line.supplierPid,
-          gtin: line.gtin,
-        }));
-        const invoiced = await getInvoicedQuantitiesByOrderLineId(order.id, lines as any);
-        for (const line of lines) {
-          const orderedQty = Number(line.quantity ?? 0);
-          invoiceCoverage[line.id] = {
-            ordered: Number.isFinite(orderedQty) ? orderedQty : 0,
-            invoiced: invoiced.get(line.id) ?? 0,
-          };
-        }
-      })
-    );
-
     const orderRefs = Array.from(
       new Set(ordersWithAnchor.map((o) => String(o.galaxusOrderId ?? "").trim()).filter(Boolean))
     );
-    const delrFiles = await (prisma as any).galaxusEdiFile.findMany({
-      where: {
-        direction: "OUT",
-        docType: "DELR",
-        status: { in: ["uploaded", "processed", "UPLOADED", "PROCESSED", "sent", "SENT"] },
-        OR: [{ orderId: { in: orderIds } }, { orderRef: { in: orderRefs } }],
-      },
-      select: {
-        shipmentId: true,
-        payloadJson: true,
-      },
-    });
+    const [delrFiles, existingItems] = await Promise.all([
+      (prisma as any).galaxusEdiFile.findMany({
+        where: {
+          direction: "OUT",
+          docType: "DELR",
+          status: { in: ["uploaded", "processed", "UPLOADED", "PROCESSED", "sent", "SENT"] },
+          OR: [{ orderId: { in: orderIds } }, { orderRef: { in: orderRefs } }],
+        },
+        select: {
+          shipmentId: true,
+          payloadJson: true,
+        },
+      }),
+      (prisma as any).shipmentItem.findMany({
+        where: { orderId: { in: orderIds } },
+        select: {
+          shipmentId: true,
+          orderId: true,
+          buyerPid: true,
+          supplierPid: true,
+          gtin14: true,
+          quantity: true,
+          shipment: {
+            select: { delrSentAt: true, delrStatus: true, status: true },
+          },
+        },
+      }),
+    ]);
     const delrShipmentIds = new Set<string>();
     for (const file of delrFiles as any[]) {
       const shipmentId = normalizeText(file?.shipmentId) || getPayloadShipmentId(file?.payloadJson);
@@ -272,20 +267,6 @@ export async function GET(request: Request) {
     }
 
     const shipmentCoverage: Record<string, ShipmentCoverage> = {};
-    const existingItems = await (prisma as any).shipmentItem.findMany({
-      where: { orderId: { in: orderIds } },
-      select: {
-        shipmentId: true,
-        orderId: true,
-        buyerPid: true,
-        supplierPid: true,
-        gtin14: true,
-        quantity: true,
-        shipment: {
-          select: { delrSentAt: true, delrStatus: true, status: true },
-        },
-      },
-    });
     const existingItemsByOrderId = new Map<string, any[]>();
     for (const item of existingItems as any[]) {
       const oid = String(item?.orderId ?? "");
@@ -349,7 +330,37 @@ export async function GET(request: Request) {
       }
     }
 
-    const allLines = ordersWithAnchor.flatMap((order) => order.lines ?? []);
+    // Same address (Galaxus Villmergen) matches every warehouse order ever.
+    // Coverage still sees the full history. Catalog + invoice work only on lines
+    // that can still be packed — that is what the scan UI renders.
+    const ordersForPack = filterOrdersToOpenLines(ordersWithAnchor, shipmentCoverage);
+    const invoiceCoverage: Record<string, { ordered: number; invoiced: number }> = {};
+    const openShipmentCoverage: Record<string, ShipmentCoverage> = {};
+    const invoicedByLine = await getInvoicedQuantitiesByLineForOrders(
+      ordersForPack.flatMap((order) =>
+        (order.lines ?? []).map((line) => ({
+          id: line.id,
+          orderId: order.id,
+          lineNumber: line.lineNumber,
+          buyerPid: line.buyerPid,
+          supplierPid: line.supplierPid,
+          gtin: line.gtin,
+        }))
+      )
+    );
+    for (const order of ordersForPack) {
+      for (const line of order.lines ?? []) {
+        const orderedQty = Number(line.quantity ?? 0);
+        invoiceCoverage[line.id] = {
+          ordered: Number.isFinite(orderedQty) ? orderedQty : 0,
+          invoiced: invoicedByLine.get(line.id) ?? 0,
+        };
+        const cov = shipmentCoverage[line.id];
+        if (cov) openShipmentCoverage[line.id] = cov;
+      }
+    }
+
+    const allLines = ordersForPack.flatMap((order) => order.lines ?? []);
     const lineGtins: string[] = Array.from(
       new Set<string>(
         allLines.map((line: any) => String(line?.gtin ?? "").trim()).filter((gtin: string) => gtin.length > 0)
@@ -373,47 +384,33 @@ export async function GET(request: Request) {
           })
         )
       );
-      const byGtin = await (prisma as any).variantMapping.findMany({
-        where: { gtin: { in: gtinQueryKeys } },
-        select: {
-          id: true,
-          gtin: true,
-          supplierVariantId: true,
-          updatedAt: true,
-          supplierVariant: {
-            select: {
-              supplierSku: true,
-              sizeRaw: true,
-              sizeNormalized: true,
-              supplierProductName: true,
-            },
+      const mappingSelect = {
+        id: true,
+        gtin: true,
+        supplierVariantId: true,
+        updatedAt: true,
+        supplierVariant: {
+          select: {
+            supplierSku: true,
+            sizeRaw: true,
+            sizeNormalized: true,
+            supplierProductName: true,
           },
-          kickdbVariant: { select: { sizeEu: true, product: { select: { name: true } } } },
         },
-        orderBy: { updatedAt: "desc" },
-      });
-      const bySupplierVariantId =
+        kickdbVariant: { select: { sizeEu: true, product: { select: { name: true } } } },
+      } as const;
+      const [byGtin, bySupplierVariantId] = await Promise.all([
+        (prisma as any).variantMapping.findMany({
+          where: { gtin: { in: gtinQueryKeys } },
+          select: mappingSelect,
+        }),
         supplierVariantIdsFromLines.length > 0
-          ? await (prisma as any).variantMapping.findMany({
+          ? (prisma as any).variantMapping.findMany({
               where: { supplierVariantId: { in: supplierVariantIdsFromLines } },
-              select: {
-                id: true,
-                gtin: true,
-                supplierVariantId: true,
-                updatedAt: true,
-                supplierVariant: {
-                  select: {
-                    supplierSku: true,
-                    sizeRaw: true,
-                    sizeNormalized: true,
-                    supplierProductName: true,
-                  },
-                },
-                kickdbVariant: { select: { sizeEu: true, product: { select: { name: true } } } },
-              },
-              orderBy: { updatedAt: "desc" },
+              select: mappingSelect,
             })
-          : [];
+          : Promise.resolve([]),
+      ]);
       const seenMappingId = new Set<string>();
       const mappings: any[] = [];
       for (const m of [...byGtin, ...bySupplierVariantId]) {
@@ -506,7 +503,7 @@ export async function GET(request: Request) {
       enrichedLinesById.set(String(line.id), enriched);
     }
 
-    const orderPayload = ordersWithAnchor.map((order) => ({
+    const orderPayload = ordersForPack.map((order) => ({
       id: order.id,
       galaxusOrderId: order.galaxusOrderId,
       orderNumber: order.orderNumber ?? null,
@@ -549,7 +546,7 @@ export async function GET(request: Request) {
       anchorOrderId: anchor.id,
       orders: orderPayload,
       invoiceCoverage,
-      shipmentCoverage,
+      shipmentCoverage: openShipmentCoverage,
     };
     eligibleCache.set(cacheKey, { at: Date.now(), body });
     return NextResponse.json(body);
