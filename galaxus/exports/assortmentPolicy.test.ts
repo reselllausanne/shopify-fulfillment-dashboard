@@ -61,7 +61,7 @@ describe("galaxusAssortmentBlockReason", () => {
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_1", title: "Nike Dunk Low", sizeRaw: "42" })).toBeNull();
   });
 
-  it("fashion-only: delists non-fashion + LEGO/TCG/controller, keeps fashion, console, REI allowlist", () => {
+  it("fashion-only: delists non-fashion + LEGO/TCG/controller/console, keeps fashion + REI allowlist", () => {
     delete process.env.GALAXUS_FASHION_ONLY;
     delete process.env.GALAXUS_REI_ALLOWLIST;
     expect(
@@ -111,8 +111,23 @@ describe("galaxusAssortmentBlockReason", () => {
         suggestedRetailInclVatChf: 90,
       })
     ).toBe("hobby_toy");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_1",
+        title: "Sony PlayStation 5 Console Disc Edition",
+        brand: "Sony",
+        suggestedRetailInclVatChf: 600,
+      })
+    ).toBe("hobby_toy");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_PS_DUAL",
+        title: "Sony Official PlayStation 5 - DualSense Wireless Controller - Remix Green",
+        brand: "Sony",
+        suggestedRetailInclVatChf: 140,
+      })
+    ).toBe("hobby_toy");
     for (const input of [
-      { providerKey: "STX_1", title: "Sony PlayStation 5 Console Disc Edition", brand: "Sony", suggestedRetailInclVatChf: 600 },
       { providerKey: "STX_041604418976", title: "Stanley Chocolate Flowstate Quencher 40oz Tumbler", suggestedRetailInclVatChf: 80 },
       { providerKey: "STX_10", title: "Nike Dunk Low Panda", brand: "Nike", sizeRaw: "42", suggestedRetailInclVatChf: 150 },
       { providerKey: "STX_11", title: "Essentials Fleece Hoodie Black", brand: "Fear of God", sizeRaw: "M", suggestedRetailInclVatChf: 120 },
@@ -618,15 +633,24 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBe("price_outlier");
   });
 
-  it("keeps electronics that are not storage or IT components", () => {
+  it("keeps electronics that are not storage or IT components (electronics gate only)", () => {
+    process.env.GALAXUS_FASHION_ONLY = "0";
     for (const input of [
-      { providerKey: "STX_1", title: "Sony PlayStation 5 Console Disc Edition", brand: "Sony", suggestedRetailInclVatChf: 600 },
       { providerKey: "STX_2", title: "Apple AirPods Pro 2", suggestedRetailInclVatChf: 250 },
-      { providerKey: "HAW_9", title: "Philips Hue White E27 LED Lampe", purchasePriceExVatChf: 20 },
-      { providerKey: "ALT_9", title: "Logitech MX Keys Tastatur", purchasePriceExVatChf: 90 },
+      { providerKey: "STX_PHONE", title: "Apple iPhone 15 Pro 256GB", brand: "Apple", suggestedRetailInclVatChf: 250 },
     ]) {
+      expect(galaxusAssortmentBlockReason(input)).not.toBe("electronics");
       expect(galaxusAssortmentBlockReason(input)).toBeNull();
     }
+    // Consoles are hobby_toy now (not the electronics/storage gate).
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_1",
+        title: "Sony PlayStation 5 Console Disc Edition",
+        brand: "Sony",
+        suggestedRetailInclVatChf: 600,
+      })
+    ).toBe("hobby_toy");
   });
 
   it("blocks general-release shoes above 350 CHF", () => {
