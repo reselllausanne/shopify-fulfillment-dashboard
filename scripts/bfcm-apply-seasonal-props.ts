@@ -14,26 +14,27 @@ const H = {
   "content-type": "application/vnd.api+json",
   revision: "2025-10-15",
 };
-type Pick = { handle: string; seg: "m" | "w" | "u"; title: string; image: string; sizes: { id: string; size: string }[] };
+type Pick = { handle: string; seg: "m" | "w" | "u" | "h"; title: string; image: string; sizes: { id: string; size: string }[] };
 const TREND: Pick[] = JSON.parse(readFileSync("/tmp/bfcm-trending.json", "utf8"));
 const CUST: Record<string, { gender: "m" | "w" | "u"; sureSize: string | null }> = JSON.parse(readFileSync("/tmp/bfcm-sizes.json", "utf8"));
 const LINK = "https://www.resell-lausanne.ch/collections/black-friday?utm_source=klaviyo&utm_medium=email&utm_campaign=rl_nov_2026_saison";
 
-const order: Record<"m" | "w" | "u", Array<"m" | "w" | "u">> = { m: ["m", "u", "w"], w: ["w", "u", "m"], u: ["u", "m", "w"] };
+const by = (h: string) => {
+  const p = TREND.find((t) => t.handle === h);
+  if (!p) throw new Error(`trend pick missing: ${h}`);
+  return p;
+};
+const TIMBERLAND = by("timberland-6-inch-premium-waterproof-wheat");
+const HOODIE = by("fear-of-god-essentials-fleece-hoodie-black");
+const UGG_TASMAN = by("ugg-tasman-ii-slipper-black");
+const UGG_MINI_W = by("ugg-classic-ultra-mini-chestnut-w");
+const FALLBACK = by("salomon-xt-6-black-coffee-burro-bitter-chocolate");
 
+// Winter bestsellers: slot 1 boot, slot 2 hoodie, slot 3 UGG / second boot. Women: UGG mini first.
 function choose(gender: "m" | "w" | "u", size: string | null): Pick[] {
-  const pool = order[gender].flatMap((g) => TREND.filter((t) => t.seg === g));
-  const own = order[gender][0];
-  // own segment first, then the rest; with sure size, size-matching pairs first
-  const ranked = [...pool];
-  const fits = (t: Pick) => (size ? t.sizes.some((s) => s.size === size) : true);
-  const primary = ranked.filter((t) => t.seg === own || own === "u");
-  const picked: Pick[] = [];
-  for (const t of [...primary.filter(fits), ...ranked.filter(fits), ...ranked]) {
-    if (picked.length === 3) break;
-    if (!picked.includes(t)) picked.push(t);
-  }
-  return picked;
+  const slots = gender === "w" ? [UGG_MINI_W, HOODIE, TIMBERLAND] : [TIMBERLAND, HOODIE, UGG_TASMAN];
+  const fits = (t: Pick) => t.seg === "h" || !size || t.sizes.some((s) => s.size === size);
+  return slots.map((t) => (fits(t) ? t : FALLBACK));
 }
 
 async function k(url: string, init?: RequestInit): Promise<any> {
@@ -72,7 +73,7 @@ async function members(u: string) {
       const n = i + 1;
       props[`rl_nov_2026_p${n}_ready`] = true;
       props[`rl_nov_2026_p${n}_title`] = p.title;
-      props[`rl_nov_2026_p${n}_caption`] = "Parmi les plus vendues du moment.";
+      props[`rl_nov_2026_p${n}_caption`] = "Parmi les plus vendues cet hiver.";
       props[`rl_nov_2026_p${n}_url`] = LINK;
       props[`rl_nov_2026_p${n}_image`] = p.image;
     });
