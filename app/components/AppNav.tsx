@@ -84,7 +84,7 @@ const NAV_GROUPS: NavGroup[] = [
 
 // Routes that render their own auth/portal chrome — no staff nav there.
 // /returns = public customer portal (Shopify embed + standalone), not ops dashboard.
-const HIDE_PREFIXES = ["/login", "/partners", "/track", "/returns"];
+const HIDE_PREFIXES = ["/login", "/partners", "/track", "/returns", "/tv"];
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
