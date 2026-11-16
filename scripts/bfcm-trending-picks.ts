@@ -7,7 +7,7 @@ import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 
 // rank = trend order. seg: m men/unisex-leaning, w women, u unisex
-const CANDIDATES: { handle: string; seg: "m" | "w" | "u" }[] = [
+const CANDIDATES: { handle: string; seg: "m" | "w" | "u" | "h" }[] = [
   { handle: "timberland-6-inch-premium-waterproof-wheat", seg: "m" },
   { handle: "salomon-xt-6-black-coffee-burro-bitter-chocolate", seg: "u" },
   { handle: "salomon-xt-6-vanilla-ice-black-silver-cloud", seg: "u" },
@@ -19,6 +19,7 @@ const CANDIDATES: { handle: string; seg: "m" | "w" | "u" }[] = [
   { handle: "adidas-samba-og-mule-preloved-brown-white-womens", seg: "w" },
   { handle: "nike-caitlin-1-cave-stone-womens", seg: "w" },
   { handle: "ugg-tasman-ii-slipper-black", seg: "u" },
+  { handle: "fear-of-god-essentials-fleece-hoodie-black", seg: "h" },
 ];
 
 const Q = `query($h:String!){productByHandle(handle:$h){id handle title status featuredImage{url} soldes:metafield(namespace:"custom",key:"soldes_48h"){value} variants(first:80){nodes{id title availableForSale selectedOptions{name value}}}}}`;

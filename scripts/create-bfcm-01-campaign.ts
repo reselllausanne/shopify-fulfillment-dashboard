@@ -52,8 +52,16 @@ function bake(src: string, html: boolean): string {
   return out;
 }
 
-async function k(path: string, init: RequestInit) {
-  const r = await fetch(`https://a.klaviyo.com/api/${path}`, { ...init, headers: H });
+async function k(path: string, init: RequestInit): Promise<any> {
+  let r: Response | undefined;
+  for (let i = 0; i < 6 && !r; i++) {
+    try {
+      r = await fetch(`https://a.klaviyo.com/api/${path}`, { ...init, headers: H });
+    } catch {
+      await new Promise((x) => setTimeout(x, 4000)); // connect timeout: request never sent, safe to retry
+    }
+  }
+  if (!r) throw new Error("network");
   const t = await r.text();
   if (!r.ok) throw new Error(`${path} ${r.status} ${t.slice(0, 400)}`);
   return t ? JSON.parse(t) : {};
@@ -74,8 +82,8 @@ async function k(path: string, init: RequestInit) {
         channel: "email",
         label: name,
         content: {
-          subject: "Les paires du moment pour l’hiver",
-          preview_text: "Timberland, Salomon, Jordan : ce qui part le plus en ce moment.",
+          subject: "Les valeurs sûres de l’hiver",
+          preview_text: "Timberland, UGG, Essentials : ce qui se vend le plus quand il fait froid.",
           from_email: "Contact@resell-lausanne.ch",
           from_label: "Resell Lausanne",
           reply_to_email: "Contact@resell-lausanne.ch",

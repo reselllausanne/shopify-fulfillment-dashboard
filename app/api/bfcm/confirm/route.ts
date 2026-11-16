@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 /**
  * Public endpoint for the Black Friday landing size click.
  * - Only touches EXISTING Klaviyo profiles. Never creates a profile, never subscribes.
- * - Refuses holds (rl_marketing_hold / rl_bf_2026_excluded) and non-consented profiles.
+ * - Refuses holds (rl_marketing_hold / rl_bf_2026_excluded) (no consent gate: sending is gated by Klaviyo itself).
  * - Saves size on the profile and fires "BFCM Registered" once (unique_id) to trigger the confirmation flow.
  */
 
@@ -95,16 +95,13 @@ export async function POST(req: Request) {
     if (!profile) return reply({ ok: true, registered: false });
 
     const props = profile.attributes.properties ?? {};
-    const consent = profile.attributes.subscriptions?.email?.marketing;
     const blocked =
       props.rl_marketing_hold === true ||
       props.rl_bf_2026_excluded === true ||
       props.rl_marketing_hold === "true" ||
       props.rl_bf_2026_excluded === "true";
     if (blocked) return reply({ ok: false, blocked: true, message: "Compte non éligible." }, 403);
-    if (consent?.consent !== "SUBSCRIBED" || (consent?.suppression ?? []).length > 0) {
-      return reply({ ok: true, registered: false });
-    }
+    // Consent not required to store the click: Klaviyo flows/campaigns skip non-consented profiles themselves.
 
     const label = range.replace("-", "–");
     const first = props.rl_bf_2026_registered !== true;
