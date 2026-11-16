@@ -77,6 +77,8 @@ const PUBLIC_PATHS = [
   "/api/tracking/token",
   // Shopify custom pixel funnel ingest. Own gate: FUNNEL_TRACK_KEY + origin allowlist + rate limit.
   "/api/track/funnel",
+  // BFCM landing size click. Own gate: origin allowlist + rate limit + Klaviyo hold/consent checks.
+  "/api/bfcm/confirm",
   // QZ Tray public cert only (never private key). Needed for silent print + override.crt download.
   "/api/qz/certificate",
   "/api/qz/override.crt",
