@@ -2388,16 +2388,15 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
     }
 
     const m = laneMarginPct(c.sellChf, totalChf);
-    const marginFloor = options.noLoss
-      ? isExpressFamily(selected.lane.label)
-        ? 0
-        : -0.05
-      : minMargin;
+    // noLoss: lane picker (chooseLane) already prefers Express >= 0, else cheapest lane within
+    // MAX_LOSS_PCT. Final guard must use the same limit (was hard-coded 0 / -5 %, which
+    // rejected valid -5..-10 % buys with a misleading "floor 5%" message).
+    const marginFloor = options.noLoss ? -MAX_LOSS_PCT : minMargin;
     if (options.noLoss ? m < marginFloor - 1e-9 : !(m > minMargin)) {
       return {
         kind: "needs_human",
         reason: "margin",
-        detail: `sell ${c.sellChf} vs total ${totalChf} margin ${(m * 100).toFixed(1)}% (floor ${(minMargin * 100).toFixed(0)}%)`,
+        detail: `sell ${c.sellChf} vs total ${totalChf} margin ${(m * 100).toFixed(1)}% (floor ${(marginFloor * 100).toFixed(0)}%)`,
         lane: selected.lane.label,
         pickReason: selected.pickReason,
         totalChf,
