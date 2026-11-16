@@ -52,8 +52,16 @@ function bake(src: string, html: boolean): string {
   return out;
 }
 
-async function k(path: string, init: RequestInit) {
-  const r = await fetch(`https://a.klaviyo.com/api/${path}`, { ...init, headers: H });
+async function k(path: string, init: RequestInit): Promise<any> {
+  let r: Response | undefined;
+  for (let i = 0; i < 6 && !r; i++) {
+    try {
+      r = await fetch(`https://a.klaviyo.com/api/${path}`, { ...init, headers: H });
+    } catch {
+      await new Promise((x) => setTimeout(x, 4000)); // connect timeout: request never sent, safe to retry
+    }
+  }
+  if (!r) throw new Error("network");
   const t = await r.text();
   if (!r.ok) throw new Error(`${path} ${r.status} ${t.slice(0, 400)}`);
   return t ? JSON.parse(t) : {};

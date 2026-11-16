@@ -1,6 +1,6 @@
 /**
  * Set rl_nov_2026_p1..p3_* on mailable profiles (properties only, no consent change).
- * Cards = trending pairs not in warehouse stock, not sale. Click -> Black Friday collection (never product).
+ * Cards = winter bestsellers not in warehouse stock, not sale. Click -> real product page.
  * Gender from order history (Women's / kids -> women side). Size used only when "sure"
  * (>=2 adult shoe orders, >=75% same size) and never mentioned in the mail.
  * Usage: tsx scripts/bfcm-apply-seasonal-props.ts [--apply]
@@ -17,7 +17,9 @@ const H = {
 type Pick = { handle: string; seg: "m" | "w" | "u" | "h"; title: string; image: string; sizes: { id: string; size: string }[] };
 const TREND: Pick[] = JSON.parse(readFileSync("/tmp/bfcm-trending.json", "utf8"));
 const CUST: Record<string, { gender: "m" | "w" | "u"; sureSize: string | null }> = JSON.parse(readFileSync("/tmp/bfcm-sizes.json", "utf8"));
-const LINK = "https://www.resell-lausanne.ch/collections/black-friday?utm_source=klaviyo&utm_medium=email&utm_campaign=rl_nov_2026_saison";
+const UTM = "utm_source=klaviyo&utm_medium=email&utm_campaign=rl_nov_2026_saison";
+// Seasonal pieces are NOT Black Friday offers: link to the real product page to convert.
+const productUrl = (handle: string) => `https://www.resell-lausanne.ch/products/${handle}?${UTM}`;
 
 const by = (h: string) => {
   const p = TREND.find((t) => t.handle === h);
@@ -38,7 +40,15 @@ function choose(gender: "m" | "w" | "u", size: string | null): Pick[] {
 }
 
 async function k(url: string, init?: RequestInit): Promise<any> {
-  const r = await fetch(url, { ...init, headers: H });
+  let r: Response | undefined;
+  for (let i = 0; i < 8 && !r; i++) {
+    try {
+      r = await fetch(url, { ...init, headers: H });
+    } catch {
+      await new Promise((x) => setTimeout(x, 4000));
+    }
+  }
+  if (!r) throw new Error("network");
   if (r.status === 429) { await new Promise((x) => setTimeout(x, 3000)); return k(url, init); }
   const t = await r.text();
   if (!r.ok) throw new Error(`${r.status} ${t.slice(0, 200)}`);
@@ -74,7 +84,7 @@ async function members(u: string) {
       props[`rl_nov_2026_p${n}_ready`] = true;
       props[`rl_nov_2026_p${n}_title`] = p.title;
       props[`rl_nov_2026_p${n}_caption`] = "Parmi les plus vendues cet hiver.";
-      props[`rl_nov_2026_p${n}_url`] = LINK;
+      props[`rl_nov_2026_p${n}_url`] = productUrl(p.handle);
       props[`rl_nov_2026_p${n}_image`] = p.image;
     });
     if (APPLY) {
