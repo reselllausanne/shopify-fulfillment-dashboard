@@ -27,6 +27,7 @@ type TvSale = {
   imageUrl: string | null;
   salesChf: number;
   marginChf: number | null;
+  marginEstimated: boolean;
   at: string;
 };
 
@@ -47,10 +48,18 @@ const SHOPIFY_TODAY_QUERY = /* GraphQL */ `
             amount
           }
         }
-        lineItems(first: 3) {
+        lineItems(first: 10) {
           nodes {
             title
             quantity
+            originalUnitPriceSet {
+              shopMoney {
+                amount
+              }
+            }
+            variant {
+              barcode
+            }
             image {
               url
             }
@@ -68,7 +77,13 @@ type ShopifyOrderNode = {
   cancelledAt: string | null;
   currentTotalPriceSet?: { shopMoney?: { amount?: string } };
   lineItems?: {
-    nodes?: Array<{ title?: string; quantity?: number; image?: { url?: string } | null }>;
+    nodes?: Array<{
+      title?: string;
+      quantity?: number;
+      originalUnitPriceSet?: { shopMoney?: { amount?: string } };
+      variant?: { barcode?: string | null } | null;
+      image?: { url?: string } | null;
+    }>;
   };
 };
 
@@ -96,6 +111,38 @@ async function fetchShopifyToday(startIso: string): Promise<ShopifyOrderNode[]> 
     after = res.data.orders.pageInfo.endCursor;
   }
   return out;
+}
+
+type BuyPriceIndex = {
+  byVariantId: Map<string, number>;
+  byGtin: Map<string, number>;
+};
+
+async function loadBuyPrices(variantIds: string[], gtins: string[]): Promise<BuyPriceIndex> {
+  const idx: BuyPriceIndex = { byVariantId: new Map(), byGtin: new Map() };
+  const vIds = [...new Set(variantIds.filter(Boolean))];
+  const gs = [...new Set(gtins.filter(Boolean))];
+  if (!vIds.length && !gs.length) return idx;
+  const rows = await prisma.supplierVariant.findMany({
+    where: {
+      OR: [
+        ...(vIds.length ? [{ supplierVariantId: { in: vIds } }] : []),
+        ...(gs.length ? [{ gtin: { in: gs } }] : []),
+      ],
+    },
+    select: { supplierVariantId: true, gtin: true, providerKey: true, standardBuyPrice: true, expressBuyPrice: true },
+  });
+  for (const r of rows) {
+    const buy = toNumberSafe(r.standardBuyPrice, 0) || toNumberSafe(r.expressBuyPrice, 0);
+    if (buy <= 0) continue;
+    idx.byVariantId.set(r.supplierVariantId, buy);
+    if (r.gtin) {
+      const prev = idx.byGtin.get(r.gtin);
+      const isStx = String(r.providerKey ?? "").toUpperCase().startsWith("STX");
+      if (prev == null || isStx) idx.byGtin.set(r.gtin, buy);
+    }
+  }
+  return idx;
 }
 
 async function build() {
@@ -181,6 +228,12 @@ async function build() {
   let shopifySales = 0;
   let shopifyOrders = 0;
 
+  const shopPrices = await loadBuyPrices(
+    [],
+    (shopifyLive ?? []).flatMap((o) => (o.lineItems?.nodes ?? []).map((li) => li.variant?.barcode ?? ""))
+  );
+  let shopifyMarginEstimated = 0;
+
   if (shopifyLive) {
     for (const o of shopifyLive) {
       if (o.cancelledAt) continue;
@@ -189,6 +242,26 @@ async function build() {
       shopifyOrders += 1;
       const items = o.lineItems?.nodes ?? [];
       const first = items[0];
+      let marginChf: number | null = marginByOrder.has(o.name) ? marginByOrder.get(o.name)!.margin : null;
+      let marginEstimated = false;
+      if (marginChf == null) {
+        let est = 0;
+        let known = 0;
+        for (const li of items) {
+          const unit = li.variant?.barcode ? shopPrices.byGtin.get(li.variant.barcode) : undefined;
+          const qty = Math.max(1, li.quantity ?? 1);
+          const price = toNumberSafe(li.originalUnitPriceSet?.shopMoney?.amount, 0);
+          if (unit && price > 0) {
+            est += (price - unit) * qty;
+            known += 1;
+          }
+        }
+        if (known > 0) {
+          marginChf = est;
+          marginEstimated = true;
+          shopifyMarginEstimated += est;
+        }
+      }
       sales.push({
         id: `shopify:${o.id}`,
         channel: "shopify",
@@ -197,7 +270,8 @@ async function build() {
         extraItems: Math.max(0, items.length - 1),
         imageUrl: first?.image?.url ?? marginByOrder.get(o.name)?.image ?? null,
         salesChf: total,
-        marginChf: marginByOrder.has(o.name) ? marginByOrder.get(o.name)!.margin : null,
+        marginChf,
+        marginEstimated,
         at: o.createdAt,
       });
     }
@@ -218,26 +292,32 @@ async function build() {
         imageUrl: agg.image,
         salesChf: agg.sales,
         marginChf: agg.margin,
+        marginEstimated: false,
         at: (m.shopifyCreatedAt ?? now).toISOString(),
       });
     }
     sales.push(...seen.values());
   }
 
-  let shopifyMargin = 0;
+  let shopifyMargin = shopifyMarginEstimated;
   for (const v of marginByOrder.values()) shopifyMargin += v.margin;
   const shopifyMarginPending = shopifyLive
-    ? shopifyLive.filter((o) => !o.cancelledAt && !marginByOrder.has(o.name)).length
+    ? sales.filter((x) => x.channel === "shopify" && x.marginChf == null).length
     : 0;
 
   // ---- Galaxus ----
   const costById = await galaxusLineStockxCostChfByLineId(galaxusLines);
   const gxOrders = new Map<
     string,
-    { ref: string; title: string; lines: number; sales: number; margin: number; hasMargin: boolean; at: Date }
+    { ref: string; title: string; lines: number; sales: number; margin: number; hasMargin: boolean; estimated: boolean; at: Date }
   >();
   let galaxusSales = 0;
   let galaxusMargin = 0;
+  let galaxusMarginEstimated = 0;
+  const gxPrices = await loadBuyPrices(
+    galaxusLines.map((l) => l.supplierVariantId ?? ""),
+    galaxusLines.map((l) => l.gtin ?? "")
+  );
   for (const line of galaxusLines) {
     const revenue = galaxusLineNetRevenueChf({
       lineNetAmount: line.lineNetAmount,
@@ -246,13 +326,27 @@ async function build() {
     if (revenue == null) continue;
     galaxusSales += revenue;
     let margin: number | null = null;
+    let estimated = false;
     if (isNerGalaxusMarketplaceLine(line)) {
       margin = nerMarginFromCaChf(revenue);
     } else {
       const cost = costById.get(line.id) ?? 0;
-      if (cost > 0) margin = revenue - cost;
+      if (cost > 0) {
+        margin = revenue - cost;
+      } else {
+        const unit =
+          (line.supplierVariantId ? gxPrices.byVariantId.get(line.supplierVariantId) : undefined) ??
+          (line.gtin ? gxPrices.byGtin.get(line.gtin) : undefined);
+        if (unit && unit > 0) {
+          margin = revenue - unit * Math.max(1, line.quantity ?? 1);
+          estimated = true;
+        }
+      }
     }
-    if (margin != null) galaxusMargin += margin;
+    if (margin != null) {
+      galaxusMargin += margin;
+      if (estimated) galaxusMarginEstimated += margin;
+    }
     const key = line.orderId;
     const g =
       gxOrders.get(key) ??
@@ -263,6 +357,7 @@ async function build() {
         sales: 0,
         margin: 0,
         hasMargin: false,
+        estimated: false,
         at: line.order?.orderDate ?? now,
       };
     g.lines += 1;
@@ -270,6 +365,7 @@ async function build() {
     if (margin != null) {
       g.margin += margin;
       g.hasMargin = true;
+      if (estimated) g.estimated = true;
     }
     gxOrders.set(key, g);
   }
@@ -283,6 +379,7 @@ async function build() {
       imageUrl: null,
       salesChf: g.sales,
       marginChf: g.hasMargin ? g.margin : null,
+      marginEstimated: g.estimated,
       at: g.at.toISOString(),
     });
   }
@@ -301,12 +398,14 @@ async function build() {
       salesChf: Math.round(shopifySales * 100) / 100,
       marginChf: Math.round(shopifyMargin * 100) / 100,
       orders: shopifyOrders,
+      marginEstimatedChf: Math.round(shopifyMarginEstimated),
       marginPending: shopifyMarginPending,
       live: shopifyLive != null,
     },
     galaxus: {
       salesChf: Math.round(galaxusSales * 100) / 100,
       marginChf: Math.round(galaxusMargin * 100) / 100,
+      marginEstimatedChf: Math.round(galaxusMarginEstimated),
       orders: gxOrders.size,
     },
     sales: sales.slice(0, 15),
