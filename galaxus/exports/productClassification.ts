@@ -383,8 +383,9 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
   if (CAMERA_RE.test(text)) return "camera";
   if (HEADPHONE_RE.test(text)) return "headphone";
   if (CHARGER_RE.test(text)) return "charger";
-  if (CONSOLE_RE.test(text)) return "console";
+  // Controllers before consoles: "PlayStation 5 DualSense …" matches both; keep as controller.
   if (CONTROLLER_RE.test(text)) return "controller";
+  if (CONSOLE_RE.test(text)) return "console";
   if (LEGO_RE.test(text)) return "lego";
   // Before footwear / default sneakers — StockX plush titles otherwise fall into Mode.
   if (PLUSH_RE.test(text)) return "plush";

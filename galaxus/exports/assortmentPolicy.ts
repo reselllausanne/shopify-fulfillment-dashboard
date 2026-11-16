@@ -21,16 +21,16 @@
  *   sneakers). Hard art toys (Bearbrick) stay allowed.
  * - lego (temp 2026-11-09): all product kind = lego delisted for now. Re-enable by removing
  *   the kind block + restoring "lego" in FASHION_EXEMPT_KINDS.
- * - hobby_toy (2026-11-09): Pokémon/TCG, board/card/figurine games, dice, dolls, fidget,
- *   squishy, advent calendars, books, keyholders, bike baskets, vinyl, helmets, PS5/console
- *   covers, gaming controllers, ASUS gaming peripherals, pocket knives (Taschenmesser).
- *   Title + kind hard block (STX often classifies these as sneakers → Mode keep).
- *   Fashion collabs (Pokémon sneakers, Nike Pocket Knife DM) stay.
+ * - hobby_toy (2026-11-09, console 2026-11-16): Pokémon/TCG, board/card/figurine games, dice,
+ *   dolls, fidget, squishy, advent calendars, books, keyholders, bike baskets, vinyl, helmets,
+ *   PS5/console covers, gaming controllers, consoles (PS5/Xbox/Switch), ASUS gaming
+ *   peripherals, pocket knives (Taschenmesser). Title + kind hard block (STX often classifies
+ *   these as sneakers → Mode keep). Fashion collabs (Pokémon sneakers, Nike Pocket Knife DM) stay.
  * - product_type_block (2026-11-10): Galaxus Product types from
  *   "Product type to remove - SM.xlsx" (132 German leaves). Match supplierProductType +
  *   category-path segments (+ synonyms). Wins over fashion-kept kinds (e.g. Smartwatch).
  * - non_fashion (Galaxus, 2026-10-13): only "Mode > …" categories + the sport / bag types on
- *   Galaxus's fashion list. Exempt: console hardware + REI allowlist (LEGO/WEL/TCG paused).
+ *   Galaxus's fashion list. Exempt: REI allowlist only (LEGO/WEL/TCG/console paused).
  *   GALAXUS_FASHION_ONLY=0 disables.
  * - price_outlier: consumer price above GALAXUS_MAX_RETAIL_CHF (default 300, every supplier).
  *   REI allowlist exempt (curated prior sales — Jetson / GB10 / etc. sit above the fashion cap).
@@ -181,9 +181,9 @@ const FASHION_EXTRA_LEAVES = new Set([
   "Tasche",
   "Bauchtasche",
 ]);
-/** Non-fashion kept on purpose: console hardware only.
- *  LEGO / tradingcard / controller paused 2026-11-09. */
-const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>(["console"]);
+/** Non-fashion kind keep holes — empty after console delist 2026-11-16.
+ *  LEGO / tradingcard / controller paused 2026-11-09; console 2026-11-16. */
+const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>();
 /** Non-fashion keep holes — ledger in galaxusAssortmentExceptions.ts. */
 const FASHION_EXEMPT_PROVIDER_KEYS = galaxusFashionExemptProviderKeys();
 /** REI allowlist path only (Jetson). WEL paused 2026-11-09 — whole supplier disabled. */
@@ -192,6 +192,7 @@ const FASHION_EXEMPT_SUPPLIERS = new Set(["rei"]);
 const HOBBY_TOY_BLOCKED_KINDS = new Set<GalaxusProductKind>([
   "tradingcard",
   "controller",
+  "console",
   "boardgame",
   "cardgame",
   "rpg",
