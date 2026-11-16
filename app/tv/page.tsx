@@ -11,6 +11,7 @@ type Sale = {
   imageUrl: string | null;
   salesChf: number;
   marginChf: number | null;
+  marginEstimated?: boolean;
   at: string;
 };
 
@@ -18,8 +19,8 @@ type Feed = {
   generatedAt: string;
   day: string;
   totals: { salesChf: number; marginChf: number; orders: number };
-  shopify: { salesChf: number; marginChf: number; orders: number; marginPending: number; live: boolean };
-  galaxus: { salesChf: number; marginChf: number; orders: number };
+  shopify: { salesChf: number; marginChf: number; orders: number; marginPending: number; marginEstimatedChf?: number; live: boolean };
+  galaxus: { salesChf: number; marginChf: number; marginEstimatedChf?: number; orders: number };
   sales: Sale[];
 };
 
@@ -314,7 +315,7 @@ export default function TvPage() {
               orders={feed?.shopify.orders ?? 0}
               note={
                 feed && feed.shopify.marginPending > 0
-                  ? `${feed.shopify.marginPending} marge(s) en attente`
+                  ? `${feed.shopify.marginPending} sans marge`
                   : undefined
               }
             />
@@ -366,7 +367,9 @@ export default function TvPage() {
               {flash.extraItems > 0 ? ` +${flash.extraItems}` : ""}
             </div>
             {flash.marginChf != null && (
-              <div className="text-[4.5vh] font-bold text-emerald-300">marge +{chf(flash.marginChf)} CHF</div>
+              <div className="text-[4.5vh] font-bold text-emerald-300">
+                marge {flash.marginEstimated ? "~" : ""}+{chf(flash.marginChf)} CHF
+              </div>
             )}
           </div>
         </div>
@@ -483,7 +486,9 @@ function SaleRow({ sale, fresh, now }: { sale: Sale; fresh: boolean; now: number
       <div className="text-right leading-tight">
         <div className="text-[3.2vh] font-black tabular-nums">{chf(sale.salesChf)}</div>
         {sale.marginChf != null && (
-          <div className="text-[2vh] font-semibold tabular-nums text-emerald-300">+{chf(sale.marginChf)}</div>
+          <div className="text-[2vh] font-semibold tabular-nums text-emerald-300">
+            {sale.marginEstimated ? "~" : ""}+{chf(sale.marginChf)}
+          </div>
         )}
       </div>
     </li>
