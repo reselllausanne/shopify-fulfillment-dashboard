@@ -49,8 +49,36 @@ function useCountUp(target: number, durationMs = 1200) {
   return value;
 }
 
-/** Synthesised "ka-ching" (register bell). No asset needed. */
+let saleBuffer: AudioBuffer | null = null;
+let saleBufferLoading = false;
+
+async function loadSaleSound(ctx: AudioContext) {
+  if (saleBuffer || saleBufferLoading) return;
+  saleBufferLoading = true;
+  try {
+    const res = await fetch("/tv/sale.mp3");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    saleBuffer = await ctx.decodeAudioData(await res.arrayBuffer());
+  } catch {
+    saleBuffer = null;
+  } finally {
+    saleBufferLoading = false;
+  }
+}
+
+/** Real Shopify sale chime (public/tv/sale.mp3); synth fallback if missing. */
 function playCashSound(ctx: AudioContext) {
+  if (saleBuffer) {
+    const src = ctx.createBufferSource();
+    src.buffer = saleBuffer;
+    src.connect(ctx.destination);
+    src.start();
+    return;
+  }
+  playSynthSound(ctx);
+}
+
+function playSynthSound(ctx: AudioContext) {
   const t0 = ctx.currentTime;
   const master = ctx.createGain();
   master.gain.value = 0.9;
@@ -126,10 +154,11 @@ export default function TvPage() {
       const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       audioRef.current = new Ctor();
     }
-    void audioRef.current.resume();
+    const ctx = audioRef.current;
+    void ctx.resume();
     soundOnRef.current = true;
     setSoundOn(true);
-    playCashSound(audioRef.current);
+    void loadSaleSound(ctx).then(() => playCashSound(ctx));
   }, []);
 
   // Any click/key anywhere unlocks audio (TV remote / mouse).
