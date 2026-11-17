@@ -8,6 +8,7 @@ import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
 import { isNerGalaxusMarketplaceLine, nerMarginFromCaChf } from "@/galaxus/orders/nerMarketplaceMargin";
 import { galaxusLineStockxCostChfByLineId } from "@/galaxus/orders/galaxusLineStockxCostMetrics";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
+import { isPhysicalFulfillmentLocationName } from "@/shopify/orders/physicalFulfillmentLocations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,8 +49,24 @@ const SHOPIFY_TODAY_QUERY = /* GraphQL */ `
             amount
           }
         }
+        fulfillmentOrders(first: 5) {
+          nodes {
+            assignedLocation {
+              name
+            }
+            lineItems(first: 20) {
+              nodes {
+                totalQuantity
+                lineItem {
+                  id
+                }
+              }
+            }
+          }
+        }
         lineItems(first: 10) {
           nodes {
+            id
             title
             quantity
             originalUnitPriceSet {
@@ -76,8 +93,15 @@ type ShopifyOrderNode = {
   createdAt: string;
   cancelledAt: string | null;
   currentTotalPriceSet?: { shopMoney?: { amount?: string } };
+  fulfillmentOrders?: {
+    nodes?: Array<{
+      assignedLocation?: { name?: string | null } | null;
+      lineItems?: { nodes?: Array<{ lineItem?: { id?: string | null } | null }> };
+    }>;
+  };
   lineItems?: {
     nodes?: Array<{
+      id?: string;
       title?: string;
       quantity?: number;
       originalUnitPriceSet?: { shopMoney?: { amount?: string } };
@@ -249,9 +273,26 @@ async function build() {
       let marginChf: number | null = marginByOrder.has(o.name) ? marginByOrder.get(o.name)!.margin : null;
       let marginEstimated = false;
       if (marginChf == null) {
+        // Lines fulfilled from a physical site (e.g. Warehouse Bussigny): stock already expensed → 100% margin.
+        const physicalLineIds = new Set<string>();
+        for (const fo of o.fulfillmentOrders?.nodes ?? []) {
+          if (!isPhysicalFulfillmentLocationName(fo.assignedLocation?.name)) continue;
+          for (const l of fo.lineItems?.nodes ?? []) {
+            if (l.lineItem?.id) physicalLineIds.add(l.lineItem.id);
+          }
+        }
         let est = 0;
         let known = 0;
+        let physicalOnly = items.length > 0;
         for (const li of items) {
+          const qty0 = Math.max(1, li.quantity ?? 1);
+          const price0 = toNumberSafe(li.originalUnitPriceSet?.shopMoney?.amount, 0);
+          if (li.id && physicalLineIds.has(li.id)) {
+            est += price0 * qty0;
+            known += 1;
+            continue;
+          }
+          physicalOnly = false;
           const unit = li.variant?.barcode ? shopPrices.byGtin.get(li.variant.barcode) : undefined;
           const qty = Math.max(1, li.quantity ?? 1);
           const price = toNumberSafe(li.originalUnitPriceSet?.shopMoney?.amount, 0);
@@ -262,7 +303,7 @@ async function build() {
         }
         if (known > 0) {
           marginChf = est;
-          marginEstimated = true;
+          marginEstimated = !physicalOnly;
           shopifyMarginEstimated += est;
         }
       }
