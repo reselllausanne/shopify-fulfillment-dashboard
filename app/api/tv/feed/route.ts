@@ -179,7 +179,8 @@ async function build() {
   const startIso = fromZonedTime(`${todayKey}T00:00:00`, SHOPIFY_SELL_TIMEZONE).toISOString();
   const window = shopifySellDateUtcWindow(todayKey)!;
 
-  const [matches, galaxusLines, shopifyLive] = await Promise.all([
+  const [adsRow, matches, galaxusLines, shopifyLive] = await Promise.all([
+    prisma.dailyAdSpend.findUnique({ where: { date: window.start }, select: { amountChf: true } }),
     prisma.orderMatch.findMany({
       where: { shopifyCreatedAt: { gte: window.start, lte: window.end } },
       select: {
@@ -464,6 +465,9 @@ async function build() {
     totals: {
       salesChf: Math.round((shopifySales + galaxusSales) * 100) / 100,
       marginChf: Math.round((shopifyMargin + galaxusMargin) * 100) / 100,
+      adsSpendChf: Math.round(toNumberSafe(adsRow?.amountChf, 0) * 100) / 100,
+      netMarginChf:
+        Math.round((shopifyMargin + galaxusMargin - toNumberSafe(adsRow?.amountChf, 0)) * 100) / 100,
       orders: shopifyOrders + gxOrders.size,
     },
     shopify: {
