@@ -70,7 +70,7 @@ describe("calcShopifySellPrice locked formula", () => {
   });
 
   it("ads 15% + CM2 12% of sell, real STX cost", () => {
-    expect(calcShopifySellPrice({ stockxRaw: 60, productCategory: "sneakers" })).toBe(155);
+    expect(calcShopifySellPrice({ stockxRaw: 60, productCategory: "sneakers" })).toBe(148);
     expect(calcShopifySellPrice({ stockxRaw: 147, productCategory: "sneakers" })).toBe(256);
     expect(calcShopifySellPrice({ stockxRaw: 300, productCategory: "sneakers" })).toBe(464);
   });

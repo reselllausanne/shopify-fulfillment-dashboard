@@ -167,13 +167,12 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   const kPct = 1.0 / (1.0 - (PSP + VAT + ADS_PCT + CM2_TARGET));
   const pricePct = C_plus_ship * kPct;
 
-  let finalPriceRaw: number;
-  if (pricePct <= 190.0) {
-    finalPriceRaw = pricePct;
-  } else {
-    const denom = 1.0 - (PSP + VAT + CM2_TARGET);
-    finalPriceRaw = (C_plus_ship + CPA_CAP) / denom;
-  }
+  // Ads cost = min(19% of sell, CPA_CAP): price is the lower of the two solutions.
+  // (Old branch at pricePct<=190 made price drop when cost rose, ~raw 74→75.)
+  const denomCap = 1.0 - (PSP + VAT + CM2_TARGET);
+  const priceCap = (C_plus_ship + CPA_CAP) / denomCap;
+  const finalPriceRawBase = Math.min(pricePct, priceCap);
+  let finalPriceRaw: number = finalPriceRawBase;
 
   const isSaucony = brandLower.includes("saucony") || (handleLower.includes("saucony") && !brandLower);
   const isOnitsuka =
