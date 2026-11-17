@@ -18,7 +18,7 @@ type Sale = {
 type Feed = {
   generatedAt: string;
   day: string;
-  totals: { salesChf: number; marginChf: number; orders: number };
+  totals: { salesChf: number; marginChf: number; adsSpendChf?: number; netMarginChf?: number; orders: number };
   shopify: { salesChf: number; marginChf: number; orders: number; marginPending: number; marginEstimatedChf?: number; live: boolean };
   galaxus: { salesChf: number; marginChf: number; marginEstimatedChf?: number; orders: number };
   sales: Sale[];
@@ -246,8 +246,8 @@ export default function TvPage() {
     timeZone: "Europe/Zurich",
   });
 
-  const totalMarginPct =
-    feed && feed.totals.salesChf > 0 ? (feed.totals.marginChf / feed.totals.salesChf) * 100 : 0;
+  const netMargin = feed?.totals.netMarginChf ?? feed?.totals.marginChf ?? 0;
+  const totalMarginPct = feed && feed.totals.salesChf > 0 ? (netMargin / feed.totals.salesChf) * 100 : 0;
 
   return (
     <div className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-[#05060a] text-white select-none cursor-none">
@@ -294,10 +294,15 @@ export default function TvPage() {
 
           <div className="rounded-[2vh] border border-emerald-400/30 bg-emerald-400/[0.07] px-[2.5vw] py-[2vh]">
             <div className="text-[2.6vh] font-medium uppercase tracking-[0.3em] text-emerald-200/70">
-              Marge du jour
+              Marge du jour (après pub)
+              {feed && (feed.totals.adsSpendChf ?? 0) > 0 && (
+                <span className="ml-[1vw] text-[2.2vh] normal-case tracking-normal text-emerald-200/50">
+                  brut {chf(feed.totals.marginChf)} − pub {chf(feed.totals.adsSpendChf ?? 0)}
+                </span>
+              )}
             </div>
             <div className="flex items-baseline gap-[1.2vw] leading-none">
-              <Big value={feed?.totals.marginChf ?? 0} className="text-[11vh] font-black text-emerald-300" />
+              <Big value={netMargin} className="text-[11vh] font-black text-emerald-300" />
               <span className="text-[3.5vh] font-bold text-emerald-200/50">CHF</span>
               <span className="ml-auto text-[5vh] font-bold tabular-nums text-emerald-200">
                 {totalMarginPct.toFixed(1)}%
