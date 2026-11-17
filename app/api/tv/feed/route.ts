@@ -363,6 +363,29 @@ async function build() {
     galaxusLines.map((l) => l.supplierVariantId ?? ""),
     galaxusLines.map((l) => l.gtin ?? "")
   );
+  // Typical cost/revenue ratio of today's STX lines with a known cost → fallback for lines with no price at all.
+  let ratioCost = 0;
+  let ratioRev = 0;
+  for (const line of galaxusLines) {
+    if (isNerGalaxusMarketplaceLine(line)) continue;
+    const rev = galaxusLineNetRevenueChf({
+      lineNetAmount: line.lineNetAmount,
+      priceLineAmount: line.priceLineAmount,
+    });
+    if (rev == null) continue;
+    const real = costById.get(line.id) ?? 0;
+    const unit =
+      (line.supplierVariantId ? gxPrices.byVariantId.get(line.supplierVariantId) : undefined) ??
+      (line.gtin ? gxPrices.byGtin.get(line.gtin) : undefined) ??
+      0;
+    const cost = real > 0 ? real : unit * Math.max(1, line.quantity ?? 1);
+    if (cost > 0 && cost < rev * 1.5) {
+      ratioCost += cost;
+      ratioRev += rev;
+    }
+  }
+  const typicalCostRatio = ratioRev > 0 ? Math.min(0.97, ratioCost / ratioRev) : 0.88;
+
   for (const line of galaxusLines) {
     const revenue = galaxusLineNetRevenueChf({
       lineNetAmount: line.lineNetAmount,
@@ -384,6 +407,10 @@ async function build() {
           (line.gtin ? gxPrices.byGtin.get(line.gtin) : undefined);
         if (unit && unit > 0) {
           margin = revenue - unit * Math.max(1, line.quantity ?? 1);
+          estimated = true;
+        } else if (String(line.providerKey ?? "").toUpperCase().startsWith("STX")) {
+          // No price anywhere: assume today's typical StockX cost ratio.
+          margin = revenue * (1 - typicalCostRatio);
           estimated = true;
         }
       }
