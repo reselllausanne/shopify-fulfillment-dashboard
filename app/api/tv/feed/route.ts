@@ -106,7 +106,11 @@ async function fetchShopifyToday(startIso: string): Promise<ShopifyOrderNode[]> 
       { estimatedQueryCost: 120 }
     );
     if (res.errors?.length) throw new Error(res.errors[0]?.message ?? "shopify graphql error");
-    out.push(...(res.data?.orders?.nodes ?? []));
+    // Shopify's created_at search can round the bound down to the whole day; filter exactly here.
+    const startMs = new Date(startIso).getTime();
+    out.push(
+      ...(res.data?.orders?.nodes ?? []).filter((o) => new Date(o.createdAt).getTime() >= startMs)
+    );
     if (!res.data?.orders?.pageInfo?.hasNextPage) break;
     after = res.data.orders.pageInfo.endCursor;
   }
