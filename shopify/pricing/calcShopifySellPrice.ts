@@ -37,7 +37,7 @@ export const SHOPIFY_CPA_CAP_HALF = 24.0;
 // sourceCostChf = raw × 1.1065 + 20.
 // Express uses the same locked calc (no flat +20 surcharge).
 // ---------------------------------------------------------------------------
-export const SHOPIFY_PRICING_LOCK_VERSION = "2026-11-09-sep19-real-stx";
+export const SHOPIFY_PRICING_LOCK_VERSION = "2026-11-17-aug19-revert";
 /** Measured Sep 2026 per order: fulfilment 6.2 + postage 4.7 + apps 3.2 + fixed 0.4. */
 export const SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5;
 /** Shopify payouts Jan–Sep 2026 = 97.1% of net sales (fees + refunds). */
@@ -105,9 +105,12 @@ export function calcShopifySellFromSourceCost(sourceCostChf: number): number | n
 }
 
 /**
- * Locked Shopify sell from StockX raw ask.
- * sourceCost = raw×1.1065+20 (sneakers) or raw×1.10+legoShip (LEGO markup path separate).
- * isExpress does not change the locked base.
+ * Shopify sell from StockX raw ask — **2026-11-17 revert to the 19-Aug-2026 formula**.
+ *
+ * That formula ran 3–23 Aug (Google Ads: ROAS 5.3–5.7, ~1.2% click→sale). Prices are
+ * ~12–18% below the 2026-11-09 lock. Ported from commit ff08281c (hybrid ads-cost
+ * model): % path up to 190 CHF, CPA-cap path above, brand/category margin discounts,
+ * low-AOV floor, express +5%, psychological round-up. Profitability is not guaranteed.
  */
 export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number | null {
   const stockxRaw = Number(input.stockxRaw);
@@ -115,6 +118,7 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
 
   const productHandle = String(input.productHandle ?? "");
   const productName = String(input.productName ?? "");
+  const brand = String(input.brand ?? "");
   const category =
     typeof input.productCategory === "string" &&
     (input.productCategory === "sneakers" ||
@@ -125,17 +129,73 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
           productHandle,
           productName,
         });
+  const isExpress = Boolean(input.isExpress);
 
+  const PSP = 0.032;
+  const VAT = 0.023;
+  const ADS_PCT = 0.19;
+  const CPA_CAP = 17.0;
+  const CM2_TARGET = 0.19;
+  const SHIP_F = isExpress ? 15.0 : 7.0;
+  const EXPRESS_UPSELL_PCT = 0.05;
+  const BRAND_MARGIN_DISCOUNT = 0.1; // Onitsuka sneakers
+  const SAUCONY_MARGIN_DISCOUNT = 0.08;
+  const SNEAKER_MARGIN_DISCOUNT = 0.05;
+  const CLOTHING_MARGIN_DISCOUNT = 0.02;
+  const LOW_AOV_COST_THRESHOLD = 100.0;
+  const LOW_AOV_MIN_MARGIN = 50.0;
+  const LOW_AOV_FULFIL = isExpress ? 15.0 : 13.0;
+
+  const handleLower = productHandle.toLowerCase();
+  const brandLower = brand.toLowerCase();
   const isLego = category === "lego";
 
+  let C: number;
   if (isLego) {
-    const legoShipping = getLegoInboundShippingChf(productHandle);
-    const C = stockxRaw * 1.1 + legoShipping;
-    const finalPriceRaw = (C + SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF) * 1.33;
-    return ceilToWholeFranc(finalPriceRaw);
+    C = stockxRaw * 1.1 + getLegoInboundShippingChf(productHandle);
+  } else {
+    C = stockxRaw * 1.08 + 20.0;
+  }
+  const C_plus_ship = C + SHIP_F;
+
+  if (isLego) {
+    let finalPriceRaw = C_plus_ship * 1.33;
+    if (isExpress) finalPriceRaw *= 1 + EXPRESS_UPSELL_PCT;
+    return psychRoundUp(finalPriceRaw);
   }
 
-  return calcShopifySellFromSourceCost(stxSourceCostChfFromRaw(stockxRaw));
+  const kPct = 1.0 / (1.0 - (PSP + VAT + ADS_PCT + CM2_TARGET));
+  const pricePct = C_plus_ship * kPct;
+
+  let finalPriceRaw: number;
+  if (pricePct <= 190.0) {
+    finalPriceRaw = pricePct;
+  } else {
+    const denom = 1.0 - (PSP + VAT + CM2_TARGET);
+    finalPriceRaw = (C_plus_ship + CPA_CAP) / denom;
+  }
+
+  const isSaucony = brandLower.includes("saucony") || (handleLower.includes("saucony") && !brandLower);
+  const isOnitsuka =
+    brandLower.includes("onitsuka") || (handleLower.includes("onitsuka") && !brandLower);
+  const isSneaker = category === "sneakers";
+
+  if (isOnitsuka && isSneaker) {
+    finalPriceRaw *= 1.0 - BRAND_MARGIN_DISCOUNT;
+  } else if (isSaucony && isSneaker) {
+    finalPriceRaw *= 1.0 - SAUCONY_MARGIN_DISCOUNT;
+  } else {
+    finalPriceRaw *= 1.0 - (isSneaker ? SNEAKER_MARGIN_DISCOUNT : CLOTHING_MARGIN_DISCOUNT);
+  }
+
+  if (C <= LOW_AOV_COST_THRESHOLD) {
+    const lowAovFloor = C + LOW_AOV_MIN_MARGIN + LOW_AOV_FULFIL;
+    if (finalPriceRaw < lowAovFloor) finalPriceRaw = lowAovFloor;
+  }
+
+  if (isExpress) finalPriceRaw *= 1 + EXPRESS_UPSELL_PCT;
+
+  return psychRoundUp(finalPriceRaw);
 }
 
 /** Which production rule `calcShopifySellPrice` would apply (never `full`). */
