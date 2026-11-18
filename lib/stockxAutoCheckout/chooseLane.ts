@@ -377,8 +377,11 @@ export function chooseLane(
     if (!normals.length && !expedited.length) {
       const anyExpress = lanes.filter((l) => isExpressFamily(l.label));
       if (anyExpress.length > 0) return { ok: false, reason: "cap", lane: null };
-      const otherUnderCap = underCap.filter((l) => l.label === "STANDARD");
-      if (otherUnderCap.length > 0) return { ok: false, reason: "wrong_lane_only", lane: null };
+      // Only STANDARD offered: buy it (price gate downstream) instead of parking the order.
+      const otherUnderCap = underCap
+        .filter((l) => l.label === "STANDARD")
+        .sort((a, b) => a.totalChf - b.totalChf);
+      if (otherUnderCap.length > 0) return { ok: true, lane: otherUnderCap[0]! };
       return { ok: false, reason: "oos", lane: null };
     }
 
