@@ -1,4 +1,4 @@
-export const MAX_ALL_IN_CHF = 250;
+export const MAX_ALL_IN_CHF = 400;
 /**
  * Shopify (customer already paid) cap. Not 250: a 474 CHF sale at 335 CHF all-in is a good buy.
  * Real gate is marginOk (sale >= live total); this is only a sanity ceiling.
