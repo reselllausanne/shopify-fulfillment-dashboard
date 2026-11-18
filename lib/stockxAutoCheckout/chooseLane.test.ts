@@ -60,10 +60,10 @@ describe("chooseLane", () => {
     if (result.ok) expect(result.lane.label).toBe("EXPRESS");
   });
 
-  it("cap when desired lane only above 250", () => {
+  it("cap when desired lane only above 400", () => {
     const result = chooseLane("STANDARD", lanes([
-      ["Standard", 260],
-      ["Express", 300],
+      ["Standard", 410],
+      ["Express", 450],
     ]));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("cap");

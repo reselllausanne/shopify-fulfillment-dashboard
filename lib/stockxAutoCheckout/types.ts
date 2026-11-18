@@ -1,4 +1,4 @@
-export const MAX_ALL_IN_CHF = 250;
+export const MAX_ALL_IN_CHF = 400;
 /**
  * Shopify (customer already paid) cap. Not 250: a 474 CHF sale at 335 CHF all-in is a good buy.
  * Real gate is marginOk (sale >= live total); this is only a sanity ceiling.
@@ -11,16 +11,6 @@ export const SHOPIFY_MAX_ALL_IN_CHF = 1500;
 export const MAX_LOSS_PCT = (() => {
   const n = Number(process.env.STOCKX_MAX_LOSS_PCT ?? 0.1);
   return Number.isFinite(n) ? Math.min(0.25, Math.max(0, n)) : 0.1;
-})();
-
-/**
- * Galaxus night-buyer loss tolerance (fraction of sell price). Backlog is late, operator cancels the
- * clearly wrong lines by hand; the rest buys up to this loss. Env STOCKX_GALAXUS_MAX_LOSS_PCT (0..0.6).
- * Shopify keeps MAX_LOSS_PCT.
- */
-export const GALAXUS_MAX_LOSS_PCT = (() => {
-  const n = Number(process.env.STOCKX_GALAXUS_MAX_LOSS_PCT ?? 0.5);
-  return Number.isFinite(n) ? Math.min(0.6, Math.max(0, n)) : 0.5;
 })();
 
 export type StockxDesiredLane = "STANDARD" | "EXPRESS";

@@ -1,7 +1,6 @@
 import { chooseGalaxusDesiredLane } from "@/lib/stockxAutoCheckout/galaxusLanePolicy";
 import {
   MAX_ALL_IN_CHF,
-  GALAXUS_MAX_LOSS_PCT,
   MAX_LOSS_PCT,
   type StockxDesiredLane,
   type StockxLaneCard,
@@ -529,7 +528,7 @@ export function chooseLaneByGalaxusExpressFirst(
 }
 
 /** Standard may lose at most this share of sell price (5 %). Express must not lose. */
-export const GALAXUS_NOLOSS_MAX_STANDARD_LOSS = GALAXUS_MAX_LOSS_PCT;
+export const GALAXUS_NOLOSS_MAX_STANDARD_LOSS = MAX_LOSS_PCT;
 
 /**
  * Galaxus night-buyer lane rule (LIVE checkout cards):
@@ -574,7 +573,7 @@ export function chooseLaneByGalaxusNoLoss(
     };
   }
   // Only Express is within the accepted loss (Standard missing or too dear).
-  if (exp && expMargin != null && expMargin >= -GALAXUS_MAX_LOSS_PCT) {
+  if (exp && expMargin != null && expMargin >= -MAX_LOSS_PCT) {
     return {
       ok: true,
       lane: exp,
