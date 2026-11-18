@@ -67,6 +67,7 @@ import {
   MAX_ALL_IN_CHF,
   SHOPIFY_MAX_ALL_IN_CHF,
   MAX_LOSS_PCT,
+  GALAXUS_MAX_LOSS_PCT,
   type StockxDesiredLane,
   type StockxLaneCard,
   type StockxLaneLabel,
@@ -866,7 +867,7 @@ export async function selectAndVerifyStockxLane(
       const sub = extractCheckoutSubtotalChf(body);
       if (sub != null) {
         const m1 = laneMarginPct(options.sellChf, sub);
-        if (m1 < -MAX_LOSS_PCT) {
+        if (m1 < -GALAXUS_MAX_LOSS_PCT) {
           return {
             ok: false,
             reason: "margin_abort",
@@ -2391,7 +2392,7 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
     // noLoss: lane picker (chooseLane) already prefers Express >= 0, else cheapest lane within
     // MAX_LOSS_PCT. Final guard must use the same limit (was hard-coded 0 / -5 %, which
     // rejected valid -5..-10 % buys with a misleading "floor 5%" message).
-    const marginFloor = options.noLoss ? -MAX_LOSS_PCT : minMargin;
+    const marginFloor = options.noLoss ? -GALAXUS_MAX_LOSS_PCT : minMargin;
     if (options.noLoss ? m < marginFloor - 1e-9 : !(m > minMargin)) {
       return {
         kind: "needs_human",

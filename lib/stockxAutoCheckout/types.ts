@@ -13,6 +13,16 @@ export const MAX_LOSS_PCT = (() => {
   return Number.isFinite(n) ? Math.min(0.25, Math.max(0, n)) : 0.1;
 })();
 
+/**
+ * Galaxus night-buyer loss tolerance (fraction of sell price). Backlog is late, operator cancels the
+ * clearly wrong lines by hand; the rest buys up to this loss. Env STOCKX_GALAXUS_MAX_LOSS_PCT (0..0.6).
+ * Shopify keeps MAX_LOSS_PCT.
+ */
+export const GALAXUS_MAX_LOSS_PCT = (() => {
+  const n = Number(process.env.STOCKX_GALAXUS_MAX_LOSS_PCT ?? 0.5);
+  return Number.isFinite(n) ? Math.min(0.6, Math.max(0, n)) : 0.5;
+})();
+
 export type StockxDesiredLane = "STANDARD" | "EXPRESS";
 
 /**
