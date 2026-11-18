@@ -22,10 +22,10 @@ import {
 } from "@/shopify/pricing/calcShopifySellPrice";
 
 /** 2026-11-17 revert to the 19-Aug formula (hybrid ads model, psych round-up). */
-const EXPECTED_SELL_RAW_100 = 199;
-const EXPECTED_SELL_RAW_108_45 = 209;
-const EXPECTED_SELL_RAW_126 = 229;
-const EXPECTED_SELL_RAW_170 = 289;
+const EXPECTED_SELL_RAW_100 = 192;
+const EXPECTED_SELL_RAW_108_45 = 203;
+const EXPECTED_SELL_RAW_126 = 227;
+const EXPECTED_SELL_RAW_170 = 287;
 const BUY_CHF_140 = 140;
 const EXPECTED_RAW_FROM_BUY_140 = 108.45;
 
@@ -70,9 +70,9 @@ describe("calcShopifySellPrice locked formula", () => {
   });
 
   it("ads 15% + CM2 12% of sell, real STX cost", () => {
-    expect(calcShopifySellPrice({ stockxRaw: 60, productCategory: "sneakers" })).toBe(159);
-    expect(calcShopifySellPrice({ stockxRaw: 147, productCategory: "sneakers" })).toBe(259);
-    expect(calcShopifySellPrice({ stockxRaw: 300, productCategory: "sneakers" })).toBe(469);
+    expect(calcShopifySellPrice({ stockxRaw: 60, productCategory: "sneakers" })).toBe(148);
+    expect(calcShopifySellPrice({ stockxRaw: 147, productCategory: "sneakers" })).toBe(256);
+    expect(calcShopifySellPrice({ stockxRaw: 300, productCategory: "sneakers" })).toBe(464);
   });
 
   it("ceilToCentime never rounds down", () => {
@@ -111,7 +111,7 @@ describe("calcShopifySellPrice locked formula", () => {
     });
     expect(adidas).toBe(EXPECTED_SELL_RAW_100);
     expect(adidas).toBe(nike);
-    expect(saucony).toBe(189);
+    expect(saucony).toBe(186);
   });
 
   it("lifestyle families at buy CHF 140 → locked floor", () => {
@@ -172,8 +172,8 @@ describe("calcShopifySellPrice locked formula", () => {
   it("express adds shipping delta and +5% upsell (Aug formula)", () => {
     const std = calcShopifySellPrice({ stockxRaw: 100, isExpress: false });
     const exp = calcShopifySellPrice({ stockxRaw: 100, isExpress: true });
-    expect(std).toBe(199);
-    expect(exp).toBe(219);
+    expect(std).toBe(192);
+    expect(exp).toBe(212);
   });
 
   it("returns whole-franc lego price", () => {

@@ -37,7 +37,7 @@ export const SHOPIFY_CPA_CAP_HALF = 24.0;
 // sourceCostChf = raw × 1.1065 + 20.
 // Express uses the same locked calc (no flat +20 surcharge).
 // ---------------------------------------------------------------------------
-export const SHOPIFY_PRICING_LOCK_VERSION = "2026-11-17-aug19-revert";
+export const SHOPIFY_PRICING_LOCK_VERSION = "2026-11-17-aug19-ceil";
 /** Measured Sep 2026 per order: fulfilment 6.2 + postage 4.7 + apps 3.2 + fixed 0.4. */
 export const SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5;
 /** Shopify payouts Jan–Sep 2026 = 97.1% of net sales (fees + refunds). */
@@ -161,19 +161,18 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   if (isLego) {
     let finalPriceRaw = C_plus_ship * 1.33;
     if (isExpress) finalPriceRaw *= 1 + EXPRESS_UPSELL_PCT;
-    return psychRoundUp(finalPriceRaw);
+    return ceilToWholeFranc(finalPriceRaw);
   }
 
   const kPct = 1.0 / (1.0 - (PSP + VAT + ADS_PCT + CM2_TARGET));
   const pricePct = C_plus_ship * kPct;
 
-  let finalPriceRaw: number;
-  if (pricePct <= 190.0) {
-    finalPriceRaw = pricePct;
-  } else {
-    const denom = 1.0 - (PSP + VAT + CM2_TARGET);
-    finalPriceRaw = (C_plus_ship + CPA_CAP) / denom;
-  }
+  // Ads cost = min(19% of sell, CPA_CAP): price is the lower of the two solutions.
+  // (Old branch at pricePct<=190 made price drop when cost rose, ~raw 74→75.)
+  const denomCap = 1.0 - (PSP + VAT + CM2_TARGET);
+  const priceCap = (C_plus_ship + CPA_CAP) / denomCap;
+  const finalPriceRawBase = Math.min(pricePct, priceCap);
+  let finalPriceRaw: number = finalPriceRawBase;
 
   const isSaucony = brandLower.includes("saucony") || (handleLower.includes("saucony") && !brandLower);
   const isOnitsuka =
@@ -195,7 +194,7 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
 
   if (isExpress) finalPriceRaw *= 1 + EXPRESS_UPSELL_PCT;
 
-  return psychRoundUp(finalPriceRaw);
+  return ceilToWholeFranc(finalPriceRaw);
 }
 
 /** Which production rule `calcShopifySellPrice` would apply (never `full`). */
