@@ -58,3 +58,17 @@ describe("classifyEmptyLaneReason", () => {
     expect(classifyEmptyLaneReason("loading...")).toBe("proxy_blank");
   });
 });
+
+import { isSizeGridBody } from "./chooseLane";
+
+describe("isSizeGridBody", () => {
+  it("detects the size picker (Mihara dump)", () => {
+    const body =
+      "Skip to Main Content\nFAQ\nBack\nMaison Mihara\nSelect Size\nUS M\nUS W\nEU\nEU 43\n\nCHF 130\nEU 44\n\nCHF 132\nCancel";
+    expect(isSizeGridBody(body)).toBe(true);
+  });
+  it("ignores a real checkout page", () => {
+    expect(isSizeGridBody("Select Size\nSubtotal CHF 130\nReview Order")).toBe(false);
+    expect(isSizeGridBody("")).toBe(false);
+  });
+});
