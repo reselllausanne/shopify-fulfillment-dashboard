@@ -48,27 +48,7 @@ export function stxReconcileConfigFromEnv(env: NodeJS.ProcessEnv = process.env):
   };
 }
 
-/** Snapshot sell this far under the locked formula is a loss listing, not drift. */
-export const STX_SNAPSHOT_LOSS_RATIO = 0.75;
-
-/**
- * Galaxus is still advertising a price far under what the current StockX buy
- * requires (Zegama 49.5 at 70.05 while the buy is 212). Locked wholesale
- * (Essentials / Bape / jmoney) is not this.
- */
-export function isStxSnapshotLossPrice(input: {
-  snapshotPriceChf: number;
-  dbBuyChf: number;
-  manualLock?: boolean;
-}): boolean {
-  if (input.manualLock) return false;
-  const expected = Math.ceil(
-    ((input.dbBuyChf + GALAXUS_STX_FIXED_BOX_AND_SHIPPING_CHF) / galaxusStxLockedDenom()) * 100
-  ) / 100;
-  if (!(expected > 0) || !(input.snapshotPriceChf > 0) || !(input.dbBuyChf > 0)) return false;
-  return input.snapshotPriceChf < expected * STX_SNAPSHOT_LOSS_RATIO;
-}
-
+/** Pure mirror of the SQL predicate (kept for tests / docs). */
 export function isStxOfferPriceMismatch(
   snapshotPriceChf: number,
   dbPriceChf: number,
@@ -136,33 +116,6 @@ export async function findStaleStxOfferKeys(cfg: StxReconcileConfig): Promise<st
   );
 }
 
-/**
- * Live Galaxus offers whose file price is a loss versus the current StockX buy.
- * These must leave the stock file (QuantityOnStock=0), not get a quiet omit.
- */
-export async function findLossPricedStxOfferKeys(cfg: StxReconcileConfig): Promise<string[]> {
-  const denom = galaxusStxLockedDenom();
-  const fixed = GALAXUS_STX_FIXED_BOX_AND_SHIPPING_CHF;
-  const ratio = STX_SNAPSHOT_LOSS_RATIO;
-  return queryKeys(
-    cfg.queryTimeoutSec,
-    () => Prisma.sql`
-      SELECT s."providerKey" AS "providerKey"
-      FROM "GalaxusFeedOfferSnapshot" s
-      JOIN "GalaxusFeedStockSnapshot" st ON st."providerKey" = s."providerKey"
-      JOIN "SupplierVariant" sv ON sv."providerKey" = s."providerKey"
-      WHERE s."providerKey" LIKE 'STX\_%'
-        AND sv."manualLock" IS DISTINCT FROM true
-        AND sv.price > 0
-        AND coalesce((st."rowJson"->>'QuantityOnStock')::numeric, 0) > 0
-        AND (s."rowJson"->>'PurchasePriceExclVat_CHF')::numeric
-            < ${ratio}::numeric * (
-              ceil((sv.price + ${fixed}::numeric) / ${denom}::numeric * 100) / 100
-            )
-      LIMIT ${cfg.maxKeys}`
-  );
-}
-
 /** Stock snapshot still advertises stock but DB says 0 (changed after the snapshot row). */
 export async function findStaleStxStockKeys(cfg: StxReconcileConfig): Promise<string[]> {
   return queryKeys(
@@ -196,12 +149,11 @@ export async function runStxSnapshotReconcile(
   cfg: StxReconcileConfig = stxReconcileConfigFromEnv()
 ): Promise<StxReconcileResult> {
   const started = Date.now();
-  const [offerKeys, stockKeys, lossKeys] = await Promise.all([
+  const [offerKeys, stockKeys] = await Promise.all([
     findStaleStxOfferKeys(cfg),
     findStaleStxStockKeys(cfg),
-    findLossPricedStxOfferKeys(cfg),
   ]);
-  const keys = Array.from(new Set([...offerKeys, ...stockKeys, ...lossKeys])).slice(0, cfg.maxKeys);
+  const keys = Array.from(new Set([...offerKeys, ...stockKeys])).slice(0, cfg.maxKeys);
 
   let patched = 0;
   for (const part of chunk(keys, cfg.chunkSize)) {
