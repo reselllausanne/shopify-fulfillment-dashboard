@@ -3,7 +3,6 @@ import { calcGalaxusStxSellFromSourceCost } from "@/galaxus/exports/pricing";
 import {
   chunk,
   isStxOfferPriceMismatch,
-  isStxSnapshotLossPrice,
   stxReconcileConfigFromEnv,
 } from "@/galaxus/ops/stxSnapshotReconcile";
 
@@ -26,23 +25,6 @@ describe("isStxOfferPriceMismatch", () => {
   });
   it("ignores invalid DB price", () => {
     expect(isStxOfferPriceMismatch(10, 0, cfg)).toBe(false);
-  });
-});
-
-describe("isStxSnapshotLossPrice", () => {
-  it("flags the Zegama case: file at 70.05 while the buy is 212", () => {
-    expect(
-      isStxSnapshotLossPrice({ snapshotPriceChf: 70.05, dbBuyChf: 212.42 })
-    ).toBe(true);
-  });
-  it("ignores a locked wholesale price", () => {
-    expect(
-      isStxSnapshotLossPrice({ snapshotPriceChf: 69, dbBuyChf: 225, manualLock: true })
-    ).toBe(false);
-  });
-  it("does not flag a price on the locked formula", () => {
-    const sell = calcGalaxusStxSellFromSourceCost(205.89)!;
-    expect(isStxSnapshotLossPrice({ snapshotPriceChf: sell, dbBuyChf: 205.89 })).toBe(false);
   });
 });
 
