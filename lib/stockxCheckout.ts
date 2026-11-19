@@ -227,10 +227,18 @@ async function resolveBuyPageSizeGrid(page: Page, sizeEU: string): Promise<boole
   try {
     const u = new URL(page.url());
     if (/\/buy\//i.test(u.pathname) && u.searchParams.get("size") !== size) {
+      const origUrl = page.url();
       u.searchParams.set("size", size);
       console.warn(`[STOCKX-CHECKOUT] size grid on /buy — retry with EU token ?size=${size}`);
       await page.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => undefined);
       await page.waitForTimeout(3500);
+      body = await page.locator("body").innerText().catch(() => "");
+      // Accept only if StockX echoes the EU size ("Size: EU 43"). Unknown token → bare offer
+      // page that looks like "no sellers" — a false OOS. Then fall back to the tile click.
+      const echoed = new RegExp(`(?:Size|Taille)\\s*[:：]?\\s*EU\\s*${size.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\d.,/])`, "i");
+      if (!isSizeGridBody(body) && echoed.test(body)) return true;
+      await page.goto(origUrl, { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => undefined);
+      await page.waitForTimeout(3000);
       body = await page.locator("body").innerText().catch(() => "");
       if (!isSizeGridBody(body)) return true;
     }
