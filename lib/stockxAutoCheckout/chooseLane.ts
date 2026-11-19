@@ -304,6 +304,16 @@ export function isNoSellersPage(body: string | null | undefined): boolean {
  *                    → incomplete hydrate / CF — retry, NOT hard OOS.
  *  - `oos`         : unknown / unparseable (keep the conservative default).
  */
+/**
+ * StockX /buy/ page stuck on the size picker ("Select Size" + tiles + Cancel):
+ * ?size= token not recognised. NOT a proxy problem; the right tile must be clicked.
+ */
+export function isSizeGridBody(body: string | null | undefined): boolean {
+  const t = String(body || "");
+  if (!/Select Size|Choose Size|Sélectionner la taille|Choisir la taille/i.test(t)) return false;
+  return !/Review Order|Place Order|Subtotal|Sous[- ]?total|Vérifier la commande|Passer commande/i.test(t);
+}
+
 export function classifyEmptyLaneReason(
   body: string | null | undefined
 ): "oos_no_ask" | "express_only" | "proxy_blank" | "oos" {

@@ -27,6 +27,7 @@ import {
   classifyEmptyLaneReason,
   classifyLaneLabel,
   isNoSellersPage,
+  isSizeGridBody,
   countDistinctShippingTierInText,
   extractCheckoutSubtotalChf,
   GALAXUS_CSAT_MIN_MARGIN,
@@ -209,6 +210,53 @@ async function dismissNoise(page: Page) {
       await page.waitForTimeout(250);
     }
   }
+}
+
+/**
+ * /buy/<slug>?size=<token> sometimes lands on the size picker (token not recognised:
+ * toddler, women's, odd EU→US map). Click the EU tab then the exact "EU <size>" tile
+ * instead of failing as proxy_blank. Returns true when the picker is gone (lanes load).
+ */
+async function resolveBuyPageSizeGrid(page: Page, sizeEU: string): Promise<boolean> {
+  const size = sizeEU.replace(/^EU\s*/i, "").trim();
+  if (!size) return false;
+  let body = await page.locator("body").innerText().catch(() => "");
+  if (!isSizeGridBody(body)) return false;
+  console.warn(`[STOCKX-CHECKOUT] size grid on /buy — clicking EU ${size}`);
+  const esc = size.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tileRe = new RegExp(`^\\s*EU\\s*${esc}\\s*(?:CHF|Offer|Offre|$)`, "i");
+  const clickables = "button,[role=tab],[role=radio],[role=option],[role=button],label,li,a,div";
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const euTab = page.locator(clickables).filter({ hasText: /^\s*EU\s*$/ }).first();
+    if (await euTab.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await euTab.click().catch(() => undefined);
+      await page.waitForTimeout(500);
+    }
+    const tile = page.locator(clickables).filter({ hasText: tileRe }).first();
+    if (await tile.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await tile.scrollIntoViewIfNeeded().catch(() => undefined);
+      await tile.click().catch(() => undefined);
+    } else {
+      await page
+        .evaluate(
+          `({ src }) => {
+            const re = new RegExp(src, "i");
+            const nodes = Array.from(document.querySelectorAll("button,li,label,a,div,span"));
+            const hits = nodes.filter((n) => re.test((n.textContent || "")));
+            hits.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
+            const n = hits[0];
+            if (n) n.click();
+          }`,
+          { src: tileRe.source }
+        )
+        .catch(() => undefined);
+    }
+    await page.waitForTimeout(1500);
+    body = await page.locator("body").innerText().catch(() => "");
+    if (!isSizeGridBody(body)) return true;
+  }
+  console.warn(`[STOCKX-CHECKOUT] size grid: EU ${size} tile not clickable`);
+  return false;
 }
 
 async function selectSizeEuOrUs(
@@ -786,7 +834,7 @@ export async function selectAndVerifyStockxLane(
     lanes = await parseLanesFromPage(page);
     if (classifyEmptyLaneReason(body) === "oos_no_ask") break;
   }
-  if (!lanes.length && classifyEmptyLaneReason(body) === "proxy_blank") {
+  if (!lanes.length && classifyEmptyLaneReason(body) === "proxy_blank" && !isSizeGridBody(body)) {
     try {
       const fs = await import("node:fs/promises");
       const dump = `/app/.data/stockx-lane-dump-${Date.now().toString(36)}.txt`;
@@ -2319,6 +2367,9 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
       await page.waitForTimeout(4500);
       await dismissNoise(page);
     }
+
+    // Size picker instead of checkout (?size= token not recognised) → click the EU tile.
+    await resolveBuyPageSizeGrid(page, c.sizeEU);
 
     // Strip xpress-ship default so STANDARD remains selectable when HARD RULE picks it.
     try {
