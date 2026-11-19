@@ -79,6 +79,7 @@ const PUBLIC_PATHS = [
   "/api/track/funnel",
   // BFCM landing size click. Own gate: origin allowlist + rate limit + Klaviyo hold/consent checks.
   "/api/bfcm/confirm",
+  "/api/bfcm/amp-size",
   // QZ Tray public cert only (never private key). Needed for silent print + override.crt download.
   "/api/qz/certificate",
   "/api/qz/override.crt",

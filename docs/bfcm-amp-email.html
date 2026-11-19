@@ -1,0 +1,54 @@
+<!doctype html>
+<html ⚡4email data-css-strict>
+<head>
+  <meta charset="utf-8">
+  <script async src="https://cdn.ampproject.org/v0.js"></script>
+  <script async custom-element="amp-form" src="https://cdn.ampproject.org/v0/amp-form-0.1.js"></script>
+  <script async custom-template="amp-mustache" src="https://cdn.ampproject.org/v0/amp-mustache-0.2.js"></script>
+  <style amp4email-boilerplate>body{visibility:hidden}</style>
+  <style amp-custom>
+    body{margin:0;background:#f4f4f4;font-family:Arial,Helvetica,sans-serif;color:#111}
+    .w{max-width:600px;margin:0 auto;background:#fff;padding:32px 24px;text-align:center}
+    h1{font-size:30px;line-height:1.1;margin:8px 0}
+    .big{font-size:56px;font-weight:700;margin:8px 0}
+    p{font-size:16px;line-height:1.5}
+    .row{display:block}
+    button{display:inline-block;margin:4px;padding:14px 18px;border:2px solid #111;background:#fff;color:#111;font-size:16px;font-weight:700;cursor:pointer}
+    button:hover{background:#111;color:#fff}
+    .ok{background:#111;color:#fff;padding:18px;margin-top:16px;font-size:18px}
+    .small{font-size:12px;color:#666}
+  </style>
+</head>
+<body>
+<div class="w">
+  <p class="small">SNEAKERS AUTHENTIQUES / LAUSANNE, SUISSE</p>
+  <h1>ON FAIT DE LA PLACE.</h1>
+  <div class="big">−50%</div>
+  <p>Plus de 300 paires de notre entrepôt. Accès avant tout le monde : jeudi 26 novembre à 19 h.</p>
+  <p><b>Quelle pointure t’intéresse ?</b></p>
+  <form method="post" action-xhr="https://solution.resell-lausanne.ch/api/bfcm/amp-size" custom-validation-reporting="show-all-on-submit">
+    <input type="hidden" name="email" value="{{ person.email }}">
+    <div class="row">
+      <button type="submit" name="size_range" value="36-37.5">36–37.5</button>
+      <button type="submit" name="size_range" value="38-39.5">38–39.5</button>
+      <button type="submit" name="size_range" value="40-41.5">40–41.5</button>
+      <button type="submit" name="size_range" value="42-43.5">42–43.5</button>
+      <button type="submit" name="size_range" value="44-46">44–46</button>
+    </div>
+    <div submitting><p>Enregistrement…</p></div>
+    <div submit-success>
+      <template type="amp-mustache">
+        <div class="ok">Pointure {{label}} enregistrée ✓<br>On te prévient jeudi 26 novembre à 19 h.</div>
+      </template>
+    </div>
+    <div submit-error>
+      <template type="amp-mustache">
+        <p>Oups. <a href="https://www.resell-lausanne.ch/pages/black-friday">Choisis ta pointure sur le site</a>.</p>
+      </template>
+    </div>
+  </form>
+  <p class="small">Une paire par modèle et par pointure. L’inscription ne réserve aucune paire.</p>
+  <p class="small">Resell Lausanne · Chemin de Bas-de-Plan 6 · 1030 Bussigny</p>
+</div>
+</body>
+</html>
