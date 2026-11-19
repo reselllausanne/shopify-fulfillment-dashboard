@@ -227,10 +227,18 @@ async function resolveBuyPageSizeGrid(page: Page, sizeEU: string): Promise<boole
   try {
     const u = new URL(page.url());
     if (/\/buy\//i.test(u.pathname) && u.searchParams.get("size") !== size) {
+      const origUrl = page.url();
       u.searchParams.set("size", size);
       console.warn(`[STOCKX-CHECKOUT] size grid on /buy — retry with EU token ?size=${size}`);
       await page.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => undefined);
       await page.waitForTimeout(3500);
+      body = await page.locator("body").innerText().catch(() => "");
+      // Accept only if StockX echoes the EU size ("Size: EU 43"). Unknown token → bare offer
+      // page that looks like "no sellers" — a false OOS. Then fall back to the tile click.
+      const echoed = new RegExp(`(?:Size|Taille)\\s*[:：]?\\s*EU\\s*${size.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\d.,/])`, "i");
+      if (!isSizeGridBody(body) && echoed.test(body)) return true;
+      await page.goto(origUrl, { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => undefined);
+      await page.waitForTimeout(3000);
       body = await page.locator("body").innerText().catch(() => "");
       if (!isSizeGridBody(body)) return true;
     }
@@ -239,34 +247,36 @@ async function resolveBuyPageSizeGrid(page: Page, sizeEU: string): Promise<boole
   }
   console.warn(`[STOCKX-CHECKOUT] size grid on /buy — clicking EU ${size}`);
   const esc = size.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const tileRe = new RegExp(`^\\s*EU\\s*${esc}\\s*(?:CHF|Offer|Offre|$)`, "i");
   const clickables = "button,[role=tab],[role=radio],[role=option],[role=button],label,li,a,div";
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const euTab = page.locator(clickables).filter({ hasText: /^\s*EU\s*$/ }).first();
     if (await euTab.isVisible({ timeout: 1500 }).catch(() => false)) {
       await euTab.click().catch(() => undefined);
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(600);
     }
-    const tile = page.locator(clickables).filter({ hasText: tileRe }).first();
-    if (await tile.isVisible({ timeout: 2000 }).catch(() => false)) {
+    // innerText keeps the newline between "EU 38" and the price (FR: "76 CHF", EN: "CHF 76"),
+    // so "EU 38" never matches "EU 38.5" / "EU 3876 CHF" by accident.
+    const marked = await page
+      .evaluate(
+        `({ esc }) => {
+          const re = new RegExp("^EU\\\\s*" + esc + "\\\\s+(?:CHF\\\\s*[\\\\d’'.,]+|[\\\\d’'.,]+\\\\s*CHF|Offer|Offre)\\\\s*$", "i");
+          const nodes = Array.from(document.querySelectorAll("button,[role=option],[role=radio],li,label,a"));
+          const hits = nodes.filter((n) => re.test(((n).innerText || "").trim()));
+          hits.sort((a, b) => (a.innerText || "").length - (b.innerText || "").length);
+          document.querySelectorAll("[data-pw-size-tile]").forEach((n) => n.removeAttribute("data-pw-size-tile"));
+          if (!hits[0]) return false;
+          hits[0].setAttribute("data-pw-size-tile", "1");
+          return true;
+        }`,
+        { esc }
+      )
+      .catch(() => false);
+    if (marked) {
+      const tile = page.locator('[data-pw-size-tile="1"]').first();
       await tile.scrollIntoViewIfNeeded().catch(() => undefined);
-      await tile.click().catch(() => undefined);
-    } else {
-      await page
-        .evaluate(
-          `({ src }) => {
-            const re = new RegExp(src, "i");
-            const nodes = Array.from(document.querySelectorAll("button,li,label,a,div,span"));
-            const hits = nodes.filter((n) => re.test((n.textContent || "")));
-            hits.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
-            const n = hits[0];
-            if (n) n.click();
-          }`,
-          { src: tileRe.source }
-        )
-        .catch(() => undefined);
+      await tile.click({ timeout: 8000 }).catch(() => undefined);
     }
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2500);
     body = await page.locator("body").innerText().catch(() => "");
     if (!isSizeGridBody(body)) return true;
   }
@@ -562,6 +572,22 @@ async function clickPlaceOrder(page: Page, opts?: { dry?: boolean }): Promise<bo
   return true;
 }
 
+/**
+ * Grid-selected size lands on "Pricing Options" (bid mode: "CHF 96 Buy Now" card, primary
+ * button "Review Offer"). Click the Buy Now card so the primary button becomes Review Order.
+ */
+async function selectBuyNowPricingOption(page: Page): Promise<boolean> {
+  const card = page
+    .locator("button,[role=radio],div[role=button],label")
+    .filter({ hasText: /(?:CHF\s*[\d’',.]+|[\d’',.]+\s*CHF)\s*(?:Buy Now|Acheter maintenant)/i })
+    .first();
+  if (!(await card.isVisible({ timeout: 2500 }).catch(() => false))) return false;
+  await card.scrollIntoViewIfNeeded().catch(() => undefined);
+  await card.click({ timeout: 6000 }).catch(() => undefined);
+  await page.waitForTimeout(1800);
+  return true;
+}
+
 /** Why the last clickReviewOrder returned false (goes into the ledger detail). */
 let lastReviewDiag = "";
 
@@ -569,7 +595,12 @@ async function clickReviewOrder(page: Page): Promise<boolean> {
   lastReviewDiag = "";
   const byTestId = page.locator('[data-testid="checkout-confirm-button"]').first();
   if (await byTestId.isVisible({ timeout: 6000 }).catch(() => false)) {
-    const confirmLabel = ((await byTestId.innerText().catch(() => "")) || "").replace(/\s+/g, " ");
+    let confirmLabel = ((await byTestId.innerText().catch(() => "")) || "").replace(/\s+/g, " ");
+    // Pricing-options page: a real ask exists as "CHF x Buy Now" card → switch to buy mode.
+    if (/offer|offre/i.test(confirmLabel) && (await selectBuyNowPricingOption(page))) {
+      confirmLabel = ((await byTestId.innerText().catch(() => "")) || "").replace(/\s+/g, " ");
+      console.warn(`[STOCKX-CHECKOUT] Buy Now card selected → confirm label="${confirmLabel.slice(0, 40)}"`);
+    }
     // Offer pages reuse this button. Review/Confirm Offer is a BID, never a purchase.
     if (/offer|offre/i.test(confirmLabel)) {
       lastReviewDiag = `offer_page label="${confirmLabel.slice(0, 40)}"`;
