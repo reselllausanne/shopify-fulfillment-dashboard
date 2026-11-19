@@ -411,59 +411,100 @@ def calc_touch_price(stockx_raw_price, product_category="sneakers", product_hand
     return result.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
+_CLOTHING_TOKENS = (
+    "jersey", "tee", "t-shirt", "tshirt", "hoodie", "sweatshirt", "jacket", "coat",
+    "pants", "trouser", "shorts", "shirt", "apparel", "crewneck", "pullover",
+    "track pant", "jogger", "beanie", " hat", " cap", "backpack", "short sleeve",
+    "long sleeve", "windbreaker", "bomber", "fleece", "polo", "tank", "boxer",
+    "sock", "underwear", "belt", "watch", "glasses", "figure", "collectible",
+    "skateboard",
+)
+
+
+def _classify_sell_category(product_category, product_handle):
+    """Mirror TS calcShopifySellPrice category pick (explicit category wins, else tokens)."""
+    pc = str(product_category or "").strip().lower()
+    handle = str(product_handle or "").lower()
+    if pc == "lego" or "lego" in handle:
+        return "lego"
+    if pc in ("sneakers", "clothing"):
+        return pc
+    if any(tok in handle for tok in _CLOTHING_TOKENS):
+        return "clothing"
+    return "sneakers"
+
+
 def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, product_handle="", brand=""):
     """
-    LOCKED Shopify sell formula (v2026-11-09-sep19-real-stx) — manual constants only.
-    Must stay in sync with shopify/pricing/calcShopifySellPrice.ts.
+    Shopify sell formula = 19-Aug-2026 formula (TS lock 2026-11-17-aug19-ceil).
+    MUST stay in sync with shopify/pricing/calcShopifySellPrice.ts (calcShopifySellPrice).
 
-    shopifySellPrice =
-      (sourceCostChf + fixedFulfillmentAndShippingChf)
-      / (1 - blendedPaymentCostRate - VATFlatRate - paidAdsRate - targetCM2Rate)
-    then ceil to whole CHF (never below floor).
-
-    Shape of 2026-09-19 (ads + CM2 as % of sell), real StockX CH cost.
-    No fixed ads/profit CHF. No discount leakage in denom.
-
-    sourceCost (sneakers): stockx_raw * (1 + 23.11/217) + 20
-    LEGO: (C + ship) * 1.33, ceil whole CHF
-
-    is_express / brand unused for the locked base (express = same calc; no +20).
+    C = raw * 1.08 + 20 ; C_plus_ship = C + (7 std | 15 express)
+    price = min(C_plus_ship / (1 - PSP - VAT - 19% ads - 19% CM2),
+                (C_plus_ship + 17) / (1 - PSP - VAT - 19% CM2))
+    brand/category margin discount, low-AOV floor (C <= 100), express +5%, ceil whole CHF.
+    LEGO: (C_plus_ship) * 1.33 (+5% express), ceil whole CHF.
     """
-    _ = (is_express, brand)
+    stockx_raw = float(stockx_raw)
     print(f"[PRICE DEBUG] calc_sell_price INPUT: stockx_raw={stockx_raw}")
+    if not (stockx_raw > 0):
+        return None
 
-    FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5
-    BLENDED_PAYMENT_COST_RATE = 0.029
-    VAT_FLAT_RATE = 0.021
-    PAID_ADS_RATE = 0.15
-    TARGET_CM2_RATE = 0.12
-    STX_LIST_MULTIPLIER = 1.0 + 23.11 / 217.0
-    DENOM = 1.0 - (
-        BLENDED_PAYMENT_COST_RATE + VAT_FLAT_RATE + PAID_ADS_RATE + TARGET_CM2_RATE
-    )
+    PSP = 0.032
+    VAT = 0.023
+    ADS_PCT = 0.19
+    CPA_CAP = 17.0
+    CM2_TARGET = 0.19
+    ship_f = 15.0 if is_express else 7.0
+    EXPRESS_UPSELL_PCT = 0.05
+    ONITSUKA_DISCOUNT = 0.10
+    SAUCONY_DISCOUNT = 0.08
+    SNEAKER_DISCOUNT = 0.05
+    CLOTHING_DISCOUNT = 0.02
+    LOW_AOV_COST_THRESHOLD = 100.0
+    LOW_AOV_MIN_MARGIN = 50.0
+    low_aov_fulfil = 15.0 if is_express else 13.0
 
-    is_lego = "lego" in str(product_category or "").lower() or "lego" in str(product_handle or "").lower()
+    handle_lower = str(product_handle or "").lower()
+    brand_lower = str(brand or "").lower()
+    category = _classify_sell_category(product_category, product_handle)
 
-    if is_lego:
-        lego_shipping = get_lego_shipping_cost(product_handle)
-        C = stockx_raw * 1.10 + lego_shipping
-        final_price_raw = (C + FIXED_FULFILLMENT_AND_SHIPPING_CHF) * 1.33
-        final_price = _ceil_to_whole_franc(final_price_raw)
-        print(
-            f"[PRICE DEBUG] LEGO: C={C:.2f} → {final_price_raw:.4f} → ceil franc {final_price}"
-        )
-        print(f"[PRICE DEBUG] calc_sell_price OUTPUT: {final_price} CHF")
-        return final_price
+    if category == "lego":
+        C = stockx_raw * 1.10 + get_lego_shipping_cost(product_handle)
+        raw = (C + ship_f) * 1.33
+        if is_express:
+            raw *= 1.0 + EXPRESS_UPSELL_PCT
+        out = _ceil_to_whole_franc(raw)
+        print(f"[PRICE DEBUG] calc_sell_price OUTPUT: {out} CHF (lego)")
+        return out
 
-    C = stockx_raw * STX_LIST_MULTIPLIER + 20.0
-    final_price_raw = (C + FIXED_FULFILLMENT_AND_SHIPPING_CHF) / DENOM
-    final_price = _ceil_to_whole_franc(final_price_raw)
-    print(
-        f"[PRICE DEBUG] Locked: (C={C:.2f} + {FIXED_FULFILLMENT_AND_SHIPPING_CHF}) "
-        f"/ {DENOM:.4f} = {final_price_raw:.4f} → ceil franc {final_price}"
-    )
-    print(f"[PRICE DEBUG] calc_sell_price OUTPUT: {final_price} CHF")
-    return final_price
+    C = stockx_raw * 1.08 + 20.0
+    c_plus_ship = C + ship_f
+    price_pct = c_plus_ship / (1.0 - (PSP + VAT + ADS_PCT + CM2_TARGET))
+    price_cap = (c_plus_ship + CPA_CAP) / (1.0 - (PSP + VAT + CM2_TARGET))
+    final_raw = min(price_pct, price_cap)
+
+    is_saucony = "saucony" in brand_lower or ("saucony" in handle_lower and not brand_lower)
+    is_onitsuka = "onitsuka" in brand_lower or ("onitsuka" in handle_lower and not brand_lower)
+    is_sneaker = category == "sneakers"
+    if is_onitsuka and is_sneaker:
+        final_raw *= 1.0 - ONITSUKA_DISCOUNT
+    elif is_saucony and is_sneaker:
+        final_raw *= 1.0 - SAUCONY_DISCOUNT
+    else:
+        final_raw *= 1.0 - (SNEAKER_DISCOUNT if is_sneaker else CLOTHING_DISCOUNT)
+
+    if C <= LOW_AOV_COST_THRESHOLD:
+        floor = C + LOW_AOV_MIN_MARGIN + low_aov_fulfil
+        if final_raw < floor:
+            final_raw = floor
+
+    if is_express:
+        final_raw *= 1.0 + EXPRESS_UPSELL_PCT
+
+    out = _ceil_to_whole_franc(final_raw)
+    print(f"[PRICE DEBUG] calc_sell_price OUTPUT: {out} CHF")
+    return out
 
 
 def _ceil_to_whole_franc(price: float) -> int:
