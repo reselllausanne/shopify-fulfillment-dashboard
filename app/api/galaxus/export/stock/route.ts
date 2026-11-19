@@ -21,6 +21,10 @@ import {
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { attachAvailableStock } from "@/inventory/availableStock";
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
+import {
+  findLossPricedStxOfferKeys,
+  stxReconcileConfigFromEnv,
+} from "@/galaxus/ops/stxSnapshotReconcile";
 import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 import {
   isPhysicalMergeEnabled,
@@ -443,6 +447,17 @@ export async function GET(request: Request) {
   }
 
   const pushZeroRows = isGalaxusStockZeroPushEnabled();
+  let lossPricedStxKeys = new Set<string>();
+  try {
+    lossPricedStxKeys = new Set(
+      await findLossPricedStxOfferKeys(stxReconcileConfigFromEnv())
+    );
+  } catch (err: any) {
+    console.warn(
+      "[GALAXUS][EXPORT][STOCK] loss-price key load failed — those offers stay until the next run",
+      err?.message ?? err
+    );
+  }
   const stxSizeMedianIndex = buildStxSizePriceMedianIndex(exportCandidates);
   exportCandidates.forEach((candidate) => {
     const variant = candidate.variant as any;
@@ -599,9 +614,22 @@ export async function GET(request: Request) {
           providerKey,
           manualNote: variant?.manualNote ?? null,
         });
+    // A live offer priced far under the current StockX buy (Zegama 70 vs buy 212)
+    // must leave the file. Omitting a 0 does not delist Galaxus.
+    const lossPrice = lossPricedStxKeys.has(providerKey);
+    if (stock <= 0 || lossPrice) {
+      if (pushZeroRows) {
+        tryPushDelistZero(
+          providerKey,
+          mappingSupplierKey,
+          supplierVariantId,
+          variant?.manualNote ?? null
+        );
+      }
+      return;
+    }
     // GLD (and any MOQ>1 supplier): do not list variants that cannot fill a min order.
-    // Also omit literal 0 — never push zero-stock rows (master/offer already gated).
-    if (!meetsGalaxusStockMoq(stock, moq) || stock <= 0) {
+    if (!meetsGalaxusStockMoq(stock, moq)) {
       return;
     }
 
@@ -659,6 +687,13 @@ export async function GET(request: Request) {
       DeliveryRouteId: warehouseFields.deliveryRouteId,
     });
   });
+  if (pushZeroRows) {
+    const already = new Set(rows.map((row) => String(row.ProviderKey ?? "")));
+    for (const providerKey of lossPricedStxKeys) {
+      if (already.has(providerKey)) continue;
+      tryPushDelistZero(providerKey, null, null, null);
+    }
+  }
     let finalRows = rows;
     const allowAlternatives = !supplier || supplier.toLowerCase() === "ner";
     if (allowAlternatives) {
