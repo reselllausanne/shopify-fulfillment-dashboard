@@ -222,6 +222,21 @@ async function resolveBuyPageSizeGrid(page: Page, sizeEU: string): Promise<boole
   if (!size) return false;
   let body = await page.locator("body").innerText().catch(() => "");
   if (!isSizeGridBody(body)) return false;
+  // 1) Reload with the raw EU token (?size=43 works on EU-sized products; the EU→US map
+  //    token is what landed us on the picker). Verified live on Mihara Hank OG.
+  try {
+    const u = new URL(page.url());
+    if (/\/buy\//i.test(u.pathname) && u.searchParams.get("size") !== size) {
+      u.searchParams.set("size", size);
+      console.warn(`[STOCKX-CHECKOUT] size grid on /buy — retry with EU token ?size=${size}`);
+      await page.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => undefined);
+      await page.waitForTimeout(3500);
+      body = await page.locator("body").innerText().catch(() => "");
+      if (!isSizeGridBody(body)) return true;
+    }
+  } catch {
+    /* fall through to tile click */
+  }
   console.warn(`[STOCKX-CHECKOUT] size grid on /buy — clicking EU ${size}`);
   const esc = size.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const tileRe = new RegExp(`^\\s*EU\\s*${esc}\\s*(?:CHF|Offer|Offre|$)`, "i");
