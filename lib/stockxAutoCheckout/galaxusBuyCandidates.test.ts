@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   galaxusBuySizeEuOrOs,
+  galaxusTitleMatchesProductName,
   sizeEuFromGalaxusLine,
 } from "@/lib/stockxAutoCheckout/galaxusBuyCandidates";
 
@@ -81,5 +82,32 @@ describe("galaxusBuySizeEuOrOs", () => {
     expect(
       galaxusBuySizeEuOrOs(sizeEuFromGalaxusLine({ size: "One size" }))
     ).toBe("OS");
+  });
+});
+
+describe("galaxusTitleMatchesProductName", () => {
+  it("matches Li-Ning with doubled brand", () => {
+    expect(
+      galaxusTitleMatchesProductName(
+        "Li Ning Li-Ning Way of Wade D'Angelo Russell Dlo 1 Lunar Rock (43)",
+        "Li-Ning Way of Wade D'Angelo Russell Dlo 1 Lunar Rock"
+      )
+    ).toBe(true);
+  });
+  it("matches ASICS with dash and slash", () => {
+    expect(
+      galaxusTitleMatchesProductName(
+        "ASICS Superblast 3 - cobalt burst/light orange (40.5)",
+        "ASICS Superblast 3 Cobalt Burst Light Orange"
+      )
+    ).toBe(true);
+  });
+  it("rejects other colorway", () => {
+    expect(
+      galaxusTitleMatchesProductName(
+        "ASICS Superblast 3 - cobalt burst/light orange (40.5)",
+        "ASICS Superblast 3 Black White"
+      )
+    ).toBe(false);
   });
 });

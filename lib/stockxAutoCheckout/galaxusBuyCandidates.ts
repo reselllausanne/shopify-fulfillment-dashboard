@@ -39,6 +39,53 @@ export function gtinLookupVariants(gtin: string): string[] {
   return Array.from(new Set([gtin, digits, bare, bare.padStart(12, "0"), bare.padStart(13, "0"), bare.padStart(14, "0")]));
 }
 
+/** Lowercase words only; trailing "(43)" size removed. */
+export function normalizeProductTitle(raw: string): string {
+  return String(raw ?? "")
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Galaxus title equals StockX product name. Galaxus may repeat the brand
+ * ("Li Ning Li-Ning Way of Wade …"). Exact words only, no fuzzy match.
+ */
+export function galaxusTitleMatchesProductName(title: string, productName: string): boolean {
+  const t = normalizeProductTitle(title);
+  const n = normalizeProductTitle(productName);
+  if (!t || !n) return false;
+  if (t === n) return true;
+  if (!t.endsWith(` ${n}`)) return false;
+  const prefix = t.slice(0, t.length - n.length - 1);
+  return n.startsWith(`${prefix} `);
+}
+
+async function resolveSlugByTitle(title: string): Promise<{ urlKey: string; styleId: string | null } | null> {
+  const norm = normalizeProductTitle(title);
+  if (norm.length < 12) return null;
+  const tokens = Array.from(new Set(norm.split(" ").filter((w) => w.length >= 4)))
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 4);
+  if (tokens.length < 2) return null;
+  const rows = await prisma.kickDBProduct
+    .findMany({
+      where: {
+        urlKey: { not: null },
+        AND: tokens.map((w) => ({ name: { contains: w, mode: "insensitive" as const } })),
+      },
+      select: { urlKey: true, styleId: true, name: true },
+      take: 50,
+    })
+    .catch(() => []);
+  const hits = rows.filter((r) => r.urlKey && galaxusTitleMatchesProductName(title, String(r.name ?? "")));
+  const keys = new Set(hits.map((h) => h.urlKey!.trim()));
+  if (keys.size !== 1) return null;
+  const h = hits[0]!;
+  return { urlKey: h.urlKey!.trim(), styleId: h.styleId?.trim() || null };
+}
+
 /** True for OS / O/S / One size / onesize tokens (skate-deck / plush / LEGO class). */
 export function isGalaxusOneSizeToken(raw: string): boolean {
   return /^(os|o\/s|one[\s-]*size|onesize)$/i.test(String(raw ?? "").trim());
@@ -198,6 +245,15 @@ export async function resolveGalaxusStxBuyCandidate(input: {
       });
       slug = product?.urlKey?.trim() || null;
       styleId = product?.styleId?.trim() || styleId;
+    }
+  }
+
+  // GTIN gone from catalog (old STX offer): exact normalized title match, unique only.
+  if (!slug) {
+    const byTitle = await resolveSlugByTitle(String(line.productName || ""));
+    if (byTitle) {
+      slug = byTitle.urlKey;
+      styleId = byTitle.styleId ?? styleId;
     }
   }
 
