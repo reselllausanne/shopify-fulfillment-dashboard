@@ -47,6 +47,12 @@ import {
   shouldEmitGalaxusDelistZero,
 } from "@/galaxus/exports/galaxusWasLiveKeys";
 import {
+  gtinCore,
+  gtinCoreOfProviderKey,
+  loadLiveGalaxusKeysBySupplierVariant,
+  loadMasterSnapshotKeySet,
+} from "@/galaxus/exports/gtinElection";
+import {
   buildStxSizePriceMedianIndex,
   createGalaxusAssortmentStats,
   galaxusAssortmentBlockReasonForCandidate,
@@ -166,6 +172,11 @@ export async function GET(request: Request) {
   const trmExclusionStats = createTrmFeedExclusionStats();
   const assortmentStats = { ...createGalaxusAssortmentStats(), alternative: 0 };
   const bestByGtin = new Map<string, any>();
+  // Same-product candidates that lost the election (multi-supplier GTINs only, ~140k at full scale).
+  const gtinLosers = new Map<
+    string,
+    { core: string; supplierVariantId: string | null; manualNote: string | null }
+  >();
   const pageSize = all ? 5000 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
@@ -217,6 +228,7 @@ export async function GET(request: Request) {
     }
     accumulateBestCandidates(mappings, bestByGtin, {
       keyBy: "gtin",
+      normalizeGtinKey: true,
       requireProductName: false,
       // Must match master/catalog-ready: otherwise a cheaper no-image rival
       // (often NER) wins the GTIN, then isGalaxusCatalogReady drops it → GTIN empty.
@@ -227,6 +239,16 @@ export async function GET(request: Request) {
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);
         }
+      },
+      onLoser: (loser) => {
+        const key = String(loser.providerKey ?? "").trim();
+        const core = gtinCore(loser.gtin);
+        if (!key || !core) return;
+        gtinLosers.set(key, {
+          core,
+          supplierVariantId: loser.variant?.supplierVariantId ?? null,
+          manualNote: loser.variant?.manualNote ?? null,
+        });
       },
     });
     currentOffset += pageSize;
@@ -444,6 +466,8 @@ export async function GET(request: Request) {
 
   const pushZeroRows = isGalaxusStockZeroPushEnabled();
   const stxSizeMedianIndex = buildStxSizePriceMedianIndex(exportCandidates);
+  const contestedCores = new Set(Array.from(gtinLosers.values(), (l) => l.core));
+  const liveWinnerByCore = new Map<string, string>();
   exportCandidates.forEach((candidate) => {
     const variant = candidate.variant as any;
     const providerKey = candidate.providerKey ?? "";
@@ -648,6 +672,11 @@ export async function GET(request: Request) {
       supplierPid: providerKey,
     });
 
+    const electionCore = gtinCore(candidate?.gtin);
+    if (electionCore && contestedCores.has(electionCore)) {
+      liveWinnerByCore.set(electionCore, providerKey);
+    }
+
     rows.push({
       ProviderKey: providerKey,
       QuantityOnStock: Number.isFinite(stock) ? stock.toString() : "0",
@@ -712,6 +741,52 @@ export async function GET(request: Request) {
       }
     }
 
+    // Election losers that Galaxus still shows live: send one zero (under every live key of the
+    // losing variant, listing aliases included) so only the winner stays sellable. Only when the
+    // winner is live in this file AND has master data — otherwise zeroing could take the product
+    // dark (omitting the loser is the old behavior).
+    let electionLoserZeros = 0;
+    if (pushZeroRows && liveWinnerByCore.size > 0) {
+      const tLosers = Date.now();
+      try {
+        const emittedKeys = new Set(finalRows.map((row) => String(row.ProviderKey ?? "").trim()));
+        const masterKnownWinners = await loadMasterSnapshotKeySet(liveWinnerByCore.values());
+        const retiring = Array.from(gtinLosers.entries()).filter(([loserKey, loser]) => {
+          const winnerKey = liveWinnerByCore.get(loser.core);
+          return Boolean(winnerKey && winnerKey !== loserKey && masterKnownWinners.has(winnerKey));
+        });
+        const liveKeysBySv = await loadLiveGalaxusKeysBySupplierVariant(
+          retiring.map(([, loser]) => loser.supplierVariantId ?? "")
+        );
+        const loserRows: ExportRow[] = [];
+        const zeroed = new Set<string>();
+        for (const [loserKey, loser] of retiring) {
+          const winnerKey = liveWinnerByCore.get(loser.core);
+          const keys = [loserKey, ...(liveKeysBySv.get(loser.supplierVariantId ?? "") ?? [])];
+          for (const key of keys) {
+            if (zeroed.has(key) || emittedKeys.has(key) || key === winnerKey) continue;
+            if (gtinCoreOfProviderKey(key) !== loser.core) continue;
+            zeroed.add(key);
+            if (!shouldEmitGalaxusDelistZero(key, delistZeroEligibleKeys)) {
+              zeroSkippedNotEligible += 1;
+              continue;
+            }
+            loserRows.push(
+              buildForceZeroStockRow(key, null, loser.supplierVariantId, loser.manualNote)
+            );
+          }
+        }
+        electionLoserZeros = loserRows.length;
+        if (loserRows.length > 0) finalRows = [...finalRows, ...loserRows];
+      } catch (err: any) {
+        console.warn(
+          "[GALAXUS][EXPORT][STOCK] GTIN loser zeros skipped (master lookup failed)",
+          err?.message ?? err
+        );
+      }
+      mark("gtinLoserZeros", tLosers);
+    }
+
     // Hard invariant: one row per ProviderKey. Candidates are unique, but the
     // listing-alias superseded zeros, delist zeros and alternative-product merges can
     // re-emit a key that already has a row. Duplicate keys poison the snapshot rebuild
@@ -749,6 +824,8 @@ export async function GET(request: Request) {
       candidates: exportCandidates.length,
       rows: finalRows.length,
       duplicateRowsDropped,
+      gtinLosers: gtinLosers.size,
+      electionLoserZeros,
     });
     const csv = toCsv(headers, finalRows);
     const filename = `galaxus-stock-${supplier ?? "all"}-${Date.now()}.csv`;

@@ -179,6 +179,7 @@ export async function GET(request: Request) {
     }
     accumulateBestCandidates(mappings, bestByGtin, {
       keyBy: "gtin",
+      normalizeGtinKey: true,
       requireProductName: false,
       // Same gate as stock/master: no-image winners get dropped later → empty GTIN.
       requireImage: true,

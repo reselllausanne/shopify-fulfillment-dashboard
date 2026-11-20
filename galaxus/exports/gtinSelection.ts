@@ -6,8 +6,9 @@ import { bwzShipChfFromManualNote } from "@/app/lib/bwzParcel";
 import { shouldOmitWelPokemonFromGalaxusFeed } from "@/galaxus/exports/welFeedOmit";
 import { shouldOmitStxFromGalaxusFeed } from "@/galaxus/exports/stxFeedGate";
 import { hasGalaxusPrimaryImage } from "@/galaxus/exports/variantImagePresence";
+import { gtinCore } from "@/galaxus/exports/gtinElection";
 
-type VariantCandidate = {
+export type VariantCandidate = {
   mapping: any;
   variant: any;
   product: any;
@@ -50,6 +51,12 @@ type CandidateExcludeReason =
 
 type AccumulateOptions = {
   keyBy?: "gtin" | "providerKey";
+  /**
+   * Elect per GTIN-14 value (`198730461243` = `0198730461243`) instead of the exact string.
+   * Stock + offer use it so one product never gets two live offers; master keeps per-spelling
+   * winners so Galaxus knows every key a product can switch to.
+   */
+  normalizeGtinKey?: boolean;
   requireProductName?: boolean;
   requireImage?: boolean;
   /** Prefer candidates with stock > 0 over out-of-stock cheaper rows. */
@@ -62,6 +69,8 @@ type AccumulateOptions = {
     mapping: any;
     variant: any;
   }) => void;
+  /** Valid candidate that lost its GTIN to a better one (only multi-supplier GTINs call this). */
+  onLoser?: (candidate: VariantCandidate) => void;
 };
 
 function extractSupplierKey(supplierVariantId?: string | null): string | null {
@@ -287,7 +296,12 @@ export function accumulateBestCandidates(
     );
     if (!candidate) continue;
 
-    const mapKey = keyBy === "providerKey" ? candidate.providerKey : candidate.gtin;
+    const mapKey =
+      keyBy === "providerKey"
+        ? candidate.providerKey
+        : options?.normalizeGtinKey
+          ? gtinCore(candidate.gtin) ?? candidate.gtin
+          : candidate.gtin;
     const existing = bestByGtin.get(mapKey);
     if (!existing) {
       bestByGtin.set(mapKey, candidate);
@@ -310,6 +324,9 @@ export function accumulateBestCandidates(
       )
     ) {
       bestByGtin.set(mapKey, candidate);
+      options?.onLoser?.(existing);
+    } else {
+      options?.onLoser?.(candidate);
     }
   }
 

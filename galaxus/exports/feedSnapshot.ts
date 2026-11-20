@@ -11,6 +11,12 @@ import { runOpsJob } from "@/galaxus/ops/jobRunner";
 import { OPS_SNAPSHOT_REBUILD_JOB } from "@/galaxus/ops/opsBackgroundJobs";
 import { reconcileDeletedKeysByBucket } from "@/galaxus/exports/snapshotDeleteReconcile";
 import { applySnapshotDiff, useDiffSnapshotRebuild } from "@/galaxus/exports/snapshotDiffApply";
+import {
+  expandProviderKeysWithGtinSiblings,
+  findGtinElectionLosers,
+  gtinCoreOfProviderKey,
+  liveWinnerKeyByGtin,
+} from "@/galaxus/exports/gtinElection";
 
 export { useDiffSnapshotRebuild };
 import {
@@ -448,14 +454,56 @@ export async function patchFeedSnapshotsForProviderKeys(params: {
   // patches here left underwater STX offers frozen until the next full rebuild.
   if (!(await canPatchFeedSnapshotTables())) return { patched: 0 };
 
-  const encoded = encodeURIComponent(keys.join(","));
-  const [stockCsv, offerCsv] = await Promise.all([
-    fetchExportCsv(params.origin, `/api/galaxus/export/stock?all=1&providerKeys=${encoded}`),
-    fetchExportCsv(params.origin, `/api/galaxus/export/offer?all=1&providerKeys=${encoded}`),
-  ]);
+  // Same-GTIN siblings join the export so the patch runs the same one-offer-per-GTIN election
+  // as the full rebuild. Without them a refreshed loser (STX 95.28) is re-published next to
+  // the winner (NER 50) until the next rebuild.
+  let exportKeys = keys;
+  let publishedSiblings: string[] = [];
+  let siblingsByKey = new Map<string, string[]>();
+  try {
+    const expanded = await expandProviderKeysWithGtinSiblings(keys);
+    exportKeys = expanded.keys;
+    publishedSiblings = expanded.publishedSiblings;
+    siblingsByKey = expanded.siblingsByKey;
+  } catch (err: any) {
+    console.warn("[snapshot-patch] GTIN sibling lookup failed — patching requested keys only", {
+      message: err?.message ?? String(err),
+    });
+  }
 
-  const stockParsed = parseCsvToRows(stockCsv);
-  const offerParsed = parseCsvToRows(offerCsv);
+  const exportFor = async (forKeys: string[]) => {
+    const encoded = encodeURIComponent(forKeys.join(","));
+    const [stockCsv, offerCsv] = await Promise.all([
+      fetchExportCsv(params.origin, `/api/galaxus/export/stock?all=1&providerKeys=${encoded}`),
+      fetchExportCsv(params.origin, `/api/galaxus/export/offer?all=1&providerKeys=${encoded}`),
+    ]);
+    return { stock: parseCsvToRows(stockCsv).rows, offer: parseCsvToRows(offerCsv).rows };
+  };
+
+  const first = await exportFor(exportKeys);
+  const stockParsed = { rows: first.stock };
+  const offerParsed = { rows: first.offer };
+  const losers = findGtinElectionLosers(
+    [...exportKeys, ...publishedSiblings],
+    stockParsed.rows,
+    offerParsed.rows
+  );
+
+  // A requested key whose product has no live row only because siblings joined (winner blocked
+  // or published at 0) gets its old solo export back, so the patch never darkens a product.
+  const liveCores = liveWinnerKeyByGtin(stockParsed.rows, offerParsed.rows);
+  const firstOfferKeys = new Set(offerParsed.rows.map((row) => String(row.ProviderKey ?? "").trim()));
+  const soloKeys = keys.filter((key) => {
+    if (!siblingsByKey.has(key) || losers.has(key) || firstOfferKeys.has(key)) return false;
+    const core = gtinCoreOfProviderKey(key);
+    return !core || !liveCores.has(core);
+  });
+  if (soloKeys.length > 0) {
+    const solo = await exportFor(soloKeys);
+    stockParsed.rows.push(...solo.stock);
+    offerParsed.rows.push(...solo.offer);
+  }
+
   const now = new Date();
   const prismaAny = prisma as any;
 
@@ -480,15 +528,34 @@ export async function patchFeedSnapshotsForProviderKeys(params: {
 
   // Keys the live export no longer emits (newly gated / blocked) must leave the snapshot,
   // otherwise the stale row keeps the offer published until the next full rebuild.
-  const staleStock = deleteStale ? missingProviderKeys(keys, stockParsed.rows) : [];
-  const staleOffer = deleteStale ? missingProviderKeys(keys, offerParsed.rows) : [];
+  // Election losers always leave, even with deleteStale=false: another key of their GTIN is
+  // live in this very export, so their absence is not a blip.
+  const loserKeys = Array.from(losers);
+  const blipCandidates = keys.filter((key) => !losers.has(key));
+  const staleStock = [
+    ...missingProviderKeys(loserKeys, stockParsed.rows),
+    ...(deleteStale ? missingProviderKeys(blipCandidates, stockParsed.rows) : []),
+  ];
+  const staleOffer = [
+    ...loserKeys,
+    ...(deleteStale ? missingProviderKeys(blipCandidates, offerParsed.rows) : []),
+  ];
   if (!deleteStale) {
     const skipped =
-      missingProviderKeys(keys, stockParsed.rows).length +
-      missingProviderKeys(keys, offerParsed.rows).length;
+      missingProviderKeys(blipCandidates, stockParsed.rows).length +
+      missingProviderKeys(blipCandidates, offerParsed.rows).length;
     if (skipped > 0) {
       console.info("[snapshot-patch] deleteStale=false, kept rows the export skipped", { skipped });
     }
+  }
+  if (loserKeys.length > 0 || soloKeys.length > 0) {
+    console.info("[snapshot-patch] GTIN election", {
+      requested: keys.length,
+      exported: exportKeys.length,
+      losers: loserKeys.length,
+      soloFallback: soloKeys.length,
+      sampleLosers: loserKeys.slice(0, 5),
+    });
   }
   if (staleStock.length > 0) {
     await withTransientDbRetry("snapshot-patch-stale-stock-delete", () =>
