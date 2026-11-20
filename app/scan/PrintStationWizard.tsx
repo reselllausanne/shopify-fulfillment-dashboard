@@ -106,6 +106,7 @@ export default function PrintStationWizard({ open, onClose, onSaved }: Props) {
         labelHeightMm: preset.heightMm,
         continuousLabel: preset.continuous,
         dpi: preset.dpi ?? d.dpi,
+        ...("extra" in preset ? preset.extra : {}),
       })
     );
   };

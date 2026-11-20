@@ -117,6 +117,20 @@ export const QZ_TRAY_DOWNLOAD_URL = "https://qz.io/download/";
 
 export const LABEL_PRESETS = [
   {
+    // Same as `lp -o media=w288h360 -o fit-to-page` (works on BIXOLON XD5-40d).
+    id: "bixolon-4x5",
+    label: "BIXOLON 4 × 5 po (driver, portrait, ajusté à la page)",
+    widthMm: 102,
+    heightMm: 127,
+    continuous: false,
+    dpi: 203,
+    extra: {
+      useDriverPaperSize: true,
+      scaleContent: true,
+      orientation: "portrait",
+    } as Partial<PrintStationConfig>,
+  },
+  {
     id: "62x100",
     label: "62 × 100 mm (Swiss Post / Brother QL)",
     widthMm: 62,
