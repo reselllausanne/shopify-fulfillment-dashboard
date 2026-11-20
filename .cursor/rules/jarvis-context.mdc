@@ -1,0 +1,10 @@
+---
+description: Contexte métier Resell Lausanne (sources, décisions datées, accès lecture seule)
+alwaysApply: false
+---
+
+# Contexte métier
+
+Avant de répondre sur une règle métier : `docs/jarvis/memory/decisions.md`. Cite id + date + source.
+Pour une donnée vivante (stock, commandes, ads) : `docs/jarvis/SOURCES.md` puis `docs/jarvis/bin/jarvis`. Ne jamais copier de données de prod dans git.
+Deux décisions actives en conflit : le dire, ne pas choisir.
