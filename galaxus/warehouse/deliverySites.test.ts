@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   describeGalaxusWarehouseShipTo,
+  galaxusWarehouseBoxKey,
   galaxusWarehouseShipToConflict,
   matchGalaxusWarehouseSite,
   ssccRecipientFromGalaxusOrder,
@@ -145,5 +146,33 @@ describe("galaxusWarehouseShipToConflict", () => {
     expect(view.label).toBe("Unknown warehouse");
     expect(view.line1).toBe("Neue Strasse 1");
     expect(view.city).toBe("Basel");
+  });
+});
+
+describe("galaxusWarehouseBoxKey", () => {
+  it("maps each warehouse to its own box, stable across street text", () => {
+    expect(
+      galaxusWarehouseBoxKey({
+        recipientAddress1: "Ferroring 23",
+        recipientPostalCode: "5612",
+        recipientCity: "Villmergen",
+      })
+    ).toBe("wohlen");
+    expect(
+      galaxusWarehouseBoxKey({
+        recipientAddress1: "c/o Fiege, Schützenmattstrasse 133/137",
+        recipientPostalCode: "CH-8180",
+        recipientCity: "Bülach",
+      })
+    ).toBe("buelach");
+  });
+
+  it("keys unknown addresses by normalized address", () => {
+    const a = galaxusWarehouseBoxKey({
+      recipientAddress1: "Neue Strasse 1",
+      recipientPostalCode: "4000",
+      recipientCity: "Basel",
+    });
+    expect(a.startsWith("addr:")).toBe(true);
   });
 });

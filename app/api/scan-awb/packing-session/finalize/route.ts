@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { DocumentType } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { createCompositeWarehouseShipment } from "@/galaxus/warehouse/shipments";
+import { galaxusWarehouseBoxKey, type GalaxusShipToInput } from "@/galaxus/warehouse/deliverySites";
 import { DocumentService } from "@/galaxus/documents/DocumentService";
 import {
   applySuccessfulSwissPostLabelToShipment,
@@ -189,17 +190,11 @@ async function resolveSsccLabelUrl(shipmentId: string): Promise<string | null> {
 }
 
 /**
- * Mirror `sameGalaxusDeliveryAddress` from `galaxus/warehouse/shipments.ts` so
- * the pre-flight grouping matches the composite function's own validator (any
- * mismatch would cause `createCompositeWarehouseShipment` to reject the group).
+ * Same key the composite builder validates with (`galaxusWarehouseShipToConflict`),
+ * so a group here is never rejected there. Known warehouse → site key.
  */
-function recipientKey(order: {
-  recipientPostalCode?: string | null;
-  recipientAddress1?: string | null;
-  recipientCity?: string | null;
-}): string {
-  const norm = (v: unknown) => String(v ?? "").trim().toLowerCase();
-  return `${norm(order.recipientPostalCode)}|${norm(order.recipientAddress1)}|${norm(order.recipientCity)}`;
+function recipientKey(order: GalaxusShipToInput): string {
+  return galaxusWarehouseBoxKey(order);
 }
 
 export async function POST(req: NextRequest) {
@@ -233,9 +228,12 @@ export async function POST(req: NextRequest) {
         orderDate: true,
         orderNumber: true,
         physicalDeliveryNoteRequired: true,
+        recipientName: true,
         recipientPostalCode: true,
         recipientAddress1: true,
+        recipientAddress2: true,
         recipientCity: true,
+        recipientCountry: true,
       },
     });
     const orderById = new Map(orderRows.map((o) => [o.id, o]));

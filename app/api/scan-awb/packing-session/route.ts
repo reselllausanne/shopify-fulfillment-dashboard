@@ -14,17 +14,16 @@ import {
 } from "@/app/api/scan-awb/packing-session/awbGalaxusPin";
 import {
   describeGalaxusWarehouseShipTo,
-  galaxusWarehouseMixMessage,
-  galaxusWarehouseShipToConflict,
-  type GalaxusShipToInput,
   type GalaxusShipToView,
 } from "@/galaxus/warehouse/deliverySites";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Max pairs per packing session (one warehouse box). */
-export const PACKING_SESSION_CAP = 8;
+/**
+ * No pair cap. Scans split into one open box per Galaxus warehouse
+ * (`shipTo.boxKey`); the client groups by it. Never mix warehouses in one shipment.
+ */
 
 type SessionEntry = {
   galaxusOrderId: string;
@@ -37,13 +36,11 @@ type SessionEntry = {
 
 type RejectResponse = {
   ok: false;
-  sessionCap: number;
   rejected: { reason: string; scanCode: string };
 };
 
 type MatchResponse = {
   ok: true;
-  sessionCap: number;
   matched: {
     galaxusOrderId: string;
     galaxusOrderDbId: string;
@@ -82,7 +79,7 @@ function normalizeGtinCandidates(candidates: string[]): string[] {
 
 function reject(reason: string, scanCode: string): NextResponse<RejectResponse> {
   return NextResponse.json(
-    { ok: false, sessionCap: PACKING_SESSION_CAP, rejected: { reason, scanCode } },
+    { ok: false, rejected: { reason, scanCode } },
     { status: 200 }
   );
 }
@@ -105,13 +102,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
         gtin: row?.gtin ? String(row.gtin).trim() : null,
       }))
       .filter((row: SessionEntry) => row.galaxusOrderLineId);
-
-    if (session.length >= PACKING_SESSION_CAP) {
-      return reject(
-        `Session already at cap ${PACKING_SESSION_CAP} pairs`,
-        scanCodeRaw
-      );
-    }
 
     const notes: string[] = [];
     const awbCandidatesBase = awbLookupCandidates(scanCodeRaw);
@@ -401,41 +391,12 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
       return (a.lineNumber ?? 0) - (b.lineNumber ?? 0);
     });
 
-    let sessionShipTo: GalaxusShipToInput | null = null;
-    if (session.length > 0) {
-      const sessionOrderIds = Array.from(new Set(session.map((row) => row.galaxusOrderId).filter(Boolean)));
-      const sessionOrders = await prisma.galaxusOrder.findMany({
-        where: { galaxusOrderId: { in: sessionOrderIds } },
-        select: {
-          recipientName: true,
-          recipientAddress1: true,
-          recipientAddress2: true,
-          recipientPostalCode: true,
-          recipientCity: true,
-          recipientCountry: true,
-        },
-      });
-      if (sessionOrders.length === 0) {
-        return reject("Open box has no Galaxus delivery address. Clear the box and scan again.", scanCodeRaw);
-      }
-      sessionShipTo = sessionOrders[0];
-      if (sessionOrders.some((row) => galaxusWarehouseShipToConflict(sessionShipTo!, row))) {
-        return reject(
-          "This box already mixes Galaxus warehouses. Clear it and pack one warehouse per box.",
-          scanCodeRaw
-        );
-      }
-    }
-
     for (const line of sorted) {
       const cov = coverage[line.id];
       if (!cov) continue;
       const inSession = sessionCountByLine.get(line.id) ?? 0;
       const availableAfterSession = cov.remaining - inSession;
       if (availableAfterSession <= 0) continue;
-      if (sessionShipTo && galaxusWarehouseShipToConflict(sessionShipTo, line.order)) {
-        return reject(galaxusWarehouseMixMessage(sessionShipTo, line.order), scanCodeRaw);
-      }
 
       let unitIndex = cov.shipped + cov.reserved + inSession;
       if (
@@ -476,7 +437,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
       return NextResponse.json(
         {
           ok: true,
-          sessionCap: PACKING_SESSION_CAP,
           matched: {
             galaxusOrderId: line.order.galaxusOrderId,
             galaxusOrderDbId: line.order.id,
@@ -517,7 +477,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
     return NextResponse.json(
       {
         ok: false,
-        sessionCap: PACKING_SESSION_CAP,
         rejected: {
           reason: err?.message || "Internal error",
           scanCode: "",
