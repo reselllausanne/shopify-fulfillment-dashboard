@@ -81,9 +81,55 @@ export const DEFAULT_LABEL_HEIGHT_MM = 100;
 
 export const PRINT_STATION_STORAGE_KEY = "resell.printStation.v1";
 
+/** Saved per-printer configs on this browser (printerName → config). */
+export const PRINT_STATION_PROFILES_STORAGE_KEY = "resell.printStation.profiles.v1";
+
+export type PrintStationProfiles = Record<string, PrintStationConfig>;
+
+/** Parse stored profiles; drops junk entries. Pure. */
+export function parsePrintStationProfiles(raw: string | null | undefined): PrintStationProfiles {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, Partial<PrintStationConfig>>;
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: PrintStationProfiles = {};
+    for (const [name, cfg] of Object.entries(parsed)) {
+      if (!name.trim() || !cfg || typeof cfg !== "object") continue;
+      out[name] = defaultPrintStationConfig({ ...cfg, printerName: name });
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Add/replace the profile keyed by config.printerName. No printer → unchanged. Pure. */
+export function upsertPrintStationProfile(
+  profiles: PrintStationProfiles,
+  config: PrintStationConfig
+): PrintStationProfiles {
+  const name = String(config.printerName || "").trim();
+  if (!name) return profiles;
+  return { ...profiles, [name]: { ...config, printerName: name } };
+}
+
 export const QZ_TRAY_DOWNLOAD_URL = "https://qz.io/download/";
 
 export const LABEL_PRESETS = [
+  {
+    // Same as `lp -o media=w288h360 -o fit-to-page` (works on BIXOLON XD5-40d).
+    id: "bixolon-4x5",
+    label: "BIXOLON 4 × 5 po (driver, portrait, ajusté à la page)",
+    widthMm: 102,
+    heightMm: 127,
+    continuous: false,
+    dpi: 203,
+    extra: {
+      useDriverPaperSize: true,
+      scaleContent: true,
+      orientation: "portrait",
+    } as Partial<PrintStationConfig>,
+  },
   {
     id: "62x100",
     label: "62 × 100 mm (Swiss Post / Brother QL)",

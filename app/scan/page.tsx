@@ -20,6 +20,7 @@ import {
   type PrintStationProbeStatus,
 } from "@/app/lib/printStationClient";
 import PrintStationWizard from "./PrintStationWizard";
+import PrinterProfileSelect from "./PrinterProfileSelect";
 import InStockShipPanel from "./InStockShipPanel";
 import type { PrintStationConfig } from "@/lib/printStation";
 
@@ -2624,6 +2625,10 @@ export default function ScanPage() {
                     ? "off"
                     : printStationStatus.reason}
               </span>
+              <PrinterProfileSelect
+                refreshKey={printStationStatus?.printerName}
+                onChanged={() => void refreshPrintStation(false)}
+              />
               <button
                 type="button"
                 onClick={() => setPrintStationWizardOpen(true)}
