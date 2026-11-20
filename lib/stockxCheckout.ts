@@ -2330,10 +2330,19 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
   /** Which unit of a qty>1 line (0-based). Default 0. */
   unitIndex?: number;
 }): Promise<GalaxusAutoCheckoutResult> {
-  const maxAllInChf = Math.min(MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? MAX_ALL_IN_CHF));
+  const c = options.candidate;
+  // High-ticket lines (sell > cap, e.g. LEGO 968 CHF): the flat 400 cap blocked every lane.
+  // noLoss buys keep the 10 % loss guard, so the cap scales to sell × (1 + MAX_LOSS_PCT).
+  const sellBasedCap =
+    options.noLoss && Number.isFinite(c.sellChf) && c.sellChf > 0
+      ? Math.ceil(c.sellChf * (1 + MAX_LOSS_PCT))
+      : 0;
+  const maxAllInChf = Math.min(
+    Math.max(MAX_ALL_IN_CHF, sellBasedCap),
+    Number(options.maxAllInChf ?? Math.max(MAX_ALL_IN_CHF, sellBasedCap))
+  );
   const dryRun = Boolean(options.dryRun);
   const minMargin = options.minMargin ?? GALAXUS_CSAT_MIN_MARGIN;
-  const c = options.candidate;
 
   // Prebuy: already linked on this Galaxus line → never double-buy.
   const unitIndex = Math.max(0, Number(options.unitIndex ?? 0) || 0);
