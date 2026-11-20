@@ -440,14 +440,22 @@ export default function PrintStationWizard({ open, onClose, onSaved }: Props) {
               >
                 Continuer
               </button>
+              <button
+                type="button"
+                disabled={busy || !draft.printerName}
+                onClick={() => void confirmAndSave(true)}
+                className="w-full rounded border border-emerald-600 bg-emerald-50 py-2 text-emerald-900 disabled:opacity-40"
+              >
+                Enregistrer sans test (auto-print ON)
+              </button>
             </div>
           )}
 
           {step === "test" && (
             <div className="space-y-3">
               <p>
-                Imprime un label de test local. Aucune commande, aucun Swiss Post,
-                aucun Shopify, aucun DELR.
+                Imprime un faux label Swiss Post (000, même format que les vrais). Aucune
+                commande, aucun Swiss Post, aucun Shopify, aucun DELR.
               </p>
               <button
                 type="button"
@@ -456,6 +464,14 @@ export default function PrintStationWizard({ open, onClose, onSaved }: Props) {
                 className="w-full rounded bg-emerald-700 text-white py-2 disabled:opacity-40"
               >
                 {busy ? "Impression…" : "Imprimer un label de test"}
+              </button>
+              <button
+                type="button"
+                disabled={busy || !draft.printerName}
+                onClick={() => void confirmAndSave(true)}
+                className="w-full rounded border border-emerald-600 bg-emerald-50 py-2 text-emerald-900 disabled:opacity-40"
+              >
+                Passer le test — enregistrer (auto-print ON)
               </button>
               <button
                 type="button"

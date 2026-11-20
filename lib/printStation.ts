@@ -394,8 +394,56 @@ export const PRINT_STATION_SETUP_NOTES = {
 } as const;
 
 /**
- * Minimal valid PDF used only for station test prints.
- * Does NOT call Swiss Post / Shopify / DELR / fulfill-from-awb.
+ * Fake Swiss Post label (all zeros) for station test prints: same page size as the
+ * real one (297 x 209 pt, landscape) so test = real layout/rotation/centering.
+ * Border + corner marks show clipping/centering. Does NOT call Swiss Post / Shopify / DELR.
  */
-export const STATION_TEST_LABEL_PDF_BASE64 =
-  "JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PAovVHlwZSAvQ2F0YWxvZwovUGFnZXMgMiAwIFIKPj4KZW5kb2JqCjIgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFszIDAgUl0KL0NvdW50IDEKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL1R5cGUgL1BhZ2UKL1BhcmVudCAyIDAgUgovTWVkaWFCb3ggWzAgMCA0NDAgNzA5XQovQ29udGVudHMgNCAwIFIKL1Jlc291cmNlczogPDwKL0ZvbnQgPDwKL0YxIDUgMCBSCj4+Cj4+Cj4+CmVuZG9iago0IDAgb2JqCjw8Ci9MZW5ndGggODgKPj4Kc3RyZWFtCkJUCi9GMSAyNCBUZgo1MCA2NTAgVGQKKFRFU1QgTEFCRUwpIFRqCjUwIDYwMCBUZAooUmVzZWxsIHByaW50IHN0YXRpb24pIFRqCkVUCmVuZHN0cmVhbQplbmRvYmoKNSAwIG9iago8PAovVHlwZSAvRm9udAovU3VidHlwZSAvVHlwZTEKL0Jhc2VGb250IC9IZWx2ZXRpY2EKPj4KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAxNSAwMDAwMCBuIAowMDAwMDAwMDY0IDAwMDAwIG4gCjAwMDAwMDAxMjEgMDAwMDAgbiAKMDAwMDAwMDI2NCAwMDAwMCBuIAowMDAwMDAwNDAzIDAwMDAwIG4gCnRyYWlsZXIKPDwKL1NpemUgNgovUm9vdCAxIDAgUgo+PgpzdGFydHhyZWYKNDc4CiUlRU9GCg==";
+export function buildTestLabelPdf(): string {
+  const W = 297;
+  const H = 209;
+  const bars: string[] = [];
+  // Fake barcode: deterministic bar widths.
+  let x = 20;
+  const widths = [2, 1, 3, 1, 2, 2, 1, 3, 2, 1, 1, 3, 2, 1, 2, 3, 1, 1, 2, 2];
+  for (let i = 0; i < 38; i++) {
+    const w = widths[i % widths.length];
+    if (i % 2 === 0) bars.push(`${x} 100 ${w} 60 re f`);
+    x += w + 1;
+  }
+  const content = [
+    "2 w 4 4 289 201 re S", // border (clipping check)
+    "0 0 12 12 re f", // corner marks
+    `${W - 12} 0 12 12 re f`,
+    `0 ${H - 12} 12 12 re f`,
+    `${W - 12} ${H - 12} 12 12 re f`,
+    ...bars,
+    "BT /F1 16 Tf 20 175 Td (TEST LABEL - SWISS POST) Tj ET",
+    "BT /F1 18 Tf 20 75 Td (99.60.000000.00000000) Tj ET",
+    "BT /F1 11 Tf 20 55 Td (Max Muster) Tj 0 -14 Td (Teststrasse 0) Tj 0 -14 Td (0000 Testort) Tj ET",
+  ].join("\n");
+  const objs = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>`,
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objs.forEach((o, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, "0")} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return pdf;
+}
+
+export const STATION_TEST_LABEL_PDF_BASE64 = (() => {
+  const pdf = buildTestLabelPdf();
+  return typeof btoa === "function"
+    ? btoa(pdf)
+    : Buffer.from(pdf, "binary").toString("base64");
+})();
