@@ -8,7 +8,7 @@ Les volumes, stocks et commandes ne sont PAS ici : les lire dans leur source (vo
 - topic: buyer.loss_tolerance
 - date: 2026-11-04
 - source: chat 2b1ef821-3cdd-434b-8520-9fb71d1bc2eb (message de Théo)
-- status: active
+- status: superseded
 - value: Pas d'achat à perte. Perte max 5 % si vraiment nécessaire. Toujours le dire quand un achat est refusé.
 
 ### D-002
@@ -16,7 +16,7 @@ Les volumes, stocks et commandes ne sont PAS ici : les lire dans leur source (vo
 - date: 2026-11-18
 - source: commit 490667b1 « fix(buyer): loss 10% for all, Galaxus cap 400 (#477) »
 - status: active
-- value: Perte max 10 % pour tous, plafond Galaxus 400.
+- value: Perte max 10 % pour tous, plafond Galaxus 400. Confirmé par Théo le 2026-11-20 (chat, 17:40).
 
 ### D-003
 - topic: buyer.channel

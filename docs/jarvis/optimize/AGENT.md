@@ -34,7 +34,7 @@ python3 docs/jarvis/optimize/test_audit.py   # tests isolés (détection, silenc
 
 ## Sujets ouverts (humains, hors détection auto)
 
-- O-A : `D-001` (perte max 5 %, 2026-11-04) vs `D-002` (perte max 10 %, commit #477, 2026-11-18). Théo confirme la règle courante.
+- O-A : RÉSOLU 2026-11-20. Perte max = 10 % (D-002), confirmé par Théo.
 - O-B : `AGENTS.md` cite 3 fichiers absents de `main` (`.cursor/environment.json`, `.cursor/CLOUD_AGENT_SETUP.md`, `.cursor/rules/returns-customer-exchange.mdc`). Ajouter les fichiers ou retirer les mentions.
 - O-C : règle `galaxus-supplier-price.mdc` (D-005) existe seulement en fichier non suivi sur le Mac. À commiter sur une branche dédiée.
 - O-D : dépôt principal public sur GitHub alors que Théo le pense privé. Il contient des noms de tables, de fournisseurs, des règles de prix. Vérifier qu'aucun secret n'y est (aucun scan fait ici).
