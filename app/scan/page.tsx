@@ -400,7 +400,12 @@ const ENABLE_FORCE_FULFILL = resolveClientFlag(
 );
 const SCAN_SESSION_STORAGE_KEY = "scan.fulfillment.session.key.v1";
 const PACKING_SESSION_STORAGE_KEY = "scan.packingSession.entries.v1";
-const PACKING_SESSION_CAP = 8;
+/** Boxes always shown (current Galaxus warehouses). No pair limit per box. */
+const PACKING_BOXES_DEFAULT: Array<{ key: string; label: string }> = [
+  { key: "wohlen", label: "Wohlen" },
+  { key: "buelach", label: "Bülach" },
+];
+const PACKING_BOX_LEGACY_KEY = "legacy";
 
 type DirectOpenUnit = {
   lineId: string;
@@ -471,13 +476,15 @@ type PackingSessionEntry = {
   physicalDeliveryNoteRequired: boolean;
   shipToSummary?: string | null;
   shipToKnown?: boolean;
+  /** Box id (warehouse). Missing on entries saved before the split. */
+  boxKey?: string;
+  boxLabel?: string;
   resolvedVia: string;
 };
 
 type PackingSessionApiResponse =
   | {
       ok: true;
-      sessionCap: number;
       matched: {
         galaxusOrderId: string;
         galaxusOrderDbId: string;
@@ -493,6 +500,7 @@ type PackingSessionApiResponse =
         sizeEU: string | null;
         physicalDeliveryNoteRequired: boolean;
         shipTo?: {
+          boxKey?: string;
           label: string;
           known: boolean;
           summary: string;
@@ -504,7 +512,6 @@ type PackingSessionApiResponse =
     }
   | {
       ok: false;
-      sessionCap: number;
       rejected: { reason: string; scanCode: string };
     };
 
@@ -778,7 +785,6 @@ export default function ScanPage() {
   const firstKeystrokeAtRef = useRef<number | null>(null);
   const [packingSession, setPackingSession] = useState<PackingSessionEntry[]>([]);
   const [packingReject, setPackingReject] = useState<{ scanCode: string; reason: string } | null>(null);
-  const [packingSessionReady, setPackingSessionReady] = useState<boolean>(false);
   const [directShipPrompt, setDirectShipPrompt] = useState<DirectShipPromptState | null>(null);
   const directShipPromptResolver = useRef<((selection: DirectShipSelection | null) => void) | null>(
     null
@@ -925,7 +931,6 @@ export default function ScanPage() {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
           setPackingSession(parsed as PackingSessionEntry[]);
-          setPackingSessionReady(parsed.length >= PACKING_SESSION_CAP);
         }
       }
     } catch {
@@ -1742,16 +1747,6 @@ export default function ScanPage() {
   ) => {
     if (!scanCode.trim()) return;
     const current = packingSessionRef.current;
-    if (current.length >= PACKING_SESSION_CAP) {
-      // Don't nag when a direct-delivery / home-return / decathlon scan already ran.
-      if (!opts.mainScanHandled) {
-        setPackingReject({
-          scanCode,
-          reason: `Session full (${PACKING_SESSION_CAP}/${PACKING_SESSION_CAP}) — pack + close first.`,
-        });
-      }
-      return;
-    }
     try {
       const res = await fetch("/api/scan-awb/packing-session", {
         method: "POST",
@@ -1789,6 +1784,8 @@ export default function ScanPage() {
           physicalDeliveryNoteRequired: Boolean(data.matched.physicalDeliveryNoteRequired),
           shipToSummary: data.matched.shipTo?.summary ?? null,
           shipToKnown: data.matched.shipTo?.known ?? false,
+          boxKey: data.matched.shipTo?.boxKey ?? PACKING_BOX_LEGACY_KEY,
+          boxLabel: data.matched.shipTo?.label ?? "Unknown warehouse",
           resolvedVia: data.matched.resolvedVia,
         };
         setPackingSession((prev) => {
@@ -1797,7 +1794,6 @@ export default function ScanPage() {
             return prev;
           }
           const next = [...prev, entry];
-          if (next.length >= PACKING_SESSION_CAP) setPackingSessionReady(true);
           // Stale success/error line invalid once box changes.
           setFinalizeStatus(null);
           return next;
@@ -1825,9 +1821,12 @@ export default function ScanPage() {
     firstKeystrokeAtRef.current = null;
   };
 
-  const handleFinalizeSession = async () => {
+  /** Pack ONE box (one warehouse). Other boxes stay open. */
+  const handleFinalizeSession = async (boxKey: string) => {
     if (finalizeBusy) return;
-    const snapshot = packingSessionRef.current;
+    const snapshot = packingSessionRef.current.filter(
+      (e) => (e.boxKey ?? PACKING_BOX_LEGACY_KEY) === boxKey
+    );
     if (snapshot.length === 0) return;
     const entries = snapshot.map((e) => ({
       galaxusOrderDbId: e.galaxusOrderDbId,
@@ -1930,8 +1929,9 @@ export default function ScanPage() {
         // Auto-clear: only on full success. Partial failures keep entries so
         // operator can retry. `packingSession` effect persists [] to
         // localStorage key `scan.packingSession.entries.v1` automatically.
-        setPackingSession([]);
-        setPackingSessionReady(false);
+        setPackingSession((prev) =>
+          prev.filter((e) => (e.boxKey ?? PACKING_BOX_LEGACY_KEY) !== boxKey)
+        );
       } else if (total > 0) {
         const firstError =
           results.find((r) => !r?.ok)?.error || data?.error || "unknown error";
@@ -2887,230 +2887,182 @@ export default function ScanPage() {
           </div>
         </div>
 
-        {/* Packing session panel — always visible. Empty until first warehouse-pair scan lands. */}
+        {/* Packing boxes — one open box per Galaxus warehouse, no pair limit. */}
         <div className="mt-6 border rounded-lg bg-white shadow p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-              <div className="text-base font-semibold text-gray-900">
-                Packing session · {packingSession.length}/{PACKING_SESSION_CAP} pairs
-              </div>
-              <div className="flex gap-2">
-                {packingSession.length > 0 && packingSession.length < PACKING_SESSION_CAP && (
-                  <button
-                    type="button"
-                    onClick={() => setPackingSessionReady(true)}
-                    className="px-3 py-1.5 text-sm rounded bg-green-700 text-white hover:bg-green-800"
-                  >
-                    Mark session ready (Done)
-                  </button>
-                )}
-                {packingSession.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPackingSession([]);
-                      setPackingSessionReady(false);
-                      setPackingReject(null);
-                      setFinalizeStatus(null);
-                      setFinalizeBusy(false);
-                    }}
-                    className="px-3 py-1.5 text-sm rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
-                  >
-                    Clear session
-                  </button>
-                )}
-              </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div className="text-base font-semibold text-gray-900">
+              Packing boxes · {packingSession.length} pair{packingSession.length === 1 ? "" : "s"}
             </div>
-
-            {packingReject && (
-              <div className="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
-                <span className="font-mono">{packingReject.scanCode || "(empty)"}</span>{" "}
-                — {packingReject.reason}
-              </div>
+            {packingSession.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPackingSession([]);
+                  setPackingReject(null);
+                  setFinalizeStatus(null);
+                  setFinalizeBusy(false);
+                }}
+                className="px-3 py-1.5 text-sm rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+              >
+                Clear all boxes
+              </button>
             )}
+          </div>
 
-            {packingSession.length === 0 ? (
-              <p className="text-sm text-gray-600">
-                Scan an AWB / GTIN / SKU per pair. Each scan is FIFO-matched to the oldest pending
-                warehouse Galaxus order that still needs that shoe.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b text-gray-600 text-left">
-                      <th className="py-1 pr-2">#</th>
-                      <th className="py-1 pr-2">Shoe</th>
-                      <th className="py-1 pr-2">Size</th>
-                      <th className="py-1 pr-2">GTIN / PID</th>
-                      <th className="py-1 pr-2">Order</th>
-                      <th className="py-1 pr-2">Order date</th>
-                      <th className="py-1 pr-2">Unit</th>
-                      <th className="py-1"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {packingSession.map((e, idx) => (
-                      <tr key={`${e.lineId}-${e.unitIndex}-${idx}`} className="border-b align-top">
-                        <td className="py-1 pr-2 font-mono">{idx + 1}</td>
-                        <td className="py-1 pr-2">
-                          {e.productName || "—"}
-                          <div className="text-[10px] text-gray-500">
-                            line #{e.lineNumber} · via {e.resolvedVia}
-                          </div>
-                        </td>
-                        <td className="py-1 pr-2">{e.sizeEU || "—"}</td>
-                        <td className="py-1 pr-2 font-mono">
-                          {e.gtin || "—"}
-                          <div className="text-[10px] text-gray-500">{e.supplierPid || "—"}</div>
-                        </td>
-                        <td className="py-1 pr-2 font-mono">
-                          {e.galaxusOrderId}
-                          {e.galaxusOrderNumber ? ` (${e.galaxusOrderNumber})` : ""}
-                        </td>
-                        <td className="py-1 pr-2 whitespace-nowrap">
-                          {new Date(e.orderDate).toLocaleDateString("de-CH")}
-                        </td>
-                        <td className="py-1 pr-2">#{e.unitIndex + 1}</td>
-                        <td className="py-1 text-right">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const next = packingSession.filter((_, i) => i !== idx);
-                              setPackingSession(next);
-                              if (next.length < PACKING_SESSION_CAP) {
-                                setPackingSessionReady(false);
-                              }
-                            }}
-                            className="text-red-700 hover:underline text-[11px]"
-                          >
-                            remove
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+          {packingReject && (
+            <div className="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+              <span className="font-mono">{packingReject.scanCode || "(empty)"}</span> —{" "}
+              {packingReject.reason}
+            </div>
+          )}
+          {finalizeStatus && (
+            <div
+              className={`mb-3 rounded border px-3 py-2 text-sm font-medium ${
+                finalizeStatus.tone === "ok"
+                  ? "border-green-500 bg-green-50 text-green-900"
+                  : "border-red-500 bg-red-50 text-red-800"
+              }`}
+            >
+              {finalizeStatus.text}
+            </div>
+          )}
+          <p className="text-xs text-gray-600 mb-3">
+            Scan an AWB / GTIN / SKU per pair. Each pair goes to the box of the Galaxus warehouse its
+            order ships to. No limit per box. Pack each box when full.
+          </p>
 
-            {(packingSessionReady || packingSession.length >= PACKING_SESSION_CAP) &&
-              packingSession.length > 0 && (
-                <div className="mt-4 rounded-lg border border-green-400 bg-green-50 p-4 text-green-950">
-                  <div className="font-semibold text-green-900">
-                    Session ready — one warehouse shipment
-                  </div>
-                  <p className="text-sm mt-1">
-                    Put the {packingSession.length} pair
-                    {packingSession.length === 1 ? "" : "s"} in one box. One button = same as
-                    warehouse builder: <strong>one composite Shipment</strong> across these
-                    orders (one SSCC, one Swiss Post label, one delivery note). DELR only for
-                    the pairs in this box — not the rest of each order.
-                  </p>
-                  <p className="text-sm mt-2 font-medium">
-                    {(() => {
-                      const ship = packingSession.find((entry) => entry.shipToSummary);
-                      if (!ship?.shipToSummary) {
-                        return "Ship-to comes from the Galaxus order. Scan again if this box was started before the warehouse split.";
-                      }
-                      return ship.shipToKnown
-                        ? `Ship to ${ship.shipToSummary}`
-                        : `Unknown Galaxus warehouse — still ship to the order address: ${ship.shipToSummary}`;
-                    })()}
-                  </p>
-                  <p className="text-xs mt-1 text-green-800">
-                    Reminder: put the Swiss Post label + delivery note (+ any required customs docs)
-                    inside the parcel before sealing. One box = one Galaxus warehouse.
-                  </p>
-                  <div className="mt-3 space-y-2">
-                    {(() => {
-                      const byOrder = new Map<
-                        string,
-                        {
-                          dbId: string;
-                          orderId: string;
-                          orderNumber: string | null;
-                          orderDate: string;
-                          count: number;
-                          requiresDeliveryNote: boolean;
-                        }
-                      >();
-                      for (const e of packingSession) {
-                        const key = e.galaxusOrderDbId;
-                        const prev = byOrder.get(key);
-                        if (prev) {
-                          prev.count += 1;
-                          prev.requiresDeliveryNote =
-                            prev.requiresDeliveryNote || Boolean(e.physicalDeliveryNoteRequired);
-                        } else {
-                          byOrder.set(key, {
-                            dbId: e.galaxusOrderDbId,
-                            orderId: e.galaxusOrderId,
-                            orderNumber: e.galaxusOrderNumber,
-                            orderDate: e.orderDate,
-                            count: 1,
-                            requiresDeliveryNote: Boolean(e.physicalDeliveryNoteRequired),
-                          });
-                        }
-                      }
-                      const rows = Array.from(byOrder.values()).sort(
-                        (a, b) =>
-                          new Date(a.orderDate).getTime() - new Date(b.orderDate).getTime()
-                      );
-                      if (finalizeStatus) {
-                        return (
-                          <div
-                            className={`rounded border px-3 py-2 text-sm font-medium ${
-                              finalizeStatus.tone === "ok"
-                                ? "border-green-500 bg-white text-green-900"
-                                : "border-red-500 bg-white text-red-800"
-                            }`}
-                          >
-                            {finalizeStatus.text}
+          <div className="grid gap-4 md:grid-cols-2">
+            {(() => {
+              const boxes: Array<{ key: string; label: string; entries: PackingSessionEntry[] }> =
+                PACKING_BOXES_DEFAULT.map((b) => ({ ...b, entries: [] }));
+              for (const e of packingSession) {
+                const key = e.boxKey ?? PACKING_BOX_LEGACY_KEY;
+                let box = boxes.find((b) => b.key === key);
+                if (!box) {
+                  box = {
+                    key,
+                    label:
+                      key === PACKING_BOX_LEGACY_KEY
+                        ? "Older scans (address-grouped)"
+                        : e.boxLabel || "Other address",
+                    entries: [],
+                  };
+                  boxes.push(box);
+                }
+                box.entries.push(e);
+              }
+              return boxes.map((box) => {
+                const orderCount = new Set(box.entries.map((e) => e.galaxusOrderDbId)).size;
+                const shipSummary = box.entries.find((e) => e.shipToSummary)?.shipToSummary;
+                const needsNote = box.entries.some((e) => e.physicalDeliveryNoteRequired);
+                return (
+                  <div
+                    key={box.key}
+                    className={`rounded-lg border p-3 ${
+                      box.entries.length > 0 ? "border-green-400 bg-green-50/40" : "border-gray-200"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-semibold text-gray-900">
+                        {box.label} · {box.entries.length} pair{box.entries.length === 1 ? "" : "s"}
+                      </div>
+                      {box.entries.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPackingSession((prev) =>
+                              prev.filter((e) => (e.boxKey ?? PACKING_BOX_LEGACY_KEY) !== box.key)
+                            )
+                          }
+                          className="text-[11px] text-gray-600 hover:underline"
+                        >
+                          clear box
+                        </button>
+                      )}
+                    </div>
+                    {shipSummary && <div className="text-xs text-gray-600 mt-0.5">{shipSummary}</div>}
+                    {box.entries.length === 0 ? (
+                      <p className="text-xs text-gray-500 mt-2">Empty.</p>
+                    ) : (
+                      <>
+                        <div className="overflow-x-auto mt-2">
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr className="border-b text-gray-600 text-left">
+                                <th className="py-1 pr-2">#</th>
+                                <th className="py-1 pr-2">Shoe</th>
+                                <th className="py-1 pr-2">Size</th>
+                                <th className="py-1 pr-2">Order</th>
+                                <th className="py-1"></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {box.entries.map((e, idx) => (
+                                <tr
+                                  key={`${e.lineId}-${e.unitIndex}-${idx}`}
+                                  className="border-b align-top"
+                                >
+                                  <td className="py-1 pr-2 font-mono">{idx + 1}</td>
+                                  <td className="py-1 pr-2">
+                                    {e.productName || "—"}
+                                    <div className="text-[10px] text-gray-500 font-mono">
+                                      {e.gtin || e.supplierPid || "—"} · unit #{e.unitIndex + 1}
+                                    </div>
+                                  </td>
+                                  <td className="py-1 pr-2">{e.sizeEU || "—"}</td>
+                                  <td className="py-1 pr-2 font-mono">
+                                    {e.galaxusOrderId}
+                                    {e.galaxusOrderNumber ? ` (${e.galaxusOrderNumber})` : ""}
+                                    <div className="text-[10px] text-gray-500">
+                                      {new Date(e.orderDate).toLocaleDateString("de-CH")}
+                                    </div>
+                                  </td>
+                                  <td className="py-1 text-right">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setPackingSession((prev) =>
+                                          prev.filter(
+                                            (p) =>
+                                              !(p.lineId === e.lineId && p.unitIndex === e.unitIndex)
+                                          )
+                                        )
+                                      }
+                                      className="text-red-700 hover:underline text-[11px]"
+                                    >
+                                      remove
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {needsNote && (
+                          <div className="mt-2 rounded border-2 border-red-500 bg-red-50 px-2 py-1.5 text-xs text-red-900">
+                            Delivery note required before sealing this box. Finalize opens delivery
+                            note + label.
                           </div>
-                        );
-                      }
-                      return (
-                        <>
-                          {rows.map((r) => (
-                            <div
-                              key={r.dbId}
-                              className="rounded border border-green-300 bg-white px-3 py-2 text-sm"
-                            >
-                              <span className="font-mono">{r.orderId}</span>
-                              {r.orderNumber ? ` (${r.orderNumber})` : ""} ·{" "}
-                              <span className="text-gray-600">
-                                {new Date(r.orderDate).toLocaleDateString("de-CH")}
-                              </span>{" "}
-                              · {r.count} pair{r.count === 1 ? "" : "s"}
-                              {r.requiresDeliveryNote ? " · delivery note required" : ""}
-                            </div>
-                          ))}
-                          {hasDeliveryNoteRequirement && (
-                            <div className="rounded border-2 border-red-500 bg-red-50 px-3 py-2 text-sm text-red-900">
-                              <div className="font-semibold">Delivery note required before sealing parcel.</div>
-                              <div className="mt-1 text-xs">
-                                Required for {deliveryNoteRequiredOrders.length} order
-                                {deliveryNoteRequiredOrders.length === 1 ? "" : "s"}.
-                              </div>
-                              <div className="mt-2 text-xs">Finalize auto-opens delivery note + label for immediate print.</div>
-                            </div>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => void handleFinalizeSession()}
-                            disabled={finalizeBusy || packingSession.length === 0}
-                            className="w-full mt-1 px-3 py-2 rounded bg-green-700 text-white text-sm font-semibold hover:bg-green-800 disabled:opacity-50"
-                          >
-                            {finalizeBusy
-                              ? "Creating composite shipment…"
-                              : `Pack box — 1 shipment (${packingSession.length} pairs · ${rows.length} order${rows.length === 1 ? "" : "s"})`}
-                          </button>
-                        </>
-                      );
-                    })()}
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void handleFinalizeSession(box.key)}
+                          disabled={finalizeBusy}
+                          className="w-full mt-2 px-3 py-2 rounded bg-green-700 text-white text-sm font-semibold hover:bg-green-800 disabled:opacity-50"
+                        >
+                          {finalizeBusy
+                            ? "Creating shipment…"
+                            : `Pack ${box.label} box — ${box.entries.length} pair${
+                                box.entries.length === 1 ? "" : "s"
+                              } · ${orderCount} order${orderCount === 1 ? "" : "s"}`}
+                        </button>
+                      </>
+                    )}
                   </div>
-                </div>
-              )}
+                );
+              });
+            })()}
+          </div>
         </div>
 
         {/* Result */}

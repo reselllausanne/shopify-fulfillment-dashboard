@@ -56,6 +56,8 @@ export type GalaxusShipToInput = {
 
 export type GalaxusShipToView = {
   siteKey: GalaxusWarehouseSiteKey | null;
+  /** Stable packing-box id: known site key, else normalized address. */
+  boxKey: string;
   label: string;
   known: boolean;
   gln: string | null;
@@ -156,6 +158,7 @@ export function describeGalaxusWarehouseShipTo(input: GalaxusShipToInput): Galax
   );
   return {
     siteKey: site?.key ?? null,
+    boxKey: galaxusWarehouseBoxKey(input),
     label,
     known: Boolean(site),
     gln,
@@ -208,8 +211,19 @@ function addressKey(input: GalaxusShipToInput): string {
 }
 
 /**
+ * Packing-box id for an order. Known warehouse (Wohlen / Bülach) → site key,
+ * so small street-text differences never split one warehouse into two boxes.
+ * Unknown address → normalized postal|street|city.
+ */
+export function galaxusWarehouseBoxKey(input: GalaxusShipToInput): string {
+  const site = matchGalaxusWarehouseSite(input);
+  return site ? site.key : `addr:${addressKey(input)}`;
+}
+
+/**
  * True when two orders must not share one parcel.
- * Same GLN wins over small street-text differences. Missing GLN falls back to street + postal + city.
+ * Same GLN wins over small street-text differences. Missing GLN falls back to
+ * box key (known site, else street + postal + city).
  */
 export function galaxusWarehouseShipToConflict(
   a: GalaxusShipToInput,
@@ -218,7 +232,7 @@ export function galaxusWarehouseShipToConflict(
   const glnA = galaxusGlnDigits(a.deliveryPartyGln);
   const glnB = galaxusGlnDigits(b.deliveryPartyGln);
   if (glnA && glnB) return glnA !== glnB;
-  return addressKey(a) !== addressKey(b);
+  return galaxusWarehouseBoxKey(a) !== galaxusWarehouseBoxKey(b);
 }
 
 export function galaxusWarehouseMixMessage(a: GalaxusShipToInput, b: GalaxusShipToInput): string {
