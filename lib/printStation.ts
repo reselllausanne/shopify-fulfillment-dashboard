@@ -117,15 +117,16 @@ export const QZ_TRAY_DOWNLOAD_URL = "https://qz.io/download/";
 
 export const LABEL_PRESETS = [
   {
-    // Same as `lp -o media=w288h360 -o fit-to-page` (works on BIXOLON XD5-40d).
+    // QZ ignores the CUPS queue paper and prints on A4 when no size is sent, so the
+    // size is explicit here; scaleContent fits the PDF to it (like lp fit-to-page).
     id: "bixolon-4x5",
-    label: "BIXOLON 4 × 5 po (driver, portrait, ajusté à la page)",
+    label: "BIXOLON 4 × 5 po (102 × 127 mm, portrait, ajusté)",
     widthMm: 102,
     heightMm: 127,
     continuous: false,
     dpi: 203,
     extra: {
-      useDriverPaperSize: true,
+      useDriverPaperSize: false,
       scaleContent: true,
       orientation: "portrait",
     } as Partial<PrintStationConfig>,
