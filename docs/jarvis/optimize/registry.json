@@ -1,0 +1,44 @@
+{
+ "findings": {
+  "broken_ref|AGENTS.md::.cursor/CLOUD_AGENT_SETUP.md": {
+   "announced": "2026-11-20T17:32:25+01:00",
+   "first_seen": "2026-11-20T17:32:25+01:00",
+   "fp": "9282dc2c70c2",
+   "key": "AGENTS.md::.cursor/CLOUD_AGENT_SETUP.md",
+   "kind": "broken_ref",
+   "last_seen": "2026-11-20T17:32:52+01:00",
+   "msg": "AGENTS.md cite `.cursor/CLOUD_AGENT_SETUP.md` : fichier introuvable",
+   "status": "open"
+  },
+  "broken_ref|AGENTS.md::.cursor/environment.json": {
+   "announced": "2026-11-20T17:32:25+01:00",
+   "first_seen": "2026-11-20T17:32:25+01:00",
+   "fp": "673fdc68cfe2",
+   "key": "AGENTS.md::.cursor/environment.json",
+   "kind": "broken_ref",
+   "last_seen": "2026-11-20T17:32:52+01:00",
+   "msg": "AGENTS.md cite `.cursor/environment.json` : fichier introuvable",
+   "status": "open"
+  },
+  "broken_ref|AGENTS.md::.cursor/rules/returns-customer-exchange.mdc": {
+   "announced": "2026-11-20T17:32:25+01:00",
+   "first_seen": "2026-11-20T17:32:25+01:00",
+   "fp": "c4ef64f608ea",
+   "key": "AGENTS.md::.cursor/rules/returns-customer-exchange.mdc",
+   "kind": "broken_ref",
+   "last_seen": "2026-11-20T17:32:52+01:00",
+   "msg": "AGENTS.md cite `.cursor/rules/returns-customer-exchange.mdc` : fichier introuvable",
+   "status": "open"
+  },
+  "contradiction|buyer.loss_tolerance::D-001+D-002": {
+   "announced": "2026-11-20T17:32:25+01:00",
+   "first_seen": "2026-11-20T17:32:25+01:00",
+   "fp": "5317f92b1096",
+   "key": "buyer.loss_tolerance::D-001+D-002",
+   "kind": "contradiction",
+   "last_seen": "2026-11-20T17:32:52+01:00",
+   "msg": "docs/jarvis/memory/decisions.md : sujet `buyer.loss_tolerance` a 2 décisions actives qui divergent (D-001, D-002). Marquer l'ancienne `superseded` ou trancher.",
+   "status": "open"
+  }
+ }
+}

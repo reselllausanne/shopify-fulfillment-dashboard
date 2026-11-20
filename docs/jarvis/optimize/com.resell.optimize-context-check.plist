@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.resell.optimize-context-check</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/resell-lausanne/Projects/shopify-fulfillment-dashboard/docs/jarvis/optimize/audit.py</string>
+    <string>--alert-file</string>
+    <string>/Users/resell-lausanne/Projects/shopify-fulfillment-dashboard/docs/jarvis/optimize/alerts.log</string>
+  </array>
+  <key>EnvironmentVariables</key><dict><key>TZ</key><string>Europe/Zurich</string></dict>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardErrorPath</key><string>/tmp/optimize-context-check.err</string>
+</dict></plist>

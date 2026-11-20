@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Jarvis read-only data access for Resell Lausanne. No secret is printed or stored here.
+# Secrets stay on the VPS (container env) or in ~/secrets on this Mac.
+# Usage: jarvis <cmd> [args]
+#   sources                 print source map
+#   decision <term>         search dated decisions (docs/jarvis/memory/decisions.md)
+#   sql "<select ...>"      read-only SQL on prod DB (VPS, read-only session; health_* blocked)
+#   shopify-orders          live Shopify order count (Admin API, via VPS env)
+#   decathlon-ping          Mirakl API version (via VPS env)
+#   gads                    Google Ads account name (via VPS env)
+#   gsc                     Search Console sites (service account in ~/secrets)
+#   vps                     VPS git SHA + container status
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+VPS="${JARVIS_VPS:-resell-vps}"
+APP="/opt/resell"
+
+vps_psql() { # $1 = sql
+  local sql="$1"
+  if printf '%s' "$sql" | grep -Eiq '(^|[^a-z_])(insert|update|delete|drop|alter|truncate|create|grant|copy|call|do)[[:space:]]'; then
+    echo "refused: write keyword" >&2; exit 2; fi
+  if printf '%s' "$sql" | grep -Eiq 'health_|StockXToken|PartnerUser'; then
+    echo "refused: table outside Jarvis scope (health/credentials)" >&2; exit 2; fi
+  local b64; b64="$(printf '%s' "$sql" | base64 | tr -d '\n')"
+  ssh -o BatchMode=yes "$VPS" "cd $APP && U=\$(docker compose exec -T web printenv DIRECT_URL | tr -d '\r'); U=\${U%%\?*}; \
+    export PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=30000'; \
+    echo '$b64' | base64 -d | psql \"\$U\" -v ON_ERROR_STOP=1 -P pager=off -A -F ' | '"
+}
+
+vps_node() { # $1 = js (runs inside web container, env stays server-side)
+  local b64; b64="$(printf '%s' "$1" | base64 | tr -d '\n')"
+  ssh -o BatchMode=yes "$VPS" "cd $APP && echo '$b64' | base64 -d | docker compose exec -T web node -"
+}
+
+case "${1:-}" in
+  sources)  cat "$HERE/SOURCES.md" ;;
+  decision) shift; grep -n -i -B2 -A8 -- "${*:?term}" "$HERE/memory/decisions.md" || echo "no decision matches" ;;
+  sql)      vps_psql "${2:?sql}" ;;
+  shopify-orders)
+    vps_node 'const e=process.env;const h=e.SHOP_NAME_SHOPIFY.includes(".")?e.SHOP_NAME_SHOPIFY:e.SHOP_NAME_SHOPIFY+".myshopify.com";fetch(`https://${h}/admin/api/${e.API_VERSION_SHOPIFY}/orders/count.json?status=any`,{headers:{"X-Shopify-Access-Token":e.SHOPIFY_ADMIN_ACCESS_TOKEN||e.ACCESS_TOKEN_SHOPIFY}}).then(async r=>console.log("shopify_orders_total",r.status,await r.text()))' ;;
+  decathlon-ping)
+    vps_node 'const e=process.env;fetch(e.DECATHLON_MIRAKL_API_BASE_URL.replace(/\/$/,"")+"/api/version",{headers:{Authorization:e.DECATHLON_MIRAKL_API_KEY}}).then(async r=>console.log("mirakl",r.status,await r.text()))' ;;
+  gads)
+    vps_node 'const e=process.env;(async()=>{const t=await(await fetch("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({client_id:e.GOOGLE_ADS_CLIENT_ID,client_secret:e.GOOGLE_ADS_CLIENT_SECRET,refresh_token:e.GOOGLE_ADS_REFRESH_TOKEN,grant_type:"refresh_token"})})).json();const q=await fetch(`https://googleads.googleapis.com/${e.GOOGLE_ADS_API_VERSION||"v18"}/customers/${e.GOOGLE_ADS_CUSTOMER_ID}/googleAds:search`,{method:"POST",headers:{Authorization:"Bearer "+t.access_token,"developer-token":e.GOOGLE_ADS_DEVELOPER_TOKEN,"login-customer-id":e.GOOGLE_ADS_LOGIN_CUSTOMER_ID,"content-type":"application/json"},body:JSON.stringify({query:"select customer.descriptive_name, metrics.cost_micros, metrics.clicks from customer where segments.date during LAST_7_DAYS"})});console.log("gads",q.status,(await q.text()).slice(0,400))})()' ;;
+  gsc)      python3 "$HERE/bin/gsc_sites.py" ;;
+  vps)      ssh -o BatchMode=yes "$VPS" "cd $APP && git rev-parse HEAD && docker compose ps --format '{{.Name}} {{.Status}}'" ;;
+  *) sed -n 2,13p "$0"; exit 1 ;;
+esac
