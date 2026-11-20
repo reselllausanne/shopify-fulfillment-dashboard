@@ -13,8 +13,12 @@
  */
 
 import {
+  PRINT_STATION_PROFILES_STORAGE_KEY,
   PRINT_STATION_STORAGE_KEY,
   QZ_TRAY_DOWNLOAD_URL,
+  parsePrintStationProfiles,
+  upsertPrintStationProfile,
+  type PrintStationProfiles,
   STATION_TEST_LABEL_PDF_BASE64,
   buildQzPdfDataOptions,
   buildQzPixelConfigOptions,
@@ -86,6 +90,45 @@ export function loadPrintStationConfig(): PrintStationConfig {
 export function savePrintStationConfig(config: PrintStationConfig): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(PRINT_STATION_STORAGE_KEY, JSON.stringify(config));
+  // Remember this printer's settings so it can be re-selected from the dropdown.
+  if (String(config.printerName || "").trim()) {
+    savePrinterProfiles(upsertPrintStationProfile(loadPrinterProfiles(), config));
+  }
+}
+
+export function loadPrinterProfiles(): PrintStationProfiles {
+  if (typeof window === "undefined") return {};
+  return parsePrintStationProfiles(
+    window.localStorage.getItem(PRINT_STATION_PROFILES_STORAGE_KEY)
+  );
+}
+
+function savePrinterProfiles(profiles: PrintStationProfiles): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(PRINT_STATION_PROFILES_STORAGE_KEY, JSON.stringify(profiles));
+}
+
+export function deletePrinterProfile(printerName: string): void {
+  const profiles = { ...loadPrinterProfiles() };
+  delete profiles[printerName];
+  savePrinterProfiles(profiles);
+}
+
+/**
+ * Make a saved printer profile the active one (keeps this station's id/name).
+ * Returns the new active config, or null if no such profile.
+ */
+export function switchPrinterProfile(printerName: string): PrintStationConfig | null {
+  const profile = loadPrinterProfiles()[printerName];
+  if (!profile) return null;
+  const current = loadPrintStationConfig();
+  const next = defaultPrintStationConfig({
+    ...profile,
+    stationId: current.stationId,
+    stationName: current.stationName || profile.stationName,
+  });
+  savePrintStationConfig(next);
+  return next;
 }
 
 export function clearPrintStationConfig(): void {
