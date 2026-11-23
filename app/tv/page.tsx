@@ -21,6 +21,7 @@ type Feed = {
   totals: { salesChf: number; marginChf: number; adsSpendChf?: number; netMarginChf?: number; orders: number };
   shopify: { salesChf: number; marginChf: number; orders: number; marginPending: number; marginEstimatedChf?: number; live: boolean };
   galaxus: { salesChf: number; marginChf: number; marginEstimatedChf?: number; orders: number };
+  allIds?: string[];
   sales: Sale[];
 };
 
@@ -203,11 +204,16 @@ export default function TvPage() {
       const data = (await res.json()) as Feed;
       setFeed(data);
       setError(null);
+      const allIds = data.allIds ?? data.sales.map((s) => s.id);
       if (knownIds.current == null) {
-        knownIds.current = new Set(data.sales.map((s) => s.id));
+        knownIds.current = new Set(allIds);
         return;
       }
-      const fresh = data.sales.filter((s) => !knownIds.current!.has(s.id));
+      // New = never seen AND really recent (a cancelled order, a late import or a day change must not ring).
+      const seen = knownIds.current;
+      const unseen = data.sales.filter((s) => !seen.has(s.id));
+      allIds.forEach((id) => seen.add(id));
+      const fresh = unseen.filter((s) => Date.now() - new Date(s.at).getTime() < 30 * 60_000);
       if (fresh.length) {
         fresh.forEach((s) => knownIds.current!.add(s.id));
         setFreshIds((prev) => new Set([...prev, ...fresh.map((s) => s.id)]));

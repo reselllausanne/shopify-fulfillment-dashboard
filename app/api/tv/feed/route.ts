@@ -317,7 +317,7 @@ async function build() {
         }
       }
       sales.push({
-        id: `shopify:${o.id}`,
+        id: `shopify:${o.name}`,
         channel: "shopify",
         ref: o.name,
         title: first?.title ?? "Commande Shopify",
@@ -486,6 +486,8 @@ async function build() {
       marginEstimatedChf: Math.round(galaxusMarginEstimated),
       orders: gxOrders.size,
     },
+    // Every sale of the day: the TV only plays the sound for ids it has never seen.
+    allIds: sales.map((x) => x.id),
     sales: sales.slice(0, 15),
   };
 }
