@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type Size = { nikeLabel: string; euSize: string; gtin: string };
 type Parsed = {
@@ -17,11 +17,19 @@ type Parsed = {
  * "Coller un lien produit" — for pairs absent from StockX/KickDB (e.g. Nike baby shoes).
  * 1) Aperçu: reads the page. 2) Prix + stock par taille → crée Shopify + lignes ner: (Galaxus au prochain feed).
  */
-export default function NikeUrlCard({ locationId }: { locationId: string }) {
-  const [url, setUrl] = useState("");
+export default function NikeUrlCard({
+  locationId,
+  autoGtin,
+  defaultPrice,
+}: {
+  locationId: string;
+  autoGtin?: string;
+  defaultPrice?: string;
+}) {
+  const [url, setUrl] = useState(autoGtin ?? "");
   const [parsed, setParsed] = useState<Parsed | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
-  const [price, setPrice] = useState("");
+  const [price, setPrice] = useState(defaultPrice ?? "");
   const [stock, setStock] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -60,6 +68,12 @@ export default function NikeUrlCard({ locationId }: { locationId: string }) {
       setStock({});
     }
   }
+
+  // Unknown GTIN scanned → look the page up automatically (once per GTIN).
+  useEffect(() => {
+    if (autoGtin) void preview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoGtin]);
 
   function payload(dryRun: boolean) {
     // url state is resolved to the official page after preview
