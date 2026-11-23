@@ -660,7 +660,7 @@ function LastOrderCard({
 }) {
   return (
     <div
-      className="relative overflow-hidden rounded-[2vh] border-2 bg-black/30 px-[2.5vw] py-[1.6vh] backdrop-blur"
+      className="relative overflow-hidden rounded-[2vh] border-2 bg-black/30 px-[2.5vw] py-[1.2vh] backdrop-blur"
       style={{
         borderColor: tone.base,
         boxShadow: `0 0 ${2 + tone.t * 5}vh ${tone.soft}`,
@@ -673,7 +673,7 @@ function LastOrderCard({
         <span style={{ color: tone.base, transition: "color 2.5s linear" }}>{tone.label}</span>
       </div>
       <div
-        className="mt-[0.4vh] text-[15vh] font-black leading-none tabular-nums"
+        className="mt-[0.4vh] text-[11vh] font-black leading-none tabular-nums"
         style={{ color: tone.base, textShadow: `0 0 4vh ${tone.soft}`, transition: "color 2.5s linear" }}
       >
         {loaded ? fmtElapsed(elapsedMs) : "--:--"}
