@@ -11,6 +11,8 @@
  * picks up the new `ner:` rows.
  */
 import { NextResponse } from "next/server";
+import { findBrandPageByGtin, serpApiSearch } from "@/shopify/restock/findBrandPageByGtin";
+import { cleanGtin } from "@/shopify/restock/gtinNormalize";
 import { fetchNikeProduct, nikeToProductData } from "@/shopify/restock/parseNikeProduct";
 import { createProductFromData, validateProductFromData } from "@/shopify/restock/createProductFromData";
 
@@ -21,8 +23,25 @@ export const maxDuration = 60;
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const url = typeof body?.url === "string" ? body.url.trim() : "";
-    if (!url) return NextResponse.json({ ok: false, error: "Missing url" }, { status: 400 });
+    let url = typeof body?.url === "string" ? body.url.trim() : "";
+    let found: Awaited<ReturnType<typeof findBrandPageByGtin>> | null = null;
+    // Auto: no URL but a GTIN → Google (SerpAPI) → official brand page.
+    if (!url && typeof body?.gtin === "string" && body.gtin.trim()) {
+      const key = process.env.SERPAPI_KEY?.trim();
+      if (!key) return NextResponse.json({ ok: false, error: "SERPAPI_KEY missing" }, { status: 500 });
+      found = await findBrandPageByGtin(cleanGtin(body.gtin), serpApiSearch(key));
+      if (!found.ok || !found.url) {
+        return NextResponse.json({ ok: false, error: found.error ?? "page_not_found", found }, { status: 404 });
+      }
+      url = found.url;
+    }
+    if (!url) return NextResponse.json({ ok: false, error: "Missing url or gtin" }, { status: 400 });
+    if (!/(^|\.)nike\.com$/i.test(new URL(url).hostname)) {
+      return NextResponse.json(
+        { ok: false, error: "brand_parser_missing", url, found },
+        { status: 422 }
+      );
+    }
 
     const parsed = await fetchNikeProduct(url);
 
@@ -37,6 +56,8 @@ export async function POST(request: Request) {
       return NextResponse.json({
         ok: true,
         mode: "preview",
+        url,
+        found,
         parsed,
         missingFromPage: validateProductFromData(allSizes),
       });

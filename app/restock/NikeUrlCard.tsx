@@ -51,8 +51,10 @@ export default function NikeUrlCard({ locationId }: { locationId: string }) {
   }
 
   async function preview() {
-    const json = await call({ url: url.trim() });
+    const v = url.trim();
+    const json = await call(/^https?:\/\//i.test(v) ? { url: v } : { gtin: v });
     if (json?.ok && json.mode === "preview") {
+      if (json.url) setUrl(json.url);
       setParsed(json.parsed);
       setMissing(json.missingFromPage ?? []);
       setStock({});
@@ -60,6 +62,7 @@ export default function NikeUrlCard({ locationId }: { locationId: string }) {
   }
 
   function payload(dryRun: boolean) {
+    // url state is resolved to the official page after preview
     const s: Record<string, number> = {};
     for (const [k, v] of Object.entries(stock)) {
       const n = Math.trunc(Number(v));
@@ -84,7 +87,7 @@ export default function NikeUrlCard({ locationId }: { locationId: string }) {
 
   return (
     <div className="mt-8 rounded-sm border border-gray-300 bg-white p-4">
-      <div className="text-sm font-semibold">Produit hors StockX — coller un lien Nike</div>
+      <div className="text-sm font-semibold">Produit hors StockX — GTIN ou lien Nike</div>
       <div className="mt-2 flex gap-2">
         <input
           value={url}
@@ -92,7 +95,7 @@ export default function NikeUrlCard({ locationId }: { locationId: string }) {
           onKeyDown={(e) => {
             if (e.key === "Enter" && url.trim()) preview();
           }}
-          placeholder="https://www.nike.com/ch/t/…/BQ5453-001"
+          placeholder="GTIN (auto via Google) ou https://www.nike.com/ch/t/…"
           className="flex-1 rounded-sm border border-gray-400 px-3 py-2 text-sm focus:border-black focus:outline-none"
         />
         <button
