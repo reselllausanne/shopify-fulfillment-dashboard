@@ -892,6 +892,11 @@ export default function ScanPage() {
   useEffect(() => {
     packingSessionRef.current = packingSession;
   }, [packingSession]);
+  // Serialize packing-session scans. They are fired `void` (not awaited), and the server derives
+  // each unit's unitIndex from the session we send. If two scans of the SAME size overlap (hardware
+  // scanner fires fast), both read a session that misses the other, both get unitIndex 0, and the
+  // client dedup (lineId+unitIndex) drops the second — so scanning a duplicate size added only one.
+  const packingScanChainRef = useRef<Promise<void>>(Promise.resolve());
   const canceledStates = useMemo(
     () => new Set(["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"]),
     []
@@ -1742,7 +1747,20 @@ export default function ScanPage() {
    * - When mainScanHandled is false and no pair matches, surfaces reject reason
    *   as red text on the panel (never as an alert).
    */
-  const tryAddScanToPackingSession = async (
+  const tryAddScanToPackingSession = (
+    scanCode: string,
+    opts: { mainScanHandled: boolean }
+  ): Promise<void> => {
+    // Chain so each packing scan sees the previous one's committed unit before building its
+    // request — prevents two scans of the same size from both claiming unitIndex 0.
+    const run = packingScanChainRef.current.then(() =>
+      doAddScanToPackingSession(scanCode, opts)
+    );
+    packingScanChainRef.current = run.catch(() => undefined);
+    return run;
+  };
+
+  const doAddScanToPackingSession = async (
     scanCode: string,
     opts: { mainScanHandled: boolean }
   ) => {
@@ -1789,16 +1807,17 @@ export default function ScanPage() {
           boxLabel: data.matched.shipTo?.label ?? "Unknown warehouse",
           resolvedVia: data.matched.resolvedVia,
         };
-        setPackingSession((prev) => {
-          // Dedup: same lineId + unitIndex should never appear twice.
-          if (prev.some((p) => p.lineId === entry.lineId && p.unitIndex === entry.unitIndex)) {
-            return prev;
-          }
+        // Dedup: same lineId + unitIndex should never appear twice. Read/append against the ref
+        // (authoritative) and update it synchronously so the next queued scan sees this unit even
+        // before React commits the state — otherwise a fast duplicate-size scan reuses unitIndex 0.
+        const prev = packingSessionRef.current;
+        if (!prev.some((p) => p.lineId === entry.lineId && p.unitIndex === entry.unitIndex)) {
           const next = [...prev, entry];
+          packingSessionRef.current = next;
+          setPackingSession(next);
           // Stale success/error line invalid once box changes.
           setFinalizeStatus(null);
-          return next;
-        });
+        }
       } else if (!opts.mainScanHandled) {
         // Only nag when nothing else claimed this scan.
         setPackingReject({
