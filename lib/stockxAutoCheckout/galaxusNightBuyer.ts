@@ -17,7 +17,7 @@ import path from "node:path";
 import { prisma } from "@/app/lib/prisma";
 import { fetchRecentStockxBuyingOrders } from "@/galaxus/stx/stockxClient";
 import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
-import { nextStockxPlaywrightProxy } from "@/lib/stockxPlaywrightProxy";
+import { nextStockxPlaywrightProxy, stockxBrowserProxyMode } from "@/lib/stockxPlaywrightProxy";
 import {
   launchStockxContext,
   runStockxAutoCheckoutForGalaxusLine,
@@ -609,12 +609,14 @@ async function getSession(): Promise<Session> {
     await closeSession();
   }
   if (!session) {
-    const sticky = nextStockxPlaywrightProxy();
+    // Direct VPS IP unless STOCKX_BROWSER_PROXY_MODE=always. Burned pool IPs got the
+    // "Please login to continue / verify you are not a bot" gate (proxy_blank loop).
+    const sticky = stockxBrowserProxyMode() === "always" ? nextStockxPlaywrightProxy() : null;
     const launched = await launchStockxContext({
       account: "galaxus",
       proxy: sticky,
       useStickyProxy: Boolean(sticky),
-      forceCold: Boolean(sticky),
+      forceCold: true,
     });
     session = { launched, startedAt: Date.now(), consecutiveFails: 0 };
     console.warn(`[NIGHT-BUYER] new session (sticky=${Boolean(sticky)})`);
