@@ -1817,13 +1817,28 @@ export default function ScanPage() {
           setPackingSession(next);
           // Stale success/error line invalid once box changes.
           setFinalizeStatus(null);
+        } else {
+          // Server returned a unit already in the box (same line+unitIndex). Tell the operator
+          // instead of silently dropping it — otherwise a duplicate-size scan looks like nothing
+          // happened.
+          setPackingReject({
+            scanCode,
+            reason: `Already in the box (${entry.productName ?? entry.supplierPid ?? "pair"}${
+              entry.sizeEU ? ` ${entry.sizeEU}` : ""
+            }, unit ${entry.unitIndex + 1}) — no remaining unit to add.`,
+          });
         }
-      } else if (!opts.mainScanHandled) {
-        // Only nag when nothing else claimed this scan.
-        setPackingReject({
-          scanCode,
-          reason: data.rejected?.reason || "Rejected",
-        });
+      } else {
+        // A warehouse pair that could not be assigned (all units already packed / no remaining)
+        // must be surfaced even when another channel handled the main scan — the whole symptom
+        // the operator sees is "I scan the 2nd pair and nothing happens".
+        const reason = data.rejected?.reason || "Rejected";
+        // Surface only "can't add another unit" conflicts when another channel handled the scan;
+        // stay quiet for "not a warehouse pair" rejects (those fire on every non-warehouse scan).
+        const isPackConflict = /already|assigned|packed|remaining/i.test(reason);
+        if (!opts.mainScanHandled || isPackConflict) {
+          setPackingReject({ scanCode, reason });
+        }
       }
     } catch (err: any) {
       if (!opts.mainScanHandled) {
