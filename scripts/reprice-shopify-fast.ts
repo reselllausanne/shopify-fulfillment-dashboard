@@ -41,6 +41,7 @@ import {
   type SnapshotVariantNode,
 } from "@/shopify/bulk/variantSnapshot";
 import { computeStxSellPrices, pickShopifyVariantBySize } from "@/shopify/stx/syncShopifyStxPrices";
+import { lotCountFromHandle, sameLotSize } from "@/shopify/stx/lotHandle";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 import { cleanGtin } from "@/shopify/restock/gtinNormalize";
 
@@ -82,6 +83,7 @@ const VARIANTS_QUERY = /* GraphQL */ `
 query FastRepriceProduct($id: ID!, $first: Int!) {
   product(id: $id) {
     id
+    handle
     variants(first: $first) {
       pageInfo { hasNextPage }
       nodes {
@@ -429,6 +431,7 @@ async function main() {
     let productData: {
       product: {
         id: string;
+        handle?: string | null;
         variants: {
           pageInfo: { hasNextPage: boolean };
           nodes: Array<{
@@ -475,6 +478,34 @@ async function main() {
     }
 
     const nodes = productData?.product?.variants?.nodes ?? [];
+
+    // Several KickDB slugs (single, 2x-lot, 4x-lot…) can share one Shopify product.
+    // Only price rows whose slug has the same lot size as the Shopify product handle,
+    // else the single's price lands on the lot (order #7821: 207 instead of 583).
+    const lotSizes = new Set(bucket.rows.map((r) => lotCountFromHandle(r.productHandle)));
+    if (lotSizes.size > 1 || bucket.rows.some((r) => lotCountFromHandle(r.productHandle) > 1)) {
+      let shopHandle = productData?.product?.handle ?? null;
+      if (!shopHandle) {
+        try {
+          const h = await shopifyGraphQL<{ product: { handle: string | null } | null }>(
+            `query($id: ID!){ product(id:$id){ handle } }`,
+            { id: productGid }
+          );
+          shopHandle = h.data?.product?.handle ?? null;
+        } catch {
+          shopHandle = null;
+        }
+      }
+      if (!shopHandle) return; // cannot prove lot size → never guess
+      const before = bucket.rows.length;
+      bucket.rows = bucket.rows.filter((r) => sameLotSize(r.productHandle, shopHandle));
+      for (const [k, r] of Array.from(bucket.byBarcode.entries())) {
+        if (!sameLotSize(r.productHandle, shopHandle)) bucket.byBarcode.delete(k);
+      }
+      if (bucket.rows.length < before) {
+        console.log(`  lot-size guard: ${productGid} ${shopHandle} skipped ${before - bucket.rows.length} mismatched row(s)`);
+      }
+    }
     const bulkVariants: Array<{ id: string; price: string }> = [];
     const metafields: Array<{
       ownerId: string;
