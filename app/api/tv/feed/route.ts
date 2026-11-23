@@ -69,7 +69,7 @@ const SHOPIFY_TODAY_QUERY = /* GraphQL */ `
             id
             title
             quantity
-            originalUnitPriceSet {
+            discountedUnitPriceSet {
               shopMoney {
                 amount
               }
@@ -104,7 +104,7 @@ type ShopifyOrderNode = {
       id?: string;
       title?: string;
       quantity?: number;
-      originalUnitPriceSet?: { shopMoney?: { amount?: string } };
+      discountedUnitPriceSet?: { shopMoney?: { amount?: string } };
       variant?: { barcode?: string | null } | null;
       image?: { url?: string } | null;
     }>;
@@ -287,7 +287,7 @@ async function build() {
         let physicalOnly = items.length > 0;
         for (const li of items) {
           const qty0 = Math.max(1, li.quantity ?? 1);
-          const price0 = toNumberSafe(li.originalUnitPriceSet?.shopMoney?.amount, 0);
+          const price0 = toNumberSafe(li.discountedUnitPriceSet?.shopMoney?.amount, 0);
           if (li.id && physicalLineIds.has(li.id)) {
             est += price0 * qty0;
             known += 1;
@@ -296,7 +296,7 @@ async function build() {
           physicalOnly = false;
           const unit = li.variant?.barcode ? shopPrices.byGtin.get(li.variant.barcode) : undefined;
           const qty = Math.max(1, li.quantity ?? 1);
-          const price = toNumberSafe(li.originalUnitPriceSet?.shopMoney?.amount, 0);
+          const price = toNumberSafe(li.discountedUnitPriceSet?.shopMoney?.amount, 0);
           if (unit && price > 0) {
             est += (price - unit) * qty;
             known += 1;
@@ -369,6 +369,7 @@ async function build() {
   let ratioRev = 0;
   for (const line of galaxusLines) {
     if (isNerGalaxusMarketplaceLine(line)) continue;
+    if (line.stockxMatches.some((m) => String(m.stockxOrderNumber ?? "").toUpperCase().startsWith("LOCAL-STOCK"))) continue;
     const rev = galaxusLineNetRevenueChf({
       lineNetAmount: line.lineNetAmount,
       priceLineAmount: line.priceLineAmount,
@@ -396,7 +397,13 @@ async function build() {
     galaxusSales += revenue;
     let margin: number | null = null;
     let estimated = false;
-    if (isNerGalaxusMarketplaceLine(line)) {
+    const ownedStock = line.stockxMatches.some((m) =>
+      String(m.stockxOrderNumber ?? "").toUpperCase().startsWith("LOCAL-STOCK")
+    );
+    if (ownedStock && !(costById.get(line.id) ?? 0)) {
+      // Sold from owned local stock: already expensed → 100% margin.
+      margin = revenue;
+    } else if (isNerGalaxusMarketplaceLine(line)) {
       margin = nerMarginFromCaChf(revenue);
     } else {
       const cost = costById.get(line.id) ?? 0;

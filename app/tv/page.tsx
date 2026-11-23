@@ -373,7 +373,7 @@ export default function TvPage() {
             </div>
             {flash.marginChf != null && (
               <div className="text-[4.5vh] font-bold text-emerald-300">
-                marge {flash.marginEstimated ? "~" : ""}+{chf(flash.marginChf)} CHF
+                marge {flash.marginEstimated ? "~" : ""}{flash.marginChf < 0 ? "" : "+"}{chf(flash.marginChf)} CHF
               </div>
             )}
           </div>
@@ -492,7 +492,7 @@ function SaleRow({ sale, fresh, now }: { sale: Sale; fresh: boolean; now: number
         <div className="text-[3.2vh] font-black tabular-nums">{chf(sale.salesChf)}</div>
         {sale.marginChf != null && (
           <div className="text-[2vh] font-semibold tabular-nums text-emerald-300">
-            {sale.marginEstimated ? "~" : ""}+{chf(sale.marginChf)}
+            {sale.marginEstimated ? "~" : ""}{sale.marginChf < 0 ? "" : "+"}{chf(sale.marginChf)}
           </div>
         )}
       </div>
