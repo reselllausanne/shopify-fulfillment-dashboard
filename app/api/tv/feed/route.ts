@@ -8,6 +8,7 @@ import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
 import { isNerGalaxusMarketplaceLine, nerMarginFromCaChf } from "@/galaxus/orders/nerMarketplaceMargin";
 import { galaxusLineStockxCostChfByLineId } from "@/galaxus/orders/galaxusLineStockxCostMetrics";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
+import { liveBuyChfCached, refreshLiveBuy } from "@/app/lib/tvLiveBuy";
 import { isPhysicalFulfillmentLocationName } from "@/shopify/orders/physicalFulfillmentLocations";
 
 export const runtime = "nodejs";
@@ -221,6 +222,7 @@ async function build() {
         stockxMatches: {
           orderBy: { updatedAt: "desc" },
           select: {
+            unitIndex: true,
             stockxAmount: true,
             stockxOrderNumber: true,
             stockxOrderId: true,
@@ -262,6 +264,11 @@ async function build() {
     (shopifyLive ?? []).flatMap((o) => (o.lineItems?.nodes ?? []).map((li) => li.variant?.barcode ?? ""))
   );
   let shopifyMarginEstimated = 0;
+  refreshLiveBuy(
+    (shopifyLive ?? [])
+      .filter((o) => !o.cancelledAt && !marginByOrder.has(o.name))
+      .flatMap((o) => (o.lineItems?.nodes ?? []).map((li) => li.variant?.barcode))
+  );
 
   if (shopifyLive) {
     for (const o of shopifyLive) {
@@ -294,13 +301,14 @@ async function build() {
             continue;
           }
           physicalOnly = false;
-          const unit = li.variant?.barcode ? shopPrices.byGtin.get(li.variant.barcode) : undefined;
+          const gtin = li.variant?.barcode ?? "";
           const qty = Math.max(1, li.quantity ?? 1);
           const price = toNumberSafe(li.discountedUnitPriceSet?.shopMoney?.amount, 0);
-          if (unit && price > 0) {
-            est += (price - unit) * qty;
-            known += 1;
-          }
+          if (price <= 0) continue;
+          const unit = liveBuyChfCached(gtin) ?? (gtin ? shopPrices.byGtin.get(gtin) : undefined);
+          // No buy price anywhere: assume 20% margin.
+          est += unit && unit > 0 ? (price - unit) * qty : price * qty * 0.2;
+          known += 1;
         }
         if (known > 0) {
           marginChf = est;
@@ -364,29 +372,16 @@ async function build() {
     galaxusLines.map((l) => l.supplierVariantId ?? ""),
     galaxusLines.map((l) => l.gtin ?? "")
   );
-  // Typical cost/revenue ratio of today's STX lines with a known cost → fallback for lines with no price at all.
-  let ratioCost = 0;
-  let ratioRev = 0;
-  for (const line of galaxusLines) {
-    if (isNerGalaxusMarketplaceLine(line)) continue;
-    if (line.stockxMatches.some((m) => String(m.stockxOrderNumber ?? "").toUpperCase().startsWith("LOCAL-STOCK"))) continue;
-    const rev = galaxusLineNetRevenueChf({
-      lineNetAmount: line.lineNetAmount,
-      priceLineAmount: line.priceLineAmount,
-    });
-    if (rev == null) continue;
-    const real = costById.get(line.id) ?? 0;
-    const unit =
-      (line.supplierVariantId ? gxPrices.byVariantId.get(line.supplierVariantId) : undefined) ??
-      (line.gtin ? gxPrices.byGtin.get(line.gtin) : undefined) ??
-      0;
-    const cost = real > 0 ? real : unit * Math.max(1, line.quantity ?? 1);
-    if (cost > 0 && cost < rev * 1.5) {
-      ratioCost += cost;
-      ratioRev += rev;
-    }
-  }
-  const typicalCostRatio = ratioRev > 0 ? Math.min(0.97, ratioCost / ratioRev) : 0.88;
+  // Fallback when no buy price exists anywhere: assume 20% margin.
+  const FALLBACK_MARGIN = 0.2;
+  const isLocal = (m: { stockxOrderNumber?: string | null }) =>
+    String(m.stockxOrderNumber ?? "").toUpperCase().startsWith("LOCAL-STOCK");
+  // Live KicksDB buy price for every STX pair still without a real purchase (refreshes in background).
+  refreshLiveBuy(
+    galaxusLines
+      .filter((l) => !isNerGalaxusMarketplaceLine(l) && (costById.get(l.id) ?? 0) <= 0)
+      .map((l) => l.gtin)
+  );
 
   for (const line of galaxusLines) {
     const revenue = galaxusLineNetRevenueChf({
@@ -397,31 +392,31 @@ async function build() {
     galaxusSales += revenue;
     let margin: number | null = null;
     let estimated = false;
-    const ownedStock = line.stockxMatches.some((m) =>
-      String(m.stockxOrderNumber ?? "").toUpperCase().startsWith("LOCAL-STOCK")
-    );
-    if (ownedStock && !(costById.get(line.id) ?? 0)) {
-      // Sold from owned local stock: already expensed → 100% margin.
-      margin = revenue;
-    } else if (isNerGalaxusMarketplaceLine(line)) {
+    if (isNerGalaxusMarketplaceLine(line)) {
       margin = nerMarginFromCaChf(revenue);
     } else {
-      const cost = costById.get(line.id) ?? 0;
-      if (cost > 0) {
-        margin = revenue - cost;
-      } else {
+      // Per unit: owned local stock = 100%, real purchase = revenue - cost, rest = live/DB buy price (else 20%).
+      const qty = Math.max(1, line.quantity ?? 1);
+      const unitRev = revenue / qty;
+      const ownedUnits = new Set(line.stockxMatches.filter(isLocal).map((m) => m.unitIndex)).size;
+      const boughtUnits = new Set(
+        line.stockxMatches.filter((m) => !isLocal(m) && Number(m.stockxAmount) > 0).map((m) => m.unitIndex)
+      ).size;
+      const realCost = costById.get(line.id) ?? 0;
+      const bought = realCost > 0 ? Math.min(qty, Math.max(1, boughtUnits)) : 0;
+      const owned = Math.min(qty - bought, ownedUnits);
+      const rest = Math.max(0, qty - bought - owned);
+      let m = owned * unitRev;
+      if (bought > 0) m += bought * unitRev - realCost;
+      if (rest > 0) {
         const unit =
+          liveBuyChfCached(line.gtin) ??
           (line.supplierVariantId ? gxPrices.byVariantId.get(line.supplierVariantId) : undefined) ??
           (line.gtin ? gxPrices.byGtin.get(line.gtin) : undefined);
-        if (unit && unit > 0) {
-          margin = revenue - unit * Math.max(1, line.quantity ?? 1);
-          estimated = true;
-        } else if (String(line.providerKey ?? "").toUpperCase().startsWith("STX")) {
-          // No price anywhere: assume today's typical StockX cost ratio.
-          margin = revenue * (1 - typicalCostRatio);
-          estimated = true;
-        }
+        m += unit && unit > 0 ? rest * (unitRev - unit) : rest * unitRev * FALLBACK_MARGIN;
+        estimated = true;
       }
+      margin = m;
     }
     if (margin != null) {
       galaxusMargin += margin;
