@@ -21,7 +21,7 @@ describe("findBrandPageByGtin", () => {
   });
   it("finds the official Nike page from a GTIN", async () => {
     const r = await findBrandPageByGtin("00193145977099", fake);
-    expect(r).toMatchObject({ ok: true, brand: "nike", styleCode: "BQ5453-001", url: nikeUrl });
+    expect(r).toMatchObject({ ok: true, brand: "nike", styleCode: "BQ5453-001", url: "https://www.nike.com/ch/t/x/BQ5453-001" });
   });
   it("fails cleanly when nothing names a brand", async () => {
     const r = await findBrandPageByGtin("00193145977099", async () => []);

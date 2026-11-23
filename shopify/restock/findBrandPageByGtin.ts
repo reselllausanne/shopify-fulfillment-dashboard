@@ -21,6 +21,8 @@ type BrandDef = {
   styleCode: RegExp;
   /** `site:` filter used for the official page search. */
   siteQuery: string;
+  /** Free resolver (no search): URL that redirects to the PDP for a style code. */
+  directUrl?: (styleCode: string) => string;
 };
 
 export const BRANDS: BrandDef[] = [
@@ -30,6 +32,8 @@ export const BRANDS: BrandDef[] = [
     hosts: ["nike.com"],
     styleCode: /\b([A-Z]{1,2}\d{4}-\d{3})\b/gi,
     siteQuery: "site:nike.com/ch",
+    // Verified: nike.com/ch/t/x/<STYLE> 301s to the real PDP (slug + id resolved by Nike).
+    directUrl: (code) => `https://www.nike.com/ch/t/x/${code}`,
   },
   {
     key: "adidas",
@@ -150,6 +154,11 @@ export async function findBrandPageByGtin(gtin: string, search: SearchFn): Promi
   const styleCode = voteStyleCode(found, brand);
   if (!styleCode) return { ok: false, brand: brand.key, styleCode: null, url: null, evidence, error: "style_code_not_found" };
   evidence.push(`brand=${brand.key} styleCode=${styleCode}`);
+
+  if (brand.directUrl) {
+    evidence.push("official page via direct style URL (0 search call)");
+    return { ok: true, brand: brand.key, styleCode, url: brand.directUrl(styleCode), evidence };
+  }
 
   const official = await search(`${brand.siteQuery} ${styleCode}`);
   const url = pickOfficialPage(official, brand, styleCode);
