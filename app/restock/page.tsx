@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import NikeUrlCard from "./NikeUrlCard";
 
 type LookupResult =
   | {
@@ -1655,6 +1656,8 @@ export default function RestockScanPage() {
           </button>
         </div>
       )}
+
+      <NikeUrlCard locationId={locationId} />
     </div>
   );
 }
