@@ -165,26 +165,47 @@ export async function notifyGalaxusFeedStale(params: {
 export async function notifyGalaxusMasterSpecsFeedStale(params: {
   hoursSinceSuccess: number | null;
   lastSuccessAt: string | null;
+  /**
+   * "push": no successful master-specs SFTP for too long.
+   * "rebuild": the SFTP keeps succeeding but it is re-shipping a stale snapshot — the nightly
+   *   snapshot REBUILD has not produced fresh data (e.g. the sweep kept timing out). This is the
+   *   silent case that let Galaxus run on a days-old ProductData/SpecificationData file.
+   */
+  kind?: "push" | "rebuild";
 }): Promise<{ sent: boolean; reason?: string }> {
-  if (!shouldSendAlert("stale:master-specs-feed")) {
+  const kind = params.kind ?? "push";
+  const dedupeKey = `stale:master-specs-feed:${kind}`;
+  if (!shouldSendAlert(dedupeKey)) {
     return { sent: false, reason: "deduped" };
   }
   const age =
     params.hoursSinceSuccess == null
       ? "never / unknown"
       : `${params.hoursSinceSuccess}h ago`;
-  const text = [
-    ":warning: *Galaxus master/specs feed STALE*",
-    `• last successful master-specs: ${params.lastSuccessAt ?? "none"} (${age})`,
-    `• at: ${new Date().toISOString()}`,
-    "",
-    "Product identity, images, and categories on Galaxus may be outdated.",
-    "Fix: `bash scripts/galaxus-ops-cron.sh push-master-specs` (COPY dump → oneshot SFTP).",
-    "Do not use feed-worker Prisma stream — nightly cron only.",
-  ].join("\n");
+  const text =
+    kind === "rebuild"
+      ? [
+          ":warning: *Galaxus master/specs SNAPSHOT STALE (push OK, data frozen)*",
+          `• last snapshot rebuild: ${params.lastSuccessAt ?? "none"} (${age})`,
+          `• at: ${new Date().toISOString()}`,
+          "",
+          "The nightly COPY→SFTP keeps succeeding but is re-shipping an OLD snapshot — the",
+          "rebuild is failing (check /var/log/resell/galaxus-ops-cron.log for the rebuild step).",
+          "Galaxus has stale product identity, images, categories and keeps selling delisted items.",
+          "Fix: unblock the rebuild (`run-master-specs-snapshot-rebuild`), then push-master-specs.",
+        ].join("\n")
+      : [
+          ":warning: *Galaxus master/specs feed STALE*",
+          `• last successful master-specs: ${params.lastSuccessAt ?? "none"} (${age})`,
+          `• at: ${new Date().toISOString()}`,
+          "",
+          "Product identity, images, and categories on Galaxus may be outdated.",
+          "Fix: `bash scripts/galaxus-ops-cron.sh push-master-specs` (COPY dump → oneshot SFTP).",
+          "Do not use feed-worker Prisma stream — nightly cron only.",
+        ].join("\n");
   return sendAlert(
-    "stale:master-specs-feed",
-    `[Resell] Galaxus master/specs feed STALE (${age})`,
+    dedupeKey,
+    `[Resell] Galaxus master/specs ${kind === "rebuild" ? "snapshot" : "feed"} STALE (${age})`,
     text
   );
 }

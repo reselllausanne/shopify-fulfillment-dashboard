@@ -939,6 +939,17 @@ const STALE_PRICE_FEED_MS =
   1000;
 /** ProductData + SpecificationData — alert if nightly 04:00 COPY push missed (~26h). */
 const STALE_MASTER_SPECS_FEED_MS = 26 * 60 * 60 * 1000;
+/**
+ * The COPY→SFTP can keep succeeding while re-shipping a stale snapshot (rebuild failing), so the
+ * push-success check above stays green for days. Also alert when the snapshot REBUILD itself is
+ * stale. Tunable: GALAXUS_MASTER_SPECS_REBUILD_STALE_HOURS (default 48, min 26 so a single missed
+ * nightly does not page).
+ */
+const STALE_MASTER_SPECS_REBUILD_MS =
+  Math.max(26, Number.parseInt(process.env.GALAXUS_MASTER_SPECS_REBUILD_STALE_HOURS ?? "", 10) || 48) *
+  60 *
+  60 *
+  1000;
 /** A whole PriceData file is ~620k rows; sales in a burst share one delayed upload. */
 const POST_SALE_PRICE_FEED_COOLDOWN_MS = 10 * 60 * 1000;
 
@@ -1020,6 +1031,25 @@ export async function checkGalaxusMasterSpecsFeedHealth(): Promise<{
     await notifyGalaxusMasterSpecsFeedStale({
       hoursSinceSuccess,
       lastSuccessAt: new Date(at).toISOString(),
+      kind: "push",
+    });
+    return { ok: false, lastSuccessAt: new Date(at).toISOString(), hoursSinceSuccess };
+  }
+  // Push succeeded recently, but confirm it is shipping a FRESH snapshot — the rebuild can fail
+  // (sweep timeout / OOM) while the cron falls back to re-SFTP'ing the last-good CSV, leaving
+  // Galaxus on days-old data with a green push history.
+  const meta = await prismaAny.galaxusFeedSnapshotMeta.findUnique({
+    where: { id: "default" },
+    select: { masterRebuiltAt: true },
+  });
+  const rebuiltAt: Date | null = meta?.masterRebuiltAt ?? null;
+  const rebuildAgeMs = rebuiltAt ? Date.now() - new Date(rebuiltAt).getTime() : null;
+  if (rebuildAgeMs != null && rebuildAgeMs > STALE_MASTER_SPECS_REBUILD_MS) {
+    const rebuildHours = Math.round((rebuildAgeMs / 3600000) * 10) / 10;
+    await notifyGalaxusMasterSpecsFeedStale({
+      hoursSinceSuccess: rebuildHours,
+      lastSuccessAt: new Date(rebuiltAt as Date).toISOString(),
+      kind: "rebuild",
     });
     return { ok: false, lastSuccessAt: new Date(at).toISOString(), hoursSinceSuccess };
   }
