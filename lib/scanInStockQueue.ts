@@ -461,6 +461,22 @@ async function listShopifyShipFromStock(): Promise<InStockShipItem[]> {
 
   if (matches.length === 0) return [];
 
+  // Drop sales we already shipped. Once fulfilled from our flow a ShopifyFulfillmentRecord exists
+  // for the order (Swiss Post label created), so these pairs must leave the "to ship" rail — they
+  // were lingering because this path had no fulfillment check (Galaxus uses shipment coverage).
+  // Order-level is fine here: ship-from-stock sales are single-pair orders.
+  const fulfilledOrderIds = new Set<string>();
+  const matchOrderIds = Array.from(
+    new Set(matches.map((m) => text(m.shopifyOrderId)).filter((s): s is string => Boolean(s)))
+  );
+  if (matchOrderIds.length > 0) {
+    const records = await prisma.shopifyFulfillmentRecord.findMany({
+      where: { shopifyOrderId: { in: matchOrderIds } },
+      select: { shopifyOrderId: true },
+    });
+    for (const r of records) fulfilledOrderIds.add(String(r.shopifyOrderId));
+  }
+
   const skus = Array.from(
     new Set(matches.map((m) => text(m.shopifySku)).filter((s): s is string => Boolean(s)))
   );
@@ -470,6 +486,7 @@ async function listShopifyShipFromStock(): Promise<InStockShipItem[]> {
   const seenOrders = new Set<string>();
 
   for (const m of matches) {
+    if (m.shopifyOrderId && fulfilledOrderIds.has(String(m.shopifyOrderId))) continue;
     const dedupeKey = `${m.shopifyOrderId}|${m.shopifyLineItemId}`;
     if (seenOrders.has(dedupeKey)) continue;
     seenOrders.add(dedupeKey);
