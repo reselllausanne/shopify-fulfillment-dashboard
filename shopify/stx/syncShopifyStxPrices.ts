@@ -8,6 +8,7 @@ import {
 import { resolveShopifyStxListingProviderKey } from "@/galaxus/supplier/providerKey";
 import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
+import { sameLotSize } from "@/shopify/stx/lotHandle";
 
 const VARIANT_PRICE_MUTATION = /* GraphQL */ `
 mutation SyncStxVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -533,6 +534,20 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
       stxRow.supplierVariantId ?? null
     );
     return { gtin: cleanGtin, ok: false, reason: "ambiguous_shopify_variant" };
+  }
+
+  if (
+    barcodeMatch?.productHandle &&
+    handleForCalc &&
+    !sameLotSize(handleForCalc, barcodeMatch.productHandle)
+  ) {
+    await recordShopifyStxSkip(
+      providerKey,
+      cleanGtin,
+      "lot_size_mismatch",
+      stxRow.supplierVariantId ?? null
+    );
+    return { gtin: cleanGtin, ok: false, reason: "lot_size_mismatch" };
   }
 
   // Barcodes are optional on Shopify (we create every size even without one).
