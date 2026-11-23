@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fromZonedTime } from "date-fns-tz";
 
 type Sale = {
   id: string;
@@ -246,14 +247,23 @@ export default function TvPage() {
     timeZone: "Europe/Zurich",
   });
 
+  // Countdown since last order (resets when a new sale shows up in the feed).
+  const lastOrderAt = feed
+    ? feed.sales.length > 0
+      ? new Date(feed.sales[0].at).getTime()
+      : fromZonedTime(`${feed.day}T00:00:00`, "Europe/Zurich").getTime()
+    : null;
+  const elapsedMs = lastOrderAt == null ? 0 : Math.max(0, now - lastOrderAt);
+  const tone = lastOrderTone(elapsedMs);
+
   const netMargin = feed?.totals.netMarginChf ?? feed?.totals.marginChf ?? 0;
   const totalMarginPct = feed && feed.totals.salesChf > 0 ? (netMargin / feed.totals.salesChf) * 100 : 0;
 
   return (
     <div className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-[#05060a] text-white select-none cursor-none">
       {/* ambient glow */}
-      <div className="pointer-events-none absolute -left-[10vw] -top-[20vh] h-[70vh] w-[50vw] rounded-full bg-emerald-500/20 blur-[140px]" />
-      <div className="pointer-events-none absolute -right-[10vw] -bottom-[20vh] h-[70vh] w-[50vw] rounded-full bg-fuchsia-600/20 blur-[140px]" />
+      <CountdownBackdrop tone={tone} />
+      <div className="pointer-events-none absolute -right-[10vw] -bottom-[20vh] h-[70vh] w-[50vw] rounded-full bg-fuchsia-600/10 blur-[140px]" />
 
       {/* header */}
       <header className="relative flex items-center justify-between px-[3vw] pt-[2.5vh]">
@@ -276,6 +286,8 @@ export default function TvPage() {
       <main className="relative grid min-h-0 flex-1 grid-cols-[1.35fr_1fr] gap-[2vw] px-[3vw] py-[2.5vh]">
         {/* left: numbers */}
         <section className="flex min-h-0 flex-col gap-[2vh]">
+          <LastOrderCard tone={tone} elapsedMs={elapsedMs} loaded={feed != null} hasSale={(feed?.sales.length ?? 0) > 0} />
+
           <div className="rounded-[2vh] border border-white/10 bg-white/[0.04] px-[2.5vw] py-[2.5vh] backdrop-blur">
             <div className="text-[2.6vh] font-medium uppercase tracking-[0.3em] text-white/50">
               Ventes du jour
@@ -414,6 +426,31 @@ export default function TvPage() {
             opacity: 1;
           }
         }
+        @keyframes tvbreathe {
+          0%, 100% { transform: scale(1); opacity: 0.75; }
+          50% { transform: scale(1.18); opacity: 1; }
+        }
+        @keyframes tvring {
+          0% { transform: scale(0.35); opacity: 0.55; }
+          100% { transform: scale(1.6); opacity: 0; }
+        }
+        @keyframes tvspin {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes tvdrift {
+          0% { transform: translate3d(0, 105vh, 0) scale(0.6); opacity: 0; }
+          15% { opacity: 0.8; }
+          100% { transform: translate3d(var(--dx, 4vw), -15vh, 0) scale(1.3); opacity: 0; }
+        }
+        @keyframes tvalarm {
+          0%, 100% { opacity: 0.25; }
+          50% { opacity: 0.95; }
+        }
+        @keyframes tvshake {
+          0%, 100% { transform: translate(0, 0); }
+          25% { transform: translate(-0.25vw, 0.15vh); }
+          75% { transform: translate(0.25vw, -0.15vh); }
+        }
         @keyframes tvslide {
           from {
             transform: translateX(6vw);
@@ -497,5 +534,162 @@ function SaleRow({ sale, fresh, now }: { sale: Sale; fresh: boolean; now: number
         )}
       </div>
     </li>
+  );
+}
+
+// ── Last-order countdown ────────────────────────────────────────────────────
+/** Minutes without order until the scene is fully red. */
+const RED_AFTER_MIN = 90;
+
+type Tone = {
+  /** 0 = just ordered, 1 = max alert */
+  t: number;
+  hue: number;
+  base: string;
+  soft: string;
+  label: string;
+};
+
+function lastOrderTone(elapsedMs: number): Tone {
+  const t = Math.min(1, elapsedMs / (RED_AFTER_MIN * 60_000));
+  // Ease so green lasts a bit, then slides through yellow/orange to red.
+  const e = t * t * (3 - 2 * t);
+  const hue = Math.round(140 * (1 - e));
+  const label =
+    t < 0.15 ? "Ça tourne" : t < 0.4 ? "Ça se calme" : t < 0.7 ? "Ça dort…" : t < 1 ? "Alerte : trop calme" : "🚨 Plus aucune vente !";
+  return { t, hue, base: `hsl(${hue} 90% 55%)`, soft: `hsl(${hue} 90% 50% / 0.35)`, label };
+}
+
+function fmtElapsed(ms: number) {
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+function CountdownBackdrop({ tone }: { tone: Tone }) {
+  // Faster / angrier as time passes.
+  const breathe = (4 - tone.t * 3).toFixed(2); // 4s → 1s
+  const ring = (6 - tone.t * 3.5).toFixed(2);
+  const spin = (40 - tone.t * 28).toFixed(1);
+  const embers = 6 + Math.round(tone.t * 10);
+  const tr = "background-color 2.5s linear, border-color 2.5s linear, box-shadow 2.5s linear";
+  return (
+    <>
+      {/* big colour wash */}
+      <div
+        className="pointer-events-none absolute inset-0 transition-colors duration-[2500ms]"
+        style={{ backgroundColor: tone.base, opacity: 0.05 + tone.t * 0.13, transition: "background-color 2.5s linear, opacity 2.5s linear" }}
+      />
+      {/* breathing blobs */}
+      <div
+        className="pointer-events-none absolute -left-[10vw] -top-[20vh] h-[75vh] w-[55vw] rounded-full blur-[140px]"
+        style={{ backgroundColor: tone.soft, transition: tr, animation: `tvbreathe ${breathe}s ease-in-out infinite` }}
+      />
+      <div
+        className="pointer-events-none absolute left-[25vw] top-[30vh] h-[60vh] w-[50vw] rounded-full blur-[160px]"
+        style={{ backgroundColor: tone.soft, transition: tr, animation: `tvbreathe ${breathe}s ease-in-out infinite reverse` }}
+      />
+      {/* slow rotating conic sweep */}
+      <div
+        className="pointer-events-none absolute left-1/2 top-1/2 h-[160vmax] w-[160vmax] -translate-x-1/2 -translate-y-1/2 opacity-[0.10]"
+        style={{
+          background: `conic-gradient(from 0deg, transparent 0deg, ${tone.base} 40deg, transparent 90deg, transparent 180deg, ${tone.base} 220deg, transparent 270deg)`,
+          animation: `tvspin ${spin}s linear infinite`,
+        }}
+      />
+      {/* expanding rings behind the countdown */}
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="pointer-events-none absolute left-[22vw] top-[16vh] h-[40vh] w-[40vh] rounded-full border-2"
+          style={{
+            borderColor: tone.base,
+            transition: "border-color 2.5s linear",
+            animation: `tvring ${ring}s ease-out ${(i * Number(ring)) / 3}s infinite`,
+          }}
+        />
+      ))}
+      {/* rising embers */}
+      {Array.from({ length: embers }).map((_, i) => {
+        const size = 0.6 + ((i * 37) % 10) / 6;
+        return (
+          <span
+            key={i}
+            className="pointer-events-none absolute bottom-0 rounded-full"
+            style={{
+              left: `${(i * 53) % 100}vw`,
+              width: `${size}vh`,
+              height: `${size}vh`,
+              backgroundColor: tone.base,
+              boxShadow: `0 0 2vh ${tone.base}`,
+              transition: "background-color 2.5s linear",
+              ["--dx" as string]: `${((i * 29) % 9) - 4}vw`,
+              animation: `tvdrift ${(9 - tone.t * 4 + (i % 5)).toFixed(1)}s linear ${(i * 1.3) % 9}s infinite`,
+            }}
+          />
+        );
+      })}
+      {/* red alarm vignette once it gets bad */}
+      {tone.t > 0.6 && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            boxShadow: `inset 0 0 ${10 + tone.t * 18}vh ${tone.base}`,
+            animation: `tvalarm ${(2.2 - tone.t * 1.5).toFixed(2)}s ease-in-out infinite`,
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function LastOrderCard({
+  tone,
+  elapsedMs,
+  loaded,
+  hasSale,
+}: {
+  tone: Tone;
+  elapsedMs: number;
+  loaded: boolean;
+  hasSale: boolean;
+}) {
+  return (
+    <div
+      className="relative overflow-hidden rounded-[2vh] border-2 bg-black/30 px-[2.5vw] py-[1.6vh] backdrop-blur"
+      style={{
+        borderColor: tone.base,
+        boxShadow: `0 0 ${2 + tone.t * 5}vh ${tone.soft}`,
+        transition: "border-color 2.5s linear, box-shadow 2.5s linear",
+        animation: tone.t >= 1 ? "tvshake 0.5s linear infinite" : undefined,
+      }}
+    >
+      <div className="flex items-center justify-between text-[2.4vh] font-medium uppercase tracking-[0.3em] text-white/60">
+        <span>{hasSale ? "Depuis la dernière commande" : "Depuis minuit · aucune vente"}</span>
+        <span style={{ color: tone.base, transition: "color 2.5s linear" }}>{tone.label}</span>
+      </div>
+      <div
+        className="mt-[0.4vh] text-[15vh] font-black leading-none tabular-nums"
+        style={{ color: tone.base, textShadow: `0 0 4vh ${tone.soft}`, transition: "color 2.5s linear" }}
+      >
+        {loaded ? fmtElapsed(elapsedMs) : "--:--"}
+      </div>
+      {/* progress to red */}
+      <div className="mt-[1vh] h-[0.9vh] w-full overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full rounded-full"
+          style={{
+            width: `${Math.max(2, tone.t * 100)}%`,
+            background: "linear-gradient(90deg, hsl(140 90% 55%), hsl(60 90% 55%), hsl(0 90% 55%))",
+            backgroundSize: `${100 / Math.max(0.02, tone.t)}% 100%`,
+            transition: "width 1s linear",
+          }}
+        />
+      </div>
+    </div>
   );
 }
