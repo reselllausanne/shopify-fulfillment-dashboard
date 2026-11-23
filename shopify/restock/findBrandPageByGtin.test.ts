@@ -5,7 +5,7 @@ const nikeUrl = "https://www.nike.com/ch/t/court-borough-low-2-schuh-fur-babys-u
 
 const fake: SearchFn = async (q) => {
   if (q.startsWith("site:nike.com")) return [{ link: nikeUrl, title: "Nike Court Borough Low 2" }];
-  if (q === "193145977099") {
+  if (q === '"193145977099"') {
     return [
       { link: "https://www.de.fnac.ch/QUIKSILV/a1", title: "Quiksilver Rucksack" },
       { link: "https://www.amazon.ca/Nike-Court-Borough-Toddler-Bq5453-001/dp/B07YVPV9ZP", title: "Nike Court Borough Low 2 (TDV) Toddler Bq5453-001" },

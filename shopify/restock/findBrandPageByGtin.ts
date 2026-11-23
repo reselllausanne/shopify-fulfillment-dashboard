@@ -143,7 +143,8 @@ export async function findBrandPageByGtin(gtin: string, search: SearchFn): Promi
   const evidence: string[] = [];
   const found: SearchResult[] = [];
   for (const v of gtinSearchVariants(gtin)) {
-    const res = await search(v);
+    // Exact-match quotes: unquoted GTINs return fuzzy junk (usb cables…); quoted hits the product pages.
+    const res = await search(`"${v}"`);
     found.push(...res);
     evidence.push(`search ${v}: ${res.length} résultats`);
     const brand = detectBrand(found);
