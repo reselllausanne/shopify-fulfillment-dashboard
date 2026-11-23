@@ -1,0 +1,10 @@
+# Sources LUES par Optimize (chemins relatifs à la racine du dépôt). Lecture seule. Rien d'autre n'est lu.
+docs/jarvis/SOURCES.md
+docs/jarvis/memory/decisions.md
+AGENTS.md
+.cursor/rules/git-github-vps.mdc
+.cursor/rules/stockx-one-chrome.mdc
+docs/GITHUB-VPS-SYNC.md
+docs/VPS-DEPLOY-RUNBOOK.md
+docs/STOCKX-BUYER.md
+docs/PARALLEL-AGENTS.md
