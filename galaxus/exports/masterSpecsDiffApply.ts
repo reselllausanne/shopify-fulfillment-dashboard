@@ -1,4 +1,4 @@
-import { prisma } from "@/app/lib/prisma";
+import { prisma, prismaDirect } from "@/app/lib/prisma";
 import { withTransientDbRetry } from "@/galaxus/exports/transientDbRetry";
 import {
   SNAPSHOT_BUCKET_PREFIX_LEN,
@@ -117,13 +117,32 @@ export class MasterSpecsDiffWriter {
   }
 }
 
+// The sweep's bucket-count GROUP BY and key-pull both seq-scan the whole snapshot table
+// (master heap ~2.4GB / 2.2M rows, specs ~1.9GB / 7.1M rows). Under IO contention these exceed
+// the pooler's statement_timeout and get cancelled (Postgres 57014) — which failed the entire
+// nightly rebuild, so Galaxus was fed a stale master/specs CSV for days. Run them on a pinned
+// session-mode connection with statement_timeout disabled so a slow scan completes instead of
+// aborting the rebuild.
+const SWEEP_READ_TXN_MS = Number(process.env.GALAXUS_MASTER_SPECS_SWEEP_READ_TIMEOUT_MS ?? 0) ||
+  30 * 60 * 1000;
+
+async function sweepReadNoTimeout<T>(run: (tx: any) => Promise<T>): Promise<T> {
+  const client = prismaDirect as any;
+  return client.$transaction(
+    async (tx: any) => {
+      await tx.$executeRawUnsafe("SET LOCAL statement_timeout = 0");
+      return run(tx);
+    },
+    { timeout: SWEEP_READ_TXN_MS, maxWait: 60_000 }
+  );
+}
+
 /** Stale = [providerKey] (master) or [providerKey, specificationKey] (specs). */
 async function findStale(
   table: MasterTable | SpecsTable,
   seen: Set<string>,
   composite: boolean
 ): Promise<string[][]> {
-  const prismaAny = prisma as any;
   const len = SNAPSHOT_BUCKET_PREFIX_LEN;
   const seenProviderKeys = composite
     ? (function* () {
@@ -134,8 +153,10 @@ async function findStale(
   const bucketRows: Array<{ b: string | null; c: number | bigint }> = await withTransientDbRetry(
     "master-diff-bucket-counts",
     () =>
-      prismaAny.$queryRawUnsafe(
-        `SELECT left("providerKey", ${len}) AS b, count(*)::int AS c FROM "${table}" GROUP BY 1`
+      sweepReadNoTimeout((tx) =>
+        tx.$queryRawUnsafe(
+          `SELECT left("providerKey", ${len}) AS b, count(*)::int AS c FROM "${table}" GROUP BY 1`
+        )
       )
   );
   const dbBuckets = new Map<string, number>();
@@ -148,12 +169,14 @@ async function findStale(
   const rows: Array<{ providerKey: string; specificationKey?: string }> = await withTransientDbRetry(
     "master-diff-key-pull",
     () =>
-      full
-        ? prismaAny.$queryRawUnsafe(`SELECT ${cols} FROM "${table}"`)
-        : prismaAny.$queryRawUnsafe(
-            `SELECT ${cols} FROM "${table}" WHERE left("providerKey", ${len}) = ANY($1::text[])`,
-            differing
-          )
+      sweepReadNoTimeout((tx) =>
+        full
+          ? tx.$queryRawUnsafe(`SELECT ${cols} FROM "${table}"`)
+          : tx.$queryRawUnsafe(
+              `SELECT ${cols} FROM "${table}" WHERE left("providerKey", ${len}) = ANY($1::text[])`,
+              differing
+            )
+      )
   );
   const out: string[][] = [];
   for (const r of rows) {
