@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import NikeUrlCard from "./NikeUrlCard";
 
 type LookupResult =
   | {
@@ -1198,6 +1199,14 @@ export default function RestockScanPage() {
             Rechercher le produit par nom ou SKU pour lier et restock.
           </div>
 
+          {/* Auto: Google (SerpAPI) → official brand page → price + stock */}
+          <NikeUrlCard
+            key={lookup.gtin}
+            locationId={locationId}
+            autoGtin={lookup.gtin}
+            defaultPrice={manualSellPrice}
+          />
+
           {/* Product search input */}
           <div className="relative mt-3">
             <input
@@ -1655,6 +1664,8 @@ export default function RestockScanPage() {
           </button>
         </div>
       )}
+
+      {lookup?.status !== "not-found" && <NikeUrlCard locationId={locationId} />}
     </div>
   );
 }
