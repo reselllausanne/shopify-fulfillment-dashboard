@@ -48,6 +48,8 @@ export type ProductFromData = {
   sourceUrl?: string | null;
   subtitle?: string | null;
   genders?: string[];
+  description?: string | null;
+  ageGroup?: "TD" | "PS" | "GS" | null;
 };
 
 export type NerRow = {
@@ -66,6 +68,8 @@ export type NerRow = {
   productName: string;
   brand: string;
   color: string | null;
+  gender: string;
+  description: string | null;
   images: string[];
 };
 
@@ -98,6 +102,17 @@ export function validateProductFromData(data: ProductFromData): string[] {
   return missing;
 }
 
+/** Same vocabulary as KickDBProduct.gender in prod: men | women | kids | unisex. */
+export function dbGender(data: { genders?: string[]; ageGroup?: string | null; sizes: Array<{ size: string }> }): string {
+  if (data.ageGroup) return "kids";
+  const g = (data.genders ?? []).map((x) => x.toUpperCase());
+  if (g.length && g.every((x) => x === "GIRLS" || x === "BOYS")) return "kids";
+  if (g.includes("MEN") && g.includes("WOMEN")) return "unisex";
+  if (g.includes("WOMEN")) return "women";
+  if (g.includes("MEN")) return "men";
+  return "unisex";
+}
+
 /** Pure: rows mirrored into the KickDB tables + stx_ SupplierVariant (same shape as a StockX product). */
 export function buildNerRows(data: ProductFromData): NerRow[] {
   const priceExVat = Math.round((data.sellPrice / VAT_DIVISOR) * 100) / 100;
@@ -123,6 +138,8 @@ export function buildNerRows(data: ProductFromData): NerRow[] {
       productName: data.name.trim(),
       brand: data.brand.trim(),
       color: data.color?.trim() || null,
+      gender: dbGender(data),
+      description: data.description?.trim() || null,
       images,
     };
   });
@@ -170,9 +187,15 @@ export async function upsertNerRows(rows: NerRow[], shopify?: { productId: strin
   const now = new Date();
   const p = prisma as any;
   const first = rows[0];
+  // Same shape as StockX traits: Galaxus specs read Colorway / Gender from here.
+  const traits = (r: NerRow) => [
+    { trait: "Style", value: r.sku },
+    ...(r.color ? [{ trait: "Colorway", value: r.color }] : []),
+    { trait: "Gender", value: r.gender },
+  ];
   const product = await p.kickDBProduct.upsert({
     where: { kickdbProductId: first.kickdbProductId },
-    update: { name: first.productName, brand: first.brand, imageUrl: first.images[0], colorway: first.color, lastFetchedAt: now },
+    update: { name: first.productName, brand: first.brand, imageUrl: first.images[0], colorway: first.color, gender: first.gender, description: first.description, traitsJson: traits(first), lastFetchedAt: now },
     create: {
       kickdbProductId: first.kickdbProductId,
       urlKey: first.kickdbProductId,
@@ -181,6 +204,9 @@ export async function upsertNerRows(rows: NerRow[], shopify?: { productId: strin
       brand: first.brand,
       imageUrl: first.images[0],
       colorway: first.color,
+      gender: first.gender,
+      description: first.description,
+      traitsJson: traits(first),
       lastFetchedAt: now,
     },
   });
@@ -217,6 +243,8 @@ export async function upsertNerRows(rows: NerRow[], shopify?: { productId: strin
       sizeNormalized: r.sizeNormalized,
       supplierProductName: r.productName,
       supplierBrand: r.brand,
+      supplierColorway: r.color,
+      supplierGender: r.gender,
       images: r.images,
       sourceImageUrl: r.images[0],
       imageSyncStatus: "PENDING",
@@ -392,6 +420,31 @@ export async function createProductFromData(
   await publishToSalesChannels(productId).catch((e) => warnings.push(`Publication canaux: ${e?.message ?? e}`));
 
   await upsertNerRows(rows, { productId, handle: listing.handle });
+
+  // Host the Nike images now (Supabase) so the master never waits for the nightly image sync.
+  try {
+    const { runImageSync } = await import("@/galaxus/jobs/imageSync");
+    const ids = await (prisma as any).variantMapping.findMany({
+      where: { gtin: { in: rows.map((r) => r.gtin) }, supplierKey: "stx" },
+      select: { supplierVariantId: true },
+    });
+    const img = await runImageSync({ supplierVariantIds: ids.map((i: any) => i.supplierVariantId) } as any);
+    if (img.failed > 0) warnings.push(`Images: ${img.failed} échec(s) d'hébergement`);
+  } catch (e: any) {
+    warnings.push(`Images non hébergées: ${e?.message ?? e}`);
+  }
+
+  // Same post-restock hook as the scan flow: delivery_48h / soldes_48h / physical_in_stock
+  // metafields (=> Soldes + Livraison 48H collections), express price, Galaxus 48h route.
+  for (const r of rows) {
+    try {
+      const { convergeVariant } = await import("@/shopify/inventory/convergence");
+      const conv = await convergeVariant(r.gtin, { postPhysicalRestock: true });
+      for (const w of conv.warnings ?? []) warnings.push(`${r.sizeRaw}: ${w}`);
+    } catch (e: any) {
+      warnings.push(`convergence ${r.gtin}: ${e?.message ?? e}`);
+    }
+  }
   warnings.push(
     "Lignes stx_ écrites (KickDB + SupplierVariant). Galaxus: prochain feed (02h stock/prix, 04h master/specs) — aucun push déclenché."
   );

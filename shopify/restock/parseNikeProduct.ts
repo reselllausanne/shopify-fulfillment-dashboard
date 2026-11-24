@@ -25,6 +25,9 @@ export type ParsedNikeProduct = {
   sizes: ParsedNikeSize[];
   productType: string | null;
   genders: string[];
+  description: string | null;
+  /** TD (toddler 2C-10C), PS (10.5C-3Y), GS (3.5Y+) when the page sizes are kids sizes. */
+  ageGroup: "TD" | "PS" | "GS" | null;
   /** Nike list price (info only, never used as sell price). */
   nikePrice: number | null;
   sourceUrl: string | null;
@@ -47,6 +50,23 @@ function asArray<T>(v: T | T[] | null | undefined): T[] {
 /** Nike `t_default` is 400px; `t_PDP_1728_v1` is the 1728px product image Galaxus needs. */
 export function nikeHiResImage(url: string): string {
   return url.replace("/t_default/", "/t_PDP_1728_v1/");
+}
+
+export function nikeAgeGroup(labels: string[]): "TD" | "PS" | "GS" | null {
+  let group: "TD" | "PS" | "GS" | null = null;
+  const rank = { TD: 1, PS: 2, GS: 3 } as const;
+  for (const l of labels) {
+    const m = String(l).trim().match(/^(\d+(?:\.\d+)?)\s*([CY])$/i);
+    if (!m) return null; // adult / numeric sizes
+    const n = Number(m[1]);
+    const g = m[2].toUpperCase() === "C" ? (n <= 10 ? "TD" : "PS") : n <= 3 ? "PS" : "GS";
+    if (!group || rank[g] > rank[group]) group = g;
+  }
+  return group;
+}
+
+function stripHtml(s: string): string {
+  return s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 }
 
 export function parseNikeHtml(html: string, sourceUrl?: string): ParsedNikeProduct {
@@ -108,6 +128,8 @@ export function parseNikeHtml(html: string, sourceUrl?: string): ParsedNikeProdu
     sizes,
     productType: sel?.productType ? String(sel.productType) : null,
     genders: asArray<string>(sel?.genders).map(String),
+    description: stripHtml(String(sel?.productInfo?.productDescription ?? group?.description ?? "")) || null,
+    ageGroup: nikeAgeGroup(sizes.map((x) => x.nikeLabel)),
     nikePrice: Number.isFinite(price) ? price : null,
     sourceUrl: sourceUrl ?? sel?.pdpUrl?.url ?? null,
   };
@@ -138,6 +160,8 @@ export function nikeToProductData(
     name: parsed.name,
     subtitle: parsed.subtitle,
     genders: parsed.genders,
+    description: parsed.description,
+    ageGroup: parsed.ageGroup,
     sku: parsed.sku,
     color: parsed.color,
     images: parsed.images,

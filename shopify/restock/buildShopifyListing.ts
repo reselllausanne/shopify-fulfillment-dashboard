@@ -65,7 +65,9 @@ export function buildShopifyListing(
   const name = data.name.trim();
   const baseName = name.toLowerCase().startsWith(brand.toLowerCase()) ? name : `${brand} ${name}`;
   const color = dedupeColor(data.color);
-  const title = color ? `${baseName} ${color}` : baseName;
+  // Collections (Homme / Enfant) are title rules: kids pairs carry (TD)/(PS)/(GS) like StockX titles.
+  const ageSuffix = data.ageGroup ? ` (${data.ageGroup})` : "";
+  const title = `${color ? `${baseName} ${color}` : baseName}${ageSuffix}`;
   const gender = genderLabel(data);
   const kids = isKidsProduct(data);
   const style = data.sku.trim();

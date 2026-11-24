@@ -7,6 +7,7 @@ const data: ProductFromData = {
   name: "Nike Court Borough Low 2",
   subtitle: "Schuh für Babys und Kleinkinder",
   genders: ["GIRLS", "BOYS"],
+  ageGroup: "TD",
   sku: "BQ5453-001",
   color: "Schwarz/Schwarz/Schwarz",
   images: ["https://x/a.png"],
@@ -25,8 +26,8 @@ describe("buildShopifyListing", () => {
     expect(l.descriptionHtml).toContain("Code style :</strong> BQ5453-001");
   });
   it("no duplicated brand or color", () => {
-    expect(l.title).toBe("Nike Court Borough Low 2 Schwarz");
+    expect(l.title).toBe("Nike Court Borough Low 2 Schwarz (TD)");
     expect(dedupeColor("A/A/B")).toBe("A/B");
-    expect(l.handle).toBe("nike-court-borough-low-2-schwarz");
+    expect(l.handle).toBe("nike-court-borough-low-2-schwarz-td");
   });
 });

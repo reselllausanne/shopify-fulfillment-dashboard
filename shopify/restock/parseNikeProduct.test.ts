@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { nikeToProductData, parseNikeHtml } from "./parseNikeProduct";
+import { nikeAgeGroup, nikeToProductData, parseNikeHtml } from "./parseNikeProduct";
 import { buildNerRows, validateProductFromData } from "./createProductFromData";
 
 const html = readFileSync(join(__dirname, "__fixtures__/nike-pdp-BQ5453-001.html"), "utf8");
@@ -21,11 +21,19 @@ describe("parseNikeHtml", () => {
     expect(p.sizes[0]).toMatchObject({ nikeLabel: "2C", euSize: "17", gtin: "00193145977099" });
     expect(p.sizes[8]).toMatchObject({ nikeLabel: "10C", euSize: "27" });
   });
+  it("kids age group + description", () => {
+    expect(p.ageGroup).toBe("TD");
+    expect(p.description).toBeTruthy();
+    expect(nikeAgeGroup(["10.5C", "13C"])).toBe("PS");
+    expect(nikeAgeGroup(["4Y", "6Y"])).toBe("GS");
+    expect(nikeAgeGroup(["41", "42"])).toBeNull();
+  });
   it("feeds createProductFromData validation + ner rows", () => {
     const data = nikeToProductData(p, { sellPrice: 29.9, stockByNikeLabel: { "5C": 1, "6C": 2 } });
     expect(validateProductFromData(data)).toEqual([]);
     const rows = buildNerRows(data);
     expect(rows.map((r) => r.sizeRaw)).toEqual(["21", "22"]);
+    expect(rows[0].gender).toBe("kids");
     expect(rows[0].kickdbVariantId).toBe("nike-BQ5453-001-21");
     expect(rows[0].providerKey).toMatch(/^STX_/);
   });
