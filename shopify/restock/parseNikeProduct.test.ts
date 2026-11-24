@@ -14,6 +14,7 @@ describe("parseNikeHtml", () => {
     expect(p.name).toContain("Court Borough Low 2");
     expect(p.color).toBe("Schwarz/Schwarz/Schwarz");
     expect(p.images.length).toBeGreaterThan(0);
+    expect(p.images[0]).toContain("/t_PDP_1728_v1/");
   });
   it("reads 9 sizes 2C-10C with GTIN and EU label", () => {
     expect(p.sizes).toHaveLength(9);

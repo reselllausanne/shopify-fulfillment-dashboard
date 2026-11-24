@@ -1204,7 +1204,11 @@ export default function RestockScanPage() {
             key={lookup.gtin}
             locationId={locationId}
             autoGtin={lookup.gtin}
-            defaultPrice={manualSellPrice}
+            fixedPrice={parsedFixedPrice()}
+            fixedCompareAt={(() => {
+              const sell = parsedFixedPrice();
+              return sell != null ? parsedFixedCompareAt(sell) : null;
+            })()}
           />
 
           {/* Product search input */}
@@ -1665,7 +1669,16 @@ export default function RestockScanPage() {
         </div>
       )}
 
-      {lookup?.status !== "not-found" && <NikeUrlCard locationId={locationId} />}
+      {lookup?.status !== "not-found" && (
+        <NikeUrlCard
+          locationId={locationId}
+          fixedPrice={parsedFixedPrice()}
+          fixedCompareAt={(() => {
+            const sell = parsedFixedPrice();
+            return sell != null ? parsedFixedCompareAt(sell) : null;
+          })()}
+        />
+      )}
     </div>
   );
 }

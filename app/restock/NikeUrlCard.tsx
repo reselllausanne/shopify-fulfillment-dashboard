@@ -20,16 +20,18 @@ type Parsed = {
 export default function NikeUrlCard({
   locationId,
   autoGtin,
-  defaultPrice,
+  fixedPrice,
+  fixedCompareAt,
 }: {
   locationId: string;
   autoGtin?: string;
-  defaultPrice?: string;
+  /** Prix manuel du haut de page (CHF). Seule source du prix de vente. */
+  fixedPrice: number | null;
+  fixedCompareAt?: number | null;
 }) {
   const [url, setUrl] = useState(autoGtin ?? "");
   const [parsed, setParsed] = useState<Parsed | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
-  const [price, setPrice] = useState(defaultPrice ?? "");
   const [stock, setStock] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -82,7 +84,7 @@ export default function NikeUrlCard({
       const n = Math.trunc(Number(v));
       if (n > 0) s[k] = n;
     }
-    return { url: url.trim(), sellPrice: Number(price.replace(",", ".")), stock: s, locationId, dryRun };
+    return { url: url.trim(), sellPrice: fixedPrice, compareAt: fixedCompareAt ?? null, stock: s, locationId, dryRun };
   }
 
   async function create(dryRun: boolean) {
@@ -97,7 +99,7 @@ export default function NikeUrlCard({
   }
 
   const totalUnits = Object.values(stock).reduce((a, v) => a + (Math.trunc(Number(v)) > 0 ? Math.trunc(Number(v)) : 0), 0);
-  const canCreate = !!parsed && missing.length === 0 && Number(price.replace(",", ".")) > 0 && totalUnits > 0 && !!locationId && !busy;
+  const canCreate = !!parsed && missing.length === 0 && fixedPrice != null && fixedPrice > 0 && totalUnits > 0 && !!locationId && !busy;
 
   return (
     <div className="mt-8 rounded-sm border border-gray-300 bg-white p-4">
@@ -143,15 +145,16 @@ export default function NikeUrlCard({
             </div>
           </div>
 
-          <label className="mt-3 block text-xs font-medium">
-            Prix de vente (CHF, TVA incluse) *
-            <input
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              placeholder="29.90"
-              className="mt-1 w-40 rounded-sm border border-gray-400 px-3 py-2 text-sm focus:border-black focus:outline-none"
-            />
-          </label>
+          <div className="mt-3 text-xs font-medium">
+            {fixedPrice != null ? (
+              <span>
+                Prix de vente: {fixedPrice.toFixed(2)} CHF (prix manuel du haut)
+                {fixedCompareAt ? ` · compare-at ${fixedCompareAt.toFixed(2)}` : " · sans compare-at"}
+              </span>
+            ) : (
+              <span className="text-red-700">Coche « Prix manuel » en haut et saisis le prix de vente.</span>
+            )}
+          </div>
 
           <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5">
             {parsed.sizes.map((s) => (
