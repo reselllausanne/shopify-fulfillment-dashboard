@@ -864,7 +864,7 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBeNull();
   });
 
-  it("LEGO: exempt from price cap, advent calendars stay hobby_toy", () => {
+  it("LEGO: 1000 CHF cap (not 300), advent calendars stay hobby_toy", () => {
     delete process.env.GALAXUS_MAX_RETAIL_CHF;
     expect(
       galaxusAssortmentBlockReason({
@@ -872,6 +872,14 @@ describe("galaxusAssortmentBlockReason", () => {
         title: "LEGO Star Wars Millennium Falcon Set 75192",
         brand: "LEGO",
         suggestedRetailInclVatChf: 1100,
+      })
+    ).toBe("price_outlier");
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_7c",
+        title: "LEGO Star Wars Millennium Falcon Set 75192",
+        brand: "LEGO",
+        suggestedRetailInclVatChf: 900,
       })
     ).toBeNull();
     expect(

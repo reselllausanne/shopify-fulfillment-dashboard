@@ -153,7 +153,7 @@ export const GALAXUS_POLICY_EXCEPTIONS: GalaxusPolicyException[] = [
     title: "All LEGO sets (product kind = lego)",
     gates: ["price_cap_300"],
     reason: "policy",
-    note: "Re-enabled 2026-11-24: LEGO-brand sets skip the absolute 300 CHF cap (Christmas long tail; price = StockX cost + margin, not aligned to Galaxus). Earlier trial rolled back 2026-10-26.",
+    note: "Re-enabled 2026-11-24: LEGO-brand sets use a 1000 CHF cap instead of the 300 CHF one (Christmas long tail; price = StockX cost + margin, not aligned to Galaxus). Earlier trial rolled back 2026-10-26.",
     addedAt: "2026-11-24",
     reviewAt: "2026-12-24",
     active: true,
