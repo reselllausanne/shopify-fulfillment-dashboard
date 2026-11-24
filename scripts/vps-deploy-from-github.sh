@@ -21,6 +21,7 @@ DEPLOY_SERVICE="${DEPLOY_SERVICE:-web}"
 # worker that is not rebuilt keeps running old code next to the new web
 # (Galaxus feed ran Sep 16 code until Oct 11). Empty = every compose service except web.
 DEPLOY_WORKERS="${DEPLOY_WORKERS-${DEPLOY_PRICE_WORKERS-}}"
+DEPLOY_ALL_WORKERS="${DEPLOY_ALL_WORKERS:-0}"
 EXPECTED_SHA="${EXPECTED_SHA:-}"
 DRY_RUN=0
 VALIDATE_CONFIG=0
@@ -404,6 +405,115 @@ resolve_deploy_workers() {
   order_workers_feed_last $(docker compose config --services | grep -vx "$DEPLOY_SERVICE")
 }
 
+# ---------------------------------------------------------------------------
+# Selective worker redeploy.
+# Workers bake the whole repo into their image, but each only *runs* the files in its import
+# closure. Recreating all of them on every merge killed in-flight feed/AWB runs and added
+# 1-5 min (feed drain). Now: redeploy a worker only if a changed file is in its closure, or a
+# global input (deps, prisma, Dockerfile, compose, scripts, data/config files) changed.
+# Anything unknown / any error => redeploy ALL (old behaviour). Force all: DEPLOY_ALL_WORKERS=1.
+# Marker = last SHA at which ALL worker images were known current (stored in .git, untracked).
+# ---------------------------------------------------------------------------
+worker_marker_file() {
+  echo "$(git rev-parse --git-dir)/deploy-workers-sha"
+}
+
+# 0 = this changed file affects every worker (or cannot be proven irrelevant).
+is_global_worker_input() {
+  local f="${1:-}"
+  case "$f" in
+    # never reach any container
+    docs/* | .cursor/* | .github/* | *.md | *.test.ts | *.test.tsx | *.spec.ts | */__tests__/* | public/*) return 1 ;;
+    scripts/vps-* | scripts/safe-* | scripts/*.test.sh) return 1 ;;
+    package.json | package-lock.json | Dockerfile | docker-compose.yml | docker-entrypoint.sh) return 0 ;;
+    tsconfig.json | prisma/* | portable_product_upsert/* | scripts/workers/stubServerOnly.cjs) return 0 ;;
+    scripts/*) return 0 ;;
+  esac
+  case "$f" in
+    # code files: decided by import closure
+    *.ts | *.tsx | *.mts | *.js | *.mjs | *.cjs | *.css) return 1 ;;
+  esac
+  # json/sql/py/xml/... may be read at runtime by a worker: be conservative
+  return 0
+}
+
+# stdin: changed files. $1: closure file ("service<TAB>file" lines). $2..: candidate services.
+# Prints services to redeploy (one per line); prints "ALL" if a global input changed.
+plan_worker_redeploy() {
+  local closure="$1"
+  shift
+  local changed=() f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if is_global_worker_input "$f"; then
+      echo "ALL"
+      return 0
+    fi
+    changed+=("$f")
+  done
+  local svc
+  for svc in "$@"; do
+    for f in "${changed[@]+"${changed[@]}"}"; do
+      if grep -qxF "${svc}	${f}" "$closure"; then
+        echo "$svc"
+        break
+      fi
+    done
+  done
+}
+
+# service<TAB>entry.ts for every compose service with `build:` and a scripts/*.ts command.
+compose_worker_entries() {
+  awk '
+    /^  [a-zA-Z0-9_-]+:[[:space:]]*$/ { svc=$1; sub(":","",svc); next }
+    /^    build:/ { built[svc]=1 }
+    /^    command:/ { if (match($0, /scripts\/[^"]*\.ts/)) entry[svc]=substr($0, RSTART, RLENGTH) }
+    END { for (s in entry) if (built[s]) print s "\t" entry[s] }
+  ' "${1:-docker-compose.yml}" | sort
+}
+
+# Prints the worker services to redeploy for WANT, space separated. "ALL" => full old path.
+select_workers_for_deploy() {
+  local want="$1" marker base entries closure svc plan
+  if [ "${DEPLOY_ALL_WORKERS:-0}" = "1" ] || [ -n "$DEPLOY_WORKERS" ]; then
+    echo "ALL"; return 0
+  fi
+  marker="$(worker_marker_file)"
+  if [ ! -f "$marker" ]; then
+    echo "== workers: no marker -> ALL" >&2; echo "ALL"; return 0
+  fi
+  base="$(cat "$marker")"
+  if ! git cat-file -e "${base}^{commit}" 2>/dev/null || ! git merge-base --is-ancestor "$base" "$want" 2>/dev/null; then
+    echo "== workers: marker $base unusable -> ALL" >&2; echo "ALL"; return 0
+  fi
+  if git diff --quiet "$base" "$want" --; then
+    echo "== workers: no diff since $base -> none" >&2; return 0
+  fi
+  entries="$(compose_worker_entries docker-compose.yml)"
+  if [ -z "$entries" ]; then
+    echo "== workers: no entries parsed -> ALL" >&2; echo "ALL"; return 0
+  fi
+  closure="$(mktemp)"
+  # shellcheck disable=SC2086
+  if ! docker run --rm --entrypoint node -w /app "${COMPOSE_PROJECT_NAME}-${DEPLOY_SERVICE}:latest" \
+      scripts/vps-worker-closure.mjs $(echo "$entries" | cut -f2 | sort -u | tr '\n' ' ') >"$closure.raw" 2>/dev/null; then
+    echo "== workers: closure failed -> ALL" >&2; rm -f "$closure" "$closure.raw"; echo "ALL"; return 0
+  fi
+  # entry -> service rows
+  while IFS="	" read -r svc entry; do
+    awk -F'\t' -v e="$entry" -v s="$svc" '$1==e {print s "\t" $2}' "$closure.raw"
+  done <<<"$entries" >"$closure"
+  if [ ! -s "$closure" ]; then
+    echo "== workers: empty closure -> ALL" >&2; rm -f "$closure" "$closure.raw"; echo "ALL"; return 0
+  fi
+  plan="$(git diff --name-only "$base" "$want" -- | plan_worker_redeploy "$closure" $(echo "$entries" | cut -f1) || true)"
+  rm -f "$closure" "$closure.raw"
+  if printf '%s\n' "$plan" | grep -qx ALL; then
+    echo "ALL"; return 0
+  fi
+  order_workers_feed_last $plan
+}
+
 parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -422,6 +532,9 @@ parse_args() {
         ;;
       --migrate)
         RUN_MIGRATE=1
+        ;;
+      --all-workers)
+        DEPLOY_ALL_WORKERS=1
         ;;
       --service=*)
         DEPLOY_SERVICE="${1#--service=}"
@@ -515,8 +628,9 @@ main() {
       echo "   docker compose up -d --no-deps $DEPLOY_SERVICE"
     fi
     echo "   verify web running + labels (+ image when available)"
+    echo "   workers: selective by import closure vs marker (ALL when unsure)"
     for svc in $(resolve_deploy_workers); do
-      echo "   docker compose build $svc && docker compose up -d --no-deps $svc"
+      echo "   (if selected) docker compose build $svc && docker compose up -d --no-deps $svc"
       echo "   verify_compose_service_running $svc"
     done
     echo "   verify_critical_workers_running ($DEPLOY_CRITICAL_WORKERS)"
@@ -558,9 +672,15 @@ main() {
 
   verify_web_deployment "$WANT"
 
-  local workers
-  workers="$(resolve_deploy_workers)"
-  echo "== workers: $workers"
+  local workers sel
+  sel="$(select_workers_for_deploy "$WANT")"
+  if [ "$sel" = "ALL" ]; then
+    workers="$(resolve_deploy_workers)"
+    echo "== workers: ALL -> $workers"
+  else
+    workers="$sel"
+    echo "== workers: selective -> ${workers:-<none, code unchanged for workers>}"
+  fi
   for svc in $workers; do
     echo "== build + up worker $svc"
     if ! docker compose build "$svc" || ! docker compose up -d --no-deps "$svc"; then
@@ -570,6 +690,10 @@ main() {
     # Every worker must leave Created — especially worker-galaxus-feed (stock/price).
     verify_compose_service_running "$svc" 90
   done
+  # All worker images now current at WANT (selected ones rebuilt; others unaffected by diff).
+  if [ -z "$DEPLOY_WORKERS" ]; then
+    echo "$WANT" >"$(worker_marker_file)"
+  fi
 
   echo "== critical workers: $DEPLOY_CRITICAL_WORKERS"
   verify_critical_workers_running

@@ -8,9 +8,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
 
-COPY package*.json ./
-COPY prisma ./prisma
-
+# apt first: prisma/package changes must not re-run apt (cache order = least → most volatile)
 # Install runtime deps for Playwright + remote desktop (noVNC)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
@@ -20,6 +18,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         xvfb fluxbox x11vnc novnc websockify \
         python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+COPY package*.json ./
+COPY prisma ./prisma
 
 # Install dev deps for build (Tailwind/PostCSS live in devDependencies)
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
@@ -34,13 +35,17 @@ RUN mkdir -p /ms-playwright \
     && npx patchright install chromium \
     && (npx patchright install --with-deps chrome || echo "patchright chrome install skipped (channel opt-in via STOCKX_CHROME_CHANNEL)")
 
-COPY . .
-
+# Python deps only need requirements.txt: keep above COPY . . so source edits skip pip.
+COPY portable_product_upsert/requirements.txt portable_product_upsert/requirements.txt
 # Python deps for the product-upsert bridge (portable_product_upsert).
 # bookworm is PEP 668 externally-managed -> --break-system-packages for system install.
 RUN pip3 install --break-system-packages --no-cache-dir -r portable_product_upsert/requirements.txt
 
-RUN npm run build
+COPY . .
+
+# .next/cache mount: incremental SWC/webpack cache across deploys (not baked into image).
+RUN --mount=type=cache,target=/app/.next/cache,sharing=locked \
+    npm run build
 
 ENV NODE_ENV=production
 
