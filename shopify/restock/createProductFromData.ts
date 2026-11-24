@@ -161,7 +161,7 @@ export type CreateProductFromDataResult = {
  * SupplierVariant (providerKey STX_<gtin>), VariantMapping. `manualLock` + `manualPrice`
  * keep convergence from repricing it (same as liquidation restock).
  */
-export async function upsertNerRows(rows: NerRow[]): Promise<void> {
+export async function upsertNerRows(rows: NerRow[], shopify?: { productId: string; handle: string }): Promise<void> {
   const now = new Date();
   const p = prisma as any;
   const first = rows[0];
@@ -179,6 +179,14 @@ export async function upsertNerRows(rows: NerRow[]): Promise<void> {
       lastFetchedAt: now,
     },
   });
+  // Mark as already on Shopify so the KickDB->Shopify consumers never treat it as a create candidate.
+  if (shopify) {
+    await p.shopifySyncState.upsert({
+      where: { kickdbProductId: first.kickdbProductId },
+      update: { shopifyProductId: shopify.productId, shopifyHandle: shopify.handle, syncStatus: "synced", shopifySyncedAt: now },
+      create: { kickdbProductId: first.kickdbProductId, shopifyProductId: shopify.productId, shopifyHandle: shopify.handle, syncStatus: "synced", shopifySyncedAt: now },
+    });
+  }
   for (const r of rows) {
     const kv = await p.kickDBVariant.upsert({
       where: { kickdbVariantId: r.kickdbVariantId },
@@ -365,7 +373,7 @@ export async function createProductFromData(
 
   await publishToSalesChannels(productId).catch((e) => warnings.push(`Publication canaux: ${e?.message ?? e}`));
 
-  await upsertNerRows(rows);
+  await upsertNerRows(rows, { productId, handle: listing.handle });
   warnings.push(
     "Lignes stx_ écrites (KickDB + SupplierVariant). Galaxus: prochain feed (02h stock/prix, 04h master/specs) — aucun push déclenché."
   );
