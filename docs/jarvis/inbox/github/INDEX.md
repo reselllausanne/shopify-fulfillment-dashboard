@@ -8,16 +8,16 @@
 
 | Fichier | Fiches | Contenu |
 |---|---:|---|
-| `regles-metier.md` | 11 | règles confirmées et conflits |
-| `procedures.md` | 10 | procédures opératoires durables |
-| `integrations-et-comptes.md` | 11 | systèmes intégrés, sans identifiants sensibles |
+| `regles-metier.md` | 15 | règles confirmées et conflits |
+| `procedures.md` | 11 | procédures opératoires durables |
+| `integrations-et-comptes.md` | 12 | systèmes intégrés, sans identifiants sensibles |
 | `workflows-automatiques.md` | 10 | workers, planifications et déclencheurs |
 | `site-web.md` | 15 | politiques et comportements versionnés du storefront |
 | `lecons-et-incidents.md` | 10 | incidents et garde-fous durables |
 | `SECRETS-A-REGENERER.md` | 1 | emplacement seulement, aucune valeur |
-| `QUESTIONS-OUVERTES.md` | 10 | incertitudes à arbitrer, maximum 15 |
+| `QUESTIONS-OUVERTES.md` | 9 | incertitudes à arbitrer, maximum 15 |
 | `INDEX.md` | 0 | présent index |
-| **Total** | **78** | |
+| **Total** | **83** | |
 
 ## Sources consultées
 

@@ -78,3 +78,10 @@ Extraction du 2026-11-24. Noms de systèmes et rôles seulement; aucun identifia
 - source: `docs/jarvis/SOURCES.md:27-34` — SHA `80eb2466`, PR #485
 - statut: incertain
 - valeur: L’intégration MCP Shopify était bloquée par une erreur d’authentification lors du dernier relevé. Son état actuel doit être retesté avant usage.
+
+### F-012
+- sujet: contrats d’observation fournisseurs
+- date: 2026-09-19
+- source: `inventory/supplierStock/contractRegistry.ts:35-52,58-72` — SHA `ce607c86`
+- statut: actif
+- valeur: Les scrapers `fan`, `exl`, `haw`, `wrk`, `bwz`, `tus` et `ven` émettent le contrat d’observation structuré. Aucun n’est marqué validé humainement dans le registre.

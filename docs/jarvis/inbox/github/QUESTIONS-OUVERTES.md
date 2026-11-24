@@ -31,41 +31,34 @@ Extraction du 2026-11-24. Maximum contractuel: 15 questions.
 - valeur: D-010 indique que la formule reste « à figer sur le VPS ». Quelle implémentation et quel commit constituent aujourd’hui la référence?
 
 ### F-005
-- sujet: cohérence du statut FantasyWelt
+- sujet: validation des contrats fournisseurs
 - date: 2026-09-19
-- source: `docs/SUPPLIER-OBSERVATION-QUALIFICATION.md:25-44` — SHA `c3adfe22`; `docs/SUPPLIER-STOCK-RECONCILIATION.md:47-56` — SHA `c997935d`
+- source: `inventory/supplierStock/contractRegistry.ts:35-52,58-72` — SHA `ce607c86`; `docs/SUPPLIER-OBSERVATION-QUALIFICATION.md:25-44` — SHA `c3adfe22`
 - statut: incertain
-- valeur: Le document de qualification marque FantasyWelt implémenté en observation, tandis que le document de réconciliation affirme que tous les contrats sont faux. Lequel reflète le code courant?
+- valeur: Sept scrapers émettent désormais le contrat, mais le registre les laisse tous non validés humainement et la documentation est partiellement obsolète. Quels fournisseurs ont réellement passé la qualification live?
 
 ### F-006
-- sujet: statut commercial Decathlon
-- date: 2026-11-24
-- source: `docs/jarvis/memory/decisions.md:76-81` — SHA `80eb2466`, PR #485; `README.md:194-278`; PR #506
-- statut: incertain
-- valeur: Les offres doivent rester à zéro, mais retours et expéditions historiques restent actifs. Le canal est-il définitivement fermé aux nouvelles ventes ou seulement suspendu?
-
-### F-007
 - sujet: pilote partenaire Galaxus
 - date: 2026-08-06
 - source: `docs/partner-galaxus-self-fulfill-pilot-checklist.md:1-24` — SHA `37a203f6`
 - statut: incertain
 - valeur: Le dépôt contient le pilote et ses tests, mais pas de décision attestant son activation commerciale. Est-il actif, limité ou abandonné?
 
-### F-008
+### F-007
 - sujet: application du contrôle de stock fournisseur
 - date: 2026-09-17
 - source: `docs/SUPPLIER-STOCK-RECONCILIATION.md:8-27` — SHA `c997935d`
 - statut: incertain
 - valeur: Le mode dépend d’un drapeau d’environnement absent du dépôt. Est-il encore observation-only en production?
 
-### F-009
+### F-008
 - sujet: Shopify MCP Cursor
 - date: 2026-11-20
 - source: `docs/jarvis/SOURCES.md:27-34` — SHA `80eb2466`, PR #485
 - statut: incertain
 - valeur: L’erreur d’authentification MCP Shopify est-elle résolue depuis le dernier test?
 
-### F-010
+### F-009
 - sujet: activation sGTM
 - date: 2026-10-19
 - source: `docker-compose.yml:220-259` — SHA `beff9170`, PR #154

@@ -71,3 +71,10 @@ Extraction du 2026-11-24. Procédures durables uniquement; aucune donnée de pro
 - source: `docs/STOCKX-BUYER.md:7-25,47-57` — SHA `19e4b840`, PR #415
 - statut: actif
 - valeur: Exécuter d’abord les rachats annulés, puis Shopify Express et les plus anciens, puis Galaxus, sous verrou unique. Utiliser le mode dry-run pour contrôler la sélection sans acheter.
+
+### F-011
+- sujet: preuve de scan des expéditions Galaxus
+- date: 2026-11-24
+- source: `galaxus/warehouse/unitScans.ts:3-10,40-79,106-123` — SHA `74de0c8f`, PR #510
+- statut: actif
+- valeur: Chaque unité d’une nouvelle expédition entrepôt Galaxus doit disposer d’un scan distinct correspondant à sa ligne. Le garde-fou s’applique à la création, au marquage expédié et au DELR; les expéditions historiques sans exigence enregistrée restent exemptées.

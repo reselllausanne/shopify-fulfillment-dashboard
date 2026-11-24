@@ -4,10 +4,10 @@ Extraction du 2026-11-24. Les cadences citées sont des paramètres de code, pas
 
 ### F-001
 - sujet: déploiement VPS
-- date: 2026-11-10
-- source: `.github/workflows/deploy-vps.yml:1-14,38-58,94-129` — SHA `1b783852`, PR #410
+- date: 2026-11-24
+- source: `.github/workflows/deploy-vps.yml:1-14,38-58,94-129` — SHA `1b783852`, PR #410; `scripts/vps-deploy-from-github.sh:409-415,475-515,675-699` — SHA `96340633`, PR #513
 - statut: actif
-- valeur: Chaque changement exécutable poussé sur `main` valide Docker/Compose puis déploie le SHA exact sur le VPS par SSH. La concurrence est sérialisée.
+- valeur: Chaque changement exécutable poussé sur `main` valide Docker/Compose puis déploie le SHA exact sur le VPS par SSH. Depuis le 24 novembre, seuls les workers dont la fermeture d’import est touchée sont recréés; toute incertitude force le redéploiement complet.
 
 ### F-002
 - sujet: ingestion EDI Galaxus
