@@ -1,3 +1,4 @@
+import { getUnitScanGuardError } from "@/galaxus/warehouse/unitScans";
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
 import { prisma } from "@/app/lib/prisma";
@@ -67,6 +68,10 @@ export async function POST(
     if (manualEtaMin && !Number.isNaN(manualEtaMin.getTime())) data.manualEtaMin = manualEtaMin;
     if (manualEtaMax && !Number.isNaN(manualEtaMax.getTime())) data.manualEtaMax = manualEtaMax;
     if (body.markShipped) {
+      const scanError = await getUnitScanGuardError(shipmentId);
+      if (scanError) {
+        return NextResponse.json({ ok: false, error: scanError }, { status: 409 });
+      }
       data.shippedAt = new Date();
       if (!trackingNumber) {
         // keep existing trackingNumber if already set; otherwise leave empty

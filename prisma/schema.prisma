@@ -2285,6 +2285,8 @@ model Shipment {
   delrSentAt                    DateTime?
   delrStatus                    ShipmentDelrStatus?
   delrError                     String?
+  /// true => mark-shipped / DELR refuse unless ShipmentUnitScan covers every unit.
+  requiresUnitScans             Boolean             @default(false)
   labelZpl                      String?
   labelPdfUrl                   String?
   labelGeneratedAt              DateTime?
@@ -2296,6 +2298,7 @@ model Shipment {
   items          ShipmentItem[]
   supplierOrders SupplierOrder[]
   ediFiles       GalaxusEdiFile[]
+  unitScans      ShipmentUnitScan[]
 
   @@index([orderId])
   @@index([providerKey])
@@ -2319,6 +2322,24 @@ model ShipmentItem {
 
   @@index([shipmentId])
   @@index([orderId])
+  @@schema("public")
+}
+
+/// Per-unit physical scan evidence for warehouse shipments (one row per unit).
+model ShipmentUnitScan {
+  id                String   @id @default(uuid())
+  shipmentId        String
+  orderId           String
+  galaxusOrderLineId String
+  unitIndex         Int
+  gtin              String
+  source            String
+  scannedAt         DateTime @default(now())
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@unique([shipmentId, galaxusOrderLineId, unitIndex])
+  @@index([shipmentId])
   @@schema("public")
 }
 

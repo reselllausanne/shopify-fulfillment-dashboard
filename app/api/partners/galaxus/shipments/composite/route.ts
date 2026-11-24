@@ -88,6 +88,8 @@ export async function POST(request: NextRequest) {
       confirmReplace: Boolean(body.confirmReplace),
       trackingNumbers: body.trackingNumber ? [String(body.trackingNumber)] : undefined,
       carrierFinal: body.carrierFinal ?? null,
+      // Partner-run warehouse: no Resell scan station. Shipment keeps requiresUnitScans=false.
+      skipUnitScans: true,
     });
 
     if (result.status === "error") {

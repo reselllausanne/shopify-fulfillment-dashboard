@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DocumentType } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
+import { SCAN_SOURCE_PACKING_SESSION } from "@/galaxus/warehouse/unitScans";
 import { createCompositeWarehouseShipment } from "@/galaxus/warehouse/shipments";
 import { galaxusWarehouseBoxKey, type GalaxusShipToInput } from "@/galaxus/warehouse/deliverySites";
 import { DocumentService } from "@/galaxus/documents/DocumentService";
@@ -312,6 +313,16 @@ export async function POST(req: NextRequest) {
           anchorOrderId: anchorOrderDbId,
           items,
           confirmReplace: true,
+          // Packing session = one scanned entry per unit (unitIndex unique per line).
+          scans: entries
+            .filter((e) => orderIdsSet.has(e.galaxusOrderDbId))
+            .map((e) => ({
+              sourceOrderId: e.galaxusOrderDbId,
+              lineId: e.galaxusOrderLineId,
+              unitIndex: e.unitIndex,
+              gtin: e.gtin,
+              source: SCAN_SOURCE_PACKING_SESSION,
+            })),
         });
         if (composite.status === "error") {
           result.error = composite.message ?? "Composite shipment failed";

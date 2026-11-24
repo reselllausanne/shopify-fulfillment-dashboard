@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
 import { createCompositeWarehouseShipment } from "@/galaxus/warehouse/shipments";
+import { parseUnitScans } from "@/galaxus/warehouse/unitScans";
 import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
 
 export const runtime = "nodejs";
@@ -12,6 +13,7 @@ type Body = {
   confirmReplace?: boolean;
   trackingNumber?: string | null;
   carrierFinal?: string | null;
+  scans?: unknown;
 };
 
 export async function POST(request: NextRequest) {
@@ -44,6 +46,7 @@ export async function POST(request: NextRequest) {
       confirmReplace: Boolean(body.confirmReplace),
       trackingNumbers: body.trackingNumber ? [String(body.trackingNumber)] : undefined,
       carrierFinal: body.carrierFinal ?? null,
+      scans: parseUnitScans(body.scans),
     });
 
     if (result.status === "error") {

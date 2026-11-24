@@ -1,3 +1,4 @@
+import { validateUnitScansForLines, type UnitScanInput, type ValidatedUnitScan } from "@/galaxus/warehouse/unitScans";
 import "server-only";
 
 import type { GalaxusOrder, GalaxusOrderLine, Shipment } from "@prisma/client";
@@ -637,6 +638,9 @@ export async function createCompositeWarehouseShipment(
     carrierFinal?: string | null;
     shippedAt?: Date | null;
     packageType?: "PARCEL" | "PALLET";
+    /** Per-unit scan evidence; required unless skipUnitScans (partner-run warehouses only). */
+    scans?: UnitScanInput[];
+    skipUnitScans?: boolean;
   }
 ): Promise<CreateShipmentsResult> {
   const prismaAny = prisma as any;
@@ -721,6 +725,24 @@ export async function createCompositeWarehouseShipment(
     } catch (err: any) {
       return { status: "error", shipments: [], message: err?.message ?? "Invalid order line" };
     }
+  }
+
+  // Scan guard runs before any destructive purge below.
+  let scanRows: ValidatedUnitScan[] = [];
+  if (!options.skipUnitScans) {
+    const scanCheck = validateUnitScansForLines(
+      packed.map((p) => ({
+        lineId: String(p.line.id),
+        sourceOrderId: String(p.sourceOrder.id),
+        quantity: p.quantity,
+        gtin: (p.line as any).gtin,
+      })),
+      Array.isArray(options.scans) ? options.scans : []
+    );
+    if (!scanCheck.ok) {
+      return { status: "error", shipments: [], message: scanCheck.message };
+    }
+    scanRows = scanCheck.rows;
   }
 
   const providerKeys = new Set<string>();
@@ -858,8 +880,15 @@ export async function createCompositeWarehouseShipment(
         packageType,
         shippedAt,
         delrStatus: "PENDING",
+        requiresUnitScans: !options.skipUnitScans,
       },
     });
+
+    if (scanRows.length > 0) {
+      await tx.shipmentUnitScan.createMany({
+        data: scanRows.map((r) => ({ ...r, shipmentId: shipment.id })),
+      });
+    }
 
     await tx.shipmentItem.createMany({
       data: packed.map((item) => ({

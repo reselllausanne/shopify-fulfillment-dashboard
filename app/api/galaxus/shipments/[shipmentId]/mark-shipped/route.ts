@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { getUnitScanGuardError } from "@/galaxus/warehouse/unitScans";
 import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
 
 export const runtime = "nodejs";
@@ -19,6 +20,10 @@ export async function POST(
     const body = await request.json().catch(() => ({}));
     const trackingNumber = body?.trackingNumber ? String(body.trackingNumber).trim() : null;
     const shippedAt = body?.shippedAt ? new Date(body.shippedAt) : new Date();
+    const scanError = await getUnitScanGuardError(shipmentId);
+    if (scanError) {
+      return NextResponse.json({ ok: false, error: scanError }, { status: 409 });
+    }
     const shipment = await prisma.shipment.update({
       where: { id: shipmentId },
       data: {

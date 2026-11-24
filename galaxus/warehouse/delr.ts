@@ -1,5 +1,7 @@
 import "server-only";
 
+import { getUnitScanGuardError } from "@/galaxus/warehouse/unitScans";
+
 import { prisma } from "@/app/lib/prisma";
 import { XMLParser } from "fast-xml-parser";
 import { buildDispatchNotification } from "@/galaxus/edi/documents";
@@ -259,6 +261,12 @@ export async function uploadDelrForShipment(
         message: "Shipment is outside partner scope",
       };
     }
+  }
+
+  // Scan guard: no bypass (force / manual / StockX match do not apply).
+  const scanError = await getUnitScanGuardError(shipment.id);
+  if (scanError) {
+    return { shipmentId, status: "error", httpStatus: 409, message: scanError };
   }
 
   shipment.order = await refreshOrderRecipientFromOrdp(shipment.order);
