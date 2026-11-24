@@ -174,10 +174,10 @@ export function laneFromOrderNumber(n: string | null | undefined): "EXPRESS" | "
   return null;
 }
 
-/** Pure: keep the same IP until it ages out or two retryable failures in a row. */
+/** Pure: keep the same IP until it ages out or N (default 3) retryable failures in a row. */
 export const SESSION_MAX_MS = Number(process.env.NIGHT_BUYER_SESSION_MIN || 50) * 60_000;
 export function shouldRotateSession(s: { startedAt: number; consecutiveFails: number }, now: number): boolean {
-  return now - s.startedAt > SESSION_MAX_MS || s.consecutiveFails >= 2;
+  return now - s.startedAt > SESSION_MAX_MS || s.consecutiveFails >= Number(process.env.NIGHT_BUYER_ROTATE_FAILS || 3);
 }
 
 const QUEUE_SQL = `
@@ -609,7 +609,7 @@ export async function closeSession(): Promise<void> {
 async function warmThroughGate(page: import("playwright").Page): Promise<void> {
   for (let i = 0; i < 5; i += 1) {
     await page
-      .goto("https://stockx.com/fr-fr/buying", { waitUntil: "domcontentloaded", timeout: 40_000 })
+      .goto("https://stockx.com/fr-fr/buy/asics-superblast-3-cobalt-burst-light-orange?size=7.5", { waitUntil: "domcontentloaded", timeout: 40_000 })
       .catch(() => undefined);
     await page.waitForTimeout(7_000);
     const body = await page
