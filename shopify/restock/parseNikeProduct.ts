@@ -16,6 +16,8 @@ export type ParsedNikeSize = {
 export type ParsedNikeProduct = {
   brand: string;
   name: string;
+  /** Nike subtitle (e.g. "Schuh für Babys und Kleinkinder"). */
+  subtitle: string | null;
   /** Style-color, e.g. BQ5453-001. */
   sku: string;
   color: string | null;
@@ -93,7 +95,8 @@ export function parseNikeHtml(html: string, sourceUrl?: string): ParsedNikeProdu
 
   return {
     brand,
-    name: subtitle && !name.includes(subtitle) ? `${name} ${subtitle}`.trim() : name,
+    name,
+    subtitle: subtitle || null,
     sku,
     color,
     images,
@@ -128,6 +131,8 @@ export function nikeToProductData(
   return {
     brand: parsed.brand,
     name: parsed.name,
+    subtitle: parsed.subtitle,
+    genders: parsed.genders,
     sku: parsed.sku,
     color: parsed.color,
     images: parsed.images,

@@ -128,7 +128,7 @@ async function attachImageFromUrl(productId: string, url: string, alt: string): 
   if (errors?.length) throw new Error(`productCreateMedia failed: ${errors.map((e) => e.message).join("; ")}`);
 }
 
-async function publishToSalesChannels(productId: string): Promise<void> {
+export async function publishToSalesChannels(productId: string): Promise<void> {
   const pubs = await shopifyGraphQL<{
     publications: { nodes: Array<{ id: string; name: string }> };
   }>(/* GraphQL */ `query SimpleCatalogPublications { publications(first: 20) { nodes { id name } } }`);

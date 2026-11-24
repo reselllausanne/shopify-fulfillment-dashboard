@@ -2,10 +2,9 @@ import { prisma } from "@/app/lib/prisma";
 import { normalizeSize, validateGtin } from "@/app/lib/normalize";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
-import {
-  createProductWithVariant,
-  updateVariantPricingAndIdentity,
-} from "@/shopify/catalog/graphql";
+import { updateVariantPricingAndIdentity } from "@/shopify/catalog/graphql";
+import { buildShopifyListing } from "@/shopify/restock/buildShopifyListing";
+import { publishToSalesChannels } from "@/shopify/restock/createSimpleCatalogProduct";
 import {
   activateInventoryAtLocation,
   adjustInventoryAtLocation,
@@ -44,19 +43,25 @@ export type ProductFromData = {
   sellPrice: number;
   productType?: string | null;
   sourceUrl?: string | null;
+  subtitle?: string | null;
+  genders?: string[];
 };
 
 export type NerRow = {
-  supplierVariantId: string;
+  /** Deterministic KickDB-style ids (no StockX): one product per style-color, one variant per EU size. */
+  kickdbProductId: string;
+  kickdbVariantId: string;
   providerKey: string;
   gtin: string;
   sku: string;
   sizeRaw: string;
   sizeNormalized: string;
   priceExVat: number;
+  sellPrice: number;
   stock: number;
   productName: string;
   brand: string;
+  color: string | null;
   images: string[];
 };
 
@@ -89,32 +94,33 @@ export function validateProductFromData(data: ProductFromData): string[] {
   return missing;
 }
 
-/** Pure: DB rows the Galaxus feed reads (`ner:<SKU>-<SIZE>`). */
+/** Pure: rows mirrored into the KickDB tables + stx_ SupplierVariant (same shape as a StockX product). */
 export function buildNerRows(data: ProductFromData): NerRow[] {
   const priceExVat = Math.round((data.sellPrice / VAT_DIVISOR) * 100) / 100;
   const images = data.images.filter((u) => /^https?:\/\//i.test(u));
-  const rows: NerRow[] = [];
-  for (const s of data.sizes) {
+  const style = sanitizeIdPart(data.sku);
+  return data.sizes.map((s) => {
     const sizeNormalized = normalizeSize(s.size) ?? s.size;
-    const supplierVariantId = `ner:${sanitizeIdPart(data.sku)}-${sanitizeIdPart(sizeNormalized)}`;
     const gtin = s.gtin.trim();
-    const providerKey = buildProviderKey(gtin, supplierVariantId);
+    const providerKey = buildProviderKey(gtin, "stx_x");
     if (!providerKey) throw new Error(`providerKey introuvable pour GTIN ${gtin}`);
-    rows.push({
-      supplierVariantId,
+    return {
+      kickdbProductId: `nike-${style}`,
+      kickdbVariantId: `nike-${style}-${sanitizeIdPart(sizeNormalized)}`,
       providerKey,
       gtin,
       sku: data.sku.trim(),
       sizeRaw: s.size.trim(),
       sizeNormalized,
       priceExVat,
+      sellPrice: data.sellPrice,
       stock: s.stock,
-      productName: data.color ? `${data.name.trim()} ${data.color.trim()}` : data.name.trim(),
+      productName: data.name.trim(),
       brand: data.brand.trim(),
+      color: data.color?.trim() || null,
       images,
-    });
-  }
-  return rows;
+    };
+  });
 }
 
 const BULK_CREATE = /* GraphQL */ `
@@ -125,10 +131,10 @@ mutation FromDataBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInpu
   }
 }`;
 
-const PRODUCT_OPTIONS = /* GraphQL */ `
-mutation FromDataOptions($productId: ID!, $options: [OptionCreateInput!]!) {
-  productOptionsCreate(productId: $productId, options: $options, variantStrategy: LEAVE_AS_IS) {
-    product { id variants(first: 1) { nodes { id inventoryItem { id } } } }
+const PRODUCT_CREATE = /* GraphQL */ `
+mutation FromDataProductCreate($product: ProductCreateInput!) {
+  productCreate(product: $product) {
+    product { id }
     userErrors { field message }
   }
 }`;
@@ -150,45 +156,73 @@ export type CreateProductFromDataResult = {
   error?: string;
 };
 
-/** Persist `ner:` SupplierVariant + VariantMapping rows (idempotent upsert). */
+/**
+ * Persist like a StockX product: KickDBProduct + KickDBVariant, `stx_<kickdbVariant.id>`
+ * SupplierVariant (providerKey STX_<gtin>), VariantMapping. `manualLock` + `manualPrice`
+ * keep convergence from repricing it (same as liquidation restock).
+ */
 export async function upsertNerRows(rows: NerRow[]): Promise<void> {
   const now = new Date();
+  const p = prisma as any;
+  const first = rows[0];
+  const product = await p.kickDBProduct.upsert({
+    where: { kickdbProductId: first.kickdbProductId },
+    update: { name: first.productName, brand: first.brand, imageUrl: first.images[0], colorway: first.color, lastFetchedAt: now },
+    create: {
+      kickdbProductId: first.kickdbProductId,
+      urlKey: first.kickdbProductId,
+      styleId: first.sku,
+      name: first.productName,
+      brand: first.brand,
+      imageUrl: first.images[0],
+      colorway: first.color,
+      lastFetchedAt: now,
+    },
+  });
   for (const r of rows) {
-    assertMappingIntegrity({
-      supplierVariantId: r.supplierVariantId,
-      gtin: r.gtin,
-      providerKey: r.providerKey,
-      status: "SUPPLIER_GTIN",
+    const kv = await p.kickDBVariant.upsert({
+      where: { kickdbVariantId: r.kickdbVariantId },
+      update: { gtin: r.gtin, providerKey: r.providerKey, sizeEu: r.sizeRaw, lastFetchedAt: now },
+      create: {
+        kickdbVariantId: r.kickdbVariantId,
+        productId: product.id,
+        sizeEu: r.sizeRaw,
+        gtin: r.gtin,
+        providerKey: r.providerKey,
+        lastFetchedAt: now,
+      },
     });
+    const supplierVariantId = `stx_${kv.id}`;
+    assertMappingIntegrity({ supplierVariantId, gtin: r.gtin, providerKey: r.providerKey, status: "SUPPLIER_GTIN" });
     const data = {
       gtin: r.gtin,
       providerKey: r.providerKey,
       price: r.priceExVat,
       stock: r.stock,
       supplierSku: r.sku,
-      sizeRaw: r.sizeRaw,
+      sizeRaw: `EU ${r.sizeRaw}`,
       sizeNormalized: r.sizeNormalized,
       supplierProductName: r.productName,
       supplierBrand: r.brand,
       images: r.images,
       sourceImageUrl: r.images[0],
+      imageSyncStatus: "PENDING",
+      manualLock: true,
+      manualPrice: r.sellPrice,
+      manualUpdatedAt: now,
+      manualNote: "restock:from-url",
       lastSyncAt: now,
       updatedAt: now,
     };
-    await prisma.supplierVariant.upsert({
-      where: { supplierVariantId: r.supplierVariantId },
+    await p.supplierVariant.upsert({
+      where: { supplierVariantId },
       update: data,
-      create: { supplierVariantId: r.supplierVariantId, ...data },
+      create: { supplierVariantId, ...data },
     });
-    await prisma.variantMapping.upsert({
-      where: { supplierVariantId: r.supplierVariantId },
-      update: { gtin: r.gtin, providerKey: r.providerKey, status: "SUPPLIER_GTIN", updatedAt: now },
-      create: {
-        supplierVariantId: r.supplierVariantId,
-        gtin: r.gtin,
-        providerKey: r.providerKey,
-        status: "SUPPLIER_GTIN",
-      },
+    await p.variantMapping.upsert({
+      where: { supplierVariantId },
+      update: { gtin: r.gtin, providerKey: r.providerKey, kickdbVariantId: kv.id, supplierKey: "stx", status: "SUPPLIER_GTIN", updatedAt: now },
+      create: { supplierVariantId, gtin: r.gtin, providerKey: r.providerKey, kickdbVariantId: kv.id, supplierKey: "stx", status: "SUPPLIER_GTIN" },
     });
   }
 }
@@ -215,7 +249,11 @@ export async function createProductFromData(
 
   // Refuse duplicates: a GTIN already on Shopify means the product exists.
   const existing = await prisma.supplierVariant.findMany({
-    where: { gtin: { in: rows.map((r) => r.gtin) }, supplierVariantId: { startsWith: "stx_" } },
+    where: {
+      gtin: { in: rows.map((r) => r.gtin) },
+      supplierVariantId: { startsWith: "stx_" },
+      NOT: { manualNote: "restock:from-url" },
+    },
     select: { gtin: true },
     take: 1,
   });
@@ -230,24 +268,31 @@ export async function createProductFromData(
   }
 
   const first = rows[0];
-  const created = await createProductWithVariant({
-    title: `${data.brand} ${data.name}${data.color ? ` - ${data.color}` : ""}`.trim(),
-    brand: data.brand,
-    providerKey: first.supplierVariantId,
-    gtin: first.gtin,
-    price: data.sellPrice,
-  });
-  const productId = created.productId;
+  const listing = buildShopifyListing(data);
 
-  // Size option + first variant rename, then remaining sizes.
-  const opt = await shopifyGraphQL<{
-    productOptionsCreate: { userErrors: Array<{ message: string }> };
-  }>(PRODUCT_OPTIONS, {
-    productId,
-    options: [{ name: "Size", values: rows.map((r) => ({ name: r.sizeRaw })) }],
+  // Product shell identical to the StockX pipeline: tags ["New"], type, taxonomy category,
+  // French description, SEO, option "Taille", custom.* metafields.
+  const pc = await shopifyGraphQL<{
+    productCreate: { product: { id: string } | null; userErrors: Array<{ message: string }> };
+  }>(PRODUCT_CREATE, {
+    product: {
+      title: listing.title,
+      handle: listing.handle,
+      vendor: data.brand,
+      productType: listing.productType,
+      tags: listing.tags,
+      descriptionHtml: listing.descriptionHtml,
+      category: listing.category,
+      status: "ACTIVE",
+      seo: { title: listing.seoTitle, description: listing.seoDescription },
+      productOptions: [{ name: listing.option, values: [{ name: first.sizeRaw }] }],
+      metafields: listing.productMetafields,
+    },
   });
-  const optErr = opt.errors?.map((e) => e.message) ?? opt.data?.productOptionsCreate?.userErrors?.map((e) => e.message) ?? [];
-  if (optErr.length) throw new Error(`productOptionsCreate: ${optErr.join("; ")}`);
+  const pcErr =
+    pc.errors?.map((e) => e.message) ?? pc.data?.productCreate?.userErrors?.map((e) => e.message) ?? [];
+  if (pcErr.length) throw new Error(`productCreate: ${pcErr.join("; ")}`);
+  const productId = pc.data!.productCreate.product!.id;
 
   if (rows.length > 1) {
     const bulk = await shopifyGraphQL<{
@@ -260,8 +305,8 @@ export async function createProductFromData(
       variants: rows.slice(1).map((r) => ({
         price: data.sellPrice.toFixed(2),
         barcode: r.gtin,
-        optionValues: [{ optionName: "Size", name: r.sizeRaw }],
-        inventoryItem: { sku: r.supplierVariantId, tracked: true },
+        optionValues: [{ optionName: listing.option, name: r.sizeRaw }],
+        inventoryItem: { sku: listing.variantSku(r.sizeRaw), tracked: true },
       })),
     });
     const bErr = bulk.errors?.map((e) => e.message) ?? bulk.data?.productVariantsBulkCreate?.userErrors?.map((e) => e.message) ?? [];
@@ -271,11 +316,11 @@ export async function createProductFromData(
   // Stock per size at the physical location (match by barcode, not by order).
   const { data: vdata } = await shopifyGraphQL<{
     product: {
-      variants: { nodes: Array<{ id: string; barcode: string | null; inventoryItem: { id: string } | null }> };
+      variants: { nodes: Array<{ id: string; title: string; barcode: string | null; inventoryItem: { id: string } | null }> };
     } | null;
   }>(
     /* GraphQL */ `query FromDataVariants($id: ID!) {
-      product(id: $id) { variants(first: 100) { nodes { id barcode inventoryItem { id } } } }
+      product(id: $id) { variants(first: 100) { nodes { id title barcode inventoryItem { id } } } }
     }`,
     { id: productId }
   );
@@ -283,7 +328,7 @@ export async function createProductFromData(
     (vdata?.product?.variants.nodes ?? []).map((v) => [String(v.barcode ?? "").trim(), v])
   );
   for (const r of rows) {
-    const v = byBarcode.get(r.gtin);
+    const v = byBarcode.get(r.gtin) ?? (r === first ? (vdata?.product?.variants.nodes ?? []).find((n) => n.title === r.sizeRaw) : undefined);
     if (!v?.inventoryItem?.id) {
       warnings.push(`Variante Shopify introuvable pour GTIN ${r.gtin}`);
       continue;
@@ -292,7 +337,7 @@ export async function createProductFromData(
       await updateVariantPricingAndIdentity({
         productId,
         variantId: v.id,
-        sku: r.supplierVariantId,
+        sku: listing.variantSku(r.sizeRaw),
         barcode: r.gtin,
         price: data.sellPrice,
       }).catch((e) => warnings.push(`Variante 1: ${e?.message ?? e}`));
@@ -318,9 +363,11 @@ export async function createProductFromData(
   });
   if (media.errors?.length) warnings.push(`Images: ${media.errors.map((e) => e.message).join("; ")}`);
 
+  await publishToSalesChannels(productId).catch((e) => warnings.push(`Publication canaux: ${e?.message ?? e}`));
+
   await upsertNerRows(rows);
   warnings.push(
-    "Lignes ner: écrites. Galaxus: prochain feed (02h stock/prix, 04h master/specs) — aucun push déclenché."
+    "Lignes stx_ écrites (KickDB + SupplierVariant). Galaxus: prochain feed (02h stock/prix, 04h master/specs) — aucun push déclenché."
   );
   return { ...base, productId, rows, ok: true };
 }
