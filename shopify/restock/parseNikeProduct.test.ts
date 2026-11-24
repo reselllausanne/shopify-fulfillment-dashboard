@@ -25,6 +25,7 @@ describe("parseNikeHtml", () => {
     expect(validateProductFromData(data)).toEqual([]);
     const rows = buildNerRows(data);
     expect(rows.map((r) => r.sizeRaw)).toEqual(["21", "22"]);
-    expect(rows[0].supplierVariantId).toBe("ner:BQ5453-001-21");
+    expect(rows[0].kickdbVariantId).toBe("nike-BQ5453-001-21");
+    expect(rows[0].providerKey).toMatch(/^STX_/);
   });
 });

@@ -33,7 +33,8 @@ describe("createProductFromData", () => {
   it("builds ner rows with ex-VAT price and catalog identity", () => {
     const rows = buildNerRows(base);
     expect(rows).toHaveLength(2);
-    expect(rows[0].supplierVariantId).toBe("ner:BQ5453-001-2C");
+    expect(rows[0].kickdbVariantId).toBe("nike-BQ5453-001-2C");
+    expect(rows[0].providerKey).toBe("STX_0196153270001");
     expect(rows[0].brand).toBe("Nike");
     expect(rows[0].priceExVat).toBeCloseTo(50.79, 2);
     expect(rows[0].images[0]).toMatch(/^https/);
