@@ -601,6 +601,27 @@ export async function closeSession(): Promise<void> {
   await s?.launched.ctx.close().catch(() => undefined);
 }
 
+/**
+ * A fresh proxy IP gets "Please login to continue / verify you are not a bot" on the first
+ * 1-2 navigations, then passes (measured 5/5 IPs: GATE, GATE, OK). Burn those loads here so
+ * the first real pair does not exhaust its tries and rotate to another cold IP.
+ */
+async function warmThroughGate(page: import("playwright").Page): Promise<void> {
+  for (let i = 0; i < 5; i += 1) {
+    await page
+      .goto("https://stockx.com/fr-fr/buying", { waitUntil: "domcontentloaded", timeout: 40_000 })
+      .catch(() => undefined);
+    await page.waitForTimeout(7_000);
+    const body = await page
+      .evaluate(() => (document.body?.innerText || "").slice(0, 400))
+      .catch(() => "");
+    const gated = /Please login to continue|verify you are not a bot|Vérification de sécurité/i.test(body);
+    const dead = page.url().startsWith("chrome-error:");
+    if (!gated && !dead) return;
+    if (dead) return;
+  }
+}
+
 async function getSession(): Promise<Session> {
   if (session && shouldRotateSession(session, Date.now())) {
     console.warn(
@@ -618,6 +639,7 @@ async function getSession(): Promise<Session> {
       useStickyProxy: Boolean(sticky),
       forceCold: true,
     });
+    if (sticky) await warmThroughGate(launched.page);
     session = { launched, startedAt: Date.now(), consecutiveFails: 0 };
     console.warn(`[NIGHT-BUYER] new session (sticky=${Boolean(sticky)})`);
   }
