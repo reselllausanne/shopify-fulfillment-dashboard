@@ -3,6 +3,7 @@ import { normalizeSize, validateGtin } from "@/app/lib/normalize";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { updateVariantPricingAndIdentity } from "@/shopify/catalog/graphql";
+import { buildRestockFixedPriceNote } from "@/shopify/restock/operatorRestockPrice";
 import { buildShopifyListing } from "@/shopify/restock/buildShopifyListing";
 import { publishToSalesChannels } from "@/shopify/restock/createSimpleCatalogProduct";
 import {
@@ -41,6 +42,8 @@ export type ProductFromData = {
   sizes: ProductFromDataSize[];
   /** Sell price, CHF incl. VAT, typed by operator. */
   sellPrice: number;
+  /** Optional compare-at (CHF). No automatic compare-at. */
+  compareAt?: number | null;
   productType?: string | null;
   sourceUrl?: string | null;
   subtitle?: string | null;
@@ -58,6 +61,7 @@ export type NerRow = {
   sizeNormalized: string;
   priceExVat: number;
   sellPrice: number;
+  compareAt: number | null;
   stock: number;
   productName: string;
   brand: string;
@@ -114,6 +118,7 @@ export function buildNerRows(data: ProductFromData): NerRow[] {
       sizeNormalized,
       priceExVat,
       sellPrice: data.sellPrice,
+      compareAt: data.compareAt && data.compareAt > data.sellPrice ? data.compareAt : null,
       stock: s.stock,
       productName: data.name.trim(),
       brand: data.brand.trim(),
@@ -218,7 +223,7 @@ export async function upsertNerRows(rows: NerRow[], shopify?: { productId: strin
       manualLock: true,
       manualPrice: r.sellPrice,
       manualUpdatedAt: now,
-      manualNote: "restock:from-url",
+      manualNote: buildRestockFixedPriceNote(r.compareAt),
       lastSyncAt: now,
       updatedAt: now,
     };
@@ -260,12 +265,24 @@ export async function createProductFromData(
     where: {
       gtin: { in: rows.map((r) => r.gtin) },
       supplierVariantId: { startsWith: "stx_" },
-      NOT: { manualNote: "restock:from-url" },
     },
-    select: { gtin: true },
-    take: 1,
+    select: { gtin: true, supplierVariantId: true },
   });
-  if (existing.length) {
+  // Re-run of this same flow (nike-* KickDB ids) is fine; a real StockX row is not.
+  const mappings = existing.length
+    ? await (prisma as any).variantMapping.findMany({
+        where: { supplierVariantId: { in: existing.map((e: any) => e.supplierVariantId) } },
+        select: { supplierVariantId: true, kickdbVariant: { select: { kickdbVariantId: true } } },
+      })
+    : [];
+  const fromUrl = new Set(
+    mappings
+      .filter((m: any) => String(m.kickdbVariant?.kickdbVariantId ?? "").startsWith("nike-"))
+      .map((m: any) => m.supplierVariantId)
+  );
+  const clash = existing.filter((e: any) => !fromUrl.has(e.supplierVariantId));
+  if (clash.length) {
+    existing.splice(0, existing.length, ...clash);
     warnings.push(`GTIN ${existing[0].gtin} existe déjà côté StockX — utiliser le Restock normal`);
     return { ...base, rows, ok: false, error: "gtin_already_in_catalog" };
   }
@@ -312,6 +329,7 @@ export async function createProductFromData(
       productId,
       variants: rows.slice(1).map((r) => ({
         price: data.sellPrice.toFixed(2),
+        ...(data.compareAt && data.compareAt > data.sellPrice ? { compareAtPrice: data.compareAt.toFixed(2) } : {}),
         barcode: r.gtin,
         optionValues: [{ optionName: listing.option, name: r.sizeRaw }],
         inventoryItem: { sku: listing.variantSku(r.sizeRaw), tracked: true },

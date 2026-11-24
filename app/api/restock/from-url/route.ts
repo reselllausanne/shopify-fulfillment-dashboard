@@ -68,7 +68,11 @@ export async function POST(request: Request) {
       const n = Math.trunc(Number(v));
       if (Number.isFinite(n) && n > 0) stockByNikeLabel[k] = n;
     }
-    const data = nikeToProductData(parsed, { sellPrice, stockByNikeLabel });
+    const compareAt = Number(body?.compareAt);
+    const data = {
+      ...nikeToProductData(parsed, { sellPrice, stockByNikeLabel }),
+      compareAt: Number.isFinite(compareAt) && compareAt > sellPrice ? compareAt : null,
+    };
     const result = await createProductFromData(data, {
       dryRun: body?.dryRun === true,
       locationId: typeof body?.locationId === "string" ? body.locationId : null,
