@@ -1106,6 +1106,25 @@ export async function restockShopifyVariantByGtin(input: {
     }
   }
 
+  // Every scanned pair = "Livraison 48H" (smart collection on product
+  // custom.physical_in_stock). Set it now, awaited, instead of relying on the
+  // debounced mirror hook (lost on process exit). Idempotent.
+  if (!dryRun && quantity > 0 && match.productId) {
+    try {
+      const { isPhysicalWarehouseLocation } = await import("@/shopify/inventory/locationConfig");
+      if (isPhysicalWarehouseLocation(locationId)) {
+        const { syncPhysicalInStockMetafieldForProduct } = await import(
+          "@/shopify/inventory/physicalInStockMetafield"
+        );
+        const changes: string[] = [];
+        await syncPhysicalInStockMetafieldForProduct(match.productId, changes, warnings);
+        actions.push(...changes);
+      }
+    } catch (err: any) {
+      warnings.push(`48h delivery category sync failed: ${err?.message ?? err}`);
+    }
+  }
+
   // Record in-hand listing so the sold-check cron can watch it.
   if (match.inventoryItemId && quantity > 0) {
     try {
