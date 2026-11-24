@@ -96,6 +96,9 @@ type SelectedLine = {
   lineId: string;
   sourceOrderId: string;
   quantity: number;
+  /** Units physically scanned (GTIN scan only; never from typed quantity). */
+  scannedCount: number;
+  gtin: string;
 };
 
 type CreatedShipment = {
@@ -431,7 +434,11 @@ export default function GalaxusWarehouseShipmentsPage() {
           continue;
         }
         if (item.quantity > remaining) {
-          next[lid] = { ...item, quantity: remaining };
+          next[lid] = {
+            ...item,
+            quantity: remaining,
+            scannedCount: Math.min(item.scannedCount, remaining),
+          };
           changed = true;
         }
       }
@@ -472,7 +479,12 @@ export default function GalaxusWarehouseShipmentsPage() {
   const selectedItems = useMemo(() => Object.values(selectedLines), [selectedLines]);
   const selectedQty = selectedItems.reduce((acc, item) => acc + Math.max(0, Number(item.quantity ?? 0)), 0);
 
-  const toggleLine = (lineId: string, sourceOrderId: string, remaining: number, checked: boolean) => {
+  const unscannedSelected = useMemo(
+    () => selectedItems.filter((item) => item.scannedCount < item.quantity),
+    [selectedItems]
+  );
+
+  const toggleLine = (lineId: string, sourceOrderId: string, remaining: number, checked: boolean, gtin = "") => {
     setSelectedLines((prev) => {
       const next = { ...prev };
       if (!checked) {
@@ -480,7 +492,7 @@ export default function GalaxusWarehouseShipmentsPage() {
         return next;
       }
       const qty = clampQty(Math.max(1, remaining), 1, Math.max(1, remaining));
-      next[lineId] = { lineId, sourceOrderId, quantity: qty };
+      next[lineId] = prev[lineId] ?? { lineId, sourceOrderId, quantity: qty, scannedCount: 0, gtin };
       return next;
     });
   };
@@ -489,7 +501,8 @@ export default function GalaxusWarehouseShipmentsPage() {
     setSelectedLines((prev) => {
       const entry = prev[lineId];
       if (!entry) return prev;
-      const nextQty = clampQty(Number(raw), 1, Math.max(1, maxQty));
+      // Typed quantity can never exceed physically scanned units.
+      const nextQty = clampQty(Number(raw), 1, Math.max(1, Math.min(maxQty, entry.scannedCount)));
       return { ...prev, [lineId]: { ...entry, quantity: nextQty } };
     });
   };
@@ -568,12 +581,18 @@ export default function GalaxusWarehouseShipmentsPage() {
     setSelectedLines((prev) => {
       const existing = prev[lid];
       const nextQty = existing ? clampQty(existing.quantity + 1, 1, Math.max(1, target.remaining)) : 1;
+      const scannedCount = Math.min(
+        (existing?.scannedCount ?? 0) + 1,
+        Math.max(1, target.remaining)
+      );
       return {
         ...prev,
         [lid]: {
           lineId: lid,
           sourceOrderId: target.order.id,
           quantity: nextQty,
+          scannedCount,
+          gtin: cleaned,
         },
       };
     });
@@ -592,6 +611,10 @@ export default function GalaxusWarehouseShipmentsPage() {
       setError("Select at least one line to create a shipment.");
       return;
     }
+    if (unscannedSelected.length > 0) {
+      setError("Scan every unit (GTIN) before creating the shipment.");
+      return;
+    }
     let createdId = "";
     setBusy("create");
     setError(null);
@@ -608,6 +631,15 @@ export default function GalaxusWarehouseShipmentsPage() {
             sourceOrderId: item.sourceOrderId,
             quantity: item.quantity,
           })),
+          scans: selectedItems.flatMap((item) =>
+            Array.from({ length: item.quantity }, (_, unitIndex) => ({
+              lineId: item.lineId,
+              sourceOrderId: item.sourceOrderId,
+              unitIndex,
+              gtin: item.gtin,
+              source: "warehouse_page",
+            }))
+          ),
           confirmReplace: true,
         }),
       });
@@ -935,13 +967,13 @@ export default function GalaxusWarehouseShipmentsPage() {
             </div>
             <div className="flex items-center gap-2 text-xs text-gray-600">
               <span>
-                Selected: {selectedItems.length} line{selectedItems.length === 1 ? "" : "s"} - {selectedQty} qty
+                Selected: {selectedItems.length} line{selectedItems.length === 1 ? "" : "s"} - {selectedQty} qty{unscannedSelected.length > 0 ? ` (scan ${unscannedSelected.reduce((a, i) => a + i.quantity - i.scannedCount, 0)} more unit(s))` : ""}
               </span>
               <button
                 type="button"
                 className="px-2 py-1 rounded bg-gray-100 text-xs disabled:opacity-50"
                 onClick={clearSelection}
-                disabled={selectedItems.length === 0 || busy !== null}
+                disabled={selectedItems.length === 0 || busy !== null || unscannedSelected.length > 0}
               >
                 Clear
               </button>
@@ -1187,7 +1219,9 @@ export default function GalaxusWarehouseShipmentsPage() {
                     <input
                       type="checkbox"
                       checked={Boolean(selected)}
-                      onChange={(e) => toggleLine(lid, order.id, remainingQty, e.target.checked)}
+                      onChange={(e) =>
+                        toggleLine(lid, order.id, remainingQty, e.target.checked, normalizeGtinKey(String(line.gtin ?? "")))
+                      }
                       disabled={disabled}
                     />
                   </td>
@@ -1360,7 +1394,7 @@ export default function GalaxusWarehouseShipmentsPage() {
               type="button"
               className="px-3 py-2 rounded bg-blue-600 text-white text-sm disabled:opacity-50"
               onClick={() => void createShipment()}
-              disabled={busy !== null || selectedItems.length === 0}
+              disabled={busy !== null || selectedItems.length === 0 || unscannedSelected.length > 0}
             >
               {busy === "create" ? "Creating shipment..." : "Create shipment"}
             </button>
