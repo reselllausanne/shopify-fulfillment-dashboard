@@ -20,7 +20,7 @@
  *   titles). Always blocked — fashion-only alone was not enough (STX defaulted them to
  *   sneakers). Hard art toys (Bearbrick) stay allowed.
  * - lego: relisted 2026-11-24 (was temp delist 2026-11-09). "lego" is in FASHION_EXEMPT_KINDS;
- *   300 CHF price cap still applies. Re-delist: add `if (kind === "lego") return "lego"` after plush.
+ *   LEGO is also exempt from the 300 CHF price cap. Re-delist: add `if (kind === "lego") return "lego"` after plush.
  * - hobby_toy (2026-11-09, console 2026-11-16): Pokémon/TCG, board/card/figurine games, dice,
  *   dolls, fidget, squishy, advent calendars, books, keyholders, bike baskets, vinyl, helmets,
  *   PS5/console covers, gaming controllers, consoles (PS5/Xbox/Switch), ASUS gaming
@@ -34,7 +34,7 @@
  *   GALAXUS_FASHION_ONLY=0 disables.
  * - price_outlier: consumer price above GALAXUS_MAX_RETAIL_CHF (default 300, every supplier).
  *   REI allowlist exempt (curated prior sales — Jetson / GB10 / etc. sit above the fashion cap).
- *   LEGO kind is NOT price-cap exempt (Monday 2026-10-26 rollback closed the weekend Klimt hole).
+ *   LEGO sets are price-cap exempt again since 2026-11-24 (was closed 2026-10-26 after the Klimt weekend trial).
  *   GALAXUS_PRICE_OUTLIER_FILTER=1 also blocks STX asks far above brand retail.
  * - Unknown kind (2026-11-11): the classifier no longer falls back to Sneakers for non-footwear
  *   suppliers (HAW toys/condoms, ALT appliances, VEN batteries, EXL toys…); kind "unknown" is
@@ -732,7 +732,8 @@ export function galaxusAssortmentBlockReason(
   const consumer = estimateGalaxusConsumerPriceChf(input);
   if (consumer != null) {
     // Fashion-oriented absolute cap; REI allowlist (NVIDIA Jetson / GB10 / prior sellers) only.
-    if (!reiAllowlisted && consumer > galaxusMaxRetailChf()) {
+    // LEGO exempt from the absolute cap again (2026-11-24, Christmas long tail; sell price = StockX + margin).
+    if (!reiAllowlisted && !isLegoSet && consumer > galaxusMaxRetailChf()) {
       return "price_outlier";
     }
     // Optional extra: thin StockX asks far above brand retail.
