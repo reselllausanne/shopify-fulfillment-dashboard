@@ -244,6 +244,30 @@ else
   bad "deploy must call gc non-fatally"
 fi
 
+# --- selective worker redeploy ---
+cl="$(mktemp)"
+printf 'worker-a\tlib/x.ts\nworker-b\tlib/y.ts\n' >"$cl"
+out="$(printf 'app/page.tsx\ndocs/a.md\n' | plan_worker_redeploy "$cl" worker-a worker-b)"
+if [ -z "$out" ]; then pass "web-only change redeploys no worker"; else bad "web-only change -> '$out'"; fi
+out="$(printf 'lib/x.ts\n' | plan_worker_redeploy "$cl" worker-a worker-b)"
+if [ "$out" = "worker-a" ]; then pass "lib change redeploys only importing worker"; else bad "lib change -> '$out'"; fi
+for g in package.json prisma/schema.prisma Dockerfile docker-compose.yml scripts/foo.ts data/x.json; do
+  out="$(printf '%s\n' "$g" | plan_worker_redeploy "$cl" worker-a worker-b)"
+  if [ "$out" = "ALL" ]; then pass "global input $g -> ALL"; else bad "global input $g -> '$out'"; fi
+done
+rm -f "$cl"
+ent="$(compose_worker_entries "$ROOT/docker-compose.yml")"
+if echo "$ent" | grep -q "^worker-galaxus-feed	scripts/workers/galaxusFeedWorker.ts$" && ! echo "$ent" | grep -q '^web'; then
+  pass "compose_worker_entries parses feed worker, skips web"
+else
+  bad "compose_worker_entries: $ent"
+fi
+if grep -q 'DEPLOY_ALL_WORKERS' "$ROOT/scripts/vps-deploy-from-github.sh" && grep -q '"ALL"' "$ROOT/scripts/vps-deploy-from-github.sh"; then
+  pass "selective deploy falls back to ALL"
+else
+  bad "selective deploy must fall back to ALL"
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "FAIL"
   exit 1
