@@ -98,10 +98,11 @@ describe("units + state + session", () => {
     expect(stateBlocks({ status: "too_expensive", reason: "m", at }, at + 91 * 60_000)).toBe(false);
     expect(stateBlocks({ status: "bought", reason: "b", at }, at + 99 * 3600_000)).toBe(true);
   });
-  it("keeps the IP until 2 fails or expiry", () => {
+  it("keeps the IP until 3 fails or expiry", () => {
     const now = 10_000_000;
     expect(shouldRotateSession({ startedAt: now - 60_000, consecutiveFails: 1 }, now)).toBe(false);
-    expect(shouldRotateSession({ startedAt: now - 60_000, consecutiveFails: 2 }, now)).toBe(true);
+    expect(shouldRotateSession({ startedAt: now - 60_000, consecutiveFails: 2 }, now)).toBe(false);
+    expect(shouldRotateSession({ startedAt: now - 60_000, consecutiveFails: 3 }, now)).toBe(true);
     expect(shouldRotateSession({ startedAt: now - 51 * 60_000, consecutiveFails: 0 }, now)).toBe(true);
   });
 });
