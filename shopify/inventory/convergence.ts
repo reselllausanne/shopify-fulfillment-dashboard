@@ -694,10 +694,12 @@ export async function convergeVariant(
     const operatorCompare = parseRestockFixedCompareAt(lockNote);
     const useOperatorPrice = operatorFixed && operatorSell != null && operatorSell > 0;
     const targetSell = useOperatorPrice ? operatorSell : liqPrice;
-    const targetCompare =
-      useOperatorPrice && operatorCompare != null && operatorCompare > operatorSell!
+    // Operator-fixed price: compareAt only when the operator typed one (> sell). Never the StockX reference.
+    const targetCompare = useOperatorPrice
+      ? operatorCompare != null && operatorCompare > operatorSell!
         ? operatorCompare
-        : referencePrice;
+        : null
+      : referencePrice;
     const hasTargetPricing =
       targetSell != null &&
       targetSell > 0 &&
@@ -758,7 +760,7 @@ export async function convergeVariant(
         const priceDiffers = currentPrice == null || Math.abs(currentPrice - targetSell!) > 0.005;
         const compareDiffers =
           targetCompare == null
-            ? false
+            ? useOperatorPrice && currentCompareAt != null
             : currentCompareAt == null || Math.abs(currentCompareAt - targetCompare) > 0.005;
         if (priceDiffers || compareDiffers) {
           try {
