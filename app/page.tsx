@@ -1840,3 +1840,5 @@ export default function Home() {
   );
 }
 
+
+// deploy-speed probe: web-only change (no worker redeploy expected)
