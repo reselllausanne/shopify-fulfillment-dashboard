@@ -864,7 +864,7 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBeNull();
   });
 
-  it("LEGO: price cap still applies, advent calendars stay hobby_toy", () => {
+  it("LEGO: exempt from price cap, advent calendars stay hobby_toy", () => {
     delete process.env.GALAXUS_MAX_RETAIL_CHF;
     expect(
       galaxusAssortmentBlockReason({
@@ -873,7 +873,7 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 1100,
       })
-    ).toBe("price_outlier");
+    ).toBeNull();
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_7b",
@@ -946,7 +946,7 @@ describe("galaxusAssortmentBlockReason", () => {
   });
 
 
-  it("LEGO Art over cap blocked, under-cap sets pass", () => {
+  it("LEGO Art over cap passes, under-cap sets pass", () => {
     delete process.env.GALAXUS_MAX_RETAIL_CHF;
     expect(
       galaxusAssortmentBlockReason({
@@ -955,7 +955,7 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 407.55,
       })
-    ).toBe("price_outlier");
+    ).toBeNull();
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_673419345705",
