@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.980.0",
+    "@cursor/sdk": "^1.4.2",
     "@prisma/client": "^6.19.1",
     "@supabase/supabase-js": "^2.93.3",
     "@types/bwip-js": "^3.2.3",

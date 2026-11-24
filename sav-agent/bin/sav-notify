@@ -2,6 +2,7 @@
 // Log a task for Théo. Usage: sav-notify --todo|--urgent "text" [--order "#1234"]
 // --urgent also pushes to ntfy now. --todo only lands in the 18:00 recap.
 import fs from "node:fs";
+fs.mkdirSync(process.env.SAV_DATA_DIR || "/app/.data/sav", { recursive: true });
 const a = process.argv.slice(2);
 const level = a.includes("--urgent") ? "urgent" : "todo";
 const oi = a.indexOf("--order");
@@ -9,7 +10,7 @@ const order = oi >= 0 ? a[oi + 1] : null;
 const text = a.filter((x, i) => !x.startsWith("--") && !(oi >= 0 && i === oi + 1)).join(" ").trim();
 if (!text) { console.error("text required"); process.exit(2); }
 const rec = { ts: new Date().toISOString(), kind: "escalation", level, order, text };
-fs.appendFileSync("/data/log.jsonl", JSON.stringify(rec) + "\n");
+fs.appendFileSync((process.env.SAV_DATA_DIR || "/app/.data/sav") + "/log.jsonl", JSON.stringify(rec) + "\n");
 if (level === "urgent" && process.env.SAV_NTFY_TOPIC) {
   await fetch(`${process.env.SAV_NTFY_URL || "https://ntfy.sh"}/${process.env.SAV_NTFY_TOPIC}`, {
     method: "POST", headers: { Title: "SAV urgent", Priority: "high", Tags: "rotating_light" },

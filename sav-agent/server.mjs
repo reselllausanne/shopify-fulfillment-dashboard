@@ -6,12 +6,14 @@ const PORT = Number(process.env.PORT || 3100);
 const TOKEN = process.env.SAV_AGENT_TOKEN;
 const API_KEY = process.env.CURSOR_API_KEY;
 const MODEL = process.env.SAV_MODEL || "composer-2.5";
-const CWD = new URL("./workspace", import.meta.url).pathname;
-const LOG = "/data/log.jsonl";
+const CWD = process.env.SAV_CWD || "/app";
+const DATA = process.env.SAV_DATA_DIR || "/app/.data/sav";
+fs.mkdirSync(DATA, { recursive: true });
+const LOG = DATA + "/log.jsonl";
 const IDLE_MS = 30 * 60 * 1000;
 if (!TOKEN || !API_KEY) { console.error("SAV_AGENT_TOKEN and CURSOR_API_KEY required"); process.exit(1); }
 
-const PREAMBLE = "Lis d'abord SAV.md dans le dossier courant et suis-le strictement. Question de la SAV :\n\n";
+const PREAMBLE = "Lis d'abord sav-agent/workspace/SAV.md et suis-le. Question de la SAV :\n\n";
 const sessions = new Map(); // id -> { agent, last, busy }
 
 const log = (rec) => fs.appendFileSync(LOG, JSON.stringify({ ts: new Date().toISOString(), ...rec }) + "\n");
