@@ -398,7 +398,18 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
       const availableAfterSession = cov.remaining - inSession;
       if (availableAfterSession <= 0) continue;
 
-      let unitIndex = cov.shipped + cov.reserved + inSession;
+      // Skip indexes already taken in session: an earlier AWB-pinned scan may hold e.g. unit 1,
+      // so shipped+reserved+inSession would collide with it and the client dedup drops the unit.
+      const takenInSession = new Set(
+        session.filter((s) => s.galaxusOrderLineId === line.id).map((s) => s.unitIndex)
+      );
+      let unitIndex = cov.shipped + cov.reserved;
+      while (takenInSession.has(unitIndex)) unitIndex += 1;
+      if (unitIndex >= cov.ordered) {
+        unitIndex = cov.ordered - 1;
+        while (unitIndex >= cov.shipped && takenInSession.has(unitIndex)) unitIndex -= 1;
+        if (unitIndex < cov.shipped) continue;
+      }
       if (
         awbPin?.galaxusOrderLineId &&
         line.id === awbPin.galaxusOrderLineId &&

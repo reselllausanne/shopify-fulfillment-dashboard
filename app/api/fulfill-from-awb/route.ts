@@ -1386,6 +1386,22 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // Parcel physically scanned = ground truth AWB. StockX API can lag (stale states / reseller swap),
+    // leaving OrderMatch.stockxAwb null forever. Never overwrite an existing AWB.
+    if (awb) {
+      await prisma.orderMatch
+        .updateMany({
+          where: {
+            id: { in: selectedMatches.map((m) => m.id) },
+            OR: [{ stockxAwb: null }, { stockxAwb: "" }],
+          },
+          data: { stockxAwb: awb },
+        })
+        .catch((err: any) => {
+          console.error("[FULFILL-FROM-AWB] stockxAwb backfill failed", err?.message ?? String(err));
+        });
+    }
+
     // Auto Business ship+fulfill cost for shoe orders (idempotent; recoverable via note marker).
     await upsertShopifyFulfillmentExpenses({
       shopifyOrderId,
