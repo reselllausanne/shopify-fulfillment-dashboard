@@ -171,18 +171,23 @@ export async function POST(req: NextRequest) {
         `[STOCKX-AWB-SYNC] awb passes start budgetMs=${remaining()} limit=${limit} days=${days}`
       );
 
-      const shopify = await runAwbBackfill({ ...sharedBase, budgetMs: remaining() });
+      // Fair split: the Shopify pass used to consume the whole budget, starving the Galaxus
+      // backfill + stx-unit resync (warehouse boxes never got an AWB -> scan NOT_FOUND).
+      const totalBudget = remaining();
+      const slice = (fraction: number) =>
+        Math.max(5_000, Math.min(remaining(), Math.floor(totalBudget * fraction)));
+      const shopify = await runAwbBackfill({ ...sharedBase, budgetMs: slice(0.3) });
       const extraTokens = (await listStockxAccountTokens())
         .map((account) => account.token)
         .filter((t) => t !== token);
       const galaxus = await runGalaxusAwbBackfill({
         ...sharedBase,
         extraTokens,
-        budgetMs: remaining(),
+        budgetMs: slice(0.3),
       });
       const decathlon = await runDecathlonAwbBackfill({
         ...sharedBase,
-        budgetMs: remaining(),
+        budgetMs: slice(0.05),
       });
 
       let stxResync: Awaited<ReturnType<typeof runStxAwbResync>> | null = null;
