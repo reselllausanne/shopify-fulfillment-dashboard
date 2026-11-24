@@ -32,6 +32,10 @@ const DECATHLON_TERMINAL_STATES = new Set([
   "ORDER_CANCELLED",
   "CLOSED",
   "SHIPPED",
+  // Mirakl post-shipment states: parcel already left / delivered. Never offer to ship again.
+  "TO_COLLECT",
+  "RECEIVED",
+  "DELIVERED",
   "REFUSED",
   "REFUNDED",
 ]);
