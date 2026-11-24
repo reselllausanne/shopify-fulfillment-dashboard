@@ -40,6 +40,8 @@ if [ $# -eq 0 ] && [ -f /app/.data/stockx-buyer/buyer.on ]; then
   (
     sleep 45
     while [ -f /app/.data/stockx-buyer/buyer.on ]; do
+      # Optional run config that survives deploys (since/until/skip list/proxy file). Lives in the data volume.
+      if [ -f /app/.data/stockx-buyer/buyer.env ]; then set -a; . /app/.data/stockx-buyer/buyer.env; set +a; fi
       STOCKX_PROXY_PIN="${STOCKX_PROXY_PIN:-1}" \
       STOCKX_BROWSER_PROXY_MODE="${STOCKX_BROWSER_PROXY_MODE:-on_fail}" \
       STOCKX_PROXY_FILE="${STOCKX_PROXY_FILE:-/app/.data/lemonprime-ch-sticky.txt}" \
