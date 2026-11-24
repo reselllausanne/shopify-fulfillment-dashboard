@@ -44,6 +44,11 @@ function asArray<T>(v: T | T[] | null | undefined): T[] {
   return Array.isArray(v) ? v : v == null ? [] : [v];
 }
 
+/** Nike `t_default` is 400px; `t_PDP_1728_v1` is the 1728px product image Galaxus needs. */
+export function nikeHiResImage(url: string): string {
+  return url.replace("/t_default/", "/t_PDP_1728_v1/");
+}
+
 export function parseNikeHtml(html: string, sourceUrl?: string): ParsedNikeProduct {
   const next = extractJson(html, /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/) as any;
   const ld = extractJson(html, /<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/) as any;
@@ -99,7 +104,7 @@ export function parseNikeHtml(html: string, sourceUrl?: string): ParsedNikeProdu
     subtitle: subtitle || null,
     sku,
     color,
-    images,
+    images: images.map(nikeHiResImage),
     sizes,
     productType: sel?.productType ? String(sel.productType) : null,
     genders: asArray<string>(sel?.genders).map(String),
