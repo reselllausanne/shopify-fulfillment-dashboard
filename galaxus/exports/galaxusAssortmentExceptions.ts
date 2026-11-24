@@ -160,10 +160,10 @@ export const GALAXUS_POLICY_EXCEPTIONS: GalaxusPolicyException[] = [
   },
   {
     id: "lego_temp_delist",
-    title: "All LEGO sets temporarily delisted (product kind = lego)",
+    title: "All LEGO sets relisted 2026-11-24 (product kind = lego, fashion-only exempt)",
     gates: ["fashion_only"],
     reason: "policy",
-    note: "Temp remove 2026-11-09: block reason lego + drop from FASHION_EXEMPT_KINDS. Stock feed zeros qty. Flip off by deleting the kind block and restoring lego in FASHION_EXEMPT_KINDS.",
+    note: "Relisted 2026-11-24 for Christmas long tail: lego restored in FASHION_EXEMPT_KINDS, kind block removed. 300 CHF cap still applies. Sell price stays ours (above Galaxus retail on purpose: only shows when Galaxus stock out).",
     addedAt: "2026-11-09",
     reviewAt: "2026-12-01",
     active: true,

@@ -94,7 +94,7 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 200,
       })
-    ).toBe("lego");
+    ).toBeNull();
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_13",
@@ -265,7 +265,7 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBe("supplier_disabled");
   });
 
-  it("blocks all LEGO sets (temp delist 2026-11-09), even with fashion-only off", () => {
+  it("LEGO relisted 2026-11-24: sets pass, advent calendars stay hobby_toy", () => {
     process.env.GALAXUS_FASHION_ONLY = "0";
     expect(
       galaxusAssortmentBlockReason({
@@ -274,7 +274,7 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 96,
       })
-    ).toBe("lego");
+    ).toBe("hobby_toy");
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_adidas_lego",
@@ -864,7 +864,7 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBeNull();
   });
 
-  it("blocks LEGO via temp delist before price-cap checks", () => {
+  it("LEGO: price cap still applies, advent calendars stay hobby_toy", () => {
     delete process.env.GALAXUS_MAX_RETAIL_CHF;
     expect(
       galaxusAssortmentBlockReason({
@@ -873,7 +873,7 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 1100,
       })
-    ).toBe("lego");
+    ).toBe("price_outlier");
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_7b",
@@ -881,7 +881,7 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 96,
       })
-    ).toBe("lego");
+    ).toBe("hobby_toy");
   });
 
   it("blocks anything above the absolute cap even when the retail-multiple filter is off", () => {
@@ -946,7 +946,7 @@ describe("galaxusAssortmentBlockReason", () => {
   });
 
 
-  it("blocks LEGO Art / under-cap sets via temp delist (was price-cap-only after Monday rollback)", () => {
+  it("LEGO Art over cap blocked, under-cap sets pass", () => {
     delete process.env.GALAXUS_MAX_RETAIL_CHF;
     expect(
       galaxusAssortmentBlockReason({
@@ -955,7 +955,7 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 407.55,
       })
-    ).toBe("lego");
+    ).toBe("price_outlier");
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_673419345705",
@@ -963,7 +963,7 @@ describe("galaxusAssortmentBlockReason", () => {
         brand: "LEGO",
         suggestedRetailInclVatChf: 92.09,
       })
-    ).toBe("lego");
+    ).toBeNull();
   });
 
   it("keeps REI allowlisted high-ticket sellers above the absolute cap", () => {

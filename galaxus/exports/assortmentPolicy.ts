@@ -19,8 +19,8 @@
  * - plush (Galaxus / Tali, 2026-10-27): soft toys / stuffed animals (Jellycat, "Plush"
  *   titles). Always blocked — fashion-only alone was not enough (STX defaulted them to
  *   sneakers). Hard art toys (Bearbrick) stay allowed.
- * - lego (temp 2026-11-09): all product kind = lego delisted for now. Re-enable by removing
- *   the kind block + restoring "lego" in FASHION_EXEMPT_KINDS.
+ * - lego: relisted 2026-11-24 (was temp delist 2026-11-09). "lego" is in FASHION_EXEMPT_KINDS;
+ *   300 CHF price cap still applies. Re-delist: add `if (kind === "lego") return "lego"` after plush.
  * - hobby_toy (2026-11-09, console 2026-11-16): Pokémon/TCG, board/card/figurine games, dice,
  *   dolls, fidget, squishy, advent calendars, books, keyholders, bike baskets, vinyl, helmets,
  *   PS5/console covers, gaming controllers, consoles (PS5/Xbox/Switch), ASUS gaming
@@ -183,7 +183,7 @@ const FASHION_EXTRA_LEAVES = new Set([
 ]);
 /** Non-fashion kind keep holes — empty after console delist 2026-11-16.
  *  LEGO / tradingcard / controller paused 2026-11-09; console 2026-11-16. */
-const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>();
+const FASHION_EXEMPT_KINDS = new Set<GalaxusProductKind>(["lego"]);
 /** Non-fashion keep holes — ledger in galaxusAssortmentExceptions.ts. */
 const FASHION_EXEMPT_PROVIDER_KEYS = galaxusFashionExemptProviderKeys();
 /** REI allowlist path only (Jetson). WEL paused 2026-11-09 — whole supplier disabled. */
@@ -699,8 +699,8 @@ export function galaxusAssortmentBlockReason(
   if (isOffSheetCollectible(input)) return "non_fashion";
   // Soft toys: always delist (independent of GALAXUS_FASHION_ONLY).
   if (kind === "plush" || isPlushSoftToy(input)) return "plush";
-  // LEGO: temp delist 2026-11-09 (independent of GALAXUS_FASHION_ONLY).
-  if (kind === "lego") return "lego";
+  // LEGO relisted 2026-11-24 (Christmas long tail). Kind "lego" is fashion-exempt again;
+  // 300 CHF price cap still applies. Block reason "lego" kept in the type for stats header.
   // Hobby / toy sweep 2026-11-09 (TCG, games, dolls, fidget, helmets, ASUS, …).
   if (isHobbyToyBlocked(input, kind)) return "hobby_toy";
 
@@ -712,8 +712,12 @@ export function galaxusAssortmentBlockReason(
 
   // SM Product-type remove list (2026-11-10) — after hobby so overlapping toys keep hobby_toy reason.
   // Exempt: REI allowlist (Jetson / Pi cases) + per-SKU fashion exceptions (Stanley tumbler trial).
+  // LEGO relisted 2026-11-24: Galaxus SM list still carries LEGO / LEGO DUPLO / Klemmbausteine,
+  // so real LEGO-brand sets skip this gate (price cap + hobby blocks still apply).
+  const isLegoSet = normalizeStxBrand(input.brand) === "lego" || /^\s*lego\b/i.test(String(input.title ?? ""));
   if (
     !reiAllowlisted &&
+    !isLegoSet &&
     !FASHION_EXEMPT_PROVIDER_KEYS.has(providerKeyNorm) &&
     matchesGalaxusProductTypeBlocklist({
       supplierProductType: input.supplierProductType,
@@ -723,7 +727,7 @@ export function galaxusAssortmentBlockReason(
   ) {
     return "product_type_block";
   }
-  if (isGalaxusFashionOnlyEnabled() && !isGalaxusFashionKept(kind, supplierKey, input)) return "non_fashion";
+  if (isGalaxusFashionOnlyEnabled() && !isLegoSet && !isGalaxusFashionKept(kind, supplierKey, input)) return "non_fashion";
 
   const consumer = estimateGalaxusConsumerPriceChf(input);
   if (consumer != null) {
