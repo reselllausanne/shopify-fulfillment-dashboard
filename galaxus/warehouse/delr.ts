@@ -279,22 +279,8 @@ export async function uploadDelrForShipment(
     (stxMatches ?? []).some((row: any) => String(row?.stockxOrderNumber ?? "").trim().length > 0);
   const isDirect = String(shipment.order?.deliveryType ?? "").toLowerCase() === "direct_delivery";
   const allowDelrByMatch = Boolean(shipment.order?.ordrSentAt) && hasStockxMatch;
-  // Direct Swiss Post: StockX link only required when the order actually has STX lines.
-  // NER / physical / local stock has no GalaxusStockxMatch — old gate blocked DELR forever.
-  if (isDirect && !options.force && !allowDelrByMatch) {
-    const orderRef = String(shipment.order?.galaxusOrderId ?? shipment.orderId ?? "").trim();
-    const stxLink = orderRef
-      ? await getStxLinkStatusForOrder(orderRef).catch(() => null)
-      : null;
-    if (stxLink?.hasStxItems) {
-      return {
-        shipmentId,
-        status: "error",
-        httpStatus: 409,
-        message: "StockX order not linked yet",
-      };
-    }
-  }
+  // Direct Swiss Post: label exists = parcel physically scanned/packed. Never block DELR on
+  // StockX link (was causing ship delays for in-hand pairs without a match row).
   if (!isDirect && isStxShipment && stxStatus?.hasStxItems && !options.force && !isManual && !allowDelrByMatch) {
     if (!stxStatus.allLinked) {
       return {
@@ -638,11 +624,15 @@ export async function buildDelrXmlForShipment(
   const stxMatches = await loadStockxMatchesForOrders(ordersForMeta);
   const hasStockxMatch =
     (stxMatches ?? []).some((row: any) => String(row?.stockxOrderNumber ?? "").trim().length > 0);
-  if (stxStatus?.hasStxItems && !options.force && !hasStockxMatch) {
+  const isDirectDelivery =
+    String(shipment.order?.deliveryType ?? "").toLowerCase() === "direct_delivery";
+  if (isDirectDelivery) {
+    // direct delivery: no StockX link / supplier-order gate (see uploadDelrForShipment)
+  } else if (stxStatus?.hasStxItems && !options.force && !hasStockxMatch) {
     if (!stxStatus.allLinked) throw new Error("StockX units are not fully linked yet");
     if (!stxStatus.allEtaPresent) throw new Error("StockX linked units are missing ETA bounds");
   }
-  if (!stxStatus?.hasStxItems && !hasStockxMatch) {
+  if (!isDirectDelivery && !stxStatus?.hasStxItems && !hasStockxMatch) {
     const placedOnSupplier = await hasPlacedSupplierOrder(shipment);
     if (!placedOnSupplier && !options.force) {
       throw new Error("Supplier order not placed yet");
