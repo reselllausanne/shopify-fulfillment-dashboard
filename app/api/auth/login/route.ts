@@ -7,6 +7,7 @@ export async function POST(req: NextRequest) {
 
     const adminPass = process.env.ADMIN_PASSWORD;
     const logisticsPass = process.env.LOGISTICS_PASSWORD;
+    const savPass = process.env.SAV_PASSWORD;
     const jwtSecret = process.env.JWT_SECRET;
 
     if (!adminPass || !logisticsPass || !jwtSecret) {
@@ -17,12 +18,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let role: "admin" | "logistics" | null = null;
+    let role: "admin" | "logistics" | "sav" | null = null;
 
     if (password === adminPass) {
       role = "admin";
     } else if (password === logisticsPass) {
       role = "logistics";
+    } else if (savPass && password === savPass) {
+      role = "sav";
     }
 
     if (!role) {
@@ -40,7 +43,7 @@ export async function POST(req: NextRequest) {
     const response = NextResponse.json({
       success: true,
       role,
-      redirect: role === "logistics" ? "/scan" : "/",
+      redirect: role === "logistics" ? "/scan" : role === "sav" ? "/sav" : "/",
     });
 
     // Set HTTP-only cookie

@@ -28,6 +28,22 @@ services:
       - ./.env:/app/.env:ro
     restart: unless-stopped
 
+  # Isolated SAV agent (Cursor SDK). Own env: no main .env, read-only DB role, IMAP, ntfy.
+  sav-agent:
+    build:
+      context: .
+      dockerfile: sav-agent/Dockerfile
+    environment:
+      - CURSOR_API_KEY=${CURSOR_API_KEY:?}
+      - SAV_AGENT_TOKEN=${SAV_AGENT_TOKEN:?}
+      - SAV_DATABASE_URL=${SAV_DATABASE_URL:?}
+      - SAV_IMAP_USER=${SAV_IMAP_USER:-}
+      - SAV_IMAP_PASSWORD=${SAV_IMAP_PASSWORD:-}
+      - SAV_NTFY_TOPIC=${SAV_NTFY_TOPIC:-}
+    volumes:
+      - ./.data/sav:/data
+    restart: unless-stopped
+
   worker-partner-enrich:
     build: .
     env_file:
