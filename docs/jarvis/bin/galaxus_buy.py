@@ -336,17 +336,37 @@ class BrowserBackend:
         self.page.goto(url, wait_until="domcontentloaded")
         self.page.wait_for_timeout(2500)
         self._guard()
-        self.page.get_by_role("button", name=re.compile(r"ajouter au panier|in den warenkorb|add to cart", re.I)).first.click()
-        self.page.wait_for_timeout(2500)
-        self.page.goto(f"{BASE}/fr/cart", wait_until="domcontentloaded")
-        self.page.wait_for_timeout(2500)
-        self._guard()
-        html = self.page.content()
+        slug = re.search(r"/product/([a-z0-9-]+?)-\d{5,}", url)
+        words = [w for w in (slug.group(1).split("-") if slug else []) if len(w) > 2][:2]
+
+        def cart_html():
+            self.page.goto(f"{BASE}/fr/cart", wait_until="domcontentloaded")
+            self.page.wait_for_timeout(3000)
+            self._guard()
+            return self.page.content()
+
+        def has_target(h):
+            low = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", htmllib.unescape(h))).lower()
+            return bool(words) and all(w in low for w in words)
+
+        html = cart_html()
+        if not has_target(html):  # idempotent: never add a second copy
+            self.page.goto(url, wait_until="domcontentloaded")
+            self.page.wait_for_timeout(2500)
+            btn = self.page.get_by_role("button", name=re.compile(r"ajouter au panier|in den warenkorb|add to cart", re.I)).first
+            try:
+                btn.click(timeout=8000)
+            except Exception:  # sticky header can overlay the button
+                btn.evaluate("e => e.click()")
+            self.page.wait_for_timeout(2500)
+            html = cart_html()
+            if not has_target(html):
+                raise FetchError("product not found in cart after add")
         ship, delivery = parse_delivery(html)
         text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", htmllib.unescape(html)))
         m = re.search(r"(?:Total|Gesamtbetrag)[^0-9]{0,40}([\d'’.,]+)", text)
         return {"shipping_chf": ship, "delivery": delivery, "cart_total_chf": to_float(m.group(1)) if m else None,
-                "items": text.count("Supprimer"),
+                "items": text.split("Passer en caisse")[0].count("Supprimer"),  # active cart only (not 'saved for later')
                 "cart_url": f"{BASE}/fr/cart", "checkout_url": f"{BASE}/fr/checkout"}
 
     def pay(self):
