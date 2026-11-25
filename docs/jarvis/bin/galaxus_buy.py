@@ -346,6 +346,7 @@ class BrowserBackend:
         text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", htmllib.unescape(html)))
         m = re.search(r"(?:Total|Gesamtbetrag)[^0-9]{0,40}([\d'’.,]+)", text)
         return {"shipping_chf": ship, "delivery": delivery, "cart_total_chf": to_float(m.group(1)) if m else None,
+                "items": text.count("Supprimer"),
                 "cart_url": f"{BASE}/fr/cart", "checkout_url": f"{BASE}/fr/checkout"}
 
     def pay(self):
@@ -418,6 +419,14 @@ def cmd_buy(a, fetch, backend_factory, now_log):
             ship = cart["shipping_chf"]
         delivery = cart.get("delivery") or delivery
         total = compute_total(prod.get("price_chf"), ship)
+        # SAFETY: the account cart may already hold other items; paying would buy them too.
+        # Use the real cart total and refuse to pay unless the cart holds exactly this one item.
+        if cart.get("cart_total_chf") is not None:
+            total = cart["cart_total_chf"]
+        if cart.get("items", 1) != 1:
+            print(f"CART HAS {cart.get('items')} ITEMS (not only the target): total {total}. Remove the others first.", file=sys.stderr)
+            now_log(lp, **base, total_chf=total, status="refused", reason=f"cart holds {cart.get('items')} items", checkout_url=cart["checkout_url"])
+            return EXIT_PAY_REFUSED
         print_summary(prod, ship, total, delivery, cart["cart_url"], cart["checkout_url"], "STOPPED BEFORE PAYMENT")
         ok, why = decide_pay(total, load_limits(), spent_today(lp), a.confirm_pay)
         if not ok:

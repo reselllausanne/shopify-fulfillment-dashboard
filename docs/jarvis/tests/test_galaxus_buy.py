@@ -248,5 +248,23 @@ class TestLiveMarkupListing(unittest.TestCase):
         self.assertEqual(gb.parse_delivery("<p>Livr\u00e9 entre ven, 27/11 et sam, 28/11</p>")[1], "Livr\u00e9 entre ven, 27/11 et sam, 28/11")
 
 
+class TestCartSafety(Base):
+    def test_refuses_when_cart_has_other_items(self):
+        import galaxus_buy as g
+        class B:
+            def add_to_cart(self, url):
+                return {"shipping_chf": 0.0, "delivery": None, "cart_total_chf": 260.10, "items": 2,
+                        "cart_url": "c", "checkout_url": "k"}
+            def pay(self): raise AssertionError("must not pay")
+            def close(self): pass
+        logs = []
+        a = g.build_parser().parse_args(["buy", "--url", "https://www.galaxus.ch/fr/s3/product/x-1234567", "--confirm-pay"])
+        page = '<script type="application/ld+json">{"@type":"Product","name":"X","offers":{"price":"139"}}</script>'
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            code = g.cmd_buy(a, lambda u: page, lambda: B(), lambda p, **r: logs.append(r))
+        self.assertEqual(code, g.EXIT_PAY_REFUSED)
+        self.assertEqual(logs[-1]["status"], "refused")
+
+
 if __name__ == "__main__":
     unittest.main()
