@@ -1,0 +1,18 @@
+#!/usr/bin/env node
+// Source of truth for payment / cancel / refund / fulfillment of a Shopify order (DB mirror is stale).
+// Usage: sav-shopify-order "#7440"
+const e = process.env;
+const shop = (e.SHOP_NAME_SHOPIFY || "").includes(".") ? e.SHOP_NAME_SHOPIFY : `${e.SHOP_NAME_SHOPIFY}.myshopify.com`;
+const token = e.SHOPIFY_ADMIN_ACCESS_TOKEN || e.ACCESS_TOKEN_SHOPIFY;
+const name = String(process.argv[2] || "").replace(/^#?/, "#");
+const q = `query($q:String!){orders(first:3,query:$q){nodes{name createdAt email displayFinancialStatus displayFulfillmentStatus cancelledAt cancelReason
+ totalPriceSet{shopMoney{amount currencyCode}} totalRefundedSet{shopMoney{amount}}
+ refunds{createdAt note totalRefundedSet{shopMoney{amount}}}
+ fulfillments{createdAt status trackingInfo{number url company}}
+ lineItems(first:10){nodes{title quantity variantTitle}}
+ transactions{kind status createdAt amountSet{shopMoney{amount}}}}}}`;
+const r = await fetch(`https://${shop}/admin/api/${e.API_VERSION_SHOPIFY || "2024-10"}/graphql.json`, {
+  method: "POST", headers: { "content-type": "application/json", "X-Shopify-Access-Token": token },
+  body: JSON.stringify({ query: q, variables: { q: `name:${name}` } }),
+});
+console.log(JSON.stringify((await r.json()).data?.orders?.nodes ?? "no result"));
