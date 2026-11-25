@@ -22,14 +22,14 @@ describe("resolveGalaxusLocalStockCostChf", () => {
       productName: "Fear Of God Essentials Tee Stretch Limo",
       shopifySku: "125HO244368F-M",
     });
-    expect(r?.costChf).toBe(26);
+    expect(r?.costChf).toBe(42);
   });
 
   it("returns Bape tee hard COGS 35", () => {
     const r = resolveGalaxusLocalStockCostChf({
       productName: "BAPE Big Ape Head Tee White",
     });
-    expect(r?.costChf).toBe(35);
+    expect(r?.costChf).toBe(40);
   });
 
   it("does not give Bape hard COGS to non-warehouse Bape tees (allowlist only)", () => {

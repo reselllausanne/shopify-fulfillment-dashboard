@@ -7,7 +7,7 @@ import {
 describe("inStockFixedPrice", () => {
   it("resolves Essentials tee by productId with fixed COGS and sell 59/89", () => {
     const r = resolveInStockFixedPrice({ productId: "15340411617666" });
-    expect(r?.costChf).toBe(26);
+    expect(r?.costChf).toBe(42);
     expect(r?.sellChf).toBe(59);
     expect(r?.expressChf).toBe(89);
     expect(r?.label).toMatch(/T-Shirt/i);
@@ -17,7 +17,7 @@ describe("inStockFixedPrice", () => {
     const r = resolveInStockFixedPrice({
       title: "Essentials Shorts Stretch Limo (SS22)",
     });
-    expect(r?.costChf).toBe(26);
+    expect(r?.costChf).toBe(42);
     expect(r?.sellChf).toBe(59);
     expect(r?.expressChf).toBe(89);
   });
@@ -37,9 +37,20 @@ describe("inStockFixedPrice", () => {
     expect(r?.noExpress).toBe(true);
   });
 
+  it("resolves the FW24 hoodie by title and Crocs warehouse at 42", () => {
+    expect(
+      resolveInStockFixedPrice({
+        title: "Fear of God Essentials Fleece Hoodie (FW24) Black",
+      })?.costChf
+    ).toBe(42);
+    expect(
+      resolveInStockFixedPrice({ title: "Crocs Lightning McQueen (41, 42)" })?.costChf
+    ).toBe(42);
+  });
+
   it("resolves Bape by productId with fixed COGS and sell 69/99", () => {
     const r = resolveInStockFixedPrice({ productId: "gid://shopify/Product/15356478325122" });
-    expect(r?.costChf).toBe(35);
+    expect(r?.costChf).toBe(40);
     expect(r?.sellChf).toBe(69);
     expect(r?.expressChf).toBe(99);
   });
@@ -47,10 +58,10 @@ describe("inStockFixedPrice", () => {
   it("resolves Bape Sakura Tree by title / SKU base with fixed COGS", () => {
     expect(
       resolveInStockFixedPrice({ title: "BAPE Sakura Tree Tee Black" })?.costChf,
-    ).toBe(35);
+    ).toBe(40);
     expect(
       resolveInStockFixedPrice({ sku: "8d665d38-a271-46ee-9b51-9da28c3bbb6c-M" })?.costChf,
-    ).toBe(35);
+    ).toBe(40);
   });
 
   it("resolves Audemars x Travis by title with fixed COGS and sell 89/109", () => {

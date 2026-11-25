@@ -10,7 +10,7 @@ describe("resolveOrderMatchCost", () => {
         stockxOrderNumber: "ESS-6573",
         supplierCost: 0,
       })
-    ).toEqual({ cost: 26, fullMargin: false });
+    ).toEqual({ cost: 42, fullMargin: false });
   });
 
   it("keeps manualCostOverride on ESS-* rows", () => {
