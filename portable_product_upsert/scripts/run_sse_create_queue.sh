@@ -13,6 +13,9 @@ PYTHON="${ROOT}/venv/bin/python3"
 if [[ ! -x "${PYTHON}" ]]; then PYTHON="$(command -v python3)"; fi
 [[ -f "${ROOT}/.env.sse" ]] && set -a && source "${ROOT}/.env.sse" && set +a
 API="${KICKDB_BUFFER_BASE:-${RESELL_API_BASE:-http://127.0.0.1:3002}}"
+# Product creates are the heaviest Shopify writes — keep reserve + smaller bursts.
+export SHOPIFY_API_RESERVE_POINTS="${SHOPIFY_API_RESERVE_POINTS:-400}"
+CREATE_LIMIT="${SSE_CREATE_QUEUE_LIMIT:-80}"
 
 mkdir -p "${ROOT}/logs"
 exec 9>"${LOCK}"
@@ -20,9 +23,9 @@ flock -n 9 || exit 0
 
 cd "${ROOT}"
 {
-  echo "=== $(date -Is) create queue run ==="
+  echo "=== $(date -Is) create queue run reserve=${SHOPIFY_API_RESERVE_POINTS} limit=${CREATE_LIMIT} ==="
   # Hard cap: a stuck Shopify socket once held this flock for 9 days.
   timeout --kill-after=60 "${SSE_CREATE_QUEUE_TIMEOUT_SEC:-10800}" \
-    "${PYTHON}" main_from_db.py --db-api "${API}" --status untracked --limit 500
+    "${PYTHON}" main_from_db.py --db-api "${API}" --status untracked --limit "${CREATE_LIMIT}"
   echo "=== exit=$? ==="
 } >> "${LOG}" 2>&1

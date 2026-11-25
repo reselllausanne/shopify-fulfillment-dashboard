@@ -53,7 +53,12 @@ CREATE_BLOCKED_UNTIL_FILE = Path(__file__).resolve().parent / "logs" / "variant_
 # Legacy local tally — deleted on startup so it can never poison creates again.
 LEGACY_BUDGET_FILE = Path(__file__).resolve().parent / "logs" / "variant_create_budget.json"
 CREATE_PRODUCTS_PAUSED_FILE = Path(__file__).resolve().parent / "logs" / "create_products_paused"
-MIN_THROTTLE_AVAILABLE = 50  # wait/restore if GraphQL bucket nearly empty
+# Leave headroom for dashboard / returns (shared Admin API bucket ≈2000 pts).
+# Override via SHOPIFY_API_RESERVE_POINTS (same env as Node workers).
+MIN_THROTTLE_AVAILABLE = max(
+    50,
+    int(os.environ.get("SHOPIFY_API_RESERVE_POINTS", "300") or "300"),
+)
 
 
 def _auth_headers():
@@ -156,27 +161,45 @@ def probe_and_wait_for_capacity(action):
     """
     Probe Shopify live. Soft GraphQL bucket only — daily variant-create remaining
     is NOT exposed by Shopify. Returns probe dict or raises RateLimitException.
+
+    Waits until currentlyAvailable >= MIN_THROTTLE_AVAILABLE for *any* action
+    (create + price update), so SSE/consumer never drains the bucket under the
+    dashboard / returns headroom.
     """
     probe = probe_shopify_capacity()
     throttle = probe.get("throttle") or {}
     available = throttle.get("currentlyAvailable")
     restore = throttle.get("restoreRate") or 50
     print(
-        f"[PROBE] productVariantsCount={probe.get('productVariantsCount')} "
+        f"[PROBE] action={action} productVariantsCount={probe.get('productVariantsCount')} "
         f"dailyCreateCapHint={probe.get('dailyVariantCreateCapHint')} "
         f"throttle available={available}/{throttle.get('maximumAvailable')} "
-        f"restoreRate={restore}/s"
+        f"restoreRate={restore}/s reserve={MIN_THROTTLE_AVAILABLE}"
     )
-    if action == "create" and available is not None and available < MIN_THROTTLE_AVAILABLE:
+    # Cap total wait so a stuck low bucket does not hold the cron flock forever.
+    waited = 0.0
+    max_wait_s = float(os.environ.get("SHOPIFY_THROTTLE_MAX_WAIT_SEC", "120") or "120")
+    while available is not None and float(available) < MIN_THROTTLE_AVAILABLE and waited < max_wait_s:
         need = MIN_THROTTLE_AVAILABLE - float(available)
-        wait_s = min(60.0, max(1.0, need / float(restore)))
-        print(f"[PROBE] GraphQL bucket low ({available}) — waiting {wait_s:.1f}s to restore")
+        wait_s = min(30.0, max(1.0, need / float(restore or 50)))
+        print(
+            f"[PROBE] GraphQL bucket low ({available} < reserve {MIN_THROTTLE_AVAILABLE}) "
+            f"— waiting {wait_s:.1f}s (waited={waited:.0f}/{max_wait_s:.0f})"
+        )
         time.sleep(wait_s)
+        waited += wait_s
         probe = probe_shopify_capacity()
         throttle = probe.get("throttle") or {}
+        available = throttle.get("currentlyAvailable")
+        restore = throttle.get("restoreRate") or restore
         print(
-            f"[PROBE] after wait: available={throttle.get('currentlyAvailable')}/"
+            f"[PROBE] after wait: available={available}/"
             f"{throttle.get('maximumAvailable')}"
+        )
+    if available is not None and float(available) < MIN_THROTTLE_AVAILABLE:
+        print(
+            f"[PROBE] still below reserve after {waited:.0f}s "
+            f"(available={available}) — proceeding slowly"
         )
     return probe
 

@@ -112,6 +112,8 @@ services:
     environment:
       - SHOPIFY_SOLD_CHECK_INTERVAL_MS=${SHOPIFY_SOLD_CHECK_INTERVAL_MS:-172800000}
       - SHOPIFY_SOLD_CHECK_INITIAL_DELAY_MS=${SHOPIFY_SOLD_CHECK_INITIAL_DELAY_MS:-60000}
+      # Leave ~300 pts for dashboard / returns (shared Shopify bucket).
+      - SHOPIFY_API_RESERVE_POINTS=${SHOPIFY_API_RESERVE_POINTS:-300}
     command: ["npx", "tsx", "scripts/workers/shopifySoldCheckWorker.ts"]
     volumes:
       - ./.data:/app/.data
@@ -173,6 +175,8 @@ services:
       - NODE_OPTIONS=${KICKDB_BUFFER_NODE_OPTIONS:---max-old-space-size=4096}
       - KICKDB_BUFFER_PORT=3002
       - KICKDB_BUFFER_HOST=0.0.0.0
+      # Leave ~300 pts for dashboard / returns (shared Shopify bucket).
+      - SHOPIFY_API_RESERVE_POINTS=${SHOPIFY_API_RESERVE_POINTS:-300}
     command: ["npx", "tsx", "scripts/workers/kickdbBufferServer.ts"]
     ports:
       - "3002:3002"
@@ -195,6 +199,8 @@ services:
       # STX price/stock shards — keep under ~1h so pooler stays alive.
       - STX_REFRESH_PRODUCT_BATCH=${STX_REFRESH_PRODUCT_BATCH:-8000}
       - STX_REFRESH_CONCURRENCY=${STX_REFRESH_CONCURRENCY:-4}
+      # Leave ~300 pts for dashboard / returns (shared Shopify bucket).
+      - SHOPIFY_API_RESERVE_POINTS=${SHOPIFY_API_RESERVE_POINTS:-300}
     command: ["npx", "tsx", "scripts/workers/opsBackgroundWorker.ts"]
     volumes:
       - ./.data:/app/.data
@@ -220,6 +226,7 @@ services:
       - STX_KEEP_CURRENT_INITIAL_DELAY_MS=${STX_KEEP_CURRENT_INITIAL_DELAY_MS:-15000}
       - STX_KEEP_CURRENT_PRICE_ONLY=${STX_KEEP_CURRENT_PRICE_ONLY:-1}
       - STX_KEEP_CURRENT_CHECKPOINT_PATH=${STX_KEEP_CURRENT_CHECKPOINT_PATH:-.data/stx-shopify-keep-current.json}
+      # Higher reserve than other workers — continuous Shopify writer.
       - SHOPIFY_API_RESERVE_POINTS=${SHOPIFY_STX_SYNC_API_RESERVE_POINTS:-800}
     command: ["npx", "tsx", "scripts/workers/stxShopifyKeepCurrentWorker.ts"]
     volumes:
