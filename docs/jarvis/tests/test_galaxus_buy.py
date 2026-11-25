@@ -228,5 +228,25 @@ class TestAntiBot(Base):
         self.assertEqual(len(calls), gb.MAX_RETRIES + 1)
 
 
+
+
+class TestLiveMarkupListing(unittest.TestCase):
+    """Markup shape captured from the live Galaxus category page (2026-11-25)."""
+    HTML = (
+        '<a href="/fr/s3/product/zipro-yougo-tapis-de-course-41297308"> </a>'
+        '<a href="/fr/s3/product/zipro-yougo-tapis-de-course-41297308?imageIndex=1"> </a>'
+        '<div>Tapis de course <span>CHF</span> <span>166.\u2013</span> <span>Zipro Yougo</span> <span>109</span></div>'
+        '<a href="/fr/s3/product/zipro-catwalk-tapis-de-course-66191188"> </a>'
+        '<div>Tapis de course <span>CHF</span> <span>139.\u2013</span> <span>Zipro Catwalk</span> <span>16</span></div>'
+    )
+
+    def test_listing_prices_names_dedup(self):
+        r = gb.parse_listing(self.HTML)
+        self.assertEqual([(x["name"], x["price_chf"]) for x in r], [("Zipro Yougo", 166.0), ("Zipro Catwalk", 139.0)])
+
+    def test_delivery_live_phrase(self):
+        self.assertEqual(gb.parse_delivery("<p>Livr\u00e9 entre ven, 27/11 et sam, 28/11</p>")[1], "Livr\u00e9 entre ven, 27/11 et sam, 28/11")
+
+
 if __name__ == "__main__":
     unittest.main()
