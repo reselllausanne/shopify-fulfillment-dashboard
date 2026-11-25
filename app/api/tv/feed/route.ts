@@ -133,7 +133,7 @@ async function fetchShopifyToday(startIso: string): Promise<ShopifyOrderNode[]> 
     > = await shopifyGraphQL(
       SHOPIFY_TODAY_QUERY,
       { first: 25, after, q: `created_at:>=${startIso}` },
-      { estimatedQueryCost: 45 }
+      { estimatedQueryCost: 45, bypassQueue: true, maxAttempts: 2 }
     );
     if (res.errors?.length) throw new Error(res.errors[0]?.message ?? "shopify graphql error");
     // Shopify's created_at search can round the bound down to the whole day; filter exactly here.
@@ -177,6 +177,43 @@ async function loadBuyPrices(variantIds: string[], gtins: string[]): Promise<Buy
     }
   }
   return idx;
+}
+
+const SHOPIFY_FRESH_MS = 15_000;
+const SHOPIFY_WAIT_MS = 4_000;
+let shopifyOrdersCache: { at: number; day: string; orders: ShopifyOrderNode[] } | null = null;
+let shopifyRefresh: Promise<ShopifyOrderNode[] | null> | null = null;
+
+function startShopifyRefresh(startIso: string, day: string): Promise<ShopifyOrderNode[] | null> {
+  if (shopifyRefresh) return shopifyRefresh;
+  shopifyRefresh = fetchShopifyToday(startIso)
+    .then((orders) => {
+      shopifyOrdersCache = { at: Date.now(), day, orders };
+      return orders;
+    })
+    .catch((err) => {
+      console.warn("[tv/feed] shopify live fetch failed", err instanceof Error ? err.message : err);
+      return null;
+    })
+    .finally(() => {
+      shopifyRefresh = null;
+    });
+  return shopifyRefresh;
+}
+
+/** Never block the kiosk on the Shopify queue. Serve the last good list and refresh behind it. */
+async function shopifyOrdersForFeed(startIso: string, day: string): Promise<ShopifyOrderNode[] | null> {
+  const cached = shopifyOrdersCache?.day === day ? shopifyOrdersCache : null;
+  const age = cached ? Date.now() - cached.at : Number.POSITIVE_INFINITY;
+  if (cached && age < SHOPIFY_FRESH_MS) return cached.orders;
+  const pending = startShopifyRefresh(startIso, day);
+  if (cached) return cached.orders;
+  const raced = await Promise.race([
+    pending,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), SHOPIFY_WAIT_MS)),
+  ]);
+  if (raced) return raced;
+  return shopifyOrdersCache?.day === day ? shopifyOrdersCache.orders : null;
 }
 
 async function build() {
@@ -238,10 +275,7 @@ async function build() {
         },
       },
     }),
-    fetchShopifyToday(startIso).catch((err) => {
-      console.warn("[tv/feed] shopify live fetch failed", err?.message ?? err);
-      return null;
-    }),
+    shopifyOrdersForFeed(startIso, todayKey),
   ]);
 
   const matchesByOrder = new Map<string, TvCostMatch[]>();
