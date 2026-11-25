@@ -31,13 +31,19 @@ import { upsertPackageProtectionMatches } from "@/shopify/protection/upsertPacka
 export const runtime = "nodejs";
 
 const SHOP_TIMEZONE = "Europe/Zurich";
-/** Paginate headers cheaply; line items fetched in separate low-cost batches. */
-const SHOPIFY_ORDERS_PAGE_SIZE = 50;
-const SHOPIFY_ORDERS_LINE_ITEMS_BATCH = 50;
+/**
+ * Headers without FO lineItems stay ~120–180 pts / page.
+ * Old nested FO lineItems(first:50) on page=50 → requested≈533 → THROTTLED when
+ * bucket < 533 (dashboard stuck while workers chewed the rest).
+ */
+const SHOPIFY_ORDERS_PAGE_SIZE = 25;
+const SHOPIFY_ORDERS_LINE_ITEMS_BATCH = 25;
+const SHOPIFY_ORDERS_FO_PHYSICAL_BATCH = 10;
 /** Cap for matching UI load — paginated + cost-throttled (see sleepForShopifyQueryCost). */
 const SHOPIFY_ORDERS_MAX_FIRST = 250;
-const SHOPIFY_ORDER_HEADERS_ESTIMATED_COST = 140;
-const SHOPIFY_ORDER_LINE_ITEMS_ESTIMATED_COST = 60;
+const SHOPIFY_ORDER_HEADERS_ESTIMATED_COST = 180;
+const SHOPIFY_ORDER_LINE_ITEMS_ESTIMATED_COST = 80;
+const SHOPIFY_ORDER_FO_PHYSICAL_ESTIMATED_COST = 120;
 
 type OrderHeadersGraphQL = {
   orders: {
@@ -58,9 +64,41 @@ function chunkArray<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+type OrderFoPhysicalGraphQL = {
+  nodes: Array<{
+    id?: string;
+    fulfillmentOrders?: { nodes?: any[] } | null;
+  } | null>;
+};
+
+async function fetchFulfillmentOrderPhysicalByOrderIds(
+  orderIds: string[]
+): Promise<{ byOrderId: Map<string, any[]>; errors?: any[] }> {
+  const byOrderId = new Map<string, any[]>();
+  for (const idBatch of chunkArray(orderIds, SHOPIFY_ORDERS_FO_PHYSICAL_BATCH)) {
+    const foResponse: ShopifyGraphQLResult<OrderFoPhysicalGraphQL> = await shopifyGraphQL<OrderFoPhysicalGraphQL>(
+      ORDER_FO_PHYSICAL_BY_IDS_QUERY,
+      { ids: idBatch },
+      { estimatedQueryCost: SHOPIFY_ORDER_FO_PHYSICAL_ESTIMATED_COST }
+    );
+    const { data, errors, extensions } = foResponse;
+    if (errors?.length) {
+      return { byOrderId, errors };
+    }
+    for (const node of data?.nodes ?? []) {
+      if (node?.id) {
+        byOrderId.set(node.id, node.fulfillmentOrders?.nodes ?? []);
+      }
+    }
+    await sleepForShopifyQueryCost(extensions);
+  }
+  return { byOrderId };
+}
+
 async function fetchShopifyOrderEdges(
   orderQuery: string | null,
-  totalWanted: number
+  totalWanted: number,
+  options: { includePhysicalStock?: boolean } = {}
 ): Promise<{ edges: { node: any }[]; errors?: any[] }> {
   const headerEdges: { node: any }[] = [];
   let after: string | null = null;
@@ -117,12 +155,30 @@ async function fetchShopifyOrderEdges(
     await sleepForShopifyQueryCost(extensions);
   }
 
-  const edges = trimmedHeaders.map((edge) => ({
-    node: {
-      ...edge.node,
-      lineItems: lineItemsByOrderId.get(edge.node.id) ?? { edges: [] },
-    },
-  }));
+  const foPhysicalByOrderId = new Map<string, any[]>();
+  if (options.includePhysicalStock && orderIds.length) {
+    const foFetched = await fetchFulfillmentOrderPhysicalByOrderIds(orderIds);
+    if (foFetched.errors?.length) {
+      return { edges: trimmedHeaders, errors: foFetched.errors };
+    }
+    for (const [id, nodes] of foFetched.byOrderId) {
+      foPhysicalByOrderId.set(id, nodes);
+    }
+  }
+
+  const edges = trimmedHeaders.map((edge) => {
+    const physicalFo = foPhysicalByOrderId.get(edge.node.id);
+    return {
+      node: {
+        ...edge.node,
+        // Prefer FO batch (has lineItems + deliveryMethod) when physicalStock.
+        fulfillmentOrders: physicalFo
+          ? { nodes: physicalFo }
+          : edge.node.fulfillmentOrders,
+        lineItems: lineItemsByOrderId.get(edge.node.id) ?? { edges: [] },
+      },
+    };
+  });
 
   return { edges };
 }
@@ -259,13 +315,6 @@ query OrderHeaders($first: Int!, $after: String, $orderQuery: String) {
               name
               location { id name }
             }
-            lineItems(first: 50) {
-              nodes {
-                remainingQuantity
-                totalQuantity
-                lineItem { id }
-              }
-            }
           }
         }
 
@@ -335,6 +384,37 @@ query OrderLineItemsByIds($ids: [ID!]!) {
             }
             discountedTotalSet {
               shopMoney { amount currencyCode }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`;
+
+/** FO + lineItems — Lab/Bussigny assignment for matching UI (batched, not in headers). */
+const ORDER_FO_PHYSICAL_BY_IDS_QUERY = /* GraphQL */ `
+query OrderFoPhysicalByIds($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on Order {
+      id
+      fulfillmentOrders(first: 5) {
+        nodes {
+          status
+          deliveryMethod {
+            methodType
+            presentedName
+          }
+          assignedLocation {
+            name
+            location { id name }
+          }
+          lineItems(first: 30) {
+            nodes {
+              remainingQuantity
+              totalQuantity
+              lineItem { id }
             }
           }
         }
@@ -491,7 +571,9 @@ export async function POST(req: Request) {
       });
     }
 
-    const fetched = await fetchShopifyOrderEdges(orderQuery, first);
+    const fetched = await fetchShopifyOrderEdges(orderQuery, first, {
+      includePhysicalStock,
+    });
     if (fetched.errors?.length) {
       console.error("[SHOPIFY] GraphQL errors:", fetched.errors);
       return NextResponse.json(

@@ -17,10 +17,14 @@ flock -n 9 || exit 0
 
 cd "${ROOT}"
 DB_API="${KICKDB_BUFFER_BASE:-${RESELL_API_BASE:-http://127.0.0.1:3002}}"
-LIMIT="${SSE_CONSUMER_LIMIT:-500}"
+# Smaller batches leave GraphQL headroom for dashboard / returns.
+# Override up if storefront lag is worse than API starvation.
+LIMIT="${SSE_CONSUMER_LIMIT:-100}"
 # Keep chewing while queue has work. Empty batch → exit (cron restarts soon).
-MAX_BATCHES="${SSE_CONSUMER_MAX_BATCHES:-40}"
-IDLE_SLEEP_SEC="${SSE_CONSUMER_IDLE_SLEEP_SEC:-2}"
+MAX_BATCHES="${SSE_CONSUMER_MAX_BATCHES:-15}"
+IDLE_SLEEP_SEC="${SSE_CONSUMER_IDLE_SLEEP_SEC:-3}"
+# Same reserve as Node workers (main_from_db.py reads this).
+export SHOPIFY_API_RESERVE_POINTS="${SHOPIFY_API_RESERVE_POINTS:-300}"
 
 {
   echo "=== $(date -Is) sse consumer run ==="
