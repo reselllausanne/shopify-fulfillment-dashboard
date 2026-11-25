@@ -399,7 +399,25 @@ function computeSellPrices(input: {
         isExpress
       ),
   });
+  const flat = flatSellChfForName(input.stxRow.supplierProductName);
+  if (flat != null && resolved.normalSell != null) {
+    return {
+      normalSell: flat,
+      expressSell: resolved.expressSell != null ? Math.max(resolved.expressSell, flat) : null,
+    };
+  }
   return { normalSell: resolved.normalSell, expressSell: resolved.expressSell };
+}
+
+/** Fixed website sell price (CHF) for hand-picked pairs, applied on every TS price writer. */
+const FLAT_SELL_RULES: Array<{ re: RegExp; chf: number }> = [
+  { re: /^UGG Lowmel (Chestnut|Sand|Black) \(Women's\)$/i, chf: 229 },
+];
+
+export function flatSellChfForName(name: string | null | undefined): number | null {
+  const n = String(name ?? "").trim();
+  if (!n) return null;
+  return FLAT_SELL_RULES.find((r) => r.re.test(n))?.chf ?? null;
 }
 
 /** Write express money + flip express_available so theme never shows stale/inverted price. */
