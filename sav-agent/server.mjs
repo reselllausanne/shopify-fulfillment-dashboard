@@ -20,11 +20,25 @@ const sessions = new Map(); // id -> { agent, last, busy }
 
 const log = (rec) => fs.appendFileSync(LOG, JSON.stringify({ ts: new Date().toISOString(), ...rec }) + "\n");
 
+const MAP_FILE = DATA + "/sessions.json";
+const readMap = () => { try { return JSON.parse(fs.readFileSync(MAP_FILE, "utf8")); } catch { return {}; } };
+const writeMap = (m) => fs.writeFileSync(MAP_FILE, JSON.stringify(m));
+
 async function getSession(id) {
   let s = sessions.get(id);
   if (!s) {
-    const agent = await Agent.create({ apiKey: API_KEY, model: { id: MODEL }, local: { cwd: CWD, store: STORE } });
-    s = { agent, last: Date.now(), busy: false, first: true };
+    const opts = { apiKey: API_KEY, model: { id: MODEL }, local: { cwd: CWD, store: STORE } };
+    const known = readMap()[id];
+    let agent = null, first = true;
+    if (known) {
+      try { agent = await Agent.resume(known, opts); first = false; }
+      catch (e) { console.error("resume failed, new agent", e?.message); }
+    }
+    if (!agent) {
+      agent = await Agent.create(opts);
+      const m = readMap(); m[id] = agent.agentId; writeMap(m);
+    }
+    s = { agent, last: Date.now(), busy: false, first };
     sessions.set(id, s);
   }
   s.last = Date.now();
