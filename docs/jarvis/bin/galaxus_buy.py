@@ -350,14 +350,22 @@ class BrowserBackend:
                 "cart_url": f"{BASE}/fr/cart", "checkout_url": f"{BASE}/fr/checkout"}
 
     def pay(self):
-        """Last step with the payment method already saved in the logged-in profile. Never types card data.
-        UNVERIFIED on the live site (needs a logged-in profile + payment method)."""
+        """Click 'Acheter' on /fr/checkout (address + PayPal already saved on the logged-in account; verified
+        2026-11-25 up to the button). Returns {'status': 'confirmed'|'needs_paypal'|'unknown', 'order': str|None,
+        'url': str}. NEVER types card/PayPal credentials: if redirected to paypal.com we stop and report."""
         self.page.goto(f"{BASE}/fr/checkout", wait_until="domcontentloaded")
-        self.page.wait_for_timeout(2500)
-        self._guard()
-        self.page.get_by_role("button", name=re.compile(r"payer|acheter|commander|bezahlen|kaufen|order", re.I)).last.click()
         self.page.wait_for_timeout(3000)
         self._guard()
+        self.page.get_by_role("button", name=re.compile(r"^(acheter|kaufen|buy|payer)$", re.I)).last.click()
+        self.page.wait_for_timeout(8000)
+        url = self.page.url
+        text = re.sub(r"\s+", " ", self.page.inner_text("body"))
+        if "paypal." in url:
+            return {"status": "needs_paypal", "order": None, "url": url}
+        m = re.search(r"(?:commande|bestellung|order)[^0-9]{0,30}(\d{6,})", text, re.I)
+        if re.search(r"merci pour votre commande|vielen dank|thank you|commande (?:a été )?(?:passée|enregistrée)", text, re.I) or "/order" in url:
+            return {"status": "confirmed", "order": m.group(1) if m else None, "url": url}
+        return {"status": "unknown", "order": None, "url": url}
 
     def close(self):
         self._cm.__exit__(None, None, None)
@@ -435,10 +443,15 @@ def cmd_buy(a, fetch, backend_factory, now_log):
             if a.confirm_pay:
                 print(f"PAYMENT REFUSED: {why}", file=sys.stderr)
             return code
-        backend.pay()
-        now_log(lp, **base, total_chf=total, status="paid", reason=why, checkout_url=cart["checkout_url"])
-        print(f"PAID {total:.2f} CHF")
-        return EXIT_OK
+        res = backend.pay() or {"status": "unknown"}
+        if res["status"] == "confirmed":
+            now_log(lp, **base, total_chf=total, status="paid", reason=why, order=res.get("order"), checkout_url=cart["checkout_url"])
+            print(f"PAID {total:.2f} CHF | order {res.get('order') or '?'}")
+            return EXIT_OK
+        # not confirmed: do NOT log as paid (would eat the daily cap wrongly) and do NOT retry (double-buy risk)
+        now_log(lp, **base, total_chf=total, status="pending_" + res["status"], reason="payment not confirmed: check Galaxus orders before retrying", url=res.get("url"))
+        print(f"PAYMENT NOT CONFIRMED ({res['status']}) at {res.get('url')}. Check galaxus.ch orders; do not retry blindly.", file=sys.stderr)
+        return EXIT_PAY_REFUSED
     finally:
         backend.close()
 

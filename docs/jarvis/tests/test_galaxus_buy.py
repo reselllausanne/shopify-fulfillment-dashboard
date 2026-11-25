@@ -28,6 +28,7 @@ class FakeBackend:
 
     def pay(self):  # must never be called by default
         self.pay_calls += 1
+        return {"status": getattr(self, "pay_status", "confirmed"), "order": "12345678", "url": "https://x/order"}
 
     def close(self):
         self.closed = True
@@ -264,6 +265,34 @@ class TestCartSafety(Base):
             code = g.cmd_buy(a, lambda u: page, lambda: B(), lambda p, **r: logs.append(r))
         self.assertEqual(code, g.EXIT_PAY_REFUSED)
         self.assertEqual(logs[-1]["status"], "refused")
+
+
+class TestPayOutcomes(Base):
+    def _run(self, status):
+        import galaxus_buy as g
+        class B:
+            def add_to_cart(self, url): return {"shipping_chf": 0.0, "delivery": None, "cart_total_chf": 139.0, "items": 1, "cart_url": "c", "checkout_url": "k"}
+            def pay(self): return {"status": status, "order": None, "url": "https://www.paypal.com/x"}
+            def close(self): pass
+        logs = []
+        with tempfile.TemporaryDirectory() as d:
+            cfg = os.path.join(d, "a.json"); open(cfg, "w").write('{"auto_buy_max_chf":150,"daily_max_chf":500}')
+            os.environ["JARVIS_ACHAT_CONFIG"] = cfg
+            a = g.build_parser().parse_args(["buy", "--url", "https://www.galaxus.ch/fr/s3/product/x-1234567", "--confirm-pay", "--log", os.path.join(d, "l.jsonl")])
+            page = '<script type="application/ld+json">{"@type":"Product","name":"X","offers":{"price":"139"}}</script>'
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                code = g.cmd_buy(a, lambda u: page, lambda: B(), lambda p, **r: logs.append(r))
+            os.environ.pop("JARVIS_ACHAT_CONFIG", None)
+        return code, logs[-1]["status"]
+
+    def test_paypal_redirect_is_not_paid(self):
+        self.assertEqual(self._run("needs_paypal"), (4, "pending_needs_paypal"))
+
+    def test_unknown_is_not_paid(self):
+        self.assertEqual(self._run("unknown"), (4, "pending_unknown"))
+
+    def test_confirmed_is_paid(self):
+        self.assertEqual(self._run("confirmed"), (0, "paid"))
 
 
 if __name__ == "__main__":
