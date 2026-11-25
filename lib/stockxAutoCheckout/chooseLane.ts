@@ -334,6 +334,20 @@ export function euSizeTilePattern(size: string): RegExp {
   );
 }
 
+/**
+ * Size-picker tile for a US token ("9.5", "6T", "6Y", "M 9.5"): "US M 9.5" / "US 6T" + newline + price.
+ * Used when the product has no EU tab (Li-Ning: "Size: US M" only). "9.5" never matches "19.5".
+ */
+export function usSizeTilePattern(token: string): RegExp {
+  const clean = String(token).replace(/^US\s*/i, "").replace(/^[MW]\s*/i, "").trim();
+  const esc = clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const num = String.raw`[\d’'.,]+`;
+  return new RegExp(
+    String.raw`^US\s*(?:[MW]\s*)?${esc}\s+(?:CHF\s*${num}|${num}\s*CHF|[€$£]\s*${num}|${num}\s*[€$£]|${num}\s*EUR|Offer|Offre|Make an offer|Faire une offre)\s*$`,
+    "i"
+  );
+}
+
 export function classifyEmptyLaneReason(
   body: string | null | undefined
 ): "oos_no_ask" | "express_only" | "proxy_blank" | "oos" {

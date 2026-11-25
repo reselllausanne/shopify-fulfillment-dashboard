@@ -29,6 +29,7 @@ import {
   isNoSellersPage,
   isSizeGridBody,
   euSizeTilePattern,
+  usSizeTilePattern,
   countDistinctShippingTierInText,
   extractCheckoutSubtotalChf,
   GALAXUS_CSAT_MIN_MARGIN,
@@ -218,7 +219,11 @@ async function dismissNoise(page: Page) {
  * toddler, women's, odd EU→US map). Click the EU tab then the exact "EU <size>" tile
  * instead of failing as proxy_blank. Returns true when the picker is gone (lanes load).
  */
-async function resolveBuyPageSizeGrid(page: Page, sizeEU: string): Promise<boolean> {
+async function resolveBuyPageSizeGrid(
+  page: Page,
+  sizeEU: string,
+  sizeUsToken?: string | null
+): Promise<boolean> {
   const size = sizeEU.replace(/^EU\s*/i, "").trim();
   if (!size) return false;
   let body = await page.locator("body").innerText().catch(() => "");
@@ -258,17 +263,24 @@ async function resolveBuyPageSizeGrid(page: Page, sizeEU: string): Promise<boole
     // so "EU 38" never matches "EU 38.5" / "EU 3876 CHF" by accident.
     const marked = await page
       .evaluate(
-        `({ src }) => {
-          const re = new RegExp(src, "i");
+        `({ srcs }) => {
+          const res = srcs.map((s) => new RegExp(s, "i"));
           const nodes = Array.from(document.querySelectorAll("button,[role=option],[role=radio],li,label,a"));
-          const hits = nodes.filter((n) => re.test(((n).innerText || "").trim()));
+          // First pattern with a hit wins (EU tile, then the US tile when the product has no EU tab).
+          let hits = [];
+          for (const re of res) {
+            hits = nodes.filter((n) => re.test(((n).innerText || "").trim()));
+            if (hits.length) break;
+          }
           hits.sort((a, b) => (a.innerText || "").length - (b.innerText || "").length);
           document.querySelectorAll("[data-pw-size-tile]").forEach((n) => n.removeAttribute("data-pw-size-tile"));
           if (!hits[0]) return false;
           hits[0].setAttribute("data-pw-size-tile", "1");
           return true;
         }`,
-        { src: euSizeTilePattern(size).source }
+        {
+          srcs: [euSizeTilePattern(size).source, ...(sizeUsToken ? [usSizeTilePattern(sizeUsToken).source] : [])],
+        }
       )
       .catch(() => false);
     if (marked) {
@@ -280,7 +292,7 @@ async function resolveBuyPageSizeGrid(page: Page, sizeEU: string): Promise<boole
     body = await page.locator("body").innerText().catch(() => "");
     if (!isSizeGridBody(body)) return true;
   }
-  console.warn(`[STOCKX-CHECKOUT] size grid: EU ${size} tile not clickable`);
+  console.warn(`[STOCKX-CHECKOUT] size grid: EU ${size}${sizeUsToken ? ` / US ${sizeUsToken}` : ""} tile not clickable`);
   return false;
 }
 
@@ -2424,7 +2436,7 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
     }
 
     // Size picker instead of checkout (?size= token not recognised) → click the EU tile.
-    await resolveBuyPageSizeGrid(page, c.sizeEU);
+    await resolveBuyPageSizeGrid(page, c.sizeEU, sizeUS);
 
     // Strip xpress-ship default so STANDARD remains selectable when HARD RULE picks it.
     try {

@@ -59,7 +59,7 @@ describe("classifyEmptyLaneReason", () => {
   });
 });
 
-import { euSizeTilePattern, isSizeGridBody } from "./chooseLane";
+import { euSizeTilePattern, isSizeGridBody, usSizeTilePattern } from "./chooseLane";
 
 describe("isSizeGridBody", () => {
   it("detects the size picker (Mihara dump)", () => {
@@ -115,5 +115,21 @@ describe("euSizeTilePattern", () => {
     expect(re.test("EU 38.5\n\n98 CHF")).toBe(false);
     expect(re.test("EU 3876 CHF")).toBe(false);
     expect(re.test("EU 37\n\n119 CHF")).toBe(false);
+  });
+});
+
+describe("usSizeTilePattern (Li-Ning picker has US M tiles only)", () => {
+  it("matches the US tile with CHF, euro or offer price", () => {
+    const re = usSizeTilePattern("9.5");
+    expect(re.test("US M 9.5\n\n72 CHF")).toBe(true);
+    expect(re.test("US M 9.5\n\nCHF 72")).toBe(true);
+    expect(re.test("US M 9.5\n\n€72")).toBe(true);
+    expect(re.test("US M 9.5\n\nOffre")).toBe(true);
+  });
+  it("accepts toddler / kids suffix tokens and never a neighbour", () => {
+    expect(usSizeTilePattern("6T").test("US 6T\n\n94 CHF")).toBe(true);
+    expect(usSizeTilePattern("9.5").test("US M 19.5\n\n72 CHF")).toBe(false);
+    expect(usSizeTilePattern("9.5").test("US M 9\n\n75 CHF")).toBe(false);
+    expect(usSizeTilePattern("M 9.5").test("US M 9.5\n\n72 CHF")).toBe(true);
   });
 });

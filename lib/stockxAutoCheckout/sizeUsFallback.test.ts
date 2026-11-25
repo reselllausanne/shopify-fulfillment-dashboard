@@ -5,6 +5,7 @@ import {
   buildStockxCheckoutBuyUrl,
   convertEuToUs,
   inferBrandFromTitle,
+  stockxSizeQueryFromKickdbLabel,
 } from "@/lib/stockxAutoCheckout/sizeUsFallback";
 
 describe("convertEuToUs", () => {
@@ -107,5 +108,18 @@ describe("convertEuToUs assumeUsIfSmall", () => {
   });
   it("chart hit still wins", () => {
     expect(convertEuToUs("48", { title: "adidas Top Ten Hi", assumeUsIfSmall: true })).toBe("13");
+  });
+});
+
+describe("stockxSizeQueryFromKickdbLabel", () => {
+  it("keeps explicit toddler/child/youth suffixes", () => {
+    expect(stockxSizeQueryFromKickdbLabel("US 6T")).toBe("6T");
+    expect(stockxSizeQueryFromKickdbLabel("US 13C")).toBe("13C");
+    expect(stockxSizeQueryFromKickdbLabel("US 6y")).toBe("6Y");
+  });
+  it("leaves existing forms alone; plain kids 'US 6' stays unresolved", () => {
+    expect(stockxSizeQueryFromKickdbLabel("US M 7")).toBe("7");
+    expect(stockxSizeQueryFromKickdbLabel("US W 8")).toBe("8W");
+    expect(stockxSizeQueryFromKickdbLabel("US 6")).toBe(null);
   });
 });
