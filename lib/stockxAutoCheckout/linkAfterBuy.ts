@@ -39,6 +39,8 @@ export type LinkAfterBuyInput = {
   /** StockX checkoutType string when known (STANDARD / EXPRESS). */
   stockxCheckoutType?: string | null;
   estimatedDelivery?: string | Date | null;
+  /** Skip the post-link customer mail (stale relink of an old buy). */
+  skipPostLinkEmail?: boolean;
 };
 
 /**
@@ -268,7 +270,9 @@ export async function linkStockxBuyToShopify(input: LinkAfterBuyInput): Promise<
   // Cancel→rebuy: apology + new ETA (not a fresh "purchase confirmed").
   // Else: one confirmation mail now. Cron still sends later milestones.
   try {
-    if (isCancelRebuy && isCustomerDelayMailEnabled()) {
+    if (input.skipPostLinkEmail) {
+      // stale relink: no customer mail, AWB cron still advances milestones
+    } else if (isCancelRebuy && isCustomerDelayMailEnabled()) {
       const emailRes = await sendCustomerDelayMail({
         orderMatchId: match.id,
         kind: "CANCEL_REBUY_LEGIT",

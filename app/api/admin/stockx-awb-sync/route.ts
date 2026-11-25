@@ -8,6 +8,7 @@ import { AWB_BUDGET_EXHAUSTED, runAwbBackfill } from "@/lib/stockxAwbBackfill";
 import { notifyStockxAuthBroken, sendStockxEmail } from "@/lib/stockxAuthAlert";
 import { runStockxOrderOpsAlerts } from "@/lib/stockxOpsAlerts";
 import { runStaleCancelSweep } from "@/lib/stockxDelayRebuy/sweepStaleCancelled";
+import { runRelinkCancelledStockxBuys } from "@/shopify/orders/relinkCancelledStockxBuys";
 import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
 import { canRefreshStockxAccount, refreshStockxToken } from "@/lib/stockxSessionRefresh";
 import { readServerStockxToken, stockxTokenExpiresAt } from "@/lib/stockxServerToken";
@@ -112,6 +113,9 @@ export async function POST(req: NextRequest) {
       }));
       // Fire-and-forget: a rebuy checkout takes minutes, cron curl max-time is 240s.
       if (!dryRun) {
+        void runRelinkCancelledStockxBuys()
+          .then((r) => r.ran && (r.linked.length || r.ambiguous.length) && console.log(`[RELINK-CANCELLED] ${JSON.stringify(r)}`))
+          .catch((err) => console.error("[RELINK-CANCELLED] failed", err));
         void runStaleCancelSweep()
           .then((r) => r.ran && console.log(`[CANCEL-SWEEP] ${JSON.stringify(r)}`))
           .catch((err) => console.error("[CANCEL-SWEEP] failed", err));
