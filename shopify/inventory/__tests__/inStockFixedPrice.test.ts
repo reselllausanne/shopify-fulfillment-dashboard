@@ -26,14 +26,15 @@ describe("inStockFixedPrice", () => {
     const r = resolveInStockFixedPrice({ sku: "192HO246258F-M" });
     expect(r?.costChf).toBe(42);
     expect(r?.sellChf).toBe(129);
-    expect(r?.expressChf).toBe(169);
+    expect(r?.expressChf).toBeUndefined();
+    expect(r?.noExpress).toBe(true);
     expect(r?.galaxusExVatChf).toBe(69);
   });
 
   it("resolves FW24 Black hoodie by SKU base with sell 129/169", () => {
     const r = resolveInStockFixedPrice({ sku: "192HO246250F-S" });
     expect(r?.sellChf).toBe(129);
-    expect(r?.expressChf).toBe(169);
+    expect(r?.noExpress).toBe(true);
   });
 
   it("resolves Bape by productId with fixed COGS and sell 69/99", () => {
