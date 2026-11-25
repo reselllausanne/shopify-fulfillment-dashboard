@@ -28,6 +28,7 @@ import {
   classifyLaneLabel,
   isNoSellersPage,
   isSizeGridBody,
+  euSizeTilePattern,
   countDistinctShippingTierInText,
   extractCheckoutSubtotalChf,
   GALAXUS_CSAT_MIN_MARGIN,
@@ -246,7 +247,6 @@ async function resolveBuyPageSizeGrid(page: Page, sizeEU: string): Promise<boole
     /* fall through to tile click */
   }
   console.warn(`[STOCKX-CHECKOUT] size grid on /buy — clicking EU ${size}`);
-  const esc = size.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const clickables = "button,[role=tab],[role=radio],[role=option],[role=button],label,li,a,div";
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const euTab = page.locator(clickables).filter({ hasText: /^\s*EU\s*$/ }).first();
@@ -258,8 +258,8 @@ async function resolveBuyPageSizeGrid(page: Page, sizeEU: string): Promise<boole
     // so "EU 38" never matches "EU 38.5" / "EU 3876 CHF" by accident.
     const marked = await page
       .evaluate(
-        `({ esc }) => {
-          const re = new RegExp("^EU\\\\s*" + esc + "\\\\s+(?:CHF\\\\s*[\\\\d’'.,]+|[\\\\d’'.,]+\\\\s*CHF|Offer|Offre)\\\\s*$", "i");
+        `({ src }) => {
+          const re = new RegExp(src, "i");
           const nodes = Array.from(document.querySelectorAll("button,[role=option],[role=radio],li,label,a"));
           const hits = nodes.filter((n) => re.test(((n).innerText || "").trim()));
           hits.sort((a, b) => (a.innerText || "").length - (b.innerText || "").length);
@@ -268,7 +268,7 @@ async function resolveBuyPageSizeGrid(page: Page, sizeEU: string): Promise<boole
           hits[0].setAttribute("data-pw-size-tile", "1");
           return true;
         }`,
-        { esc }
+        { src: euSizeTilePattern(size).source }
       )
       .catch(() => false);
     if (marked) {

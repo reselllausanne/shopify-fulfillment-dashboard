@@ -59,7 +59,7 @@ describe("classifyEmptyLaneReason", () => {
   });
 });
 
-import { isSizeGridBody } from "./chooseLane";
+import { euSizeTilePattern, isSizeGridBody } from "./chooseLane";
 
 describe("isSizeGridBody", () => {
   it("detects the size picker (Mihara dump)", () => {
@@ -70,5 +70,50 @@ describe("isSizeGridBody", () => {
   it("ignores a real checkout page", () => {
     expect(isSizeGridBody("Select Size\nSubtotal CHF 130\nReview Order")).toBe(false);
     expect(isSizeGridBody("")).toBe(false);
+  });
+});
+
+describe("isSizeGridBody fr-fr (Ugg enfant dump, 25 Nov)", () => {
+  const frKids = [
+    "Passer au contenu principal",
+    "FAQ",
+    "Opens in new tab",
+    "Retour",
+    "UGG Classic Ultra Mini Platform Boot Chestnut (enfant)",
+    "Sélectionnez du Size",
+    "US",
+    "UK",
+    "CM",
+    "KR",
+    "EU",
+    "EU 37",
+    "",
+    "119 CHF",
+    "EU 38",
+    "",
+    "98 CHF",
+    "Annuler",
+  ].join("\n");
+  it("detects the half-translated French picker (was misread as proxy_blank)", () => {
+    expect(isSizeGridBody(frKids)).toBe(true);
+  });
+  it("French checkout page is not a picker", () => {
+    expect(isSizeGridBody(frKids + "\nSous-total 98 CHF\nVérifier la commande")).toBe(false);
+  });
+});
+
+describe("euSizeTilePattern", () => {
+  it("matches EU tile with CHF, euro, or offer-only price", () => {
+    const re = euSizeTilePattern("38");
+    expect(re.test("EU 38\n\n98 CHF")).toBe(true);
+    expect(re.test("EU 38\n\nCHF 98")).toBe(true);
+    expect(re.test("EU 38\n\n€111")).toBe(true);
+    expect(re.test("EU 38\n\nOffer")).toBe(true);
+  });
+  it("never matches a neighbouring size", () => {
+    const re = euSizeTilePattern("38");
+    expect(re.test("EU 38.5\n\n98 CHF")).toBe(false);
+    expect(re.test("EU 3876 CHF")).toBe(false);
+    expect(re.test("EU 37\n\n119 CHF")).toBe(false);
   });
 });

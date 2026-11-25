@@ -111,3 +111,25 @@ describe("galaxusTitleMatchesProductName", () => {
     ).toBe(false);
   });
 });
+
+describe("galaxusTitleMatchesProductName brand prefix", () => {
+  it("accepts a Galaxus brand word missing from the StockX name (Onitsuka)", () => {
+    expect(
+      galaxusTitleMatchesProductName(
+        "ASICS Onitsuka Tiger Mexico 66 Black White (37)",
+        "Onitsuka Tiger Mexico 66 Black White"
+      )
+    ).toBe(true);
+  });
+  it("still rejects a different model", () => {
+    expect(
+      galaxusTitleMatchesProductName(
+        "ASICS Onitsuka Tiger Mexico 66 Black White (37)",
+        "Onitsuka Tiger Mexico 66 Deluxe NM Black White"
+      )
+    ).toBe(false);
+  });
+  it("rejects long unrelated prefixes", () => {
+    expect(galaxusTitleMatchesProductName("Some Very Long Prefix Mexico 66 Black White", "Mexico 66 Black White")).toBe(false);
+  });
+});
