@@ -1,0 +1,33 @@
+---
+description: L'agent se logge seul à StockX (Shopify et Galaxus). Jamais de demande de login manuel à l'user.
+alwaysApply: true
+---
+
+# StockX: login autonome
+
+L'agent ne demande JAMAIS à l'user de se logger à StockX (compte Shopify ou Galaxus). Pas en première option, pas en dernière. Si un moyen échoue, il en essaie un autre. Il documente chaque tentative et propose un plan suivant sans login manuel.
+
+## Moyens autonomes, dans l'ordre
+
+1. Cookies Auth0 (`auth0`, `auth0_compat`, `did`) du fichier session du compte (`/app/.data/stockx-session*.json`): les poser dans le profil persistant.
+2. Refresh token Auth0 / silent auth (`prompt=none`) avec les cookies existants.
+3. Chrome headful dans Xvfb (`DISPLAY=:99`) avec le profil persistant du compte, patchright, une seule session proxy résidentielle Lausanne sticky. Laisser Turnstile se résoudre seul (20-40 s), mouvements souris humains, clic sur la case par coordonnées si l'iframe l'affiche.
+4. Email + mot de passe (`STOCKX_EMAIL/PASSWORD`, `STOCKX_GALAXUS_EMAIL/PASSWORD`) puis OTP par IMAP. Filtrer le destinataire (`contact@` pour Galaxus).
+5. Remint via proxy résidentiel, autre IP (Lausanne, Zurich, Genève). Reprise à froid avec un profil neuf du même compte, puis copie des cookies dans le profil du compte.
+6. Tout autre moyen autonome.
+
+Ne jamais mélanger les comptes: les cookies du compte Shopify ne servent pas au compte Galaxus.
+
+## Preuve avant de dire « connecté »
+
+Lire le texte de la page en FR et en EN. Ne jamais se fier à la seule absence d'un texte.
+
+- Invité si: `Login to Apply`, `create a StockX account`, `créer un compte StockX`, `Nous vous invitons à créer un compte`, redirection vers `accounts.stockx.com/u/login`.
+- Connecté seulement si: `/fr-fr/buying` (ou `/buying/orders`) ne redirige pas vers le login ET `/fr-fr/buy/<slug>?size=…` rend des prix en CHF avec lanes (Express/Standard, sous-total) et aucun texte invité.
+- Page `Un instant…`, `Vérification de sécurité`, `Please login to continue`, `Error`, `chrome-error://`: pas connecté.
+
+Après connexion prouvée: sauvegarder le storageState dans le fichier session du compte, ne plus écraser des cookies frais avec un vieux seed.
+
+## Cadre
+
+Un seul Chrome par profil. Jamais le Chrome du Mac. Pas de hotfix de code sur le VPS: PR depuis un worktree.
