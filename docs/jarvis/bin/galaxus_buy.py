@@ -265,6 +265,14 @@ class BrowserBackend:
         ship, delivery = parse_delivery(self.page.content())
         return {"shipping_chf": ship, "delivery": delivery, "cart_url": f"{BASE}/fr/cart", "checkout_url": f"{BASE}/fr/checkout"}
 
+    def pay(self):
+        """Last step with the payment method already saved in the logged-in profile. Never types card data."""
+        self.page.goto(f"{BASE}/fr/checkout")
+        self._guard()
+        self.page.get_by_role("button", name=re.compile(r"payer|acheter|commander|bezahlen|kaufen|order", re.I)).last.click()
+        self.page.wait_for_timeout(3000)
+        self._guard()
+
     def close(self):
         try:
             self._ctx.close()
@@ -330,7 +338,10 @@ def cmd_buy(a, fetch, backend_factory, now_log):
             if a.confirm_pay:
                 print(f"PAYMENT REFUSED: {why}", file=sys.stderr)
             return code
-        raise NotImplementedError("payment path not implemented yet")
+        backend.pay()
+        now_log(lp, **base, total_chf=total, status="paid", reason=why, checkout_url=cart["checkout_url"])
+        print(f"PAID {total:.2f} CHF")
+        return EXIT_OK
     finally:
         backend.close()
 

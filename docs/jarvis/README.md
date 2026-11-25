@@ -5,6 +5,7 @@ Point d'entrée pour Jarvis (et pour Cursor). Tout est lecture seule, à la dema
 - Carte des sources : `SOURCES.md`
 - Décisions datées et sourcées : `memory/decisions.md` (recherche : `bin/jarvis decision <mot>`)
 - Données vivantes : `bin/jarvis sql | shopify-orders | decathlon-ping | gads | gsc | vps`
+- Achat Galaxus (s'arrête avant paiement par défaut) : `bin/galaxus-buy --help` ; tests : `python3 -m unittest discover -s docs/jarvis/tests`
 - Audit qualité du contexte (agent Optimize séparé) : `optimize/` (`AGENT.md`, `registry.md`, `NIGHTLY.md`)
 
 Règles : aucun secret dans ce dossier ni dans git. Aucun export de prod. Commandes, volumes, stock = toujours relus dans la source à jour, jamais copiés ici.

@@ -58,7 +58,8 @@ class Base(unittest.TestCase):
         self.d.cleanup()
 
     def write_cfg(self, auto=500, daily=1000):
-        json.dump({"auto_buy_max_chf": auto, "daily_max_chf": daily}, open(self.cfg, "w"))
+        with open(self.cfg, "w") as f:
+            json.dump({"auto_buy_max_chf": auto, "daily_max_chf": daily}, f)
 
 
 class TestDefaultStop(Base):
@@ -121,6 +122,20 @@ class TestPayPolicy(Base):
         self.assertEqual(FakeBackend.instances[0].pay_calls, 0)
         self.assertIn("PAYMENT REFUSED", err)
         self.assertEqual(logs[0]["status"], "refused")
+
+    def test_confirm_pay_within_limits_pays_via_mock_and_logs(self):
+        self.write_cfg(auto=500, daily=1000)
+        code, out, _, logs = run(["buy", "--url", "https://www.galaxus.ch/p", "--confirm-pay", "--log", self.log], env={"JARVIS_ACHAT_CONFIG": self.cfg})
+        self.assertEqual((code, FakeBackend.instances[0].pay_calls, logs[0]["status"]), (0, 1, "paid"))
+        self.assertEqual(gb.spent_today(self.log), 308.9)
+
+    def test_daily_cap_blocks_second_purchase(self):
+        self.write_cfg(auto=500, daily=400)
+        env = {"JARVIS_ACHAT_CONFIG": self.cfg}
+        a = ["buy", "--url", "https://www.galaxus.ch/p", "--confirm-pay", "--log", self.log]
+        self.assertEqual(run(a, env=env)[0], 0)
+        code, *_ = run(a, env=env)
+        self.assertEqual((code, FakeBackend.instances[0].pay_calls), (4, 0))
 
     def test_confirm_pay_missing_config_refused(self):
         code, *_ = run(["buy", "--url", "https://www.galaxus.ch/p", "--confirm-pay", "--log", self.log], env={"JARVIS_ACHAT_CONFIG": "/nonexistent"})
