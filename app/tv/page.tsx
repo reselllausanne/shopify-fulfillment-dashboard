@@ -419,86 +419,85 @@ export default function TvPage() {
             radial-gradient(42cqw 46cqh at 100% 100%, rgba(192, 38, 211, 0.18), transparent 62%);
         }
         .tv-header {
-          gap: 1rem;
-          padding: clamp(8px, 2cqh, 28px) clamp(12px, 2.4cqw, 48px) 0;
+          gap: 1.2vw;
+          padding: 2vh 2.2vw 0;
         }
         .tv-live-dot {
-          height: clamp(8px, 1.6cqh, 16px);
-          width: clamp(8px, 1.6cqh, 16px);
+          height: 1.6vh;
+          width: 1.6vh;
         }
         .tv-kicker {
-          font-size: clamp(0.7rem, 2.2cqh, 1.45rem);
-          letter-spacing: 0.18em;
+          font-size: 2.4vh;
+          letter-spacing: 0.22em;
         }
         .tv-clock {
-          font-size: clamp(1.4rem, 5cqh, 3.4rem);
+          font-size: 5.6vh;
         }
         .tv-date {
-          margin-top: 0.2em;
-          font-size: clamp(0.7rem, 1.8cqh, 1.15rem);
+          margin-top: 0.4vh;
+          font-size: 2vh;
         }
         .tv-main {
           display: grid;
           grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
-          gap: clamp(8px, 1.6cqh, 24px);
-          padding: clamp(8px, 1.8cqh, 28px) clamp(12px, 2.4cqw, 48px);
+          gap: 1.6vh;
+          padding: 1.6vh 2.2vw 2vh;
         }
         .tv-numbers,
         .tv-channels {
-          gap: clamp(6px, 1.2cqh, 18px);
+          gap: 1.4vh;
         }
         .tv-card,
         .tv-channel,
         .tv-feed {
-          padding: clamp(8px, 1.6cqh, 22px) clamp(10px, 1.6cqw, 28px);
+          padding: 1.6vh 1.4vw;
         }
         .tv-label {
-          font-size: clamp(0.65rem, 1.7cqh, 1.05rem);
-          letter-spacing: 0.16em;
+          font-size: 2vh;
+          letter-spacing: 0.18em;
         }
         .tv-label-note {
           margin-left: 0.6em;
           font-size: 0.85em;
         }
         .tv-hero-num {
-          font-size: clamp(2.6rem, 14cqh, 10.5rem);
+          font-size: 14vh;
           line-height: 0.86;
         }
         .tv-margin-num {
-          font-size: clamp(1.7rem, 8cqh, 6.2rem);
+          font-size: 8vh;
           line-height: 0.9;
         }
         .tv-channel-num {
-          font-size: clamp(1.35rem, 6.2cqh, 4.8rem);
+          font-size: 7.2vh;
           line-height: 0.9;
         }
         .tv-unit {
-          font-size: clamp(0.9rem, 3cqh, 2.4rem);
+          font-size: 3.4vh;
         }
         .tv-unit-sm,
         .tv-pct {
-          font-size: clamp(0.85rem, 2.6cqh, 2rem);
+          font-size: 3vh;
         }
         .tv-sub,
         .tv-channel-meta,
         .tv-empty {
-          font-size: clamp(0.75rem, 2cqh, 1.25rem);
+          font-size: 2.2vh;
         }
         .tv-feed-list {
-          gap: clamp(4px, 0.7cqh, 10px);
+          gap: 0.8vh;
         }
         .tv-sale {
-          flex: 1 1 0;
-          min-height: 0;
-          gap: clamp(6px, 0.8cqw, 14px);
-          padding: clamp(4px, 0.7cqh, 10px) clamp(6px, 0.8cqw, 12px);
+          flex: 0 0 auto;
+          gap: 1vw;
+          padding: 0.7vh 0.7vw;
         }
         .tv-sale-img {
-          height: clamp(28px, 6.5cqh, 68px);
-          width: clamp(28px, 6.5cqh, 68px);
+          height: 6.2vh;
+          width: 6.2vh;
         }
         .tv-sale-title {
-          font-size: clamp(0.78rem, 2.15cqh, 1.3rem);
+          font-size: 2.3vh;
           display: -webkit-box;
           -webkit-line-clamp: 2;
           -webkit-box-orient: vertical;
@@ -506,42 +505,42 @@ export default function TvPage() {
         }
         .tv-sale-meta,
         .tv-sale-margin {
-          font-size: clamp(0.68rem, 1.7cqh, 1.05rem);
+          font-size: 1.7vh;
         }
         .tv-sale-price {
-          font-size: clamp(0.85rem, 2.5cqh, 1.55rem);
+          font-size: 2.7vh;
         }
         .tv-flash {
-          gap: clamp(6px, 1.4cqh, 18px);
+          gap: 1.6vh;
           border-width: 2px;
-          border-radius: clamp(16px, 3cqh, 40px);
-          padding: clamp(16px, 4cqh, 48px) clamp(16px, 4cqw, 64px);
+          border-radius: 3vh;
+          padding: 4vh 4vw;
         }
         .tv-flash-kicker {
-          font-size: clamp(0.75rem, 2.4cqh, 1.6rem);
-          letter-spacing: 0.18em;
+          font-size: 2.6vh;
+          letter-spacing: 0.2em;
         }
         .tv-flash-amount {
-          font-size: clamp(2.4rem, 12cqh, 9rem);
+          font-size: 12vh;
         }
         .tv-flash-currency {
           font-size: 0.38em;
         }
         .tv-flash-title {
-          max-width: 78cqw;
-          font-size: clamp(0.95rem, 3cqh, 2rem);
+          max-width: 78vw;
+          font-size: 3.2vh;
           display: -webkit-box;
           -webkit-line-clamp: 3;
           -webkit-box-orient: vertical;
           overflow: hidden;
         }
         .tv-flash-margin {
-          font-size: clamp(1rem, 3.4cqh, 2.3rem);
+          font-size: 3.6vh;
         }
         .tv-sound,
         .tv-error {
-          padding: 0.45em 0.9em;
-          font-size: clamp(0.75rem, 1.8cqh, 1rem);
+          padding: 0.8vh 1.2vw;
+          font-size: 1.8vh;
         }
         @container tv (max-width: 640px) {
           .tv-main {
@@ -569,10 +568,13 @@ export default function TvPage() {
             display: none;
           }
           .tv-hero-num {
-            font-size: clamp(2rem, 18cqh, 4.2rem);
+            font-size: 16vh;
           }
           .tv-margin-num {
-            font-size: clamp(1.3rem, 12cqh, 2.6rem);
+            font-size: 10vh;
+          }
+          .tv-channel-num {
+            font-size: 8vh;
           }
         }
         @keyframes tvfade {
@@ -618,7 +620,7 @@ function ChannelCard(props: {
   note?: string;
 }) {
   return (
-    <div className={`tv-channel flex min-h-0 min-w-0 flex-col justify-between overflow-hidden rounded-[2vh] border bg-gradient-to-br ${props.accent}`}>
+    <div className={`tv-channel flex min-h-0 min-w-0 flex-col justify-center gap-[1.2vh] overflow-hidden rounded-[2vh] border bg-gradient-to-br ${props.accent}`}>
       <div className="flex items-center justify-between gap-2">
         <span className={`tv-channel-meta font-bold uppercase tracking-[0.14em] ${props.text}`}>{props.name}</span>
         <span className="tv-channel-meta text-white/50">{props.orders} cmd</span>
