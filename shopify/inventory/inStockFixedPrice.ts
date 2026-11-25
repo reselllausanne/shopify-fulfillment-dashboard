@@ -4,7 +4,7 @@
  * Express 48h ship while physical > 0; price is manual — never StockX −30%.
  * Match by productId first (sizes share one product), then SKU base, then title.
  *
- * COGS: per-unit acquisition cost below (Essentials tee 26, hoodie 42, Bape 35, AP 40, boxers 20).
+ * COGS: Essentials 42 all-in, Crocs Lightning McQueen 42, Bape 40, AP×Travis 40, boxers 20.
  * Sell prices stay fixed (Essentials tee/shorts 59/89, hoodies 129/169, Bape 69/99, AP×Travis 89/109, boxers 49/69).
  * Never StockX −30% soldes / never soldes-48h collection (`delivery_48h`).
  */
@@ -57,10 +57,11 @@ export type InStockFixedPriceRule = InStockFixedPriceConfig & {
   titlePatterns?: RegExp[];
 };
 
-/** Owned warehouse / Lab stock cost per unit (CHF). Values per user 2026-08-23. */
-const ESSENTIALS_TEE_COST_CHF = 26;
+/** Owned warehouse cost per unit (CHF). Essentials 42 all-in, Crocs 42, Bape 40. */
+const ESSENTIALS_COST_CHF = 42;
 const ESSENTIALS_HOODIE_COST_CHF = 42;
-const BAPE_COST_CHF = 35;
+const CROCS_MCQUEEN_COST_CHF = 42;
+const BAPE_COST_CHF = 40;
 const AUDEMARS_TRAVIS_COST_CHF = 40;
 const SUPREME_BOXER_COST_CHF = 20;
 
@@ -77,14 +78,18 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
       "15139794616706", // Fleece Hoodie (FW24) Black
     ],
     skuBases: ["192HO246258F", "192HO246250F"],
-    // SKU + productId only — title patterns matched Kids / NBA hoodies by mistake.
+    // SKU + productId, plus the exact Fleece Hoodie title (no Kids / NBA).
+    titlePatterns: [
+      /Fear of God Essentials Fleece Hoodie/i,
+      /Fear of God Essentials Fleece Essential Sweatpant/i,
+    ],
   },
   {
-    costChf: ESSENTIALS_TEE_COST_CHF,
+    costChf: ESSENTIALS_COST_CHF,
     sellChf: ESSENTIALS_SELL_CHF,
     expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential T-Shirt (in stock)",
-    matchReason: "Essential T-Shirt (fixed 59/89, cost 26)",
+    matchReason: "Essential T-Shirt (fixed 59/89, cost 42)",
     productIds: [
       "15340411617666", // Tee Stretch Limo SS22
       "15349630501250", // Tee Light Oatmeal (SS22)
@@ -99,11 +104,11 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     ],
   },
   {
-    costChf: ESSENTIALS_TEE_COST_CHF,
+    costChf: ESSENTIALS_COST_CHF,
     sellChf: ESSENTIALS_SELL_CHF,
     expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential Shorts (in stock)",
-    matchReason: "Essential Shorts (fixed 59/89, cost 26)",
+    matchReason: "Essential Shorts (fixed 59/89, cost 42)",
     productIds: [
       "15340410732930", // Shorts Stretch Limo (SS22)
       "15340410831234", // Shorts Dark Oatmeal (SS22)
@@ -117,7 +122,7 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     sellChf: BAPE_SELL_CHF,
     expressChf: BAPE_EXPRESS_CHF,
     label: "Bape Tee (in stock)",
-    matchReason: "Bape Tee (fixed 69/99, cost 35)",
+    matchReason: "Bape Tee (fixed 69/99, cost 40)",
     productIds: [
       "15356478325122", // Check by Bathing Tee White/Beige
       "15356478357890", // Big Ape Head Tee White
@@ -162,6 +167,12 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
       "5ae9ed80-6772-46d8-922d-a7d03b251d01",
     ],
     titlePatterns: [/Supreme Hanes Boxer Briefs \(4 Pack\)/i],
+  },
+  {
+    costChf: CROCS_MCQUEEN_COST_CHF,
+    label: "Crocs Lightning McQueen (warehouse)",
+    matchReason: "Crocs Lightning McQueen warehouse buy 42",
+    titlePatterns: [/Crocs Lightning McQueen/i],
   },
 ];
 

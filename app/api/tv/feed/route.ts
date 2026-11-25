@@ -136,7 +136,7 @@ async function fetchShopifyToday(startIso: string): Promise<ShopifyOrderNode[]> 
     > = await shopifyGraphQL(
       SHOPIFY_TODAY_QUERY,
       { first: 25, after, q: `created_at:>=${startIso}` },
-      { estimatedQueryCost: 45, bypassQueue: true, maxAttempts: 2 }
+      { estimatedQueryCost: 45, bypassQueue: true, maxAttempts: 8 }
     );
     if (res.errors?.length) throw new Error(res.errors[0]?.message ?? "shopify graphql error");
     // Shopify's created_at search can round the bound down to the whole day; filter exactly here.
@@ -183,7 +183,7 @@ async function loadBuyPrices(variantIds: string[], gtins: string[]): Promise<Buy
 }
 
 const SHOPIFY_FRESH_MS = 15_000;
-const SHOPIFY_WAIT_MS = 4_000;
+const SHOPIFY_WAIT_MS = 12_000;
 let shopifyOrdersCache: { at: number; day: string; orders: ShopifyOrderNode[] } | null = null;
 let shopifyRefresh: Promise<ShopifyOrderNode[] | null> | null = null;
 
