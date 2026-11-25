@@ -10,6 +10,18 @@ import { toNumberSafe } from "@/app/utils/numbers";
 
 const FALLBACK_MARGIN = 0.2;
 
+/** Ask is not a purchase. Use it only when it still sits under the sale price. */
+export function estimateUnboughtMarginChf(
+  revenue: number,
+  qty: number,
+  unitBuy: number | undefined
+): number {
+  const q = Math.max(1, qty || 1);
+  const unitRev = revenue / q;
+  if (unitBuy && unitBuy > 0 && unitBuy < unitRev) return (unitRev - unitBuy) * q;
+  return revenue * FALLBACK_MARGIN;
+}
+
 export type TvCostMatch = {
   shopifyLineItemId?: string | null;
   shopifyOrderName: string;
@@ -210,7 +222,7 @@ export function presentShopifyLiveSale(args: {
     const gtin = String(li.gtin ?? "").trim();
     if (gtin) refreshGtins.push(gtin);
     const unit = gtin ? buyUnitChf(gtin) : undefined;
-    margin += unit && unit > 0 ? (li.unitPrice - unit) * Math.max(1, li.quantity ?? 1) : gross * FALLBACK_MARGIN;
+    margin += estimateUnboughtMarginChf(gross, li.quantity ?? 1, unit);
     estimated = true;
     known += 1;
   };
