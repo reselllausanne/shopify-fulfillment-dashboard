@@ -47,6 +47,10 @@ export type ShopifyGraphQLOptions = {
   reservePoints?: number;
   /** "analytics" uses SHOPIFY_ANALYTICS_ACCESS_TOKEN (own bucket) when set. */
   tokenPurpose?: ShopifyTokenPurpose;
+  /** Skip the process-wide serial queue. The bucket limiter still applies. */
+  bypassQueue?: boolean;
+  /** Override the 15-attempt throttle/transport loop. */
+  maxAttempts?: number;
 };
 
 const UNKNOWN_QUERY_COST = 50;
@@ -263,7 +267,8 @@ export async function shopifyGraphQL<T>(
     let lastResult: ShopifyGraphQLResult<T> | null = null;
     const estimatedCost = Number(options?.estimatedQueryCost ?? 0);
 
-    for (let attempt = 0; attempt < 15; attempt += 1) {
+    const maxAttempts = Math.max(1, Math.min(15, options?.maxAttempts ?? 15));
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const requiredCost =
         Number(lastResult?.extensions?.cost?.requestedQueryCost ?? 0) ||
         (estimatedCost > 0 ? estimatedCost : lastRequestedCostByQuery.get(query) ?? UNKNOWN_QUERY_COST);
@@ -274,7 +279,7 @@ export async function shopifyGraphQL<T>(
         apiMetrics.requests += 1;
         result = await shopifyGraphQLOnce<T>(env, query, normalizedVariables);
       } catch (error) {
-        if (isTransientShopifyTransportError(error) && attempt < 14) {
+        if (isTransientShopifyTransportError(error) && attempt < maxAttempts - 1) {
           apiMetrics.transportRetries += 1;
           const delayMs = Math.min(20000, 1000 + attempt * 1200);
           console.warn(
@@ -300,7 +305,7 @@ export async function shopifyGraphQL<T>(
         return result;
       }
 
-      if (!isThrottledShopifyGraphQLError(result.errors) || attempt >= 14) {
+      if (!isThrottledShopifyGraphQLError(result.errors) || attempt >= maxAttempts - 1) {
         return result;
       }
 
@@ -319,7 +324,7 @@ export async function shopifyGraphQL<T>(
 
   // Default: serialize callers (legacy safe). TURBO reprice sets SHOPIFY_ALLOW_PARALLEL=1
   // so N in-flight requests can fill the Admin API bucket instead of 1 req/s.
-  if (process.env.SHOPIFY_ALLOW_PARALLEL === "1") {
+  if (options?.bypassQueue || process.env.SHOPIFY_ALLOW_PARALLEL === "1") {
     return run();
   }
   const resultPromise = slot.chain.then(run, run);
