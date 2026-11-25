@@ -29,6 +29,10 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+  packages: read
+
 concurrency:
   group: deploy-vps
   cancel-in-progress: false
@@ -94,7 +98,13 @@ jobs:
 
       - name: Deploy exact SHA on VPS
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          # Short-lived job token: lets the VPS pull the image built by build-image.yml.
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREBUILT_IMAGE_REPO: ghcr.io/${{ github.repository }}
         with:
+          envs: GHCR_USER,GHCR_TOKEN,PREBUILT_IMAGE_REPO
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}

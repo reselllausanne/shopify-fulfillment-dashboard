@@ -1,0 +1,62 @@
+name: Build image
+
+# Builds the app image on a GitHub runner and pushes it to ghcr, tagged sha-<commit>.
+# Deploy VPS (deploy-vps.yml) runs in parallel and pulls this image instead of running
+# `next build` on the production box. If the image is not ready in time (or anything here
+# fails) the VPS script falls back to building locally, so this workflow can never block a deploy.
+
+on:
+  push:
+    branches: [main, "ci/**"]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".cursor/**"
+      - "**/*.test.ts"
+      - "**/*.test.tsx"
+      - "**/__tests__/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Same inlined NEXT_PUBLIC_* values the VPS build used to pick up from its .env.
+      - name: Write build-time public env
+        env:
+          NEXT_PUBLIC_ENV: ${{ secrets.NEXT_PUBLIC_ENV }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$NEXT_PUBLIC_ENV" > .env
+          grep -c '^NEXT_PUBLIC_' .env
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

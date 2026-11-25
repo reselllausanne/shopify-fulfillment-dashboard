@@ -167,7 +167,7 @@ mig_block="$(awk '/if \[ "\$RUN_MIGRATE" = "1" \]/,/^  else$/' "$ROOT/scripts/vp
 if echo "$mig_block" | grep -q 'prisma migrate deploy' \
   && awk '
     /echo/ { next }
-    /docker compose build "\$DEPLOY_SERVICE"/ && !b { b=NR }
+    /ensure_image "\$DEPLOY_SERVICE"/ && !b { b=NR }
     /prisma migrate deploy/ && !m { m=NR }
     /docker compose up -d --no-deps "\$DEPLOY_SERVICE"/ && !u { u=NR }
     END { exit !(b && m && u && b < m && m < u) }
