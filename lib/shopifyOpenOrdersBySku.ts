@@ -139,6 +139,7 @@ export function buildOpenOrdersSkuSearchQuery(params: {
   return [
     "(fulfillment_status:unfulfilled OR fulfillment_status:partial)",
     "-status:cancelled",
+    "-financial_status:refunded",
     `created:>=${ymd}`,
     skuGroup,
   ].join(" ");

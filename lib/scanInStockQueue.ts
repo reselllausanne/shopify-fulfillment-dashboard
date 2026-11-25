@@ -475,6 +475,15 @@ async function listShopifyShipFromStock(): Promise<InStockShipItem[]> {
       select: { shopifyOrderId: true },
     });
     for (const r of records) fulfilledOrderIds.add(String(r.shopifyOrderId));
+    // Refunded / voided / cancelled sales must leave the rail too (nothing to ship).
+    const dead = await prisma.shopifyOrder.findMany({
+      where: {
+        shopifyOrderId: { in: matchOrderIds },
+        OR: [{ cancelledAt: { not: null } }, { financialStatus: { in: ["REFUNDED", "VOIDED"] } }],
+      },
+      select: { shopifyOrderId: true },
+    });
+    for (const r of dead) fulfilledOrderIds.add(String(r.shopifyOrderId));
   }
 
   const skus = Array.from(

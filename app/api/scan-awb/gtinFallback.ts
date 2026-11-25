@@ -407,12 +407,14 @@ async function loadShopifyGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
         }),
         prisma.shopifyOrder.findMany({
           where: { shopifyOrderId: { in: orderIds } },
-          select: { shopifyOrderId: true, cancelledAt: true, orderName: true },
+          select: { shopifyOrderId: true, cancelledAt: true, financialStatus: true, orderName: true },
         }),
       ]);
       const fulfilledOrderIds = new Set(fulfillmentRows.map((r) => r.shopifyOrderId));
       const cancelledOrderIds = new Set(
-        shopifyOrders.filter((o) => o.cancelledAt).map((o) => o.shopifyOrderId)
+        shopifyOrders
+          .filter((o) => o.cancelledAt || /^(REFUNDED|VOIDED)$/i.test(String(o.financialStatus ?? "")))
+          .map((o) => o.shopifyOrderId)
       );
       const orderNameById = new Map(shopifyOrders.map((o) => [o.shopifyOrderId, o.orderName]));
 

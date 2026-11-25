@@ -169,7 +169,7 @@ export async function loadVerifiedOpenShopifyLinesForPackage(params: {
 
   // Bulk-load cancelled markers so we can skip whole orders cheaply.
   const cancelled = await prisma.shopifyOrder.findMany({
-    where: { shopifyOrderId: { in: orderIds }, cancelledAt: { not: null } },
+    where: { shopifyOrderId: { in: orderIds }, OR: [{ cancelledAt: { not: null } }, { financialStatus: { in: ["REFUNDED", "VOIDED"] } }] },
     select: { shopifyOrderId: true },
   });
   const cancelledSet = new Set(cancelled.map((r) => r.shopifyOrderId));
