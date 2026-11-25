@@ -197,6 +197,17 @@ export async function proxy(req: NextRequest) {
       return NextResponse.next();
     }
 
+    // SAV: only the SAV agent page + its API.
+    if (role === "sav") {
+      if (pathname === "/sav" || pathname.startsWith("/sav/") || pathname.startsWith("/api/sav/")) {
+        return NextResponse.next();
+      }
+      if (isApiPath) {
+        return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+      }
+      return NextResponse.redirect(new URL("/sav", req.url));
+    }
+
     if (isApiPath) {
       return NextResponse.json(
         { ok: false, error: "Forbidden", details: "Unknown or unauthorized role." },

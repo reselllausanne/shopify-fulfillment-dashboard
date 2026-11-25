@@ -1,0 +1,37 @@
+#!/usr/bin/env node
+// Read-only mailbox. Usage:
+//   sav-mail search [--from X] [--to X] [--subject X] [--text X] [--days N=30] [--limit 15]
+//   sav-mail read <uid>
+import { ImapFlow } from "imapflow";
+import { simpleParser } from "mailparser";
+const user = process.env.SAV_IMAP_USER || process.env.STOCKX_OTP_IMAP_USER, pass = String(process.env.SAV_IMAP_PASSWORD || process.env.STOCKX_OTP_IMAP_PASSWORD ?? "").replace(/\s+/g, "");
+if (!user || !pass) { console.error("IMAP creds missing"); process.exit(2); }
+const [cmd, ...rest] = process.argv.slice(2);
+const opt = (k, d) => { const i = rest.indexOf(`--${k}`); return i >= 0 ? rest[i + 1] : d; };
+const box = process.env.SAV_IMAP_MAILBOX || "[Gmail]/All Mail";
+const c = new ImapFlow({ host: process.env.SAV_IMAP_HOST || "imap.gmail.com", port: 993, secure: true, auth: { user, pass }, logger: false });
+const clip = (s, n) => String(s ?? "").replace(/\s+\n/g, "\n").slice(0, n);
+try {
+  await c.connect();
+  const lock = await c.getMailboxLock(box, { readOnly: true });
+  try {
+    if (cmd === "search") {
+      const q = { since: new Date(Date.now() - Number(opt("days", 30)) * 864e5) };
+      if (opt("from")) q.from = opt("from");
+      if (opt("to")) q.to = opt("to");
+      if (opt("subject")) q.subject = opt("subject");
+      if (opt("text")) q.body = opt("text");
+      const uids = (await c.search(q, { uid: true })) || [];
+      const pick = uids.slice(-Number(opt("limit", 15))).reverse();
+      for await (const m of c.fetch(pick, { envelope: true, uid: true }, { uid: true })) {
+        console.log(JSON.stringify({ uid: m.uid, date: m.envelope.date, from: m.envelope.from?.map(a => a.address).join(","), to: m.envelope.to?.map(a => a.address).join(","), subject: m.envelope.subject }));
+      }
+      if (!pick.length) console.log("no mail");
+    } else if (cmd === "read") {
+      const m = await c.fetchOne(String(rest[0]), { source: true }, { uid: true });
+      const p = await simpleParser(m.source);
+      console.log(JSON.stringify({ from: p.from?.text, to: p.to?.text, date: p.date, subject: p.subject, text: clip(p.text, 6000), attachments: (p.attachments || []).map(a => a.filename) }));
+    } else { console.error("usage: search|read"); process.exit(2); }
+  } finally { lock.release(); }
+  await c.logout();
+} catch (e) { console.error("mail error:", e.message); process.exit(1); }

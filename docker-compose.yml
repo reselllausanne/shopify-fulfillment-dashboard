@@ -28,6 +28,19 @@ services:
       - ./.env:/app/.env:ro
     restart: unless-stopped
 
+  # SAV agent (Cursor SDK). Full access like the owner: full .env, full DB, repo cwd.
+  sav-agent:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - PORT=3100
+      - SAV_CWD=/app
+    command: ["node", "sav-agent/server.mjs"]
+    volumes:
+      - ./.data:/app/.data
+    restart: unless-stopped
+
   worker-partner-enrich:
     build: .
     env_file:
