@@ -117,7 +117,7 @@ export async function syncPhysicalExpressAvailability(input: {
 
   // Express availability is exact-variant physical availability. StockX
   // delivery lanes must never make another size appear as warehouse 48h.
-  const wantExpress = hasPhysical;
+  const wantExpress = hasPhysical && !rule?.noExpress;
   // Fixed-price retail stock must stay out of soldes-48h (delivery_48h gate).
   const want48h = false;
 

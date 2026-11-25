@@ -43,6 +43,8 @@ export type InStockFixedPriceConfig = {
   sellChf?: number;
   /** Shopify custom.express_price when this lane is listed (Essentials = 89). */
   expressChf?: number;
+  /** Never offer express for this lane (standard shipping only), even with physical stock. */
+  noExpress?: boolean;
   /** Galaxus invoice ex VAT. Shopify shelf stays sellChf. The sync job must not copy sellChf here. */
   galaxusExVatChf?: number;
 };
@@ -66,7 +68,7 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
   {
     costChf: ESSENTIALS_HOODIE_COST_CHF,
     sellChf: ESSENTIALS_HOODIE_SELL_CHF,
-    expressChf: ESSENTIALS_HOODIE_EXPRESS_CHF,
+    noExpress: true,
     galaxusExVatChf: ESSENTIALS_HOODIE_GALAXUS_EX_VAT_CHF,
     label: "Essential Hoodie (in stock)",
     matchReason: "Essential Hoodie (Shopify 129, Galaxus 69)",
@@ -227,6 +229,7 @@ export function resolveInStockFixedPrice(input: {
     matchReason: rule.matchReason,
     sellChf: rule.sellChf,
     expressChf: rule.expressChf,
+    noExpress: rule.noExpress,
     galaxusExVatChf: rule.galaxusExVatChf,
   };
 }
