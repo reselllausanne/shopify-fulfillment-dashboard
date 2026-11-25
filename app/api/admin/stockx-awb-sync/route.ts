@@ -7,6 +7,7 @@ import { runGalaxusAwbBackfill } from "@/lib/galaxusAwbBackfill";
 import { AWB_BUDGET_EXHAUSTED, runAwbBackfill } from "@/lib/stockxAwbBackfill";
 import { notifyStockxAuthBroken, sendStockxEmail } from "@/lib/stockxAuthAlert";
 import { runStockxOrderOpsAlerts } from "@/lib/stockxOpsAlerts";
+import { runStaleCancelSweep } from "@/lib/stockxDelayRebuy/sweepStaleCancelled";
 import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
 import { canRefreshStockxAccount, refreshStockxToken } from "@/lib/stockxSessionRefresh";
 import { readServerStockxToken, stockxTokenExpiresAt } from "@/lib/stockxServerToken";
@@ -109,6 +110,12 @@ export async function POST(req: NextRequest) {
         ok: false,
         error: String(err?.message ?? err),
       }));
+      // Fire-and-forget: a rebuy checkout takes minutes, cron curl max-time is 240s.
+      if (!dryRun) {
+        void runStaleCancelSweep()
+          .then((r) => r.ran && console.log(`[CANCEL-SWEEP] ${JSON.stringify(r)}`))
+          .catch((err) => console.error("[CANCEL-SWEEP] failed", err));
+      }
       console.log(
         `[STOCKX-AWB-SYNC] opsAlertsOnly elapsedMs=${Date.now() - startedAt} newAlerts=${
           (opsAlerts as any)?.newAlerts ?? "?"
