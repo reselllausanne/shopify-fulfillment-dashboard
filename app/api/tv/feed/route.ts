@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
-import { resolveOrderMatchCost } from "@/app/utils/matching";
 import { shopifySellDateUtcWindow, SHOPIFY_SELL_TIMEZONE } from "@/app/utils/shopifySellDate";
+import { presentShopifyLiveSale, summarizeDbShopifyOrder, type TvCostMatch } from "@/app/lib/tvShopifySale";
 import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
 import { isNerGalaxusMarketplaceLine, nerMarginFromCaChf } from "@/galaxus/orders/nerMarketplaceMargin";
 import { galaxusLineStockxCostChfByLineId } from "@/galaxus/orders/galaxusLineStockxCostMetrics";
@@ -65,10 +65,12 @@ const SHOPIFY_TODAY_QUERY = /* GraphQL */ `
             }
           }
         }
-        lineItems(first: 10) {
+        lineItems(first: 20) {
           nodes {
             id
             title
+            name
+            sku
             quantity
             discountedUnitPriceSet {
               shopMoney {
@@ -77,6 +79,7 @@ const SHOPIFY_TODAY_QUERY = /* GraphQL */ `
             }
             variant {
               barcode
+              title
             }
             image {
               url
@@ -104,9 +107,11 @@ type ShopifyOrderNode = {
     nodes?: Array<{
       id?: string;
       title?: string;
+      name?: string;
+      sku?: string | null;
       quantity?: number;
       discountedUnitPriceSet?: { shopMoney?: { amount?: string } };
-      variant?: { barcode?: string | null } | null;
+      variant?: { barcode?: string | null; title?: string | null } | null;
       image?: { url?: string } | null;
     }>;
   };
@@ -186,8 +191,10 @@ async function build() {
       where: { shopifyCreatedAt: { gte: window.start, lte: window.end } },
       select: {
         shopifyOrderName: true,
+        shopifyLineItemId: true,
         shopifyProductTitle: true,
         shopifySku: true,
+        shopifySizeEU: true,
         shopifyTotalPrice: true,
         manualRevenueAdjustment: true,
         supplierCost: true,
@@ -237,124 +244,99 @@ async function build() {
     }),
   ]);
 
-  // ---- Shopify margin from matched lines (by order name) ----
-  const marginByOrder = new Map<string, { margin: number; sales: number; image: string | null }>();
+  const matchesByOrder = new Map<string, TvCostMatch[]>();
   for (const m of matches) {
-    const { cost, fullMargin } = resolveOrderMatchCost(m);
-    const base = toNumberSafe(m.shopifyTotalPrice, 0) + toNumberSafe(m.manualRevenueAdjustment, 0);
-    const pct = toNumberSafe(m.returnFeePercent, 0);
-    const fee = m.returnReason
-      ? toNumberSafe(m.returnFeeAmountChf, pct > 0 ? (toNumberSafe(m.shopifyTotalPrice, 0) * pct) / 100 : 0)
-      : 0;
-    const revenue = m.returnReason ? fee : base;
-    if (!fullMargin && !m.returnReason && (cost <= 0 || revenue <= 0)) continue;
-    const prev = marginByOrder.get(m.shopifyOrderName) ?? { margin: 0, sales: 0, image: null };
-    prev.margin += revenue - cost;
-    prev.sales += revenue;
-    prev.image = prev.image ?? m.shopifyLineItemImageUrl ?? null;
-    marginByOrder.set(m.shopifyOrderName, prev);
+    const list = matchesByOrder.get(m.shopifyOrderName) ?? [];
+    list.push(m);
+    matchesByOrder.set(m.shopifyOrderName, list);
   }
 
   const sales: TvSale[] = [];
   let shopifySales = 0;
   let shopifyOrders = 0;
+  let shopifyMargin = 0;
+  let shopifyMarginEstimated = 0;
 
   const shopPrices = await loadBuyPrices(
     [],
     (shopifyLive ?? []).flatMap((o) => (o.lineItems?.nodes ?? []).map((li) => li.variant?.barcode ?? ""))
   );
-  let shopifyMarginEstimated = 0;
-  refreshLiveBuy(
-    (shopifyLive ?? [])
-      .filter((o) => !o.cancelledAt && !marginByOrder.has(o.name))
-      .flatMap((o) => (o.lineItems?.nodes ?? []).map((li) => li.variant?.barcode))
-  );
+  const buyUnitChf = (gtin: string) => liveBuyChfCached(gtin) ?? (gtin ? shopPrices.byGtin.get(gtin) : undefined);
 
   if (shopifyLive) {
+    const refreshGtins: Array<string | null | undefined> = [];
     for (const o of shopifyLive) {
       if (o.cancelledAt) continue;
       const total = toNumberSafe(o.currentTotalPriceSet?.shopMoney?.amount, 0);
       shopifySales += total;
       shopifyOrders += 1;
       const items = o.lineItems?.nodes ?? [];
-      const first = items[0];
-      let marginChf: number | null = marginByOrder.has(o.name) ? marginByOrder.get(o.name)!.margin : null;
-      let marginEstimated = false;
-      if (marginChf == null) {
-        // Lines fulfilled from a physical site (e.g. Warehouse Bussigny): stock already expensed → 100% margin.
-        const physicalLineIds = new Set<string>();
-        for (const fo of o.fulfillmentOrders?.nodes ?? []) {
-          if (!isPhysicalFulfillmentLocationName(fo.assignedLocation?.name)) continue;
-          for (const l of fo.lineItems?.nodes ?? []) {
-            if (l.lineItem?.id) physicalLineIds.add(l.lineItem.id);
-          }
+      const physicalLineIds: string[] = [];
+      for (const fo of o.fulfillmentOrders?.nodes ?? []) {
+        if (!isPhysicalFulfillmentLocationName(fo.assignedLocation?.name)) continue;
+        for (const l of fo.lineItems?.nodes ?? []) {
+          if (l.lineItem?.id) physicalLineIds.push(l.lineItem.id);
         }
-        let est = 0;
-        let known = 0;
-        let physicalOnly = items.length > 0;
-        for (const li of items) {
-          const qty0 = Math.max(1, li.quantity ?? 1);
-          const price0 = toNumberSafe(li.discountedUnitPriceSet?.shopMoney?.amount, 0);
-          if (li.id && physicalLineIds.has(li.id)) {
-            est += price0 * qty0;
-            known += 1;
-            continue;
-          }
-          physicalOnly = false;
-          const gtin = li.variant?.barcode ?? "";
-          const qty = Math.max(1, li.quantity ?? 1);
-          const price = toNumberSafe(li.discountedUnitPriceSet?.shopMoney?.amount, 0);
-          if (price <= 0) continue;
-          const unit = liveBuyChfCached(gtin) ?? (gtin ? shopPrices.byGtin.get(gtin) : undefined);
-          // No buy price anywhere: assume 20% margin.
-          est += unit && unit > 0 ? (price - unit) * qty : price * qty * 0.2;
-          known += 1;
-        }
-        if (known > 0) {
-          marginChf = est;
-          marginEstimated = !physicalOnly;
-          shopifyMarginEstimated += est;
-        }
+      }
+      const presented = presentShopifyLiveSale({
+        lines: items.map((li) => ({
+          id: li.id,
+          title: li.title,
+          name: li.name,
+          sku: li.sku,
+          quantity: li.quantity,
+          unitPrice: toNumberSafe(li.discountedUnitPriceSet?.shopMoney?.amount, 0),
+          imageUrl: li.image?.url ?? null,
+          gtin: li.variant?.barcode ?? null,
+          variantTitle: li.variant?.title ?? null,
+        })),
+        matches: matchesByOrder.get(o.name) ?? [],
+        physicalLineIds,
+        buyUnitChf,
+      });
+      refreshGtins.push(...presented.refreshGtins);
+      if (presented.marginChf != null) {
+        shopifyMargin += presented.marginChf;
+        if (presented.marginEstimated) shopifyMarginEstimated += presented.marginChf;
       }
       sales.push({
         id: `shopify:${o.name}`,
         channel: "shopify",
         ref: o.name,
-        title: first?.title ?? "Commande Shopify",
-        extraItems: Math.max(0, items.length - 1),
-        imageUrl: first?.image?.url ?? marginByOrder.get(o.name)?.image ?? null,
+        title: presented.title,
+        extraItems: presented.extraItems,
+        imageUrl: presented.imageUrl,
         salesChf: total,
-        marginChf,
-        marginEstimated,
+        marginChf: presented.marginChf,
+        marginEstimated: presented.marginEstimated,
         at: o.createdAt,
       });
     }
+    refreshLiveBuy(refreshGtins);
   } else {
     // Fallback: DB matches only (may lag live orders).
-    const seen = new Map<string, TvSale>();
-    for (const m of matches) {
-      const agg = marginByOrder.get(m.shopifyOrderName);
-      if (!agg || seen.has(m.shopifyOrderName)) continue;
-      shopifySales += agg.sales;
+    for (const [orderName, rows] of matchesByOrder) {
+      const presented = summarizeDbShopifyOrder(rows);
+      if (!presented || presented.marginChf == null) continue;
+      shopifySales += presented.salesChf;
       shopifyOrders += 1;
-      seen.set(m.shopifyOrderName, {
-        id: `shopify:${m.shopifyOrderName}`,
+      shopifyMargin += presented.marginChf;
+      const at = rows.find((r) => r.shopifyCreatedAt)?.shopifyCreatedAt ?? now;
+      sales.push({
+        id: `shopify:${orderName}`,
         channel: "shopify",
-        ref: m.shopifyOrderName,
-        title: m.shopifyProductTitle,
-        extraItems: 0,
-        imageUrl: agg.image,
-        salesChf: agg.sales,
-        marginChf: agg.margin,
+        ref: orderName,
+        title: presented.title,
+        extraItems: presented.extraItems,
+        imageUrl: presented.imageUrl,
+        salesChf: presented.salesChf,
+        marginChf: presented.marginChf,
         marginEstimated: false,
-        at: (m.shopifyCreatedAt ?? now).toISOString(),
+        at: at.toISOString(),
       });
     }
-    sales.push(...seen.values());
   }
 
-  let shopifyMargin = shopifyMarginEstimated;
-  for (const v of marginByOrder.values()) shopifyMargin += v.margin;
   const shopifyMarginPending = shopifyLive
     ? sales.filter((x) => x.channel === "shopify" && x.marginChf == null).length
     : 0;
@@ -476,14 +458,14 @@ async function build() {
       salesChf: Math.round(shopifySales * 100) / 100,
       marginChf: Math.round(shopifyMargin * 100) / 100,
       orders: shopifyOrders,
-      marginEstimatedChf: Math.round(shopifyMarginEstimated),
+      marginEstimatedChf: Math.round(shopifyMarginEstimated * 100) / 100,
       marginPending: shopifyMarginPending,
       live: shopifyLive != null,
     },
     galaxus: {
       salesChf: Math.round(galaxusSales * 100) / 100,
       marginChf: Math.round(galaxusMargin * 100) / 100,
-      marginEstimatedChf: Math.round(galaxusMarginEstimated),
+      marginEstimatedChf: Math.round(galaxusMarginEstimated * 100) / 100,
       orders: gxOrders.size,
     },
     // Every sale of the day: the TV only plays the sound for ids it has never seen.

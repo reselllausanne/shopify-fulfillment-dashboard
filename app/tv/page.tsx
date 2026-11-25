@@ -30,6 +30,11 @@ const POLL_MS = 15_000;
 const chf = (n: number) =>
   new Intl.NumberFormat("fr-CH", { maximumFractionDigits: 0 }).format(Math.round(n)).replace(/\u202f|\u00a0/g, "'");
 
+const chfExact = (n: number) =>
+  new Intl.NumberFormat("fr-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    .format(n)
+    .replace(/\u202f|\u00a0/g, "'");
+
 function useCountUp(target: number, durationMs = 1200) {
   const [value, setValue] = useState(target);
   const from = useRef(target);
@@ -128,9 +133,9 @@ function timeAgo(iso: string, nowMs: number) {
   return `il y a ${h} h`;
 }
 
-function Big({ value, className = "" }: { value: number; className?: string }) {
+function Big({ value, digits = 0, className = "" }: { value: number; digits?: 0 | 2; className?: string }) {
   const v = useCountUp(value);
-  return <span className={`tabular-nums ${className}`}>{chf(v)}</span>;
+  return <span className={`tabular-nums ${className}`}>{(digits === 2 ? chfExact : chf)(v)}</span>;
 }
 
 export default function TvPage() {
@@ -255,68 +260,70 @@ export default function TvPage() {
   const netMargin = feed?.totals.netMarginChf ?? feed?.totals.marginChf ?? 0;
   const totalMarginPct = feed && feed.totals.salesChf > 0 ? (netMargin / feed.totals.salesChf) * 100 : 0;
 
-  return (
-    <div className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-[#05060a] text-white select-none cursor-none">
-      {/* ambient glow */}
-      <div className="pointer-events-none absolute -left-[10vw] -top-[20vh] h-[70vh] w-[50vw] rounded-full bg-emerald-500/20 blur-[140px]" />
-      <div className="pointer-events-none absolute -right-[10vw] -bottom-[20vh] h-[70vh] w-[50vw] rounded-full bg-fuchsia-600/20 blur-[140px]" />
+  const shopifyNote =
+    feed && feed.shopify.marginPending > 0
+      ? `${feed.shopify.marginPending} sans marge`
+      : feed && (feed.shopify.marginEstimatedChf ?? 0) > 0
+        ? `dont ~${chfExact(feed.shopify.marginEstimatedChf ?? 0)} estimé`
+        : undefined;
+  const galaxusNote =
+    feed && (feed.galaxus.marginEstimatedChf ?? 0) > 0
+      ? `dont ~${chfExact(feed.galaxus.marginEstimatedChf ?? 0)} estimé`
+      : undefined;
 
-      {/* header */}
-      <header className="relative flex items-center justify-between px-[3vw] pt-[2.5vh]">
-        <div className="flex items-center gap-[1.2vw]">
-          <span className="relative flex h-[2.2vh] w-[2.2vh]">
+  return (
+    <div className="tv-shell fixed inset-0 z-[100] flex flex-col overflow-hidden bg-[#05060a] text-white select-none">
+      <div className="tv-glow pointer-events-none absolute inset-0" />
+
+      <header className="tv-header relative flex items-center justify-between">
+        <div className="flex min-w-0 items-center gap-[1.2vw]">
+          <span className="tv-live-dot relative flex shrink-0">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
             <span className="relative inline-flex h-full w-full rounded-full bg-emerald-400" />
           </span>
-          <span className="text-[3vh] font-semibold uppercase tracking-[0.35em] text-white/80">
+          <span className="tv-kicker truncate font-semibold uppercase text-white/80">
             Resell Lausanne · Live
           </span>
         </div>
-        <div className="text-right leading-none">
-          <div className="text-[6vh] font-bold tabular-nums">{clock}</div>
-          <div className="mt-[0.5vh] text-[2.2vh] capitalize text-white/50">{date}</div>
+        <div className="shrink-0 text-right leading-none">
+          <div className="tv-clock font-bold tabular-nums">{clock}</div>
+          <div className="tv-date capitalize text-white/50">{date}</div>
         </div>
       </header>
 
-      {/* body */}
-      <main className="relative grid min-h-0 flex-1 grid-cols-[1.35fr_1fr] gap-[2vw] px-[3vw] py-[2.5vh]">
-        {/* left: numbers */}
-        <section className="flex min-h-0 flex-col gap-[2vh]">
-          <div className="rounded-[2vh] border border-white/10 bg-white/[0.04] px-[2.5vw] py-[2.5vh] backdrop-blur">
-            <div className="text-[2.6vh] font-medium uppercase tracking-[0.3em] text-white/50">
-              Ventes du jour
-            </div>
-            <div className="flex items-baseline gap-[1.2vw] leading-none">
+      <main className="tv-main relative min-h-0 flex-1">
+        <section className="tv-numbers flex min-h-0 flex-col">
+          <div className="tv-card rounded-[2vh] border border-white/10 bg-white/[0.04]">
+            <div className="tv-label font-medium uppercase text-white/50">Ventes du jour</div>
+            <div className="flex min-w-0 items-baseline gap-[1.2vw] leading-none">
               <Big
                 value={feed?.totals.salesChf ?? 0}
-                className="bg-gradient-to-r from-emerald-300 via-white to-fuchsia-300 bg-clip-text text-[19vh] font-black text-transparent"
+                className="tv-hero-num bg-gradient-to-r from-emerald-300 via-white to-fuchsia-300 bg-clip-text font-black text-transparent"
               />
-              <span className="text-[5vh] font-bold text-white/40">CHF</span>
+              <span className="tv-unit font-bold text-white/40">CHF</span>
             </div>
-            <div className="mt-[1vh] text-[2.6vh] text-white/60">
-              {feed?.totals.orders ?? 0} commandes
-            </div>
+            <div className="tv-sub text-white/60">{feed?.totals.orders ?? 0} commandes</div>
           </div>
 
-          <div className="rounded-[2vh] border border-emerald-400/30 bg-emerald-400/[0.07] px-[2.5vw] py-[2vh]">
-            <div className="text-[2.6vh] font-medium uppercase tracking-[0.3em] text-emerald-200/70">
+          <div className="tv-card rounded-[2vh] border border-emerald-400/30 bg-emerald-400/[0.07]">
+            <div className="tv-label font-medium uppercase text-emerald-200/70">
               Marge du jour (après pub)
               {feed && (feed.totals.adsSpendChf ?? 0) > 0 && (
-                <span className="ml-[1vw] text-[2.2vh] normal-case tracking-normal text-emerald-200/50">
-                  brut {chf(feed.totals.marginChf)} − pub {chf(feed.totals.adsSpendChf ?? 0)}
+                <span className="tv-label-note normal-case tracking-normal text-emerald-200/50">
+                  brut {chfExact(feed.totals.marginChf)} − pub {chfExact(feed.totals.adsSpendChf ?? 0)}
                 </span>
               )}
             </div>
-            <div className="flex items-baseline gap-[1.2vw] leading-none">
-              <Big value={netMargin} className="text-[11vh] font-black text-emerald-300" />
-              <span className="text-[3.5vh] font-bold text-emerald-200/50">CHF</span>
-              <span className="ml-auto text-[5vh] font-bold tabular-nums text-emerald-200">
+            <div className="flex min-w-0 items-baseline gap-[1.2vw] leading-none">
+              <Big digits={2} value={netMargin} className="tv-margin-num font-black text-emerald-300" />
+              <span className="tv-unit-sm font-bold text-emerald-200/50">CHF</span>
+              <span className="tv-pct ml-auto font-bold tabular-nums text-emerald-200">
                 {totalMarginPct.toFixed(1)}%
               </span>
             </div>
           </div>
 
-          <div className="grid min-h-0 flex-1 grid-cols-2 gap-[2vw]">
+          <div className="tv-channels grid min-h-0 flex-1 grid-cols-2">
             <ChannelCard
               name="Shopify"
               accent="from-lime-400/25 to-lime-400/5 border-lime-300/30"
@@ -324,11 +331,7 @@ export default function TvPage() {
               sales={feed?.shopify.salesChf ?? 0}
               margin={feed?.shopify.marginChf ?? 0}
               orders={feed?.shopify.orders ?? 0}
-              note={
-                feed && feed.shopify.marginPending > 0
-                  ? `${feed.shopify.marginPending} sans marge`
-                  : undefined
-              }
+              note={shopifyNote}
             />
             <ChannelCard
               name="Galaxus"
@@ -337,49 +340,48 @@ export default function TvPage() {
               sales={feed?.galaxus.salesChf ?? 0}
               margin={feed?.galaxus.marginChf ?? 0}
               orders={feed?.galaxus.orders ?? 0}
+              note={galaxusNote}
             />
           </div>
         </section>
 
-        {/* right: feed */}
-        <section className="flex min-h-0 flex-col rounded-[2vh] border border-white/10 bg-white/[0.03] px-[1.6vw] py-[2vh]">
-          <div className="mb-[1.5vh] text-[2.6vh] font-medium uppercase tracking-[0.3em] text-white/50">
-            Dernières ventes
-          </div>
-          <ul className="flex min-h-0 flex-1 flex-col gap-[1.2vh] overflow-hidden">
+        <section className="tv-feed flex min-h-0 flex-col rounded-[2vh] border border-white/10 bg-white/[0.03]">
+          <div className="tv-label mb-[0.6em] font-medium uppercase text-white/50">Dernières ventes</div>
+          <ul className="tv-feed-list flex min-h-0 flex-1 flex-col overflow-hidden">
             {(feed?.sales ?? []).slice(0, 8).map((s) => (
               <SaleRow key={s.id} sale={s} fresh={freshIds.has(s.id)} now={now} />
             ))}
             {feed && feed.sales.length === 0 && (
-              <li className="m-auto text-[3vh] text-white/40">Pas encore de vente aujourd&apos;hui</li>
+              <li className="tv-empty m-auto text-white/40">Pas encore de vente aujourd&apos;hui</li>
             )}
           </ul>
         </section>
       </main>
 
-      {/* new sale overlay */}
       {flash && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/55 backdrop-blur-sm animate-[tvfade_0.3s_ease-out]">
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-black/70 animate-[tvfade_0.3s_ease-out]">
           <div
-            className={`flex max-w-[80vw] flex-col items-center gap-[2vh] rounded-[4vh] border-2 px-[5vw] py-[5vh] text-center shadow-2xl animate-[tvpop_0.5s_cubic-bezier(.2,1.4,.4,1)] ${
+            className={`tv-flash flex max-w-[92vw] flex-col items-center text-center shadow-2xl animate-[tvpop_0.5s_cubic-bezier(.2,1.4,.4,1)] ${
               flash.channel === "shopify"
                 ? "border-lime-300/60 bg-lime-400/15 shadow-lime-400/30"
                 : "border-sky-300/60 bg-sky-400/15 shadow-sky-400/30"
             }`}
           >
-            <div className="text-[4vh] font-bold uppercase tracking-[0.4em] text-white/80">
+            <div className="tv-flash-kicker font-bold uppercase text-white/80">
               Nouvelle vente · {flash.channel === "shopify" ? "Shopify" : "Galaxus"}
             </div>
-            <div className="text-[18vh] font-black leading-none tabular-nums">
-              +{chf(flash.salesChf)} <span className="text-[6vh] text-white/50">CHF</span>
+            <div className="tv-flash-amount font-black leading-none tabular-nums">
+              +{chf(flash.salesChf)} <span className="tv-flash-currency text-white/50">CHF</span>
             </div>
-            <div className="max-w-[70vw] truncate text-[4vh] text-white/80">
+            <div className="tv-flash-title text-white/80">
               {flash.title}
               {flash.extraItems > 0 ? ` +${flash.extraItems}` : ""}
             </div>
             {flash.marginChf != null && (
-              <div className="text-[4.5vh] font-bold text-emerald-300">
-                marge {flash.marginEstimated ? "~" : ""}{flash.marginChf < 0 ? "" : "+"}{chf(flash.marginChf)} CHF
+              <div className="tv-flash-margin font-bold text-emerald-300">
+                marge {flash.marginEstimated ? "~" : ""}
+                {flash.marginChf < 0 ? "" : "+"}
+                {chfExact(flash.marginChf)} CHF
               </div>
             )}
           </div>
@@ -390,18 +392,189 @@ export default function TvPage() {
         <button
           type="button"
           onClick={enableSound}
-          className="absolute bottom-[2vh] left-1/2 z-20 -translate-x-1/2 cursor-pointer rounded-full border border-white/20 bg-black/70 px-[2vw] py-[1vh] text-[2vh] text-white/80"
+          className="tv-sound absolute bottom-[2vh] left-1/2 z-20 -translate-x-1/2 cursor-pointer rounded-full border border-white/20 bg-black/70 text-white/80"
         >
-          🔈 Cliquer pour activer le son
+          Cliquer pour activer le son
         </button>
       )}
       {error && (
-        <div className="absolute bottom-[2vh] right-[2vw] z-20 rounded bg-red-500/80 px-3 py-1 text-[1.8vh]">
+        <div className="tv-error absolute bottom-[2vh] right-[2vw] z-20 rounded bg-red-500/80">
           {error}
         </div>
       )}
 
       <style jsx global>{`
+        html:has(.tv-shell),
+        body:has(.tv-shell) {
+          height: 100%;
+          overflow: hidden;
+        }
+        .tv-shell {
+          container-type: size;
+          container-name: tv;
+        }
+        .tv-glow {
+          background:
+            radial-gradient(42cqw 46cqh at 0 0, rgba(16, 185, 129, 0.2), transparent 62%),
+            radial-gradient(42cqw 46cqh at 100% 100%, rgba(192, 38, 211, 0.18), transparent 62%);
+        }
+        .tv-header {
+          gap: 1rem;
+          padding: clamp(8px, 2cqh, 28px) clamp(12px, 2.4cqw, 48px) 0;
+        }
+        .tv-live-dot {
+          height: clamp(8px, 1.6cqh, 16px);
+          width: clamp(8px, 1.6cqh, 16px);
+        }
+        .tv-kicker {
+          font-size: clamp(0.7rem, 2.2cqh, 1.45rem);
+          letter-spacing: 0.18em;
+        }
+        .tv-clock {
+          font-size: clamp(1.4rem, 5cqh, 3.4rem);
+        }
+        .tv-date {
+          margin-top: 0.2em;
+          font-size: clamp(0.7rem, 1.8cqh, 1.15rem);
+        }
+        .tv-main {
+          display: grid;
+          grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+          gap: clamp(8px, 1.6cqh, 24px);
+          padding: clamp(8px, 1.8cqh, 28px) clamp(12px, 2.4cqw, 48px);
+        }
+        .tv-numbers,
+        .tv-channels {
+          gap: clamp(6px, 1.2cqh, 18px);
+        }
+        .tv-card,
+        .tv-channel,
+        .tv-feed {
+          padding: clamp(8px, 1.6cqh, 22px) clamp(10px, 1.6cqw, 28px);
+        }
+        .tv-label {
+          font-size: clamp(0.65rem, 1.7cqh, 1.05rem);
+          letter-spacing: 0.16em;
+        }
+        .tv-label-note {
+          margin-left: 0.6em;
+          font-size: 0.85em;
+        }
+        .tv-hero-num {
+          font-size: clamp(2.6rem, 14cqh, 10.5rem);
+          line-height: 0.86;
+        }
+        .tv-margin-num {
+          font-size: clamp(1.7rem, 8cqh, 6.2rem);
+          line-height: 0.9;
+        }
+        .tv-channel-num {
+          font-size: clamp(1.35rem, 6.2cqh, 4.8rem);
+          line-height: 0.9;
+        }
+        .tv-unit {
+          font-size: clamp(0.9rem, 3cqh, 2.4rem);
+        }
+        .tv-unit-sm,
+        .tv-pct {
+          font-size: clamp(0.85rem, 2.6cqh, 2rem);
+        }
+        .tv-sub,
+        .tv-channel-meta,
+        .tv-empty {
+          font-size: clamp(0.75rem, 2cqh, 1.25rem);
+        }
+        .tv-feed-list {
+          gap: clamp(4px, 0.7cqh, 10px);
+        }
+        .tv-sale {
+          flex: 1 1 0;
+          min-height: 0;
+          gap: clamp(6px, 0.8cqw, 14px);
+          padding: clamp(4px, 0.7cqh, 10px) clamp(6px, 0.8cqw, 12px);
+        }
+        .tv-sale-img {
+          height: clamp(28px, 6.5cqh, 68px);
+          width: clamp(28px, 6.5cqh, 68px);
+        }
+        .tv-sale-title {
+          font-size: clamp(0.78rem, 2.15cqh, 1.3rem);
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .tv-sale-meta,
+        .tv-sale-margin {
+          font-size: clamp(0.68rem, 1.7cqh, 1.05rem);
+        }
+        .tv-sale-price {
+          font-size: clamp(0.85rem, 2.5cqh, 1.55rem);
+        }
+        .tv-flash {
+          gap: clamp(6px, 1.4cqh, 18px);
+          border-width: 2px;
+          border-radius: clamp(16px, 3cqh, 40px);
+          padding: clamp(16px, 4cqh, 48px) clamp(16px, 4cqw, 64px);
+        }
+        .tv-flash-kicker {
+          font-size: clamp(0.75rem, 2.4cqh, 1.6rem);
+          letter-spacing: 0.18em;
+        }
+        .tv-flash-amount {
+          font-size: clamp(2.4rem, 12cqh, 9rem);
+        }
+        .tv-flash-currency {
+          font-size: 0.38em;
+        }
+        .tv-flash-title {
+          max-width: 78cqw;
+          font-size: clamp(0.95rem, 3cqh, 2rem);
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .tv-flash-margin {
+          font-size: clamp(1rem, 3.4cqh, 2.3rem);
+        }
+        .tv-sound,
+        .tv-error {
+          padding: 0.45em 0.9em;
+          font-size: clamp(0.75rem, 1.8cqh, 1rem);
+        }
+        @container tv (max-width: 640px) {
+          .tv-main {
+            grid-template-columns: 1fr;
+            grid-template-rows: auto minmax(0, 1fr);
+          }
+          .tv-channels {
+            grid-template-columns: 1fr 1fr;
+          }
+        }
+        @container tv (min-width: 1100px) and (min-height: 700px) {
+          .tv-shell {
+            cursor: none;
+          }
+        }
+        @container tv (max-height: 700px) {
+          .tv-sale-title {
+            -webkit-line-clamp: 1;
+          }
+        }
+        @container tv (max-height: 560px) {
+          .tv-kicker,
+          .tv-date,
+          .tv-sale-img {
+            display: none;
+          }
+          .tv-hero-num {
+            font-size: clamp(2rem, 18cqh, 4.2rem);
+          }
+          .tv-margin-num {
+            font-size: clamp(1.3rem, 12cqh, 2.6rem);
+          }
+        }
         @keyframes tvfade {
           from {
             opacity: 0;
@@ -445,18 +618,18 @@ function ChannelCard(props: {
   note?: string;
 }) {
   return (
-    <div className={`flex min-h-0 flex-col justify-between rounded-[2vh] border bg-gradient-to-br px-[1.8vw] py-[2vh] ${props.accent}`}>
-      <div className="flex items-center justify-between">
-        <span className={`text-[3.4vh] font-bold uppercase tracking-[0.25em] ${props.text}`}>{props.name}</span>
-        <span className="text-[2.4vh] text-white/50">{props.orders} cmd</span>
+    <div className={`tv-channel flex min-h-0 min-w-0 flex-col justify-between overflow-hidden rounded-[2vh] border bg-gradient-to-br ${props.accent}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className={`tv-channel-meta font-bold uppercase tracking-[0.14em] ${props.text}`}>{props.name}</span>
+        <span className="tv-channel-meta text-white/50">{props.orders} cmd</span>
       </div>
-      <div className="flex items-baseline gap-[0.6vw] leading-none">
-        <Big value={props.sales} className="text-[9vh] font-black" />
-        <span className="text-[2.6vh] font-bold text-white/40">CHF</span>
+      <div className="flex min-w-0 items-baseline gap-[0.6vw] leading-none">
+        <Big value={props.sales} className="tv-channel-num font-black" />
+        <span className="tv-unit-sm font-bold text-white/40">CHF</span>
       </div>
-      <div className="text-[3vh] text-white/70">
-        marge <span className={`font-bold ${props.text}`}>{chf(props.margin)} CHF</span>
-        {props.note && <span className="ml-[0.8vw] text-[2vh] text-white/40">({props.note})</span>}
+      <div className="tv-channel-meta text-white/70">
+        marge <span className={`font-bold ${props.text}`}>{chfExact(props.margin)} CHF</span>
+        {props.note && <span className="ml-[0.6em] text-white/40">({props.note})</span>}
       </div>
     </div>
   );
@@ -466,26 +639,26 @@ function SaleRow({ sale, fresh, now }: { sale: Sale; fresh: boolean; now: number
   const shop = sale.channel === "shopify";
   return (
     <li
-      className={`flex items-center gap-[1.2vw] rounded-[1.6vh] border px-[1vw] py-[1.1vh] animate-[tvslide_0.6s_ease-out] ${
+      className={`tv-sale flex items-center overflow-hidden rounded-[1.6vh] border animate-[tvslide_0.6s_ease-out] ${
         fresh ? "border-white/60 bg-white/15" : "border-white/10 bg-white/[0.04]"
       }`}
     >
-      <div className="flex h-[8vh] w-[8vh] shrink-0 items-center justify-center overflow-hidden rounded-[1.2vh] bg-white/10">
+      <div className="tv-sale-img flex shrink-0 items-center justify-center overflow-hidden rounded-[1.2vh] bg-white/10">
         {sale.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={sale.imageUrl} alt="" className="h-full w-full object-cover" />
         ) : (
-          <span className="text-[3.5vh]">{shop ? "🛍️" : "📦"}</span>
+          <span>{shop ? "🛍️" : "📦"}</span>
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[2.6vh] font-semibold">
+        <div className="tv-sale-title font-semibold leading-tight">
           {sale.title}
           {sale.extraItems > 0 && <span className="text-white/50"> +{sale.extraItems}</span>}
         </div>
-        <div className="flex items-center gap-[0.8vw] text-[2vh] text-white/50">
+        <div className="tv-sale-meta flex items-center gap-[0.8vw] text-white/50">
           <span
-            className={`rounded px-[0.6vw] py-[0.1vh] text-[1.8vh] font-bold uppercase ${
+            className={`rounded px-[0.45em] font-bold uppercase ${
               shop ? "bg-lime-400/20 text-lime-300" : "bg-sky-400/20 text-sky-300"
             }`}
           >
@@ -494,11 +667,13 @@ function SaleRow({ sale, fresh, now }: { sale: Sale; fresh: boolean; now: number
           <span>{timeAgo(sale.at, now)}</span>
         </div>
       </div>
-      <div className="text-right leading-tight">
-        <div className="text-[3.2vh] font-black tabular-nums">{chf(sale.salesChf)}</div>
+      <div className="shrink-0 text-right leading-tight">
+        <div className="tv-sale-price font-black tabular-nums">{chf(sale.salesChf)}</div>
         {sale.marginChf != null && (
-          <div className="text-[2vh] font-semibold tabular-nums text-emerald-300">
-            {sale.marginEstimated ? "~" : ""}{sale.marginChf < 0 ? "" : "+"}{chf(sale.marginChf)}
+          <div className="tv-sale-margin font-semibold tabular-nums text-emerald-300">
+            {sale.marginEstimated ? "~" : ""}
+            {sale.marginChf < 0 ? "" : "+"}
+            {chfExact(sale.marginChf)}
           </div>
         )}
       </div>
