@@ -98,6 +98,16 @@ describe("presentShopifyLiveSale", () => {
     expect(sale.title).toContain("Dunk");
   });
 
+  it("does not book a loss when the catalog ask is above the sale", () => {
+    const sale = presentShopifyLiveSale({
+      lines: [{ ...shoe, unitPrice: 77 }],
+      matches: [],
+      buyUnitChf: () => 228,
+    });
+    expect(sale.marginEstimated).toBe(true);
+    expect(sale.marginChf).toBeCloseTo(77 * 0.2, 2);
+  });
+
   it("counts a second pair, not the protection add-on", () => {
     const cheap: TvLiveLine = { ...shoe, id: "gid://shopify/LineItem/12", title: "Adidas Samba", name: "Adidas Samba", unitPrice: 90, variantTitle: "EU 41" };
     const sale = presentShopifyLiveSale({

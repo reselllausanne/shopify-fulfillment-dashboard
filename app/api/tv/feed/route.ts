@@ -3,7 +3,7 @@ import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
 import { shopifySellDateUtcWindow, SHOPIFY_SELL_TIMEZONE } from "@/app/utils/shopifySellDate";
-import { presentShopifyLiveSale, summarizeDbShopifyOrder, type TvCostMatch } from "@/app/lib/tvShopifySale";
+import { presentShopifyLiveSale, summarizeDbShopifyOrder, estimateUnboughtMarginChf, type TvCostMatch } from "@/app/lib/tvShopifySale";
 import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
 import { isNerGalaxusMarketplaceLine, nerMarginFromCaChf } from "@/galaxus/orders/nerMarketplaceMargin";
 import { galaxusLineStockxCostChfByLineId } from "@/galaxus/orders/galaxusLineStockxCostMetrics";
@@ -388,8 +388,7 @@ async function build() {
     galaxusLines.map((l) => l.supplierVariantId ?? ""),
     galaxusLines.map((l) => l.gtin ?? "")
   );
-  // Fallback when no buy price exists anywhere: assume 20% margin.
-  const FALLBACK_MARGIN = 0.2;
+  // Fallback when no buy price exists anywhere, or the ask is already above the sale: 20%.
   const isLocal = (m: { stockxOrderNumber?: string | null }) =>
     String(m.stockxOrderNumber ?? "").toUpperCase().startsWith("LOCAL-STOCK");
   // Live KicksDB buy price for every STX pair still without a real purchase (refreshes in background).
@@ -429,7 +428,7 @@ async function build() {
           liveBuyChfCached(line.gtin) ??
           (line.supplierVariantId ? gxPrices.byVariantId.get(line.supplierVariantId) : undefined) ??
           (line.gtin ? gxPrices.byGtin.get(line.gtin) : undefined);
-        m += unit && unit > 0 ? rest * (unitRev - unit) : rest * unitRev * FALLBACK_MARGIN;
+        m += estimateUnboughtMarginChf(rest * unitRev, rest, unit);
         estimated = true;
       }
       margin = m;
