@@ -310,7 +310,7 @@ fetch_prebuilt_image() {
       tstep "prebuilt: $tag not available after ${PREBUILT_WAIT_SECS}s -> local build"
       break
     fi
-    sleep 15
+    sleep 5
   done
   docker logout ghcr.io >/dev/null 2>&1 || true
   return 0
