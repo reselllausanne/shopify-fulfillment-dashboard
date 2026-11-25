@@ -1,0 +1,62 @@
+import "dotenv/config";
+import fs from "node:fs";
+import { parsePlaywrightProxyUrl } from "@/lib/stockxPlaywrightProxy";
+import { remintStockxTokenViaProxy } from "@/lib/stockxProxyRemint";
+import { launchStockxContext } from "@/lib/stockxCheckout";
+
+const OUT = "/app/.data/galaxus-activate.log";
+const log = (s: string) => fs.appendFileSync(OUT, `${new Date().toISOString().slice(11, 19)} ${s}\n`);
+const SESSION = "/app/.data/stockx-session-galaxus.json";
+const STATE = "/app/.data/galaxus-state-fresh.json";
+const BAD = /Login to Apply|create a StockX account|créer un compte|Nous vous invitons à créer/i;
+
+(async () => {
+  fs.appendFileSync(OUT, "=== activate\n");
+  const marker = JSON.parse(fs.readFileSync("/app/.data/galaxus-login.proven", "utf8"));
+  const line: string = marker.line;
+  const [h, pt, u, ...pw] = line.split(":");
+  const proxy = parsePlaywrightProxyUrl(`http://${encodeURIComponent(u)}:${encodeURIComponent(pw.join(":"))}@${h}:${pt}`) as any;
+  // 1) session file = fresh logged-in state (backup old)
+  if (fs.existsSync(SESSION)) fs.copyFileSync(SESSION, `${SESSION}.bak-${Date.now()}`);
+  fs.copyFileSync(STATE, SESSION);
+  const st = JSON.parse(fs.readFileSync(SESSION, "utf8"));
+  log(`session file replaced: cookies=${st.cookies.length} auth0=${st.cookies.filter((c: any) => /^auth0/.test(c.name)).length}`);
+  // 2) pin proxy line
+  fs.writeFileSync("/app/.data/lemonprime-lsn-pin.txt", line + "\n");
+  // 3) API token via remint on the same session
+  const r: any = await remintStockxTokenViaProxy({ account: "galaxus", proxy, maxWaitMs: 120000 } as any);
+  log(`remint token ok=${r.ok} err=${String(r.error || "").slice(0, 100)} exp=${r.expiresAt ? new Date(r.expiresAt).toISOString() : ""}`);
+  // 4) inject into the persistent galaxus profile and prove login there
+  const { ctx, page } = await launchStockxContext({ account: "galaxus", proxy, useStickyProxy: true, forceCold: true } as any);
+  let proven = false;
+  try {
+    let added = 0;
+    for (const c of st.cookies.filter((x: any) => !/^cf_|^__cf/i.test(String(x.name)))) {
+      try {
+        await ctx.addCookies([{ name: c.name, value: c.value, domain: c.domain, path: c.path || "/", expires: c.expires && c.expires > 0 ? c.expires : undefined, httpOnly: !!c.httpOnly, secure: !!c.secure, sameSite: c.sameSite || "Lax" }]);
+        added++;
+      } catch { /* skip */ }
+    }
+    log(`profile cookies injected: ${added}`);
+    for (let i = 0; i < 4 && !proven; i++) {
+      await page.goto("https://stockx.com/fr-fr/buying", { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => undefined);
+      await page.waitForTimeout(9000);
+      const url = page.url(), t = await page.title().catch(() => "");
+      const b = await page.evaluate(() => (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 200)).catch(() => "");
+      const bad = /accounts\.stockx\.com|login|identifier|chrome-error/.test(url) || /^error$/i.test(t.trim()) || /Un instant|Vérification|Please login/i.test(b);
+      log(`profile verify${i} bad=${bad} url=${url.slice(0, 55)} body=${JSON.stringify(b.slice(0, 60))}`);
+      if (bad) continue;
+      await page.goto("https://stockx.com/fr-fr/buy/asics-superblast-3-cobalt-burst-light-orange?size=7.5", { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => undefined);
+      await page.waitForTimeout(9000);
+      const bb = await page.evaluate(() => (document.body?.innerText || "").replace(/\s+/g, " ")).catch(() => "");
+      const guest = BAD.test(bb), chf = /CHF/.test(bb), sub = /Sous-total|Subtotal/i.test(bb);
+      log(`profile buy page guest=${guest} chf=${chf} subtotal=${sub}`);
+      proven = !guest && chf && sub;
+    }
+  } finally {
+    await ctx.close().catch(() => undefined);
+  }
+  log(proven ? "PROFILE_LOGGED_IN_PROVEN" : "PROFILE_NOT_PROVEN");
+  if (proven) fs.writeFileSync("/app/.data/galaxus-profile.proven", new Date().toISOString());
+  process.exit(0);
+})();
