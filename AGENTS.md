@@ -26,6 +26,10 @@ Several Cursor chats (Cloud + local) may edit this repo at once. **Coordinate on
 - Sync/deploy docs: [`docs/GITHUB-VPS-SYNC.md`](docs/GITHUB-VPS-SYNC.md).
 - VPS deploy on push to `main`: [`.github/workflows/deploy-vps.yml`](.github/workflows/deploy-vps.yml).
 
+## StockX login (mandatory)
+
+- Never ask the user to log in to StockX (Shopify or Galaxus). Find an autonomous way and prove it: [`.cursor/rules/stockx-self-login.mdc`](.cursor/rules/stockx-self-login.mdc).
+
 ## Cursor Cloud specific instructions
 
 Cloud Agents run on a remote VM, not your Mac. They do **not** inherit Mac MCP OAuth or local `.env`.
