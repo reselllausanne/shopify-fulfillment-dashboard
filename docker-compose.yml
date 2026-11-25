@@ -30,7 +30,9 @@ services:
 
   # SAV agent (Cursor SDK). Full access like the owner: full .env, full DB, repo cwd.
   sav-agent:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.sav
     env_file:
       - .env
     environment:
