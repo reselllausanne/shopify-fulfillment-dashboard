@@ -50,12 +50,12 @@ const SHOPIFY_TODAY_QUERY = /* GraphQL */ `
             amount
           }
         }
-        fulfillmentOrders(first: 5) {
+        fulfillmentOrders(first: 4) {
           nodes {
             assignedLocation {
               name
             }
-            lineItems(first: 20) {
+            lineItems(first: 8) {
               nodes {
                 totalQuantity
                 lineItem {
@@ -65,7 +65,7 @@ const SHOPIFY_TODAY_QUERY = /* GraphQL */ `
             }
           }
         }
-        lineItems(first: 20) {
+        lineItems(first: 8) {
           nodes {
             id
             title
@@ -132,8 +132,8 @@ async function fetchShopifyToday(startIso: string): Promise<ShopifyOrderNode[]> 
       >
     > = await shopifyGraphQL(
       SHOPIFY_TODAY_QUERY,
-      { first: 100, after, q: `created_at:>=${startIso}` },
-      { estimatedQueryCost: 120 }
+      { first: 25, after, q: `created_at:>=${startIso}` },
+      { estimatedQueryCost: 45 }
     );
     if (res.errors?.length) throw new Error(res.errors[0]?.message ?? "shopify graphql error");
     // Shopify's created_at search can round the bound down to the whole day; filter exactly here.
