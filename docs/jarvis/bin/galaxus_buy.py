@@ -385,6 +385,17 @@ class BrowserBackend:
             if res is not None:
                 url = self.page.url
                 text = re.sub(r"\s+", " ", self.page.inner_text("body"))
+            elif os.environ.get("GALAXUS_HEADED") == "1":
+                # Human-in-the-loop: window is visible, Théo logs in / approves on PayPal himself (up to 6 min).
+                for _ in range(240):
+                    self.page.wait_for_timeout(1500)
+                    if "paypal." not in self.page.url:
+                        break
+                url = self.page.url
+                if "paypal." in url:
+                    return {"status": "needs_paypal", "order": None, "url": url}
+                self.page.wait_for_timeout(4000)
+                text = re.sub(r"\s+", " ", self.page.inner_text("body"))
             else:
                 return {"status": "needs_paypal", "order": None, "url": url}
         m = re.search(r"(?:commande|bestellung|order)[^0-9]{0,30}(\d{6,})", text, re.I)
