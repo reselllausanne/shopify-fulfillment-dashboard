@@ -381,11 +381,39 @@ class BrowserBackend:
         url = self.page.url
         text = re.sub(r"\s+", " ", self.page.inner_text("body"))
         if "paypal." in url:
-            return {"status": "needs_paypal", "order": None, "url": url}
+            res = self._paypal_approve(expected_total=getattr(self, "expected_total", None))
+            if res is not None:
+                url = self.page.url
+                text = re.sub(r"\s+", " ", self.page.inner_text("body"))
+            else:
+                return {"status": "needs_paypal", "order": None, "url": url}
         m = re.search(r"(?:commande|bestellung|order)[^0-9]{0,30}(\d{6,})", text, re.I)
         if re.search(r"merci pour votre commande|vielen dank|thank you|commande (?:a été )?(?:passée|enregistrée)", text, re.I) or "/order" in url:
             return {"status": "confirmed", "order": m.group(1) if m else None, "url": url}
         return {"status": "unknown", "order": None, "url": url}
+
+    def _paypal_approve(self, expected_total=None):
+        """Only with an ALREADY logged-in PayPal session (log in once by hand: jarvis-browser/login_paypal.py).
+        Never types credentials. Refuses if a password field is shown or the amount on the page doesn't match.
+        Returns True after clicking the approval button and landing back off paypal.com, else None."""
+        pg = self.page
+        pg.wait_for_timeout(4000)
+        if pg.locator('input[type="password"]').count() or "connexion" in pg.url or "signin" in pg.url:
+            return None
+        body = re.sub(r"\s+", " ", pg.inner_text("body"))
+        if expected_total is not None:
+            amt = f"{expected_total:.2f}".rstrip("0").rstrip(".")
+            if not re.search(re.escape(amt).replace("\\.", "[.,]"), body):
+                return None
+        btn = pg.get_by_role("button", name=re.compile(r"payer maintenant|continuer|accepter et payer|pay now|complete purchase|jetzt bezahlen", re.I))
+        if not btn.count():
+            return None
+        btn.first.click()
+        for _ in range(20):
+            pg.wait_for_timeout(1500)
+            if "paypal." not in pg.url:
+                return True
+        return None
 
     def close(self):
         self._cm.__exit__(None, None, None)
@@ -443,6 +471,7 @@ def cmd_buy(a, fetch, backend_factory, now_log):
     backend = backend_factory()
     try:
         cart = backend.add_to_cart(prod["url"])
+        backend.expected_total = cart.get("cart_total_chf")
         if cart.get("shipping_chf") is not None:
             ship = cart["shipping_chf"]
         delivery = cart.get("delivery") or delivery
