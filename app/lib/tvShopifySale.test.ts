@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { presentShopifyLiveSale, summarizeDbShopifyOrder, type TvCostMatch, type TvLiveLine } from "@/app/lib/tvShopifySale";
+import { aaaWarehouseMarginChf, presentShopifyLiveSale, summarizeDbShopifyOrder, type TvCostMatch, type TvLiveLine } from "@/app/lib/tvShopifySale";
 
 const shoe: TvLiveLine = {
   id: "gid://shopify/LineItem/10",
@@ -118,6 +118,16 @@ describe("presentShopifyLiveSale", () => {
     expect(sale.title).toContain("Nike Dunk Low");
     expect(sale.extraItems).toBe(1);
     expect(sale.marginChf).toBeCloseTo(4.9 + 180 * 0.2 + 90 * 0.2, 2);
+  });
+});
+
+describe("aaaWarehouseMarginChf", () => {
+  it("uses the Essentials buy price and 100% for the other warehouse pairs", () => {
+    expect(
+      aaaWarehouseMarginChf({ revenue: 59, qty: 1, warehouse: true, fixedUnitCostChf: 26 })
+    ).toBe(33);
+    expect(aaaWarehouseMarginChf({ revenue: 693, qty: 9, warehouse: true })).toBe(693);
+    expect(aaaWarehouseMarginChf({ revenue: 180, qty: 1, warehouse: false })).toBeNull();
   });
 });
 
