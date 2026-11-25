@@ -121,6 +121,10 @@ export function stockxSizeQueryFromKickdbLabel(raw: string | null | undefined): 
   if (women) return `${women[1]}W`;
   const men = t.match(/US\s*M\s*([0-9]+(?:\.[0-9]+)?)/i);
   if (men) return men[1];
+  // Toddler / child / youth labels with an explicit suffix: "US 6T", "US 13C", "US 6Y" → token as StockX shows it.
+  // Plain "US 6" on a kids product stays unresolved on purpose (token unknown; picker tile is clicked instead).
+  const kid = t.match(/^US\s*([0-9]+(?:\.[0-9]+)?[CTY])$/i);
+  if (kid) return kid[1].toUpperCase();
   if (/^[0-9]+(?:\.[0-9]+)?W$/i.test(t)) return t.toUpperCase().replace(/\s/g, "");
   if (/^[0-9]+(?:\.[0-9]+)?$/.test(t)) return t;
   return null;

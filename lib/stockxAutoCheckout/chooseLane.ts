@@ -310,8 +310,42 @@ export function isNoSellersPage(body: string | null | undefined): boolean {
  */
 export function isSizeGridBody(body: string | null | undefined): boolean {
   const t = String(body || "");
-  if (!/Select Size|Choose Size|Sélectionner la taille|Choisir la taille/i.test(t)) return false;
+  // fr-fr picker is half translated: "Sélectionnez du Size" (seen on Ugg enfant / Li-Ning / Toddler dumps).
+  if (
+    !/Select Size|Choose Size|Sélectionner la taille|Choisir la taille|S[ée]lectionnez\s+(?:du\s+|la\s+)?(?:Size|taille)/i.test(
+      t
+    )
+  ) {
+    return false;
+  }
   return !/Review Order|Place Order|Subtotal|Sous[- ]?total|Vérifier la commande|Passer commande/i.test(t);
+}
+
+/**
+ * Size-picker tile for an EU size: innerText is "EU 38" + newline + price. Price is "CHF 76",
+ * "76 CHF", "€111" (guest/EU region) or an offer-only label. "EU 38" must never match "EU 38.5".
+ */
+export function euSizeTilePattern(size: string): RegExp {
+  const esc = String(size).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const num = String.raw`[\d’'.,]+`;
+  return new RegExp(
+    String.raw`^EU\s*${esc}\s+(?:CHF\s*${num}|${num}\s*CHF|[€$£]\s*${num}|${num}\s*[€$£]|${num}\s*EUR|Offer|Offre|Make an offer|Faire une offre)\s*$`,
+    "i"
+  );
+}
+
+/**
+ * Size-picker tile for a US token ("9.5", "6T", "6Y", "M 9.5"): "US M 9.5" / "US 6T" + newline + price.
+ * Used when the product has no EU tab (Li-Ning: "Size: US M" only). "9.5" never matches "19.5".
+ */
+export function usSizeTilePattern(token: string): RegExp {
+  const clean = String(token).replace(/^US\s*/i, "").replace(/^[MW]\s*/i, "").trim();
+  const esc = clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const num = String.raw`[\d’'.,]+`;
+  return new RegExp(
+    String.raw`^US\s*(?:[MW]\s*)?${esc}\s+(?:CHF\s*${num}|${num}\s*CHF|[€$£]\s*${num}|${num}\s*[€$£]|${num}\s*EUR|Offer|Offre|Make an offer|Faire une offre)\s*$`,
+    "i"
+  );
 }
 
 export function classifyEmptyLaneReason(

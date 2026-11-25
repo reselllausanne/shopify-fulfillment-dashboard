@@ -59,7 +59,9 @@ export function galaxusTitleMatchesProductName(title: string, productName: strin
   if (t === n) return true;
   if (!t.endsWith(` ${n}`)) return false;
   const prefix = t.slice(0, t.length - n.length - 1);
-  return n.startsWith(`${prefix} `);
+  // Doubled brand ("li ning li ning way of wade …") or one/two extra brand words Galaxus adds
+  // ("asics onitsuka tiger …" vs StockX "Onitsuka Tiger …"). The rest must match exactly.
+  return n.startsWith(`${prefix} `) || prefix.split(" ").length <= 2;
 }
 
 async function resolveSlugByTitle(title: string): Promise<{ urlKey: string; styleId: string | null } | null> {
