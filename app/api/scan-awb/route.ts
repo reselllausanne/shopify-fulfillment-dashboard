@@ -582,7 +582,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             select: { shopifyOrderId: true },
           }),
           prisma.shopifyOrder.findFirst({
-            where: { shopifyOrderId: match.shopifyOrderId, cancelledAt: { not: null } },
+            where: { shopifyOrderId: match.shopifyOrderId, OR: [{ cancelledAt: { not: null } }, { financialStatus: { in: ["REFUNDED", "VOIDED"] } }] },
             select: { shopifyOrderId: true },
           }),
         ]);

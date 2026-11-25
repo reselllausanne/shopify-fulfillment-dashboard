@@ -317,7 +317,7 @@ async function searchShopify(q: string, limit: number): Promise<SuggestItem[]> {
       : Promise.resolve([] as Array<{ shopifyOrderId: string }>),
     orderIds.length
       ? prisma.shopifyOrder.findMany({
-          where: { shopifyOrderId: { in: orderIds }, cancelledAt: { not: null } },
+          where: { shopifyOrderId: { in: orderIds }, OR: [{ cancelledAt: { not: null } }, { financialStatus: { in: ["REFUNDED", "VOIDED"] } }] },
           select: { shopifyOrderId: true },
         })
       : Promise.resolve([] as Array<{ shopifyOrderId: string }>),
