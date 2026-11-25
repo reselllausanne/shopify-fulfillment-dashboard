@@ -8,12 +8,13 @@ const user = process.env.SAV_IMAP_USER || process.env.STOCKX_OTP_IMAP_USER, pass
 if (!user || !pass) { console.error("IMAP creds missing"); process.exit(2); }
 const [cmd, ...rest] = process.argv.slice(2);
 const opt = (k, d) => { const i = rest.indexOf(`--${k}`); return i >= 0 ? rest[i + 1] : d; };
-const box = process.env.SAV_IMAP_MAILBOX || "[Gmail]/All Mail";
+const boxes = process.env.SAV_IMAP_MAILBOX ? [process.env.SAV_IMAP_MAILBOX] : ["[Gmail]/Tous les messages", "[Gmail]/All Mail"];
 const c = new ImapFlow({ host: process.env.SAV_IMAP_HOST || "imap.gmail.com", port: 993, secure: true, auth: { user, pass }, logger: false });
 const clip = (s, n) => String(s ?? "").replace(/\s+\n/g, "\n").slice(0, n);
 try {
   await c.connect();
-  const lock = await c.getMailboxLock(box, { readOnly: true });
+  let lock; for (const b of boxes) { try { lock = await c.getMailboxLock(b, { readOnly: true }); break; } catch {} }
+  if (!lock) throw new Error("no all-mail folder found");
   try {
     if (cmd === "search") {
       const q = { since: new Date(Date.now() - Number(opt("days", 30)) * 864e5) };
