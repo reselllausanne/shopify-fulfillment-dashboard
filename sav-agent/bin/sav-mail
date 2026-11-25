@@ -4,7 +4,7 @@
 //   sav-mail read <uid>
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
-const user = process.env.SAV_IMAP_USER || process.env.STOCKX_OTP_IMAP_USER, pass = String(process.env.SAV_IMAP_PASSWORD || process.env.STOCKX_OTP_IMAP_PASSWORD ?? "").replace(/\s+/g, "");
+const user = process.env.SAV_IMAP_USER || process.env.STOCKX_OTP_IMAP_USER, pass = String((process.env.SAV_IMAP_PASSWORD || process.env.STOCKX_OTP_IMAP_PASSWORD) ?? "").replace(/\s+/g, "");
 if (!user || !pass) { console.error("IMAP creds missing"); process.exit(2); }
 const [cmd, ...rest] = process.argv.slice(2);
 const opt = (k, d) => { const i = rest.indexOf(`--${k}`); return i >= 0 ? rest[i + 1] : d; };
