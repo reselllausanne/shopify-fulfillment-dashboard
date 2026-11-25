@@ -1,6 +1,6 @@
 import http from "node:http";
 import fs from "node:fs";
-import { Agent } from "@cursor/sdk";
+import { Agent, JsonlLocalAgentStore } from "@cursor/sdk";
 
 const PORT = Number(process.env.PORT || 3100);
 const TOKEN = process.env.SAV_AGENT_TOKEN;
@@ -10,6 +10,8 @@ const CWD = process.env.SAV_CWD || "/app";
 const DATA = process.env.SAV_DATA_DIR || "/app/.data/sav";
 fs.mkdirSync(DATA, { recursive: true });
 const LOG = DATA + "/log.jsonl";
+// Node 20 image has no node:sqlite -> JSONL store.
+const STORE = new JsonlLocalAgentStore(DATA + "/store");
 const IDLE_MS = 30 * 60 * 1000;
 if (!TOKEN || !API_KEY) { console.error("SAV_AGENT_TOKEN and CURSOR_API_KEY required"); process.exit(1); }
 
@@ -21,7 +23,7 @@ const log = (rec) => fs.appendFileSync(LOG, JSON.stringify({ ts: new Date().toIS
 async function getSession(id) {
   let s = sessions.get(id);
   if (!s) {
-    const agent = await Agent.create({ apiKey: API_KEY, model: { id: MODEL }, local: { cwd: CWD } });
+    const agent = await Agent.create({ apiKey: API_KEY, model: { id: MODEL }, local: { cwd: CWD, store: STORE } });
     s = { agent, last: Date.now(), busy: false, first: true };
     sessions.set(id, s);
   }
@@ -62,7 +64,7 @@ async function recap() {
   const rows = fs.existsSync(LOG) ? fs.readFileSync(LOG, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => Date.parse(r.ts) > since) : [];
   if (!rows.length) return;
   const prompt = `Résume pour Théo, en français, très court. Section "À FAIRE CE SOIR" (escalations, par priorité, avec n° commande), section "RÉSOLU PAR L'IA" (une ligne par question). Données :\n${JSON.stringify(rows).slice(0, 60000)}`;
-  const r = await Agent.prompt(prompt, { apiKey: API_KEY, model: { id: MODEL }, local: { cwd: "/tmp" } });
+  const r = await Agent.prompt(prompt, { apiKey: API_KEY, model: { id: MODEL }, local: { cwd: "/tmp", store: STORE } });
   const text = String(r.result ?? "").slice(0, 3500);
   if (process.env.SAV_NTFY_TOPIC && text) {
     await fetch(`${process.env.SAV_NTFY_URL || "https://ntfy.sh"}/${process.env.SAV_NTFY_TOPIC}`, {
