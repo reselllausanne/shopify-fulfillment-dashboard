@@ -690,6 +690,14 @@ main() {
     # Every worker must leave Created — especially worker-galaxus-feed (stock/price).
     verify_compose_service_running "$svc" 90
   done
+  # sav-agent runs sav-agent/server.mjs (not scripts/*.ts) so worker selection never sees it.
+  # Always rebuild: docker layer cache makes it cheap; `up -d` only recreates on image change.
+  if docker compose config --services | grep -qx sav-agent; then
+    echo "== build + up sav-agent"
+    if ! docker compose build sav-agent || ! docker compose up -d --no-deps sav-agent; then
+      echo "WARN: sav-agent not redeployed (non-fatal)"
+    fi
+  fi
   # All worker images now current at WANT (selected ones rebuilt; others unaffected by diff).
   if [ -z "$DEPLOY_WORKERS" ]; then
     echo "$WANT" >"$(worker_marker_file)"
