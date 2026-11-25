@@ -1,4 +1,5 @@
 import { isPackageProtectionShopifyLine, resolveOrderMatchCost } from "@/app/utils/matching";
+import { resolveInStockFixedPrice } from "@/shopify/inventory/inStockFixedPrice";
 import { toNumberSafe } from "@/app/utils/numbers";
 
 /**
@@ -20,6 +21,25 @@ export function estimateUnboughtMarginChf(
   const unitRev = revenue / q;
   if (unitBuy && unitBuy > 0 && unitBuy < unitRev) return (unitRev - unitBuy) * q;
   return revenue * FALLBACK_MARGIN;
+}
+
+/**
+ * AAA / Bussigny warehouse sale.
+ * Essentials (and the other fixed-cost lanes) keep their unit buy price.
+ * Every other warehouse pair is already expensed → 100% margin.
+ * Returns null when the line is not warehouse stock.
+ */
+export function aaaWarehouseMarginChf(input: {
+  revenue: number;
+  qty: number;
+  warehouse: boolean;
+  fixedUnitCostChf?: number | null;
+}): number | null {
+  if (!input.warehouse) return null;
+  const qty = Math.max(1, input.qty || 1);
+  const unitCost = input.fixedUnitCostChf;
+  if (unitCost != null && unitCost > 0) return input.revenue - unitCost * qty;
+  return input.revenue;
 }
 
 export type TvCostMatch = {
@@ -213,7 +233,17 @@ export function presentShopifyLiveSale(args: {
     const physical = lineItemIdKeys(li.id).some((key) => physicalKeys.has(key));
     if (physical) {
       if (gross > 0) {
-        margin += gross;
+        const fixed = resolveInStockFixedPrice({
+          title: li.title || li.name,
+          sku: li.sku,
+        });
+        margin +=
+          aaaWarehouseMarginChf({
+            revenue: gross,
+            qty: li.quantity ?? 1,
+            warehouse: true,
+            fixedUnitCostChf: fixed?.costChf ?? null,
+          }) ?? gross;
         known += 1;
       }
       return;

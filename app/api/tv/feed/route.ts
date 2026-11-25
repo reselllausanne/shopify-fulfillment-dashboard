@@ -3,7 +3,10 @@ import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
 import { shopifySellDateUtcWindow, SHOPIFY_SELL_TIMEZONE } from "@/app/utils/shopifySellDate";
-import { presentShopifyLiveSale, summarizeDbShopifyOrder, estimateUnboughtMarginChf, type TvCostMatch } from "@/app/lib/tvShopifySale";
+import { estimateUnboughtMarginChf, aaaWarehouseMarginChf, presentShopifyLiveSale, summarizeDbShopifyOrder, type TvCostMatch } from "@/app/lib/tvShopifySale";
+import { isCrocsLightningMcQueenLine } from "@/galaxus/warehouse/lineInventorySource";
+import { isTheWarehouseGalaxusLine } from "@/galaxus/warehouse/theCatalogStock";
+import { resolveGalaxusLocalStockCostChf } from "@/galaxus/orders/localStockMatch";
 import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
 import { isNerGalaxusMarketplaceLine, nerMarginFromCaChf } from "@/galaxus/orders/nerMarketplaceMargin";
 import { galaxusLineStockxCostChfByLineId } from "@/galaxus/orders/galaxusLineStockxCostMetrics";
@@ -255,6 +258,7 @@ async function build() {
         orderId: true,
         quantity: true,
         productName: true,
+        description: true,
         lineNetAmount: true,
         priceLineAmount: true,
         gtin: true,
@@ -410,28 +414,47 @@ async function build() {
     if (isNerGalaxusMarketplaceLine(line)) {
       margin = nerMarginFromCaChf(revenue);
     } else {
-      // Per unit: owned local stock = 100%, real purchase = revenue - cost, rest = live/DB buy price (else 20%).
       const qty = Math.max(1, line.quantity ?? 1);
-      const unitRev = revenue / qty;
-      const ownedUnits = new Set(line.stockxMatches.filter(isLocal).map((m) => m.unitIndex)).size;
-      const boughtUnits = new Set(
-        line.stockxMatches.filter((m) => !isLocal(m) && Number(m.stockxAmount) > 0).map((m) => m.unitIndex)
-      ).size;
-      const realCost = costById.get(line.id) ?? 0;
-      const bought = realCost > 0 ? Math.min(qty, Math.max(1, boughtUnits)) : 0;
-      const owned = Math.min(qty - bought, ownedUnits);
-      const rest = Math.max(0, qty - bought - owned);
-      let m = owned * unitRev;
-      if (bought > 0) m += bought * unitRev - realCost;
-      if (rest > 0) {
-        const unit =
-          liveBuyChfCached(line.gtin) ??
-          (line.supplierVariantId ? gxPrices.byVariantId.get(line.supplierVariantId) : undefined) ??
-          (line.gtin ? gxPrices.byGtin.get(line.gtin) : undefined);
-        m += estimateUnboughtMarginChf(rest * unitRev, rest, unit);
-        estimated = true;
+      const fixed = resolveGalaxusLocalStockCostChf({
+        productName: line.productName,
+        description: line.description,
+        supplierSku: line.supplierSku,
+      });
+      const warehouse =
+        fixed != null ||
+        line.stockxMatches.some(isLocal) ||
+        isCrocsLightningMcQueenLine(line) ||
+        isTheWarehouseGalaxusLine(line);
+      const warehouseMargin = aaaWarehouseMarginChf({
+        revenue,
+        qty,
+        warehouse,
+        fixedUnitCostChf: fixed?.costChf ?? null,
+      });
+      if (warehouseMargin != null) {
+        margin = warehouseMargin;
+      } else {
+        const unitRev = revenue / qty;
+        const ownedUnits = new Set(line.stockxMatches.filter(isLocal).map((m) => m.unitIndex)).size;
+        const boughtUnits = new Set(
+          line.stockxMatches.filter((m) => !isLocal(m) && Number(m.stockxAmount) > 0).map((m) => m.unitIndex)
+        ).size;
+        const realCost = costById.get(line.id) ?? 0;
+        const bought = realCost > 0 ? Math.min(qty, Math.max(1, boughtUnits)) : 0;
+        const owned = Math.min(qty - bought, ownedUnits);
+        const rest = Math.max(0, qty - bought - owned);
+        let m = owned * unitRev;
+        if (bought > 0) m += bought * unitRev - realCost;
+        if (rest > 0) {
+          const unit =
+            liveBuyChfCached(line.gtin) ??
+            (line.supplierVariantId ? gxPrices.byVariantId.get(line.supplierVariantId) : undefined) ??
+            (line.gtin ? gxPrices.byGtin.get(line.gtin) : undefined);
+          m += estimateUnboughtMarginChf(rest * unitRev, rest, unit);
+          estimated = true;
+        }
+        margin = m;
       }
-      margin = m;
     }
     if (margin != null) {
       galaxusMargin += margin;
