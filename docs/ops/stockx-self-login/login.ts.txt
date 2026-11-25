@@ -1,0 +1,262 @@
+import "dotenv/config";
+import fs from "node:fs";
+import { chromium } from "patchright";
+import { ImapFlow } from "imapflow";
+import { parsePlaywrightProxyUrl } from "@/lib/stockxPlaywrightProxy";
+import { stockxCredentialsFromEnv } from "@/lib/stockxAutoLogin";
+
+// Parallel throwaway-profile login attempts (NOT the galaxus profile). Winner writes storageState + proxy marker.
+const LOG = "/app/.data/galaxus-login.log";
+const IDXFILE = "/app/.data/galaxus-login.idx";
+const PROVEN = "/app/.data/galaxus-login.proven";
+const STATE = "/app/.data/galaxus-state-fresh.json";
+const WORKERS = Number(process.env.WORKERS || 1);
+const DEADLINE = Date.now() + 50 * 60_000;
+const rnd = (a: number, b: number) => a + Math.random() * (b - a);
+const log = (w: number, s: string) => fs.appendFileSync(LOG, `${new Date().toISOString().slice(11, 19)} w${w} ${s}\n`);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function humanMove(page: any, x: number, y: number) {
+  const steps = 16 + Math.floor(rnd(0, 10));
+  const sx = rnd(80, 500), sy = rnd(80, 300);
+  await page.mouse.move(sx, sy);
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps, e = t * t * (3 - 2 * t);
+    await page.mouse.move(sx + (x - sx) * e + rnd(-2, 2), sy + (y - sy) * e + rnd(-2, 2));
+    await page.waitForTimeout(rnd(8, 24));
+  }
+}
+
+async function challengeBox(page: any): Promise<any> {
+  const f2 = page.frames().find((f: any) => /challenges\.cloudflare\.com/.test(f.url()));
+  let box: any = null;
+  if (f2) {
+    const el = await f2.frameElement().catch(() => null);
+    box = el ? await el.boundingBox().catch(() => null) : null;
+  }
+  if (!box) box = await page.locator('iframe[src*="challenges.cloudflare.com"]').first().boundingBox({ timeout: 1000 }).catch(() => null);
+  return box && box.width >= 40 && box.height >= 30 ? box : null;
+}
+
+async function fetchOtp(after: Date, timeoutMs = 120_000): Promise<string | null> {
+  const user = String(process.env.STOCKX_OTP_IMAP_USER ?? "").trim();
+  const pass = String(process.env.STOCKX_OTP_IMAP_PASSWORD ?? "").replace(/\s+/g, "");
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const client = new ImapFlow({ host: "imap.gmail.com", port: 993, secure: true, auth: { user, pass }, logger: false });
+    try {
+      await client.connect();
+      const lock = await client.getMailboxLock("INBOX");
+      try {
+        const uids = (await client.search({ since: new Date(Date.now() - 24 * 3600_000) }, { uid: true })) as number[];
+        for await (const msg of client.fetch(uids.slice(-40), { envelope: true, uid: true }, { uid: true })) {
+          const from = (msg.envelope?.from ?? []).map((a: any) => String(a.address)).join(",");
+          const subj = String(msg.envelope?.subject ?? "");
+          const when = msg.envelope?.date ? new Date(msg.envelope.date).getTime() : 0;
+          const m = subj.match(/^(\d{6})\s*[–-]\s*(?:Votre code|Your .*code)/i);
+          const to = (msg.envelope?.to ?? []).map((a: any) => String(a.address)).join(",");
+          if (m && /stockx\.com/i.test(from) && when >= after.getTime() - 20_000 && /contact@resell-lausanne\.ch/i.test(to)) return m[1];
+        }
+      } finally { lock.release(); }
+    } catch { /* retry */ }
+    finally { await client.logout().catch(() => undefined); }
+    await sleep(4000);
+  }
+  return null;
+}
+
+const LOCK = "/app/.data/galaxus-login.lock";
+async function acquire(w: number): Promise<boolean> {
+  const end = Date.now() + 240_000;
+  while (Date.now() < end) {
+    try {
+      try { const st = fs.statSync(LOCK); if (Date.now() - st.mtimeMs > 200_000) fs.rmSync(LOCK, { recursive: true, force: true }); } catch { /* none */ }
+      fs.mkdirSync(LOCK);
+      return true;
+    } catch { await sleep(2500); if (fs.existsSync(PROVEN)) return false; }
+  }
+  return false;
+}
+function release() { try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch { /* ignore */ } }
+
+function nextIdx(all: number): number {
+  let n = 0;
+  try { n = Number(fs.readFileSync(IDXFILE, "utf8")) || 0; } catch { /* first */ }
+  fs.writeFileSync(IDXFILE, String((n + 1) % all));
+  return n % all;
+}
+
+async function attempt(w: number, line: string, idx: number): Promise<string> {
+  const [h, pt, u, ...pw] = line.split(":");
+  const proxy = parsePlaywrightProxyUrl(`http://${encodeURIComponent(u)}:${encodeURIComponent(pw.join(":"))}@${h}:${pt}`) as any;
+  const browser = await chromium.launch({ headless: false, proxy: { server: proxy.server, username: proxy.username, password: proxy.password }, args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled", "--window-size=1440,900"], env: { ...process.env, DISPLAY: process.env.DISPLAY || ":99" } });
+  try {
+    const ctx = await browser.newContext({ locale: "fr-FR", timezoneId: "Europe/Zurich", viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+    const creds: any = stockxCredentialsFromEnv("galaxus" as any);
+    let challengeSince = 0, lastClick = 0, clicks = 0;
+    const tryClick = async (minSeen = 26_000, cooldown = 24_000) => {
+      const now = Date.now();
+      if (!challengeSince) challengeSince = now;
+      if (now - challengeSince < minSeen || now - lastClick < cooldown) return;
+      const box = await challengeBox(page);
+      if (!box) return;
+      const cx = box.x + 26 + rnd(-3, 3), cy = box.y + box.height / 2 + rnd(-3, 3);
+      await humanMove(page, cx, cy);
+      await page.waitForTimeout(rnd(250, 500));
+      await page.mouse.click(cx, cy, { delay: rnd(70, 150) });
+      lastClick = Date.now(); clicks++;
+      log(w, `idx${idx} click#${clicks} ${Math.round(cx)},${Math.round(cy)}`);
+    };
+    await page.goto("https://accounts.stockx.com/login", { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => undefined);
+    const email = page.locator("#EmailAddress, input[type=email]").first();
+    let seen = false;
+    const preEnd = Date.now() + 75_000;
+    while (!seen && Date.now() < preEnd) {
+      await page.waitForTimeout(2500);
+      if (page.url().startsWith("chrome-error:")) return "dead_proxy";
+      seen = await email.isVisible({ timeout: 300 }).catch(() => false);
+      const t = await page.title().catch(() => "");
+      if (!seen && /Un instant|Just a moment/i.test(t)) await tryClick(); else if (seen) challengeSince = 0;
+    }
+    if (!seen) return "no_email_field";
+    log(w, `idx${idx} email field ready`);
+    let submittedAt = new Date();
+    let stage = "wait", resubmits = 0, pwdDone = false, otpDone = false, rechallenges = 0;
+    const typeEmail = async () => {
+      const em = page.locator("#EmailAddress, input[type=email]").first();
+      await humanMove(page, 640 + rnd(-40, 40), 400 + rnd(-30, 30));
+      await em.click({ delay: 70 });
+      await em.fill("");
+      await page.keyboard.type(creds.email, { delay: 65 });
+      await page.waitForTimeout(700);
+      submittedAt = new Date();
+      await page.keyboard.press("Enter");
+    };
+    if (!(await acquire(w))) return "no_lock";
+    let hasLock = true;
+    let otpLoops = 0;
+    let lastLogged = "";
+    try {
+    await typeEmail();
+    const end = Date.now() + 130_000;
+    while (Date.now() < end) {
+      await page.waitForTimeout(3000);
+      const url = page.url();
+      if (url.startsWith("chrome-error:")) return "proxy_died";
+      const title = await page.title().catch(() => "");
+      const body = await page.evaluate(() => (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 160)).catch(() => "");
+      if (url !== lastLogged) { lastLogged = url; log(w, `idx${idx} nav ${url.slice(0, 80)} title=${JSON.stringify(title.slice(0, 25))} body=${JSON.stringify(body.slice(0, 60))}`); }
+      if (/stockx\.com\/(fr-fr\/)?(buying|account)/.test(url) && !/accounts\.stockx\.com/.test(url) && !/^error$/i.test(title.trim())) { stage = "redirected"; break; }
+      if (/Security Verification|Un instant|Vérification de sécurité|complete the verification/i.test(body + " " + title)) {
+        if (/Un instant|Vérification de sécurité/i.test(body + " " + title) && clicks >= 1 && Date.now() - lastClick < 20_000) {
+          rechallenges++;
+          if (rechallenges > 25) return "rechallenged_abort";
+        }
+        await tryClick();
+        continue;
+      }
+      challengeSince = 0;
+      if (/\/u\/login\/identifier/.test(url) && resubmits < 3) {
+        const em = page.locator("#EmailAddress, input[type=email]").first();
+        if (await em.isVisible({ timeout: 300 }).catch(() => false)) {
+          const val = await em.inputValue().catch(() => "");
+          if (!val) { resubmits++; log(w, `idx${idx} identifier empty, retype #${resubmits}`); await typeEmail(); continue; }
+        }
+      }
+      if (otpDone) {
+        const dbg = await page.evaluate(() => ({ b: (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 220), btn: Array.from(document.querySelectorAll("button,[type=submit]")).map((e) => (e as HTMLElement).innerText.trim()).filter(Boolean).slice(0, 6), val: (document.querySelector('input[autocomplete="one-time-code"],input[name*="code" i],input[inputmode="numeric"]') as HTMLInputElement | null)?.value?.length ?? -1 })).catch(() => ({ b: "", btn: [], val: -1 }));
+        log(w, `idx${idx} after-otp body=${JSON.stringify(dbg.b)} btns=${JSON.stringify(dbg.btn)} otpLen=${dbg.val}`);
+        otpLoops++;
+        if (otpLoops === 3) await page.screenshot({ path: "/app/.data/galaxus-after-otp.png" }).catch(() => undefined);
+        // try clicking a visible submit/continue button once
+        if (false) {
+          const cont = page.locator('button[type="submit"]:visible, button:has-text("Continuer"):visible, button:has-text("Continue"):visible, button:has-text("Vérifier"):visible').first();
+          if (await cont.isVisible({ timeout: 300 }).catch(() => false)) { log(w, `idx${idx} clicking submit after otp`); await cont.click().catch(() => undefined); }
+        }
+      }
+      const pwdInput = page.locator("input[type=password]").first();
+      if (!pwdDone && (await pwdInput.isVisible({ timeout: 300 }).catch(() => false))) {
+        const alt = page.locator('a:has-text("code"), button:has-text("code"), a:has-text("autre méthode"), a:has-text("another method")').first();
+        if (await alt.isVisible({ timeout: 600 }).catch(() => false)) { log(w, `idx${idx} using code link`); await alt.click().catch(() => undefined); pwdDone = true; continue; }
+        log(w, `idx${idx} password form`);
+        await pwdInput.click({ delay: 60 });
+        await page.keyboard.type(creds.password, { delay: 65 });
+        await page.keyboard.press("Enter");
+        pwdDone = true;
+        await page.waitForTimeout(6000);
+        if (await page.evaluate(() => /incorrect|invalid/i.test(document.body?.innerText || "")).catch(() => false)) { log(w, `idx${idx} password rejected`); return "password_rejected"; }
+        continue;
+      }
+      const otpInput = page.locator('input[autocomplete="one-time-code"], input[name*="code" i], input[inputmode="numeric"], input[id*="code" i]').first();
+      if (!otpDone && (/passwordless-email-challenge|type=OTP/i.test(url) || (await otpInput.isVisible({ timeout: 300 }).catch(() => false)))) {
+        log(w, `idx${idx} OTP screen`);
+        const code = await fetchOtp(submittedAt);
+        log(w, `idx${idx} otp ${code ? "found" : "missing"}`);
+        if (!code) return "otp_missing";
+        if (await otpInput.isVisible({ timeout: 5000 }).catch(() => false)) {
+          await otpInput.click({ delay: 60 });
+          await page.keyboard.type(code, { delay: 90 });
+          await page.waitForTimeout(600);
+          const box = page.locator('input[type="checkbox"]').first();
+          if ((await box.count()) > 0 && !(await box.isChecked().catch(() => false))) {
+            await box.check({ force: true }).catch(() => undefined);
+            log(w, `idx${idx} terms checkbox ticked`);
+          }
+          await page.waitForTimeout(400);
+          const cont = page.locator('button:has-text("Continue"), button:has-text("Continuer"), button[type="submit"]').first();
+          if (await cont.isVisible({ timeout: 800 }).catch(() => false)) await cont.click().catch(() => undefined);
+          else await page.keyboard.press("Enter");
+          otpDone = true;
+        }
+        continue;
+      }
+    }
+    } finally { if (hasLock) release(); }
+    log(w, `idx${idx} stage=${stage} pwd=${pwdDone} otp=${otpDone}`);
+    // verify with FR+EN text on authenticated pages
+    for (let i = 0; i < 3; i++) {
+      await page.goto("https://stockx.com/fr-fr/buying", { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => undefined);
+      await page.waitForTimeout(9000);
+      const url = page.url(), t = await page.title().catch(() => "");
+      const b = await page.evaluate(() => (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 200)).catch(() => "");
+      const bad = /accounts\.stockx\.com|login|identifier|chrome-error/.test(url) || /^error$/i.test(t.trim()) || /Un instant|Vérification|Please login/i.test(b);
+      log(w, `idx${idx} verify${i} bad=${bad} url=${url.slice(0, 50)} body=${JSON.stringify(b.slice(0, 70))}`);
+      if (bad) continue;
+      await page.goto("https://stockx.com/fr-fr/buy/asics-superblast-3-cobalt-burst-light-orange?size=7.5", { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => undefined);
+      await page.waitForTimeout(9000);
+      const bb = await page.evaluate(() => (document.body?.innerText || "").replace(/\s+/g, " ")).catch(() => "");
+      const guest = /Login to Apply|create a StockX account|créer un compte|Nous vous invitons à créer/i.test(bb);
+      const chf = /CHF/.test(bb), sub = /Sous-total|Subtotal/i.test(bb);
+      log(w, `idx${idx} buy page guest=${guest} chf=${chf} subtotal=${sub}`);
+      if (!guest && chf && sub) {
+        await ctx.storageState({ path: STATE });
+        fs.writeFileSync(PROVEN, JSON.stringify({ idx, line, at: new Date().toISOString() }));
+        log(w, `idx${idx} PROVEN, state saved`);
+        return "LOGGED_IN_PROVEN";
+      }
+    }
+    return "login_not_proven";
+  } finally {
+    await browser.close().catch(() => undefined);
+  }
+}
+
+async function worker(w: number, all: string[]) {
+  await sleep(w * 6000);
+  while (Date.now() < DEADLINE && !fs.existsSync(PROVEN)) {
+    const idx = nextIdx(all.length);
+    let res = "err";
+    try { res = await attempt(w, all[idx], idx); } catch (e: any) { res = "exception:" + String(e?.message || e).slice(0, 80); }
+    log(w, `RESULT idx${idx} ${res}`);
+    if (res === "LOGGED_IN_PROVEN") return;
+  }
+}
+
+(async () => {
+  fs.appendFileSync(LOG, "=== parallel start\n");
+  const all = fs.readFileSync("/app/.data/lemonprime-lausanne-alive.txt", "utf8").split("\n").map((x) => x.trim()).filter(Boolean);
+  await Promise.all(Array.from({ length: WORKERS }, (_, w) => worker(w, all)));
+  fs.appendFileSync(LOG, "=== parallel done\n");
+  process.exit(0);
+})();

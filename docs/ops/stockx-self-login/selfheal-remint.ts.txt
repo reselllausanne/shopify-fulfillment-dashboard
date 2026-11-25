@@ -1,0 +1,60 @@
+import "dotenv/config";
+import fs from "node:fs";
+import { chromium } from "patchright";
+import { parsePlaywrightProxyUrl } from "@/lib/stockxPlaywrightProxy";
+import { writeStockxTokenFile } from "@/lib/stockxSilentAuth0";
+
+const OUT = "/app/.data/galaxus-selfheal.log";
+const log = (s: string) => fs.appendFileSync(OUT, `${new Date().toISOString().slice(11, 19)} ${s}\n`);
+const START = Math.floor(Math.random() * 200);
+
+function decodeExp(tok: string): number {
+  try { return JSON.parse(Buffer.from(tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString()).exp * 1000; } catch { return 0; }
+}
+
+async function once(line: string, idx: number): Promise<string> {
+  const [h, pt, u, ...pw] = line.split(":");
+  const proxy = parsePlaywrightProxyUrl(`http://${encodeURIComponent(u)}:${encodeURIComponent(pw.join(":"))}@${h}:${pt}`) as any;
+  const raw = JSON.parse(fs.readFileSync("/app/.data/stockx-session-galaxus.json", "utf8"));
+  const cookies = (raw.cookies || []).filter((c: any) => !/^cf_|^__cf/i.test(String(c.name)));
+  fs.writeFileSync("/tmp/seed-galaxus.json", JSON.stringify({ cookies, origins: raw.origins || [] }));
+  const browser = await chromium.launch({ headless: false, proxy: { server: proxy.server, username: proxy.username, password: proxy.password }, args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"], env: { ...process.env, DISPLAY: process.env.DISPLAY || ":99" } });
+  try {
+    const ctx = await browser.newContext({ storageState: "/tmp/seed-galaxus.json", locale: "fr-FR", timezoneId: "Europe/Zurich", viewport: null });
+    const page = await ctx.newPage();
+    let bearer: string | null = null;
+    ctx.on("request", (r) => { const a = r.headers()["authorization"]; if (a && /^Bearer eyJ/.test(a)) bearer = a.replace(/^Bearer\s+/i, ""); });
+    await page.goto("https://stockx.com/buying/orders", { waitUntil: "domcontentloaded", timeout: 90000 }).catch(() => undefined);
+    const until = Date.now() + 100_000;
+    while (Date.now() < until && !bearer) {
+      await page.waitForTimeout(4000);
+      const url = page.url(), t = await page.title().catch(() => "");
+      const c = await ctx.cookies();
+      const tok = c.find((x) => x.name === "token" && x.value.startsWith("eyJ") && decodeExp(x.value) > Date.now() + 60000);
+      log(`idx${idx} url=${url.slice(0, 70)} title=${JSON.stringify(t.slice(0, 25))} tokenCookieFresh=${Boolean(tok)} bearer=${Boolean(bearer)}`);
+      if (tok) { bearer = tok.value; break; }
+      if (/accounts\.stockx\.com\/u\/login/.test(url)) return "auth0_session_dead_login_wall";
+      if (/chrome-error/.test(url)) return "dead_proxy";
+    }
+    if (!bearer) return "no_token";
+    log(`idx${idx} token exp ${new Date(decodeExp(bearer)).toISOString()}`);
+    await ctx.storageState({ path: "/app/.data/galaxus-state-selfheal.json" });
+    await writeStockxTokenFile("/app/.data/stockx-token-galaxus.json", bearer, { source: "selfheal" } as any);
+    fs.copyFileSync("/app/.data/galaxus-state-selfheal.json", "/app/.data/stockx-session-galaxus.json");
+    return "REMINT_OK";
+  } finally {
+    await browser.close().catch(() => undefined);
+  }
+}
+
+(async () => {
+  fs.appendFileSync(OUT, "=== selfheal remint\n");
+  const all = fs.readFileSync("/app/.data/lemonprime-lausanne-alive.txt", "utf8").split("\n").map((x) => x.trim()).filter(Boolean);
+  for (let k = START; k < all.length && k < START + 12; k++) {
+    const r = await once(all[k], k);
+    log(`RESULT idx${k} ${r}`);
+    if (r === "REMINT_OK" || r === "auth0_session_dead_login_wall") break;
+  }
+  log("DONE");
+  process.exit(0);
+})();
