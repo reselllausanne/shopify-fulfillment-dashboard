@@ -9,7 +9,15 @@ export default function SavPage() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const session = useRef(
-    typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now())
+    (() => {
+      if (typeof window === "undefined") return "";
+      let id = window.localStorage.getItem("sav_session");
+      if (!id) {
+        id = "crypto" in window && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now());
+        window.localStorage.setItem("sav_session", id);
+      }
+      return id;
+    })()
   );
 
   async function send(e: React.FormEvent) {
