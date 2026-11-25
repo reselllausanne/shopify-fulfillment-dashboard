@@ -277,6 +277,57 @@ acquire_lock() {
   echo "== lock $LOCK_FILE (waited up to ${wait_secs}s)"
 }
 
+# ---------------------------------------------------------------------------
+# Timing + prebuilt image (built by .github/workflows/build-image.yml, pushed to ghcr).
+# Prebuilt image = no `next build` on the VPS. Any failure => old behaviour (compose build).
+# ---------------------------------------------------------------------------
+DEPLOY_T0="$SECONDS"
+tstep() {
+  echo "== [T+$((SECONDS - DEPLOY_T0))s] $*"
+}
+
+PREBUILT_IMAGE=""
+PREBUILT_IMAGE_REPO="${PREBUILT_IMAGE_REPO:-}"
+PREBUILT_WAIT_SECS="${PREBUILT_WAIT_SECS:-900}"
+
+# Pull ghcr.io/<repo>:sha-<want>. Waits for the parallel build-image run. Never fatal.
+fetch_prebuilt_image() {
+  local want="$1" tag deadline
+  [ -n "$PREBUILT_IMAGE_REPO" ] || { tstep "prebuilt: PREBUILT_IMAGE_REPO unset -> local build"; return 0; }
+  tag="${PREBUILT_IMAGE_REPO}:sha-${want}"
+  if [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GHCR_USER:-}" ]; then
+    printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin >/dev/null 2>&1 \
+      || { tstep "prebuilt: ghcr login failed -> local build"; return 0; }
+  fi
+  deadline=$((SECONDS + PREBUILT_WAIT_SECS))
+  while :; do
+    if docker pull "$tag" >/dev/null 2>&1; then
+      PREBUILT_IMAGE="$tag"
+      tstep "prebuilt: pulled $tag"
+      break
+    fi
+    if (( SECONDS >= deadline )); then
+      tstep "prebuilt: $tag not available after ${PREBUILT_WAIT_SECS}s -> local build"
+      break
+    fi
+    sleep 15
+  done
+  docker logout ghcr.io >/dev/null 2>&1 || true
+  return 0
+}
+
+# Make <project>-<svc>:latest current: tag the prebuilt image, or build locally.
+ensure_image() {
+  local svc="$1"
+  if [ -n "$PREBUILT_IMAGE" ]; then
+    docker tag "$PREBUILT_IMAGE" "${COMPOSE_PROJECT_NAME}-${svc}:latest"
+    tstep "image $svc <- prebuilt"
+  else
+    docker compose build "$svc"
+    tstep "image $svc built locally"
+  fi
+}
+
 # After up: web must be running, labelled for this project/service, image matches built service image when available.
 verify_web_deployment() {
   local want_sha="${1:-}"
@@ -648,8 +699,10 @@ main() {
   validate_deploy_config "$REPO"
   cleanup_stale_web_rename_containers
 
+  tstep "start (checkout done)"
+  fetch_prebuilt_image "$WANT"
   echo "== build $DEPLOY_SERVICE"
-  docker compose build "$DEPLOY_SERVICE"
+  ensure_image "$DEPLOY_SERVICE"
 
   if [ "$RUN_MIGRATE" = "1" ]; then
     # Migrate with newly built image BEFORE replacing the running app.
@@ -671,6 +724,7 @@ main() {
   fi
 
   verify_web_deployment "$WANT"
+  tstep "web live"
 
   local workers sel
   sel="$(select_workers_for_deploy "$WANT")"
@@ -683,12 +737,13 @@ main() {
   fi
   for svc in $workers; do
     echo "== build + up worker $svc"
-    if ! docker compose build "$svc" || ! docker compose up -d --no-deps "$svc"; then
+    if ! ensure_image "$svc" || ! docker compose up -d --no-deps "$svc"; then
       echo "FATAL: worker $svc not redeployed (web is live on $WANT)"
       exit 16
     fi
     # Every worker must leave Created — especially worker-galaxus-feed (stock/price).
     verify_compose_service_running "$svc" 90
+    tstep "worker $svc up"
   done
   # sav-agent runs sav-agent/server.mjs (not scripts/*.ts) so worker selection never sees it.
   # Always rebuild: docker layer cache makes it cheap; `up -d` only recreates on image change.
@@ -714,6 +769,7 @@ main() {
   # no concurrent build races the prune.
   bash "$REPO/scripts/vps-docker-gc.sh" || echo "WARN: docker gc failed (non-fatal)"
 
+  tstep "done"
   echo "DEPLOY_OK requested=$WANT running=$HEAD_NOW pre_tag=$PRE_TAG"
 }
 
