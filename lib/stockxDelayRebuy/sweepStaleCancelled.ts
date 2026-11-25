@@ -23,7 +23,7 @@ import { sendCustomerDelayMail } from "@/lib/stockxDelayRebuy/sendCustomer";
  *  - if not rebought after 24h: customer ORDER_CANCELED mail (deduped by StockXStatusEvent)
  *  - ntfy: immediate on rebuy success / first failure, daily 08:00 Zurich digest of all unresolved.
  *
- * Kill switch: STOCKX_CANCEL_SWEEP=0.
+ * Opt-in: runs only when STOCKX_CANCEL_SWEEP=1 (default OFF).
  */
 
 const H = 3_600_000;
@@ -107,7 +107,7 @@ export type SweepResult = {
 
 export async function runStaleCancelSweep(): Promise<SweepResult> {
   const out: SweepResult = { ran: false, candidates: 0, rebuyAttempts: 0, rebought: [], mailed: [], resolved: [] };
-  if (process.env.STOCKX_CANCEL_SWEEP === "0" || running) return out;
+  if (process.env.STOCKX_CANCEL_SWEEP !== "1" || running) return out;
   running = true;
   out.ran = true;
   try {
