@@ -13,8 +13,12 @@ const SEG_REGISTERED = "S3KvQm";
 const SEG_EXCLUDE = "Xv2cGF";
 const TEST_LIST = "W2mNct";
 const MAIL = process.argv.find((a) => a.startsWith("--mail="))?.split("=")[1] ?? "";
-const CFG: Record<string, { file: string; name: string; subject: string; preview: string }> = {
-  "05": { file: "05_ouverture_publique", name: "05 Ouverture", subject: "Black Friday : c’est parti", preview: "−50 % et plus sur les paires en stock en Suisse." },
+const CFG: Record<string, { file: string; name: string; subject: string; preview: string; copy?: [string, string][] }> = {
+  "05": { file: "05_ouverture_publique", name: "05 Non-inscrits (ouvert, on te prévient)", subject: "Pas inscrit ? On te prévient quand même", preview: "Le Black Friday est ouvert : −50 % et plus, −10 % sur toute la boutique.",
+    copy: [
+      ["BLACK FRIDAY / C’EST PARTI", "TU N’ÉTAIS PAS INSCRIT / ON TE PRÉVIENT QUAND MÊME"],
+      ["On a fait de la place dans l’entrepôt. À toi d’en faire dans ta collection.", "Tu n’étais pas inscrit à la liste, mais on te prévient quand même : le Black Friday est ouvert depuis 19 h."],
+    ] },
   "07": { file: "07_disponibilites_weekend", name: "07 Week-end / cadeaux", subject: "Pour toi, ou pour offrir", preview: "−50 % et plus, livraison 48 h* en Suisse." },
   "08": { file: "08_cloture", name: "08 Clôture", subject: "Les −50 % s’arrêtent ce soir", preview: "Dernière chance avant minuit." },
 };
@@ -101,8 +105,12 @@ function card(v: OfferVariant, range: string) {
   const SHOP = "https://www.resell-lausanne.ch/collections/black-friday";
   const CTA_RE = /\{\{ person\|lookup:'rl_bf_2026_shop_url'\|default:'[^']*' \}\}(?:&amp;|&)utm_source=klaviyo(?:&amp;|&)utm_medium=email(?:&amp;|&)utm_campaign=[a-z0-9_]+/g;
   const ctaUrl = (m: string) => { const j = m.includes("&amp;") ? "&amp;" : "&"; return `${SHOP}?utm_source=email${j}utm_medium=bfcm${j}utm_campaign=bfcm_2026_${MAIL}`; };
-  const COPY: [string, string][] = [];
-  const copy = (s: string) => COPY.reduce((acc, [a, b]) => acc.replace(a, b), s);
+  const COPY: [string, string][] = CFG[MAIL].copy ?? [];
+  const copy = (s: string) =>
+    COPY.reduce((acc, [a, b]) => {
+      if (!acc.includes(a)) throw new Error(`copy anchor missing: ${a}`);
+      return acc.replace(a, b);
+    }, s);
 
   let html = copy(readFileSync(join(PACK, `${CFG[MAIL].file}.html`), "utf8"));
   const a = html.indexOf(`{% if person|lookup:'rl_bf_2026_${MAIL}_p1_ready'`);
