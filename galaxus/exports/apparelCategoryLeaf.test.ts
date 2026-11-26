@@ -43,4 +43,19 @@ describe("apparel category leaves", () => {
     }
     expect(resolveGalaxusProductCategoryPath({ title: "adidas Campus 00s Core Black", productType: "sneakers" })).toContain("Sneakers");
   });
+
+  it("StockX generic aliases refine by title (AssortmentErrors Step 3)", () => {
+    const cases: Array<[string, string, string]> = [
+      ["adidas Adilette 22 Slides Magic Lime", "sneakers", "Sandalen"],
+      ["Nike Vista Sandal Light British Tan", "sneakers", "Sandalen"],
+      ["Crocs Classic Clog Disney Princesses (Kids)", "sneakers", "Hausschuhe"],
+      ["adidas Women's Terrex Techrock Gore-Tex Pro Jacket Black", "apparel", "Leichte Jacken"],
+      ["Nike Devin Booker Repel 8\" Basketball Shorts", "apparel", "Shorts"],
+      ["adidas Jamaica Bob Marley Track Pants Black", "apparel", "Hosen"],
+      ["adidas Argentina 2026 Tiro Jersey White", "apparel", "Shirts"],
+    ];
+    for (const [title, productType, leaf] of cases) {
+      expect(resolveGalaxusProductCategoryPath({ title, productType })).toContain(leaf);
+    }
+  });
 });

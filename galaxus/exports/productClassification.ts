@@ -72,6 +72,8 @@ const FOOTWEAR_RE =
 const RUNNING_SHOE_RE =
   /\b(gel-?(nimbus|kayano|cumulus|pulse)|cloud(flow|monster|surfer|runner|swift|boom)|speedgoat|clifton|bondi|pegasus|vomero|invincible|alphafly|vaporfly|adizero (evo|adios|boston|takumi)|fuelcell rebel|endorphin|glycerin|wave rider|hoka .*challenger)\b/i;
 const HOODIE_TITLE_RE = /\b(hoodie|hooded sweat\w*|sweatshirt|crewneck|pullover)\b/i;
+const FLIP_FLOP_TITLE_RE = /\b(flip[- ]?flops?|thongs?)\b/i;
+const ADILETTE_RE = /\badilette\b/i;
 const SHORTS_RE = /\b(shorts?|sweatshort|sweat short)\b/i;
 const APPAREL_RE =
   /\b(hoodie|sweatshirt|crewneck|tee|t-shirt|shirt|jogger|jacket|pullover|sweater|track ?pant|essentials|jersey|polo)\b/i;
@@ -317,6 +319,33 @@ export function isGalaxusLengthCmKind(kind: GalaxusProductKind): boolean {
   return LENGTH_CM_KINDS.has(kind);
 }
 
+/**
+ * StockX breadcrumb / productType aliases are coarse ("sneakers", "apparel"). Galaxus rejects
+ * those as "Product Type assignment is missing" when the title is clearly a slide, clog,
+ * running shoe, jacket, hoodie, shorts or pants (AssortmentErrors 2026-11-26). Refine by title.
+ */
+function refineGenericKindByTitle(kind: GalaxusProductKind, title: string): GalaxusProductKind {
+  if (!title) return kind;
+  if (kind === "sneakers") {
+    if (RUNNING_SHOE_RE.test(title)) return "running_shoes";
+    if (FLIP_FLOP_TITLE_RE.test(title)) return "flip_flops";
+    if (SANDALS_RE.test(title) || ADILETTE_RE.test(title)) return "sandals";
+    if (SLIPPERS_RE.test(title)) return "slippers";
+    return kind;
+  }
+  if (kind === "apparel") {
+    if (HOODIE_TITLE_RE.test(title)) return "pullover";
+    if (VEST_RE.test(title)) return "vest";
+    if (WINTER_JACKET_RE.test(title)) return "winter_jacket";
+    if (RAIN_JACKET_RE.test(title)) return "rain_jacket";
+    if (LIGHT_JACKET_RE.test(title)) return "light_jacket";
+    if (SHORTS_RE.test(title)) return "shorts";
+    if (TROUSERS_RE.test(title)) return "trousers";
+    return kind;
+  }
+  return kind;
+}
+
 export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusProductKind {
   const supplierKey = String(input.supplierKey ?? "").toLowerCase();
   const brand = sanitizeText(input.brand ?? "").toLowerCase();
@@ -369,13 +398,8 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
   if (brand && BRAND_CATEGORY[brand]) return BRAND_CATEGORY[brand];
   if (brand === "ugg") return classifyUggFootwearKind(input.title);
 
-  const refineSneakers = (kind: GalaxusProductKind): GalaxusProductKind => {
-    const title = sanitizeText(input.title ?? "");
-    if (kind === "sneakers" && RUNNING_SHOE_RE.test(title)) return "running_shoes";
-    // Generic StockX apparel alias: hoodies / sweatshirts belong in Pullover, not Shirts.
-    if (kind === "apparel" && HOODIE_TITLE_RE.test(title)) return "pullover";
-    return kind;
-  };
+  const refineSneakers = (kind: GalaxusProductKind): GalaxusProductKind =>
+    refineGenericKindByTitle(kind, sanitizeText(input.title ?? ""));
 
   const byBreadcrumb = classifyFromBreadcrumbAliases(input.breadcrumbAliases);
   if (byBreadcrumb) return refineSneakers(byBreadcrumb);
