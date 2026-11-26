@@ -56,7 +56,6 @@ describe("presentShopifyLiveSale", () => {
     expect(sale.imageUrl).toBe(shoe.imageUrl);
     expect(sale.marginEstimated).toBe(true);
     expect(sale.marginChf).toBe(74.9);
-    expect(sale.refreshGtins).toEqual(["0193324840123"]);
   });
 
   it("uses the pair COGS once the match exists and keeps protection at full margin", () => {
@@ -84,7 +83,6 @@ describe("presentShopifyLiveSale", () => {
     expect(sale.title).toContain("Nike Dunk Low");
     expect(sale.marginEstimated).toBe(false);
     expect(sale.marginChf).toBe(64.9);
-    expect(sale.refreshGtins).toEqual([]);
   });
 
   it("treats a physical pair as full margin and does not estimate it", () => {
@@ -98,14 +96,43 @@ describe("presentShopifyLiveSale", () => {
     expect(sale.title).toContain("Dunk");
   });
 
-  it("does not book a loss when the catalog ask is above the sale", () => {
+  it("books the real loss when the StockX all-in is above the sale", () => {
     const sale = presentShopifyLiveSale({
       lines: [{ ...shoe, unitPrice: 77 }],
       matches: [],
       buyUnitChf: () => 228,
     });
     expect(sale.marginEstimated).toBe(true);
-    expect(sale.marginChf).toBeCloseTo(77 * 0.2, 2);
+    expect(sale.marginChf).toBe(-151);
+  });
+
+  it("has no margin (never a flat percentage) when no buy price is known", () => {
+    const sale = presentShopifyLiveSale({
+      lines: [shoe],
+      matches: [],
+      buyUnitChf: () => undefined,
+    });
+    expect(sale.marginChf).toBeNull();
+  });
+
+  it("does not show the protection add-on alone when the pair has no price", () => {
+    const sale = presentShopifyLiveSale({
+      lines: [protection, shoe],
+      matches: [],
+      buyUnitChf: () => undefined,
+    });
+    expect(sale.marginChf).toBeNull();
+  });
+
+  it("asks for the express lane only on express orders", () => {
+    const seen: boolean[] = [];
+    const buy = (_g: string, express: boolean) => {
+      seen.push(express);
+      return 100;
+    };
+    presentShopifyLiveSale({ lines: [shoe], matches: [], buyUnitChf: buy, express: true });
+    presentShopifyLiveSale({ lines: [shoe], matches: [], buyUnitChf: buy });
+    expect(seen).toEqual([true, false]);
   });
 
   it("counts a second pair, not the protection add-on", () => {
@@ -113,11 +140,11 @@ describe("presentShopifyLiveSale", () => {
     const sale = presentShopifyLiveSale({
       lines: [protection, cheap, shoe],
       matches: [],
-      buyUnitChf: () => undefined,
+      buyUnitChf: () => 100,
     });
     expect(sale.title).toContain("Nike Dunk Low");
     expect(sale.extraItems).toBe(1);
-    expect(sale.marginChf).toBeCloseTo(4.9 + 180 * 0.2 + 90 * 0.2, 2);
+    expect(sale.marginChf).toBeCloseTo(4.9 + (180 - 100) + (90 - 100), 2);
   });
 });
 
