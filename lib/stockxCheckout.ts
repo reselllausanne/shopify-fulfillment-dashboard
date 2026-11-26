@@ -1823,7 +1823,10 @@ export async function runStockxAutoCheckoutForOrder(options: {
   {
     // Manual GOAT hold (e.g. #7707 Jordan 1 Swarovski): never buy on StockX, even with a slug.
     const hold = isClearlyNotStockxBuyable({ title: shopify.title, sku: shopify.sku });
-    if (hold.notBuyable && String(hold.label ?? "").startsWith("goat_")) {
+    if (
+      hold.notBuyable &&
+      (String(hold.label ?? "").startsWith("goat_") || hold.label === "never_buy_stockx")
+    ) {
       const nh = needsHumanBase(shopify, {
         reason: "non_stockx",
         desiredLane: "STANDARD",

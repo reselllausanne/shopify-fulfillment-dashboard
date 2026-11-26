@@ -28,6 +28,7 @@ import {
   type GalaxusBuyCandidate,
 } from "@/lib/stockxAutoCheckout/galaxusBuyCandidates";
 import { linkStockxBuyToGalaxus } from "@/lib/stockxAutoCheckout/linkAfterBuyGalaxus";
+import { isNeverBuyStockx } from "@/lib/stockxAutoCheckout/neverBuyStockx";
 import { isClearlyNotStockxBuyable } from "@/lib/stockxAutoCheckout/nonStockxBuyable";
 import { raiseCardDeclined } from "@/lib/stockxBuyer/cardAlert";
 import { addFail, capHit, failureClass, maxAttemptsBlocks, maxAttemptsReason } from "@/lib/stockxBuyer/attemptCap";
@@ -258,6 +259,7 @@ export async function buildNightQueue(opts: {
   for (const r of rows) {
     if (opts.skipOrders.has(String(r.galaxusOrderId))) continue;
     if (/zippo|briquet|lighter|feuerzeug/i.test(r.productName)) continue;
+    if (isNeverBuyStockx({ title: r.productName, gtin: r.gtin }).blocked) continue;
     const qty = Number(r.qty) || 0;
     for (const unitIndex of missingUnitIndexes(qty, taken.get(r.lineId) ?? [])) {
       out.push({
@@ -592,11 +594,16 @@ export async function resolvePair(
   });
   const line = order?.lines.find((l) => l.id === pair.lineId);
   if (!order || !line) return { ok: false, status: "needs_review", reason: "order_or_line_missing" };
-  const nb = isClearlyNotStockxBuyable({ title: line.productName, sku: line.supplierSku });
+  const nb = isClearlyNotStockxBuyable({
+    title: line.productName,
+    sku: line.supplierSku,
+    gtin: line.gtin,
+    supplierPid: line.supplierPid,
+  });
   if (nb.notBuyable) return { ok: false, status: "not_stockx", reason: nb.label ?? "not_stockx" };
   const r = await resolveGalaxusStxBuyCandidate({ order, line });
   if (r.ok) return r;
-  const notStockx = ["not_stx_line", "warehouse_stock_hint"].includes(r.reason);
+  const notStockx = ["not_stx_line", "warehouse_stock_hint", "never_buy_stockx"].includes(r.reason);
   return { ok: false, status: notStockx ? "not_stockx" : "needs_review", reason: r.reason };
 }
 
