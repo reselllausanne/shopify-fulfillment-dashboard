@@ -99,7 +99,8 @@ function card(v: OfferVariant, range: string) {
   const rangeHtml = `${TEN_HTML}<tr><td class="pad" style="padding:0 38px 30px;background:#FFFFFF;">${blocks.join("")}{% endif %}</td></tr>`;
 
   const SHOP = "https://www.resell-lausanne.ch/collections/black-friday";
-  const CTA_RE = /\{\{ person\|lookup:'rl_bf_2026_shop_url'\|default:'[^']*' \}\}/g;
+  const CTA_RE = /\{\{ person\|lookup:'rl_bf_2026_shop_url'\|default:'[^']*' \}\}(?:&amp;|&)utm_source=klaviyo(?:&amp;|&)utm_medium=email(?:&amp;|&)utm_campaign=[a-z0-9_]+/g;
+  const ctaUrl = (m: string) => { const j = m.includes("&amp;") ? "&amp;" : "&"; return `${SHOP}?utm_source=email${j}utm_medium=bfcm${j}utm_campaign=bfcm_2026_${MAIL}`; };
   const COPY: [string, string][] = [];
   const copy = (s: string) => COPY.reduce((acc, [a, b]) => acc.replace(a, b), s);
 
@@ -110,7 +111,7 @@ function card(v: OfferVariant, range: string) {
   const e2 = html.indexOf("{% endif %}", e1 + 5) + "{% endif %}".length;
   if (a < 0 || p3 < a) throw new Error("pair block not found");
   html = html.slice(0, a) + rangeHtml + html.slice(e2);
-  html = html.replace(CTA_RE, SHOP);
+  html = html.replace(CTA_RE, ctaUrl);
   if (new RegExp(`rl_bf_2026_${MAIL}_p\\d|shop_url|rl_bf_2026_vip`).test(html)) throw new Error("legacy liquid left");
     if (!html.includes("{% unsubscribe_link %}")) throw new Error("unsubscribe missing");
 
@@ -118,7 +119,7 @@ function card(v: OfferVariant, range: string) {
   const ta = text.indexOf(`{% if person|lookup:'rl_bf_2026_${MAIL}_p1_ready'`);
   const tb = text.indexOf("Stock local.");
   if (ta < 0 || tb < ta) throw new Error("text pair block not found");
-  text = (text.slice(0, ta) + TEN_TEXT + textBlocks.join("") + "{% endif %}\n\n" + text.slice(tb)).replace(CTA_RE, SHOP);
+  text = (text.slice(0, ta) + TEN_TEXT + textBlocks.join("") + "{% endif %}\n\n" + text.slice(tb)).replace(CTA_RE, ctaUrl);
   if (new RegExp(`rl_bf_2026_${MAIL}_p\\d|shop_url`).test(text)) throw new Error("legacy liquid left (text)");
 
   const name = `${PREVIEW ? "[TEST] " : ""}BFCM 2026 — ${CFG[MAIL].name}`;
