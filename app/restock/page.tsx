@@ -540,18 +540,43 @@ export default function RestockScanPage() {
       ...prev.slice(0, 99),
     ]);
 
-    fetch("/api/restock/scan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        gtin: scannedGtin,
-        quantity: qty,
-        locationId: locId,
-        ...(sell != null ? { salePrice: sell } : {}),
-        ...(compare != null ? { compareAtPrice: compare } : {}),
-      }),
-    })
-      .then((r) => r.json())
+    const post = (extra: Record<string, unknown>): Promise<ApplyResult> =>
+      fetch("/api/restock/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gtin: scannedGtin,
+          quantity: qty,
+          locationId: locId,
+          ...(sell != null ? { salePrice: sell } : {}),
+          ...(compare != null ? { compareAtPrice: compare } : {}),
+          ...extra,
+        }),
+      }).then((r) => r.json());
+
+    // Known pair (KickDB confirmed GTIN) but not on Shopify yet: create + restock
+    // automatically instead of waiting for a click. Anything unsure stays in "attention".
+    const autoResolve = async (): Promise<ApplyResult> => {
+      const first = await post({});
+      if (first.ok || !(first.error ?? "").includes("fournir un identifiant")) return first;
+      try {
+        const lk = await fetch(`/api/restock/scan?gtin=${encodeURIComponent(scannedGtin)}`).then((r) => r.json());
+        const res = lk?.result as LookupResult | undefined;
+        if (
+          lk?.ok &&
+          res &&
+          (res.status === "resolved" || res.status === "shopify-exists-no-gtin") &&
+          res.gtinConfirmed
+        ) {
+          return await post({ identifier: res.slug });
+        }
+      } catch {
+        // fall through: keep the original result (attention list)
+      }
+      return first;
+    };
+
+    autoResolve()
       .then((data: ApplyResult) => {
         if (data.ok && (data.status === "restocked" || data.status === "created-restocked")) {
           const title = data.shopify?.restock?.variant?.productTitle ?? null;
