@@ -1,6 +1,6 @@
 /**
  * Late BFCM campaigns 05 / 07 / 08. Registered profiles: 3 live BF pairs for THEIR size range. Others: 3 generic men/unisex pairs.
- * Flags: --mail=05|07|08, --preview (TEST list only), --schedule=<ISO>. Default: DRAFT, never sends.
+ * Flags: --mail=05|07|08|09, --preview (TEST list only), --schedule=<ISO>. Default: DRAFT, never sends.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,16 +13,20 @@ const SEG_REGISTERED = "S3KvQm";
 const SEG_EXCLUDE = "Xv2cGF";
 const TEST_LIST = "W2mNct";
 const MAIL = process.argv.find((a) => a.startsWith("--mail="))?.split("=")[1] ?? "";
-const CFG: Record<string, { file: string; name: string; subject: string; preview: string; copy?: [string, string][] }> = {
+const CFG: Record<string, { file: string; name: string; subject: string; preview: string; copy?: [string, string][]; pairKey?: string }> = {
   "05": { file: "05_ouverture_publique", name: "05 Non-inscrits (ouvert, on te prévient)", subject: "Pas inscrit ? On te prévient quand même", preview: "Le Black Friday est ouvert : −50 % et plus, −10 % sur toute la boutique.",
     copy: [
       ["BLACK FRIDAY / C’EST PARTI", "TU N’ÉTAIS PAS INSCRIT / ON TE PRÉVIENT QUAND MÊME"],
       ["On a fait de la place dans l’entrepôt. À toi d’en faire dans ta collection.", "Tu n’étais pas inscrit à la liste, mais on te prévient quand même : le Black Friday est ouvert depuis 19 h."],
     ] },
+  "09": { file: "05_ouverture_publique", pairKey: "05", name: "09 Clients jamais contactés (ouvert)", subject: "Black Friday : c’est ouvert", preview: "−50 % et plus sur les paires en stock, −10 % sur toute la boutique.",
+    copy: [["Tu reçois cet email parce que tu es abonné à Resell Lausanne.", "Tu reçois cet email parce que tu as déjà commandé chez Resell Lausanne."]] },
   "07": { file: "07_disponibilites_weekend", name: "07 Week-end / cadeaux", subject: "Pour toi, ou pour offrir", preview: "−50 % et plus, livraison 48 h* en Suisse." },
   "08": { file: "08_cloture", name: "08 Clôture", subject: "Les −50 % s’arrêtent ce soir", preview: "Dernière chance avant minuit." },
 };
-if (!CFG[MAIL]) throw new Error("--mail=05|07|08");
+if (!CFG[MAIL]) throw new Error("--mail=05|07|08|09");
+const PK = CFG[MAIL]?.pairKey ?? MAIL;
+const NEWLIST = process.argv.find((a) => a.startsWith("--list="))?.split("=")[1];
 const PREVIEW = process.argv.includes("--preview");
 const SCHEDULE = process.argv.find((a) => a.startsWith("--schedule="))?.split("=")[1];
 const RANGES: Record<string, string[]> = {
@@ -113,22 +117,22 @@ function card(v: OfferVariant, range: string) {
     }, s);
 
   let html = copy(readFileSync(join(PACK, `${CFG[MAIL].file}.html`), "utf8"));
-  const a = html.indexOf(`{% if person|lookup:'rl_bf_2026_${MAIL}_p1_ready'`);
-  const p3 = html.indexOf(`{% if person|lookup:'rl_bf_2026_${MAIL}_p3_ready'`);
+  const a = html.indexOf(`{% if person|lookup:'rl_bf_2026_${PK}_p1_ready'`);
+  const p3 = html.indexOf(`{% if person|lookup:'rl_bf_2026_${PK}_p3_ready'`);
   const e1 = html.indexOf("{% endif %}", p3);
   const e2 = html.indexOf("{% endif %}", e1 + 5) + "{% endif %}".length;
   if (a < 0 || p3 < a) throw new Error("pair block not found");
   html = html.slice(0, a) + rangeHtml + html.slice(e2);
   html = html.replace(CTA_RE, ctaUrl);
-  if (new RegExp(`rl_bf_2026_${MAIL}_p\\d|shop_url|rl_bf_2026_vip`).test(html)) throw new Error("legacy liquid left");
+  if (new RegExp(`rl_bf_2026_${PK}_p\\d|shop_url|rl_bf_2026_vip`).test(html)) throw new Error("legacy liquid left");
     if (!html.includes("{% unsubscribe_link %}")) throw new Error("unsubscribe missing");
 
   let text = copy(readFileSync(join(PACK, `${CFG[MAIL].file}.txt`), "utf8"));
-  const ta = text.indexOf(`{% if person|lookup:'rl_bf_2026_${MAIL}_p1_ready'`);
+  const ta = text.indexOf(`{% if person|lookup:'rl_bf_2026_${PK}_p1_ready'`);
   const tb = text.indexOf("Stock local.");
   if (ta < 0 || tb < ta) throw new Error("text pair block not found");
   text = (text.slice(0, ta) + TEN_TEXT + textBlocks.join("") + "{% endif %}\n\n" + text.slice(tb)).replace(CTA_RE, ctaUrl);
-  if (new RegExp(`rl_bf_2026_${MAIL}_p\\d|shop_url`).test(text)) throw new Error("legacy liquid left (text)");
+  if (new RegExp(`rl_bf_2026_${PK}_p\\d|shop_url`).test(text)) throw new Error("legacy liquid left (text)");
 
   const name = `${PREVIEW ? "[TEST] " : ""}BFCM 2026 — ${CFG[MAIL].name}`;
   const tpl = await k("templates/", "POST", { data: { type: "template", attributes: { name, editor_type: "CODE", html, text } } });
@@ -137,7 +141,7 @@ function card(v: OfferVariant, range: string) {
       type: "campaign",
       attributes: {
         name,
-        audiences: PREVIEW ? { included: [TEST_LIST], excluded: [] } : { included: [LIST_ALL], excluded: MAIL === "05" ? [SEG_EXCLUDE, SEG_REGISTERED] : [SEG_EXCLUDE] },
+        audiences: PREVIEW ? { included: [TEST_LIST], excluded: [] } : { included: [NEWLIST ?? LIST_ALL], excluded: MAIL === "05" ? [SEG_EXCLUDE, SEG_REGISTERED] : [SEG_EXCLUDE] },
         send_options: { use_smart_sending: !PREVIEW },
         send_strategy: { method: "immediate" },
         "campaign-messages": {
