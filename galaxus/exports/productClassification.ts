@@ -71,6 +71,7 @@ const FOOTWEAR_RE =
 /** Running / trail models StockX files under "sneakers" → Sport > Running > Laufschuhe. */
 const RUNNING_SHOE_RE =
   /\b(gel-?(nimbus|kayano|cumulus|pulse)|cloud(flow|monster|surfer|runner|swift|boom)|speedgoat|clifton|bondi|pegasus|vomero|invincible|alphafly|vaporfly|adizero (evo|adios|boston|takumi)|fuelcell rebel|endorphin|glycerin|wave rider|hoka .*challenger)\b/i;
+const HOODIE_TITLE_RE = /\b(hoodie|hooded sweat\w*|sweatshirt|crewneck|pullover)\b/i;
 const SHORTS_RE = /\b(shorts?|sweatshort|sweat short)\b/i;
 const APPAREL_RE =
   /\b(hoodie|sweatshirt|crewneck|tee|t-shirt|shirt|jogger|jacket|pullover|sweater|track ?pant|essentials|jersey|polo)\b/i;
@@ -368,8 +369,13 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
   if (brand && BRAND_CATEGORY[brand]) return BRAND_CATEGORY[brand];
   if (brand === "ugg") return classifyUggFootwearKind(input.title);
 
-  const refineSneakers = (kind: GalaxusProductKind): GalaxusProductKind =>
-    kind === "sneakers" && RUNNING_SHOE_RE.test(sanitizeText(input.title ?? "")) ? "running_shoes" : kind;
+  const refineSneakers = (kind: GalaxusProductKind): GalaxusProductKind => {
+    const title = sanitizeText(input.title ?? "");
+    if (kind === "sneakers" && RUNNING_SHOE_RE.test(title)) return "running_shoes";
+    // Generic StockX apparel alias: hoodies / sweatshirts belong in Pullover, not Shirts.
+    if (kind === "apparel" && HOODIE_TITLE_RE.test(title)) return "pullover";
+    return kind;
+  };
 
   const byBreadcrumb = classifyFromBreadcrumbAliases(input.breadcrumbAliases);
   if (byBreadcrumb) return refineSneakers(byBreadcrumb);
