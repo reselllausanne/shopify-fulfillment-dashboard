@@ -4,6 +4,9 @@ import {
   formatGalaxusAssortmentExceptionsMail,
   galaxusDisabledSupplierExemptProviderKeys,
   galaxusFashionExemptProviderKeys,
+  galaxusHobbyToyExemptProviderKeys,
+  galaxusPriceCapExemptProviderKeys,
+  galaxusStxFeedGateExemptProviderKeys,
 } from "@/galaxus/exports/galaxusAssortmentExceptions";
 
 describe("galaxusAssortmentExceptions ledger", () => {
@@ -30,5 +33,15 @@ describe("galaxusAssortmentExceptions ledger", () => {
     for (const row of GALAXUS_ASSORTMENT_EXCEPTIONS.filter((e) => e.active)) {
       expect(row.gates.length).toBeGreaterThan(0);
     }
+  });
+
+  it("exempts manual PS5 Slim Disc and Digital SKUs across fashion, hobby, price cap and STX feed gate", () => {
+    for (const key of ["STX_0711719577171", "STX_0711719577294"]) {
+      expect(galaxusFashionExemptProviderKeys().has(key)).toBe(true);
+      expect(galaxusHobbyToyExemptProviderKeys().has(key)).toBe(true);
+      expect(galaxusPriceCapExemptProviderKeys().has(key)).toBe(true);
+      expect(galaxusStxFeedGateExemptProviderKeys().has(key)).toBe(true);
+    }
+    expect(galaxusPriceCapExemptProviderKeys().has("STX_5702018066386")).toBe(false);
   });
 });

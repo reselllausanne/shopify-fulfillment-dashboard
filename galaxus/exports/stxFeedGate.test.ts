@@ -172,4 +172,35 @@ describe("shouldOmitStxFromGalaxusFeed", () => {
       })
     ).toEqual({ omit: true, reason: "NONFOCUS_OVER_500" });
   });
+
+  it("allows per-SKU exempt Sony PS5 Slim keys above 500 CHF while still enforcing 10k hard cap", () => {
+    expect(
+      shouldOmitStxFromGalaxusFeed({
+        providerKey: "STX_0711719577171",
+        supplierBrand: "Sony",
+        price: 1023.55,
+      })
+    ).toEqual({ omit: false });
+    expect(
+      shouldOmitStxFromGalaxusFeed({
+        providerKey: "STX_0711719577294",
+        supplierBrand: "Sony",
+        price: 870.02,
+      })
+    ).toEqual({ omit: false });
+    expect(
+      shouldOmitStxFromGalaxusFeed({
+        providerKey: "STX_0711719577171",
+        supplierBrand: "Sony",
+        price: 10_000,
+      })
+    ).toEqual({ omit: true, reason: "HARD_CAP_10K" });
+    expect(
+      shouldOmitStxFromGalaxusFeed({
+        providerKey: "STX_999999999999",
+        supplierBrand: "Sony",
+        price: 870.02,
+      })
+    ).toEqual({ omit: true, reason: "NONFOCUS_OVER_500" });
+  });
 });
