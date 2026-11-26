@@ -5,6 +5,7 @@
  * StockX-plausible categories (sneakers, hobby boxes, TCG) stay needs_human so ops can
  * map the slug manually.
  */
+import { isNeverBuyStockx, NEVER_BUY_STOCKX_REASON } from "@/lib/stockxAutoCheckout/neverBuyStockx";
 import { isStockxAutoBuyExcluded } from "@/lib/stockxAutoCheckout/precheckAvailability";
 import { isInStockFixedPriceProduct } from "@/shopify/inventory/inStockFixedPrice";
 
@@ -12,6 +13,9 @@ export type NonStockxBuyableLine = {
   title?: string | null;
   sku?: string | null;
   productId?: string | null;
+  gtin?: string | null;
+  mpn?: string | null;
+  supplierPid?: string | null;
 };
 
 /**
@@ -65,6 +69,9 @@ export function isClearlyNotStockxBuyable(line: NonStockxBuyableLine): {
   label?: string;
 } {
   const hay = `${line.title ?? ""} ${line.sku ?? ""}`;
+  // Hard never-buy list first: beats the StockX-plausible short-circuit.
+  const never = isNeverBuyStockx(line);
+  if (never.blocked) return { notBuyable: true, label: NEVER_BUY_STOCKX_REASON };
   for (const p of MANUAL_GOAT_HOLD) {
     if (p.re.test(hay)) return { notBuyable: true, label: p.label };
   }

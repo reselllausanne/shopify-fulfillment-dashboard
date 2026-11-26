@@ -5,6 +5,7 @@ import {
   galaxusLineWarehouseStockHint,
 } from "@/galaxus/warehouse/lineInventorySource";
 import { chooseGalaxusDesiredLane } from "@/lib/stockxAutoCheckout/galaxusLanePolicy";
+import { isNeverBuyStockx, NEVER_BUY_STOCKX_REASON } from "@/lib/stockxAutoCheckout/neverBuyStockx";
 import type { StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
 
 const STX_PREFIX = "stx_";
@@ -166,6 +167,17 @@ export async function resolveGalaxusStxBuyCandidate(input: {
   | { ok: false; reason: string }
 > {
   const { order, line } = input;
+  if (
+    isNeverBuyStockx({
+      title: line.productName,
+      sku: line.supplierSku,
+      gtin: line.gtin,
+      supplierPid: line.supplierPid,
+      providerKey: line.providerKey,
+    }).blocked
+  ) {
+    return { ok: false, reason: NEVER_BUY_STOCKX_REASON };
+  }
   if (!isGalaxusStxSupplierLine(line)) {
     return { ok: false, reason: "not_stx_line" };
   }

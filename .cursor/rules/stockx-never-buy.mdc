@@ -1,0 +1,12 @@
+---
+description: Produits à ne jamais acheter sur StockX (stock entrepôt)
+alwaysApply: true
+---
+
+# Never-buy StockX
+
+- Nike Varsity Elite Backpack White/Black/Metallic Silver (32 L), `HM9965-010` = stock entrepôt. Ne jamais acheter sur StockX (Galaxus ni Shopify).
+- Identifiants: MPN `HM9965-010`, supplier SKU `STX_198480965312`, GTIN `198480965312`, Galaxus product ID `66120208`.
+- Source de vérité code: `NEVER_BUY_STOCKX` dans `lib/stockxAutoCheckout/neverBuyStockx.ts` (branché sur `isClearlyNotStockxBuyable`, `resolveGalaxusStxBuyCandidate`, `buildNightQueue`). Ajouter toute nouvelle entrée là + test.
+- Autre coloris (ex. Playful Pink `198481882373`) n'est pas concerné.
+- Les achats StockX déjà faits ne sont pas annulés automatiquement: décision user.
