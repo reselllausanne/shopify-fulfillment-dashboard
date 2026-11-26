@@ -94,8 +94,8 @@ function card(v: OfferVariant, range: string) {
     "{% else %}\n" +
       gsel.items.map((v) => `${v.title}\nCHF ${v.sale_price_chf.toFixed(2)} (au lieu de CHF ${v.reference_price_chf.toFixed(2)})\nVoir la paire → (${v.url})\n`).join("\n"),
   );
-  const TEN_HTML = `<tr><td class="pad" style="padding:6px 38px 22px;background:#FFFFFF;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border:2px solid #101010;padding:16px 18px;font:400 15px/22px Arial,Helvetica,sans-serif;color:#101010;"><strong style="font-size:17px;">En plus : −10 % sur toute la boutique.</strong><br />En plus des paires en liquidation, appliqué automatiquement au paiement. C’est une seule fois par année.</td></tr></table></td></tr>`;
-  const TEN_TEXT = "EN PLUS : −10 % SUR TOUTE LA BOUTIQUE. En plus des paires en liquidation, appliqué automatiquement au paiement. C’est une seule fois par année.\n\n";
+  const TEN_HTML = `<tr><td class="pad" style="padding:6px 38px 22px;background:#FFFFFF;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border:2px solid #101010;padding:16px 18px;font:400 15px/22px Arial,Helvetica,sans-serif;color:#101010;"><strong style="font-size:17px;">En plus : −10 % sur le reste de la boutique.</strong><br />Les paires en liquidation sont déjà à −50 % et plus, donc le 10 % ne s’y ajoute pas. Il s’applique automatiquement au paiement sur tout le reste, une seule fois par année.</td></tr></table></td></tr>`;
+  const TEN_TEXT = "EN PLUS : −10 % SUR LE RESTE DE LA BOUTIQUE. Les paires en liquidation sont déjà à −50 % et plus, donc le 10 % ne s’y ajoute pas. Il s’applique automatiquement au paiement sur tout le reste, une seule fois par année.\n\n";
   const rangeHtml = `${TEN_HTML}<tr><td class="pad" style="padding:0 38px 30px;background:#FFFFFF;">${blocks.join("")}{% endif %}</td></tr>`;
 
   const SHOP = "https://www.resell-lausanne.ch/collections/black-friday";
