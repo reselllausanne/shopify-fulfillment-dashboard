@@ -80,8 +80,15 @@ function card(v: OfferVariant, range: string) {
   const SHOP = "https://www.resell-lausanne.ch/collections/black-friday";
   const CTA_RE = /\{\{ person\|lookup:'rl_bf_2026_shop_url'\|default:'[^']*' \}\}/g;
   const COPY: [string, string][] = [
-    ["On t’avait promis de passer avant tout le monde. C’est parti.", "On t’avait promis de te prévenir à l’heure. C’est ouvert."],
-    ["et tu as le premier choix jusqu’à demain matin.", "Une seule paire par modèle et par pointure : premier arrivé, premier servi."],
+    ["TON ACCÈS EST OUVERT", "ACCÈS VIP / C’EST OUVERT"],
+    ["À TOI<br />DE JOUER.", "TU PASSES<br />EN PREMIER."],
+    ["À TOI\nDE JOUER.", "TU PASSES\nEN PREMIER."],
+    ["PREMIER CHOIX", "14 H D’AVANCE"],
+    ["On t’avait promis de passer avant tout le monde. C’est parti.", "Tu t’es inscrit avec ta pointure, merci. La liquidation est ouverte et tu as 14 h d’avance sur le reste de la liste."],
+    [", et tu as le premier choix jusqu’à demain matin.", ". Les autres ne seront prévenus que demain à 9 h. Une seule paire par modèle et par pointure : premier arrivé, premier servi."],
+    ["Bonne chasse.", "Voici 3 paires dans ta pointure. Bonne chasse."],
+    ["J’EN PROFITE EN PREMIER", "ACTIVER MON ACCÈS"],
+    ["J’EN PROFITE EN PREMIER", "ACTIVER MON ACCÈS"],
   ];
   const copy = (s: string) => COPY.reduce((acc, [a, b]) => acc.replace(a, b), s);
 
@@ -94,7 +101,7 @@ function card(v: OfferVariant, range: string) {
   html = html.slice(0, a) + rangeHtml + html.slice(e2);
   html = html.replace(CTA_RE, SHOP);
   if (/rl_bf_2026_04_p\d|shop_url|rl_bf_2026_vip/.test(html)) throw new Error("legacy liquid left");
-  if (/promis de passer avant|premier choix jusqu/.test(html)) throw new Error("old copy left");
+  if (/promis de passer avant|premier choix jusqu|DE JOUER/.test(html)) throw new Error("old copy left");
   if (!html.includes("{% unsubscribe_link %}")) throw new Error("unsubscribe missing");
 
   let text = copy(readFileSync(join(PACK, "04_acces_vip.txt"), "utf8"));
@@ -123,8 +130,8 @@ function card(v: OfferVariant, range: string) {
                   channel: "email",
                   label: name,
                   content: {
-                    subject: "C’est à toi : −50 % avant tout le monde",
-                    preview_text: "La liquidation est ouverte. Tes paires, dans ta pointure.",
+                    subject: "EARLY ACCESS 🔓 Black Friday : c’est ouvert",
+                    preview_text: "−50 % et plus. 14 h d’avance, tes paires dans ta pointure.",
                     from_email: "Contact@resell-lausanne.ch",
                     from_label: "Resell Lausanne",
                     reply_to_email: "Contact@resell-lausanne.ch",
