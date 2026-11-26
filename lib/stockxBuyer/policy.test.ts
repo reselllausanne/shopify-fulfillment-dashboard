@@ -155,3 +155,18 @@ describe("keys and ordering", () => {
     expect(q.map((x) => x.key)).toEqual(["s-exp", "s-old", "s-new", "g0", "g1"]);
   });
 });
+
+describe("card declined → global halt, never a retry", () => {
+  it("needs_human payment_declined → halt", () => {
+    const o = classifyResult({ kind: "needs_human", reason: "payment_declined", detail: "Une erreur s'est produite avec votre mode de paiement." });
+    expect(o.kind).toBe("halt");
+    expect((o as { reason: string }).reason).toContain("card declined — fund/unlock card");
+  });
+  it("legacy bot_fail carrying the declined text → halt too", () => {
+    const o = classifyResult({ kind: "needs_human", reason: "bot_fail", detail: "Payment not completed (no charge): There was an error with your payment method." });
+    expect(o.kind).toBe("halt");
+  });
+  it("other bot_fail stays a retry", () => {
+    expect(classifyResult({ kind: "needs_human", reason: "bot_fail", detail: "Place Order missing" }).kind).toBe("retry");
+  });
+});

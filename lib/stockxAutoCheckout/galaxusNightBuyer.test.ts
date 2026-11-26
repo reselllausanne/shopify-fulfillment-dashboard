@@ -122,3 +122,15 @@ describe("lane from order number", () => {
     expect(laneFromOrderNumber("xx")).toBeNull();
   });
 });
+
+describe("night buyer card declined", () => {
+  it("payment_declined → halt (not retry, not paid_no_number)", () => {
+    const o = classifyCheckoutResult({ kind: "needs_human", reason: "payment_declined", detail: "There was an error with your payment method. Please enter a new payment method and try again." });
+    expect(o.kind).toBe("halt");
+    expect((o as { reason: string }).reason).toContain("card declined — fund/unlock card");
+  });
+  it("legacy 'Payment not completed' bot_fail with the declined text → halt", () => {
+    const o = classifyCheckoutResult({ kind: "needs_human", reason: "bot_fail", detail: "Payment not completed (no charge): Une erreur s'est produite avec votre mode de paiement." });
+    expect(o.kind).toBe("halt");
+  });
+});

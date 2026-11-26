@@ -63,7 +63,8 @@ export type StockxNeedsHumanReason =
   | "already_matched"
   | "physical_stock"
   | "pickup"
-  | "prebuy_dedupe";
+  | "prebuy_dedupe"
+  | "payment_declined";
 
 export type StockxAutoOutcomeKind = "easy_buy" | "needs_human" | "skipped";
 
@@ -111,4 +112,5 @@ export const STOCKX_NEEDS_HUMAN_REASON_FR: Record<StockxNeedsHumanReason, string
   pickup: "Retrait magasin — skip auto",
   prebuy_dedupe:
     "Pré-achat: Gmail (StockX/GOAT) ou achat StockX non lié — pas de nouvel achat",
+  payment_declined: "Carte / paiement refusé par StockX — buyer en pause, alimenter ou débloquer la carte",
 };

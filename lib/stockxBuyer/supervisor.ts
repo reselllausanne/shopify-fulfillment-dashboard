@@ -33,6 +33,8 @@ import { findUnlinkedStockxMatches } from "@/lib/stockxAutoCheckout/prebuyDedupe
 import { precheckStockxBuyability } from "@/lib/stockxAutoCheckout/precheckAvailability";
 import { killChromeForUserDataDir } from "@/lib/stockxBrowserProcess";
 import { postSlack } from "@/lib/stockxAuthAlert";
+import { raiseCardDeclined, readCardAlert } from "@/lib/stockxBuyer/cardAlert";
+import { CARD_DECLINED_HALT_REASON } from "@/lib/stockxPaymentDiag";
 import { redactSecrets } from "@/lib/stockxBuyer/redact";
 import { checkGoat, goatAlertText } from "@/lib/stockxBuyer/goatWatch";
 import {
@@ -207,6 +209,12 @@ async function handleOutcome(
     `${base.source} ${base.orderRef} ${(base.title || "").slice(0, 40)} → ${next.status} ${next.reason}` +
       (next.stockxOrderNumber ? ` ${next.stockxOrderNumber}` : "")
   );
+  if (out.kind === "halt" && out.reason.startsWith(CARD_DECLINED_HALT_REASON) && !rt.cfg.dryRun) {
+    // Card declined: global halt (both halt files), alert once, no retry of this line.
+    rt.counters.halts += 1;
+    await raiseCardDeclined({ source: base.source ?? "shopify", orderRef: base.orderRef ?? "?", title: base.title ?? "", detail: out.reason });
+    return;
+  }
   await learn(rt, base.key, out);
 }
 
@@ -576,6 +584,7 @@ async function writeStatus(rt: Runtime, extra: Record<string, unknown> = {}): Pr
     halted: await readHalt(),
     counters: rt.counters,
     lastError: rt.lastError,
+    cardAlert: await readCardAlert(),
     ...extra,
   }).catch(() => undefined);
   await fs.writeFile(REPORT_FILE, renderReport(rt.states), "utf8").catch(() => undefined);

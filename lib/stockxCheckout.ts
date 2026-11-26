@@ -16,7 +16,9 @@ import { connectWarmBrowser } from "@/lib/stockxWarmBrowser";
 import { killChromeForUserDataDir } from "@/lib/stockxBrowserProcess";
 import {
   extractPaymentSnippet,
+  isCardDeclined,
   isPaymentRefused,
+  CARD_DECLINED_REASON,
   PAYMENT_NOT_COMPLETED_PREFIX,
 } from "@/lib/stockxPaymentDiag";
 import {
@@ -2167,6 +2169,18 @@ export async function runStockxAutoCheckoutForOrder(options: {
       };
     }
 
+    // Card already rejected on this review page (banner from a previous click): do not click again.
+    {
+      const preBody = await page.locator("body").innerText().catch(() => "");
+      if (isCardDeclined(preBody, page.url())) {
+        return fail(CARD_DECLINED_REASON, {
+          lanes,
+          recommended: pick.lane,
+          detail: `card declined before Place Order: ${extractPaymentSnippet(preBody, 200)}`,
+        });
+      }
+    }
+
     await pay.click();
     await page.waitForTimeout(8000);
     const afterBody = await page.locator("body").innerText().catch(() => "");
@@ -2227,6 +2241,13 @@ export async function runStockxAutoCheckoutForOrder(options: {
       }
     }
     if (!stockxOrderNumber) {
+      if (isCardDeclined(shopifyClickSnippet, page.url())) {
+        return fail(CARD_DECLINED_REASON, {
+          lanes,
+          recommended: pick.lane,
+          detail: `card declined after Place Order (no charge): ${shopifyClickSnippet.slice(0, 220)}`,
+        });
+      }
       if (shopifyClickRefused) {
         return fail("bot_fail", {
           lanes,
@@ -2521,6 +2542,20 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
       };
     }
 
+    if (!dryRun) {
+      const preBody = await page.locator("body").innerText().catch(() => "");
+      if (isCardDeclined(preBody, page.url())) {
+        return {
+          kind: "needs_human",
+          reason: CARD_DECLINED_REASON,
+          detail: `card declined before Place Order: ${extractPaymentSnippet(preBody, 200)}`,
+          lane: selected.lane.label,
+          pickReason: selected.pickReason,
+          totalChf,
+        };
+      }
+    }
+
     if (!(await clickPlaceOrder(page, { dry: dryRun }))) {
       return {
         kind: "needs_human",
@@ -2600,6 +2635,16 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
       const url = clickUrl;
       const snippet = clickSnippet.replace(/"/g, "'");
       const refused = clickRefused;
+      if (isCardDeclined(clickSnippet, clickUrl)) {
+        return {
+          kind: "needs_human",
+          reason: CARD_DECLINED_REASON,
+          detail: `card declined after Place Order (no charge): ${snippet.slice(0, 220)}`,
+          lane: selected.lane.label,
+          pickReason: selected.pickReason,
+          totalChf,
+        };
+      }
       if (refused) {
         return {
           kind: "needs_human",
