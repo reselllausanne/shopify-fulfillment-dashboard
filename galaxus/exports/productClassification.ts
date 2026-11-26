@@ -68,6 +68,9 @@ function combinedText(input: ClassificationInput): string {
 
 const FOOTWEAR_RE =
   /\b(sneaker|samba|gazelle|campus|superstar|jordan|dunk|air ?max|yeezy|asics|new ?balance|salomon|shoe|shoes|trainer)\b/i;
+/** Running / trail models StockX files under "sneakers" → Sport > Running > Laufschuhe. */
+const RUNNING_SHOE_RE =
+  /\b(gel-?(nimbus|kayano|cumulus|pulse)|cloud(flow|monster|surfer|runner|swift|boom)|speedgoat|clifton|bondi|pegasus|vomero|invincible|alphafly|vaporfly|adizero (evo|adios|boston|takumi)|fuelcell rebel|endorphin|glycerin|wave rider|hoka .*challenger)\b/i;
 const SHORTS_RE = /\b(shorts?|sweatshort|sweat short)\b/i;
 const APPAREL_RE =
   /\b(hoodie|sweatshirt|crewneck|tee|t-shirt|shirt|jogger|jacket|pullover|sweater|track ?pant|essentials|jersey|polo)\b/i;
@@ -120,11 +123,11 @@ const STOCKX_ALIAS_TO_KIND: Record<string, GalaxusProductKind> = {
   "t-shirts": "apparel",
   tshirts: "apparel",
   tee: "apparel",
-  hoodies: "apparel",
-  hoodie: "apparel",
-  sweatshirts: "apparel",
-  sweatshirt: "apparel",
-  crewneck: "apparel",
+  hoodies: "pullover",
+  hoodie: "pullover",
+  sweatshirts: "pullover",
+  sweatshirt: "pullover",
+  crewneck: "pullover",
   shirts: "apparel",
   shirt: "apparel",
   polos: "apparel",
@@ -365,11 +368,14 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
   if (brand && BRAND_CATEGORY[brand]) return BRAND_CATEGORY[brand];
   if (brand === "ugg") return classifyUggFootwearKind(input.title);
 
+  const refineSneakers = (kind: GalaxusProductKind): GalaxusProductKind =>
+    kind === "sneakers" && RUNNING_SHOE_RE.test(sanitizeText(input.title ?? "")) ? "running_shoes" : kind;
+
   const byBreadcrumb = classifyFromBreadcrumbAliases(input.breadcrumbAliases);
-  if (byBreadcrumb) return byBreadcrumb;
+  if (byBreadcrumb) return refineSneakers(byBreadcrumb);
 
   const byProductType = classifyFromProductType(input.productType);
-  if (byProductType) return byProductType;
+  if (byProductType) return refineSneakers(byProductType);
 
   const text = combinedText(input);
   if (!text) {
