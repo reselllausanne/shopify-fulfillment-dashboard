@@ -17,6 +17,8 @@ import {
   readJson,
   renderReport,
 } from "@/lib/stockxBuyer/ledger";
+import { clearCardAlert, readCardAlert } from "@/lib/stockxBuyer/cardAlert";
+import { loadState as loadNightState, saveState as saveNightState } from "@/lib/stockxAutoCheckout/galaxusNightBuyer";
 import { readLearnings, renderLearnings, summarizeLearnings } from "@/lib/stockxBuyer/learnings";
 import { RECHECK_MS, stateBlocks, type JobState } from "@/lib/stockxBuyer/policy";
 import { buildCancelRebuyJobs, buildShopifyJobs, normName } from "@/lib/stockxBuyer/shopifyQueue";
@@ -43,6 +45,7 @@ export async function status() {
   return {
     on: await exists(ON_FILE),
     halted: await readHalt(),
+    cardAlert: await readCardAlert(),
     alive: heartbeat > 0 && Date.now() - heartbeat < 5 * 60_000,
     heartbeatAgeSec: heartbeat ? Math.round((Date.now() - heartbeat) / 1000) : null,
     worker: st,
@@ -74,7 +77,31 @@ export async function haltNow(reason: string): Promise<string> {
 export async function resume(): Promise<string> {
   await clearHalt();
   await fs.rm(path.join(DATA_DIR, "night-buyer.halt"), { force: true });
-  return "halt cleared";
+  await clearCardAlert();
+  // Lines parked only because of the card decline are retried right away (not after the 3 h review window).
+  let released = 0;
+  try {
+    const reduced = await loadReduced();
+    for (const s of reduced.states.values()) {
+      if (s.status === "needs_review" && String(s.reason).startsWith("card declined")) {
+        await appendEvent({ t: Date.now(), ev: "release", key: s.key, by: "card_resumed" });
+        released += 1;
+      }
+    }
+    const night = await loadNightState();
+    let changed = false;
+    for (const [k, v] of Object.entries(night as Record<string, { reason?: string }>)) {
+      if (v?.reason === "payment_declined") {
+        delete (night as Record<string, unknown>)[k];
+        changed = true;
+        released += 1;
+      }
+    }
+    if (changed) await saveNightState(night);
+  } catch {
+    /* resume must never fail on cleanup */
+  }
+  return `halt cleared${released ? `, ${released} card-declined line(s) released` : ""}`;
 }
 
 /** Manual hold (e.g. buying on GOAT by hand). Survives restarts: `held` never expires. */

@@ -29,7 +29,11 @@ import {
 } from "@/lib/stockxAutoCheckout/galaxusBuyCandidates";
 import { linkStockxBuyToGalaxus } from "@/lib/stockxAutoCheckout/linkAfterBuyGalaxus";
 import { isClearlyNotStockxBuyable } from "@/lib/stockxAutoCheckout/nonStockxBuyable";
+import { raiseCardDeclined } from "@/lib/stockxBuyer/cardAlert";
 import {
+  CARD_DECLINED_HALT_REASON,
+  CARD_DECLINED_REASON,
+  isCardDeclined,
   isPaymentNotCompletedDetail,
   nextPaymentStreak,
   paymentBreakerTripped,
@@ -124,6 +128,9 @@ export function classifyCheckoutResult(r: GalaxusAutoCheckoutResult): Outcome {
   }
   const reason = String(r.reason ?? "unknown");
   const detail = r.detail ?? null;
+  if (reason === CARD_DECLINED_REASON || (reason === "bot_fail" && isCardDeclined(detail ?? ""))) {
+    return { kind: "halt", reason: `${CARD_DECLINED_HALT_REASON}: ${String(detail ?? "").slice(0, 200)}` };
+  }
   if (reason === "link_fail") return { kind: "halt", reason: `link_fail: ${detail ?? ""}` };
   if (reason === "bot_fail" && /paid but no stockx order number/i.test(detail ?? "")) {
     return { kind: "paid_no_number", totalChf: r.totalChf ?? null, lane };
@@ -498,6 +505,7 @@ async function tripPaymentBreaker(pair: NightPair): Promise<void> {
   await fs.rm(INFLIGHT_FILE, { force: true });
   await halt(msg);
   await postSlack(`:octagonal_sign: StockX buyer HALT: ${msg}`).catch(() => false);
+  await raiseCardDeclined({ source: "galaxus", orderRef: pair.galaxusOrderId, title: pair.productName, detail: msg });
 }
 
 /**
@@ -727,6 +735,12 @@ export async function processPair(
       return;
     }
     if (out.kind === "halt") {
+      if (out.reason.startsWith(CARD_DECLINED_HALT_REASON)) {
+        await fs.rm(INFLIGHT_FILE, { force: true });
+        state[key] = { ...base, status: "needs_review", reason: CARD_DECLINED_REASON, detail: out.reason.slice(0, 200) };
+        await raiseCardDeclined({ source: "galaxus", orderRef: pair.galaxusOrderId, title: pair.productName, detail: out.reason });
+        return;
+      }
       await halt(`${pair.galaxusOrderId} ${pair.productName}: ${out.reason}`);
       return;
     }

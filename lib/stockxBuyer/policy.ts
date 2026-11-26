@@ -1,4 +1,5 @@
 import { redactSecrets } from "@/lib/stockxBuyer/redact";
+import { CARD_DECLINED_HALT_REASON, CARD_DECLINED_REASON, isCardDeclined } from "@/lib/stockxPaymentDiag";
 
 /**
  * Pure policy for the unified StockX buyer (Shopify + Galaxus).
@@ -107,6 +108,9 @@ export function classifyResult(r: RawCheckoutResult): JobOutcome {
   }
 
   // needs_human family
+  if (reason === CARD_DECLINED_REASON || (reason === "bot_fail" && isCardDeclined(detail ?? ""))) {
+    return { kind: "halt", reason: `${CARD_DECLINED_HALT_REASON}: ${String(detail ?? "").slice(0, 200)}` };
+  }
   if (reason === "link_fail") return { kind: "halt", reason: `link_fail: ${detail ?? ""}` };
   if (reason === "bot_fail" && /paid but no stockx order number/i.test(detail ?? "")) {
     return { kind: "paid_no_number", totalChf: r.totalChf ?? null, lane };

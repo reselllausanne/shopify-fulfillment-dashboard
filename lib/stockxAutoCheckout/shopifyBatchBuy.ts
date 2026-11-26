@@ -530,6 +530,12 @@ export async function runShopifyBatchBuy(options: {
         result,
       });
 
+      // Card declined: never click Place Order on the next line of this batch.
+      if (result.kind === "needs_human" && (result as { reason?: string }).reason === "payment_declined") {
+        console.error("[SHOPIFY-BATCH-BUY] card declined — STOP batch (no further Place Order)");
+        break;
+      }
+
       // Soft reset to buying/orders between SKUs (keep same session).
       await warmBuyingOrders(session.page).catch((e: any) => {
         if (looksProxy402(String(e?.message || e))) {

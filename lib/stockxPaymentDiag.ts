@@ -57,3 +57,42 @@ export function nextPaymentStreak(streak: number, event: "no_order" | "order"): 
 export function paymentBreakerTripped(streak: number, limit = PAYMENT_BREAKER_LIMIT): boolean {
   return streak >= limit;
 }
+
+/**
+ * Card / payment method rejected by StockX after "Place Order" (or already shown on the review page).
+ * Real texts seen on the VPS (26 Nov 2026, 47 refused clicks):
+ *   FR: "Une erreur s'est produite avec votre mode de paiement. Merci d'indiquer un nouveau mode de paiement, puis réessayez. Actualiser"
+ *   EN: "There was an error with your payment method. Please enter a new payment method and try again. Update"
+ * plus common wordings (declined, insufficient funds, update/add payment method, 3-D Secure required).
+ * Stricter than PAYMENT_REFUSED_RE on purpose: no bare "try again" / "expired" / "error".
+ */
+export const CARD_DECLINED_RE = new RegExp(
+  [
+    String.raw`erreur s.est produite avec votre mode de paiement`,
+    String.raw`error with your payment method`,
+    String.raw`indiquer un nouveau mode de paiement`,
+    String.raw`(enter|add|provide|use) a new payment method`,
+    String.raw`payment method (was )?(declined|failed|rejected|not accepted)`,
+    String.raw`payment (was )?(declined|refused)`,
+    String.raw`mode de paiement (a [ée]t[ée] )?(refus|rejet|invalide)`,
+    String.raw`paiement (a [ée]t[ée] )?(refus|rejet|d[ée]clin)`,
+    String.raw`(card|carte)( was| a [ée]t[ée])? (declined|refus[ée]e|rejet[ée]e|bloqu[ée]e)`,
+    String.raw`(insufficient|not enough) funds`,
+    String.raw`fonds insuffisants`,
+    String.raw`update (your )?payment (method|information)`,
+    String.raw`mettez? [àa] jour (votre )?mode de paiement`,
+    String.raw`3-?D[- ]?Secure[^.]{0,60}(fail|required|[ée]chou|requis)`,
+  ].join("|"),
+  "i"
+);
+
+/** Strict card-declined test. Never true on /buying/ pages (orders list, order detail). */
+export function isCardDeclined(text: string, url = ""): boolean {
+  if (/\/buying\//.test(url)) return false;
+  return CARD_DECLINED_RE.test(String(text ?? "").replace(/\s+/g, " "));
+}
+
+export const CARD_DECLINED_REASON = "payment_declined";
+
+/** Halt reason shown to the user / written in buyer.halt + night-buyer.halt. */
+export const CARD_DECLINED_HALT_REASON = "card declined — fund/unlock card";
