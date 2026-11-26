@@ -1096,6 +1096,41 @@ describe("galaxusAssortmentBlockReason", () => {
       expect(shoe(brand, title, 290)).toBeNull();
     }
   });
+
+  it("allows exempt manual PS5 Slim Disc and Digital SKUs above 300 CHF while blocking other consoles", () => {
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_0711719577171",
+        supplierKey: "stx",
+        gtin: "0711719577171",
+        title: "Sony PlayStation 5 Slim Disc Edition",
+        brand: "Sony",
+        purchasePriceExVatChf: 1023.55,
+        suggestedRetailInclVatChf: 1106.45,
+      })
+    ).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_0711719577294",
+        supplierKey: "stx",
+        gtin: "0711719577294",
+        title: "Sony PlayStation 5 Slim Digital Edition",
+        brand: "Sony",
+        purchasePriceExVatChf: 870.02,
+        suggestedRetailInclVatChf: 940.5,
+      })
+    ).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_711719021247",
+        supplierKey: "stx",
+        gtin: "711719021247",
+        title: "Sony PlayStation 5 Slim Disc Edition",
+        brand: "Sony",
+        purchasePriceExVatChf: 1023.55,
+      })
+    ).toBe("hobby_toy");
+  });
 });
 
 describe("galaxusAssortmentBlockReasonForCandidate", () => {

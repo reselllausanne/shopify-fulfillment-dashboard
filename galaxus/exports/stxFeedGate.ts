@@ -24,6 +24,7 @@ import {
   classifyStxBrand,
   STX_HARD_CAP_CHF,
 } from "@/galaxus/exports/stxBrandBuckets";
+import { galaxusStxFeedGateExemptProviderKeys } from "@/galaxus/exports/galaxusAssortmentExceptions";
 import aberrantOverrides from "@/galaxus/exports/stxAberrantOverrides.json";
 
 export const STX_NONFOCUS_MAX_CHF = 500;
@@ -49,6 +50,7 @@ function loadAberrantOverrideSet(): Set<string> {
 
 /** Cached at module load — JSON is committed, changes require a redeploy. */
 const ABERRANT_OVERRIDE_KEYS: ReadonlySet<string> = loadAberrantOverrideSet();
+const STX_FEED_GATE_EXEMPT_KEYS: ReadonlySet<string> = galaxusStxFeedGateExemptProviderKeys();
 
 export function isStxSupplierKey(input: {
   supplierKey?: string | null;
@@ -95,7 +97,8 @@ export function shouldOmitStxFromGalaxusFeed(input: {
   if (
     Number.isFinite(priceNum) &&
     priceNum > STX_NONFOCUS_MAX_CHF &&
-    classifyStxBrand(input.supplierBrand) === "MAINSTREAM"
+    classifyStxBrand(input.supplierBrand) === "MAINSTREAM" &&
+    !(providerKey && STX_FEED_GATE_EXEMPT_KEYS.has(providerKey.toUpperCase()))
   ) {
     return { omit: true, reason: "NONFOCUS_OVER_500" };
   }
@@ -111,6 +114,12 @@ export function shouldOmitStxFromGalaxusFeed(input: {
  * Runs one seq scan of SupplierVariant (ILIKE cannot use a btree; deliberately NOT indexed: a partial index on STX would cover ~1M frequently repriced rows and kill HOT updates on `price`). Filters in Postgres.
  */
 export async function loadStxFeedGateProviderKeys(): Promise<Set<string>> {
+  const exemptNonFocusSql =
+    STX_FEED_GATE_EXEMPT_KEYS.size > 0
+      ? ` AND UPPER("providerKey") NOT IN (${Array.from(STX_FEED_GATE_EXEMPT_KEYS)
+          .map((k) => `'${k.replace(/'/g, "''")}'`)
+          .join(",")})`
+      : "";
   const rows = await prisma.$queryRawUnsafe<Array<{ providerKey: string | null }>>(
     `
     SELECT "providerKey"
@@ -120,7 +129,7 @@ export async function loadStxFeedGateProviderKeys(): Promise<Set<string>> {
         price >= $1
         OR (
           price > $2
-          AND LOWER(COALESCE("supplierBrand", '')) NOT IN (${MAINSTREAM_EXEMPT_SQL_LIST})
+          AND LOWER(COALESCE("supplierBrand", '')) NOT IN (${MAINSTREAM_EXEMPT_SQL_LIST})${exemptNonFocusSql}
         )
       )
     `,

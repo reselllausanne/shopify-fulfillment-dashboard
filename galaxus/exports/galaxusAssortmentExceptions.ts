@@ -15,7 +15,9 @@ export type GalaxusGateId =
   | "fashion_only"
   | "supplier_disabled"
   | "price_cap_300"
-  | "category_block";
+  | "category_block"
+  | "hobby_toy"
+  | "stx_nonfocus_over_500";
 
 export type GalaxusAssortmentExceptionReason =
   | "sold_before"
@@ -39,6 +41,12 @@ export type GalaxusAssortmentException = {
   bypassFashionOnly?: boolean;
   /** Bypass galaxusCategoryBlocklist.json for this provider key. */
   bypassCategoryBlock?: boolean;
+  /** Bypass hobby_toy block (e.g. console kind) for this provider key. */
+  bypassHobbyToy?: boolean;
+  /** Bypass absolute consumer price cap (GALAXUS_MAX_RETAIL_CHF) for this provider key. */
+  bypassPriceCap?: boolean;
+  /** Bypass STX NONFOCUS_OVER_500 gate in stxFeedGate.ts for this provider key. */
+  bypassStxFeedGate?: boolean;
   reason: GalaxusAssortmentExceptionReason;
   /** Free-text: buy source, MOQ, target sell, hypothesis. */
   note: string;
@@ -140,6 +148,36 @@ export const GALAXUS_ASSORTMENT_EXCEPTIONS: GalaxusAssortmentException[] = [
     reason: "market_gap",
     note: "Only REI row kept. Reichelt CHF 557.82 incl VAT. Feed 599 ex VAT. Rest of REI is supplier_disabled.",
     addedAt: "2026-11-02",
+    active: true,
+  },
+  {
+    providerKey: "STX_0711719577171",
+    gtin: "0711719577171",
+    title: "Sony PlayStation 5 Slim Disc Edition",
+    supplierKey: "stx",
+    gates: ["fashion_only", "hobby_toy", "price_cap_300", "stx_nonfocus_over_500"],
+    bypassFashionOnly: true,
+    bypassHobbyToy: true,
+    bypassPriceCap: true,
+    bypassStxFeedGate: true,
+    reason: "overpriced_rivals",
+    note: "Galaxus 39726201 (rival CHF 1199 incl). Manual STX row qty 1; PurchasePriceExclVat 1023.55 (1000 net after 2.3% VAT) / SRP 1106.45.",
+    addedAt: "2026-11-26",
+    active: true,
+  },
+  {
+    providerKey: "STX_0711719577294",
+    gtin: "0711719577294",
+    title: "Sony PlayStation 5 Slim Digital Edition",
+    supplierKey: "stx",
+    gates: ["fashion_only", "hobby_toy", "price_cap_300", "stx_nonfocus_over_500"],
+    bypassFashionOnly: true,
+    bypassHobbyToy: true,
+    bypassPriceCap: true,
+    bypassStxFeedGate: true,
+    reason: "overpriced_rivals",
+    note: "Galaxus 39726222 (rival CHF 1099 incl). Manual STX row qty 1; PurchasePriceExclVat 870.02 (850 net after 2.3% VAT) / SRP 940.50.",
+    addedAt: "2026-11-26",
     active: true,
   },
 ];
@@ -262,6 +300,30 @@ export function galaxusCategoryBlockExemptProviderKeys(): ReadonlySet<string> {
   );
 }
 
+export function galaxusHobbyToyExemptProviderKeys(): ReadonlySet<string> {
+  return new Set(
+    activeSkuExceptions()
+      .filter((e) => e.bypassHobbyToy || e.gates.includes("hobby_toy"))
+      .map((e) => e.providerKey.trim().toUpperCase())
+  );
+}
+
+export function galaxusPriceCapExemptProviderKeys(): ReadonlySet<string> {
+  return new Set(
+    activeSkuExceptions()
+      .filter((e) => e.bypassPriceCap || e.gates.includes("price_cap_300"))
+      .map((e) => e.providerKey.trim().toUpperCase())
+  );
+}
+
+export function galaxusStxFeedGateExemptProviderKeys(): ReadonlySet<string> {
+  return new Set(
+    activeSkuExceptions()
+      .filter((e) => e.bypassStxFeedGate || e.gates.includes("stx_nonfocus_over_500"))
+      .map((e) => e.providerKey.trim().toUpperCase())
+  );
+}
+
 export function findGalaxusAssortmentException(
   providerKey: string | null | undefined
 ): GalaxusAssortmentException | null {
@@ -277,6 +339,8 @@ const GATE_LABEL: Record<GalaxusGateId, string> = {
   supplier_disabled: "supplier disabled (BWZ default off)",
   price_cap_300: "absolute price cap (GALAXUS_MAX_RETAIL_CHF, default 300)",
   category_block: "category cleanup blocklist (galaxusCategoryBlocklist.json)",
+  hobby_toy: "hobby / toy block (incl. gaming consoles)",
+  stx_nonfocus_over_500: "STX non-focus brand > 500 CHF feed gate",
 };
 
 /** Plain-text body for Tali / category email. */

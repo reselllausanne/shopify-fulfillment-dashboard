@@ -56,6 +56,8 @@ import {
   galaxusCategoryBlockExemptProviderKeys,
   galaxusDisabledSupplierExemptProviderKeys,
   galaxusFashionExemptProviderKeys,
+  galaxusHobbyToyExemptProviderKeys,
+  galaxusPriceCapExemptProviderKeys,
 } from "@/galaxus/exports/galaxusAssortmentExceptions";
 
 export type GalaxusAssortmentBlockReason =
@@ -208,6 +210,10 @@ const HOBBY_TOY_BLOCKED_KINDS = new Set<GalaxusProductKind>([
 const DISABLED_SUPPLIER_EXEMPT_PROVIDER_KEYS = galaxusDisabledSupplierExemptProviderKeys();
 /** Category cleanup blocklist holes — same ledger. */
 const CATEGORY_BLOCK_EXEMPT_PROVIDER_KEYS = galaxusCategoryBlockExemptProviderKeys();
+/** Hobby / toy (e.g. console) holes — same ledger. */
+const HOBBY_TOY_EXEMPT_PROVIDER_KEYS = galaxusHobbyToyExemptProviderKeys();
+/** Absolute 300 CHF price-cap holes — same ledger. */
+const PRICE_CAP_EXEMPT_PROVIDER_KEYS = galaxusPriceCapExemptProviderKeys();
 const FASHION_UNKNOWN_KIND_SUPPLIERS = new Set(["stx", "ner", "the", "gld"]);
 const APPAREL_SIZE_RE = /^(?:[2-5]?X{0,3}[SL]|XS|M|\d{2,3}(?:\/\d{2,3})?\s*cm)$/i;
 const APPAREL_TEXT_RE =
@@ -702,7 +708,9 @@ export function galaxusAssortmentBlockReason(
   // LEGO relisted 2026-11-24 (Christmas long tail). Kind "lego" is fashion-exempt again;
   // 300 CHF price cap still applies. Block reason "lego" kept in the type for stats header.
   // Hobby / toy sweep 2026-11-09 (TCG, games, dolls, fidget, helmets, ASUS, …).
-  if (isHobbyToyBlocked(input, kind)) return "hobby_toy";
+  if (!HOBBY_TOY_EXEMPT_PROVIDER_KEYS.has(providerKeyNorm) && isHobbyToyBlocked(input, kind)) {
+    return "hobby_toy";
+  }
 
   const reiAllowlisted =
     supplierKey === "rei" &&
@@ -736,7 +744,7 @@ export function galaxusAssortmentBlockReason(
     // Keeps 5-figure retired collector sets out (2026-11-24).
     const legoMax = Number(process.env.GALAXUS_LEGO_MAX_RETAIL_CHF ?? 1000);
     const cap = isLegoSet ? (Number.isFinite(legoMax) && legoMax > 0 ? legoMax : 1000) : galaxusMaxRetailChf();
-    if (!reiAllowlisted && consumer > cap) {
+    if (!reiAllowlisted && !PRICE_CAP_EXEMPT_PROVIDER_KEYS.has(providerKeyNorm) && consumer > cap) {
       return "price_outlier";
     }
     // Optional extra: thin StockX asks far above brand retail.
