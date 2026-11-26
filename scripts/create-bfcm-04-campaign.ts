@@ -75,7 +75,9 @@ function card(v: OfferVariant, range: string) {
         sel.items.map((v) => `POINTURE EU ${v.size_eu} — ${v.title}\nCHF ${v.sale_price_chf.toFixed(2)} (au lieu de CHF ${v.reference_price_chf.toFixed(2)})\nVoir la paire → (${v.url}${v.url.includes("?") ? "&" : "?"}utm_source=email&utm_medium=bfcm&utm_campaign=bfcm_2026_04)\n`).join("\n"),
     );
   });
-  const rangeHtml = `<tr><td class="pad" style="padding:0 38px 30px;background:#FFFFFF;">${blocks.join("")}{% endif %}</td></tr>`;
+  const TEN_HTML = `<tr><td class="pad" style="padding:6px 38px 22px;background:#FFFFFF;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border:2px solid #101010;padding:16px 18px;font:400 15px/22px Arial,Helvetica,sans-serif;color:#101010;"><strong style="font-size:17px;">En plus : −10 % sur toute la boutique.</strong><br />En plus des paires en liquidation, appliqué automatiquement au paiement. C’est une seule fois par année.</td></tr></table></td></tr>`;
+  const TEN_TEXT = "EN PLUS : −10 % SUR TOUTE LA BOUTIQUE. En plus des paires en liquidation, appliqué automatiquement au paiement. C’est une seule fois par année.\n\n";
+  const rangeHtml = `${TEN_HTML}<tr><td class="pad" style="padding:0 38px 30px;background:#FFFFFF;">${blocks.join("")}{% endif %}</td></tr>`;
 
   const SHOP = "https://www.resell-lausanne.ch/collections/black-friday";
   const CTA_RE = /\{\{ person\|lookup:'rl_bf_2026_shop_url'\|default:'[^']*' \}\}/g;
@@ -108,7 +110,7 @@ function card(v: OfferVariant, range: string) {
   const ta = text.indexOf("{% if person|lookup:'rl_bf_2026_04_p1_ready'");
   const tb = text.indexOf("Stock local.");
   if (ta < 0 || tb < ta) throw new Error("text pair block not found");
-  text = (text.slice(0, ta) + textBlocks.join("") + "{% endif %}\n\n" + text.slice(tb)).replace(CTA_RE, SHOP);
+  text = (text.slice(0, ta) + TEN_TEXT + textBlocks.join("") + "{% endif %}\n\n" + text.slice(tb)).replace(CTA_RE, SHOP);
   if (/rl_bf_2026_04_p\d|shop_url/.test(text)) throw new Error("legacy liquid left (text)");
 
   const name = PREVIEW ? "[TEST] BFCM 2026 — 04 Accès VIP par pointure" : "BFCM 2026 — 04 Accès VIP par pointure";
