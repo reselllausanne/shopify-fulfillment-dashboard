@@ -134,3 +134,12 @@ describe("night buyer card declined", () => {
     expect(o.kind).toBe("halt");
   });
 });
+
+describe("night buyer durable cap", () => {
+  it("max_attempts state blocks for ever, other states keep the recheck window", () => {
+    const capped = { status: "needs_review" as const, reason: "max_attempts:size_grid", at: 0, failCounts: { size_grid: 20 } };
+    expect(stateBlocks(capped, 365 * 24 * 3600_000)).toBe(true);
+    const parked = { status: "parked" as const, reason: "retry_exhausted:proxy_blank", at: 0, failCounts: { proxy_blank: 12 } };
+    expect(stateBlocks(parked, 20 * 60_000)).toBe(false);
+  });
+});

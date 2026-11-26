@@ -1,4 +1,5 @@
 import { redactSecrets } from "@/lib/stockxBuyer/redact";
+import { addFail, capHit, failureClass, maxAttemptsBlocks, maxAttemptsReason } from "@/lib/stockxBuyer/attemptCap";
 import { CARD_DECLINED_HALT_REASON, CARD_DECLINED_REASON, isCardDeclined } from "@/lib/stockxPaymentDiag";
 
 /**
@@ -161,11 +162,14 @@ export type JobState = {
   source?: BuySource;
   orderRef?: string;
   title?: string;
+  /** Durable failure counters per error class (see attemptCap.ts). */
+  failCounts?: Record<string, number>;
 };
 
 /** Pure: is a stored state still blocking a new attempt at `now`? */
 export function stateBlocks(s: JobState | undefined, now: number): boolean {
   if (!s) return false;
+  if (maxAttemptsBlocks(s)) return true; // capped line: only a release / higher limit frees it
   if (s.status === "retry") return s.nextAttemptAt != null && now < s.nextAttemptAt;
   return now - s.at < RECHECK_MS[s.status];
 }
@@ -178,7 +182,27 @@ export function applyOutcome(
   now: number
 ): JobState {
   const tries = (prev?.tries ?? 0) + 1;
-  const common = { ...base, at: now, tries };
+  // Durable per-class failure counters: kept across passes, dropped once the line is bought / done.
+  let failCounts = prev?.failCounts;
+  const countFailure = (reason: string, detail: string | null | undefined) => {
+    const cls = failureClass(reason, detail);
+    if (cls) failCounts = addFail(failCounts, cls);
+    return cls;
+  };
+  if (out.kind === "retry") countFailure(out.reason, out.detail);
+  else if (out.kind === "verdict" && out.status === "needs_review" && ["size_us_map", "size_grid", "slug"].includes(out.reason)) {
+    countFailure(out.reason, out.detail);
+  }
+  const hit = out.kind === "retry" || out.kind === "verdict" ? capHit(failCounts) : null;
+  const common = { ...base, at: now, tries, ...(failCounts && out.kind !== "bought" && out.kind !== "done" ? { failCounts } : {}) };
+  if (hit && (out.kind === "retry" || out.kind === "verdict")) {
+    return {
+      ...common,
+      status: "needs_review",
+      reason: maxAttemptsReason(hit.cls),
+      detail: out.kind === "retry" ? out.detail : out.detail,
+    };
+  }
   switch (out.kind) {
     case "bought":
       return {

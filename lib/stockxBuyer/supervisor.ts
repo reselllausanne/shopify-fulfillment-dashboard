@@ -34,6 +34,8 @@ import { precheckStockxBuyability } from "@/lib/stockxAutoCheckout/precheckAvail
 import { killChromeForUserDataDir } from "@/lib/stockxBrowserProcess";
 import { postSlack } from "@/lib/stockxAuthAlert";
 import { raiseCardDeclined, readCardAlert } from "@/lib/stockxBuyer/cardAlert";
+import { isMaxAttemptsReason } from "@/lib/stockxBuyer/attemptCap";
+import { noteStuckLine } from "@/lib/stockxBuyer/stuckAlert";
 import { CARD_DECLINED_HALT_REASON } from "@/lib/stockxPaymentDiag";
 import { redactSecrets } from "@/lib/stockxBuyer/redact";
 import { checkGoat, goatAlertText } from "@/lib/stockxBuyer/goatWatch";
@@ -209,6 +211,18 @@ async function handleOutcome(
     `${base.source} ${base.orderRef} ${(base.title || "").slice(0, 40)} → ${next.status} ${next.reason}` +
       (next.stockxOrderNumber ? ` ${next.stockxOrderNumber}` : "")
   );
+  if (isMaxAttemptsReason(next.reason) && base.source !== "galaxus" && !rt.cfg.dryRun) {
+    const cls = String(next.reason).slice("max_attempts:".length);
+    await noteStuckLine({
+      key: base.key,
+      source: base.source ?? "shopify",
+      orderRef: base.orderRef ?? "?",
+      title: base.title ?? "",
+      cls,
+      count: next.failCounts?.[cls] ?? 0,
+      detail: next.detail ?? null,
+    });
+  }
   if (out.kind === "halt" && out.reason.startsWith(CARD_DECLINED_HALT_REASON) && !rt.cfg.dryRun) {
     // Card declined: global halt (both halt files), alert once, no retry of this line.
     rt.counters.halts += 1;
