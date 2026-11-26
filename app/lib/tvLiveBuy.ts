@@ -1,86 +1,131 @@
 import { prisma } from "@/app/lib/prisma";
-import { fetchStockxProductByIdOrSlugRaw, kickdbVariantMatchesGtin } from "@/galaxus/kickdb/client";
+import { kickdbVariantMatchesGtin } from "@/galaxus/kickdb/client";
 import { expandGtinsForDbLookup } from "@/galaxus/stx/purchaseUnits";
-import { buildStxDualPriceFields, stxProductAskMedian } from "@/galaxus/stx/variantPriceLanes";
+import { resolveStxShippingCHF } from "@/galaxus/stx/legoShipping";
+import { selectStxActiveOffer, selectStxStandardOffer } from "@/galaxus/stx/offerSelection";
+import { isOutlierStxOffer, stxProductAskMedian } from "@/galaxus/stx/variantPriceLanes";
+import { stockxAllInChf } from "@/app/lib/stockxAllIn";
 
 /**
- * Live StockX buy price (CHF) per GTIN via KicksDB, for the TV dashboard margin.
- * Non-blocking: the feed reads the cache; stale/missing GTINs refresh in the background
- * (a few at a time) so the next poll shows the live number.
+ * StockX buy price (CHF all-in) per GTIN for the TV margin.
+ * Source: KickDBProduct.rawJson, kept fresh by the SSE listener. No live API call, so the
+ * first request after a restart already has a price. A size with no ask borrows the closest
+ * size of the same product (flagged `extrapolated`).
  */
-const TTL_OK_MS = 30 * 60 * 1000;
-const TTL_FAIL_MS = 5 * 60 * 1000;
-const CALL_TIMEOUT_MS = 15_000;
-const CONCURRENCY = 3;
+const TTL_MS = 60_000;
 
-type Entry = { at: number; price: number | null };
-const cache = new Map<string, Entry>();
-const queued = new Set<string>();
-const queue: string[] = [];
-let running = 0;
+export type StxBuyQuote = {
+  standardChf: number | null;
+  expressChf: number | null;
+  extrapolated: boolean;
+};
+
+type RawVariant = { size?: unknown; prices?: unknown; identifiers?: unknown; gtin?: unknown; ean?: unknown };
+
+const cache = new Map<string, { at: number; quote: StxBuyQuote | null }>();
 
 function key(gtin: string): string {
   return gtin.replace(/\D/g, "").replace(/^0+/, "");
 }
 
-/** Cached live buy price, or undefined when unknown / not yet fetched. */
-export function liveBuyChfCached(gtin: string | null | undefined): number | undefined {
-  const k = key(String(gtin ?? ""));
-  if (!k) return undefined;
-  const e = cache.get(k);
-  return e && e.price != null && e.price > 0 ? e.price : undefined;
+function sizeNum(v: unknown): number | null {
+  const n = Number.parseFloat(String(v ?? "").replace(/[^0-9.]/g, ""));
+  return Number.isFinite(n) ? n : null;
 }
 
-export function refreshLiveBuy(gtins: Iterable<string | null | undefined>): void {
+/** Pure: both lanes (all-in CHF) of one raw KicksDB variant, outlier asks dropped. */
+export function quoteFromRawVariant(
+  variant: RawVariant,
+  product: unknown,
+  productAskMedian: number | null
+): { standardChf: number | null; expressChf: number | null } {
+  const shipping = resolveStxShippingCHF(product as never);
+  const keep = <T extends { price: number; asks: number }>(o: T | null) =>
+    o && !isOutlierStxOffer(o, productAskMedian) ? o : null;
+  const standard = keep(selectStxStandardOffer(variant.prices));
+  const express = keep(selectStxActiveOffer(variant.prices));
+  return {
+    standardChf: standard ? stockxAllInChf(standard.price, shipping) : null,
+    expressChf: express ? stockxAllInChf(express.price, shipping) : null,
+  };
+}
+
+/** Pure: quote for the variant at `index`; borrows the nearest priced size when it has none. */
+export function quoteForVariant(variants: RawVariant[], index: number, product: unknown): StxBuyQuote | null {
+  const median = stxProductAskMedian(variants);
+  const own = quoteFromRawVariant(variants[index]!, product, median);
+  if (own.standardChf != null || own.expressChf != null) return { ...own, extrapolated: false };
+
+  const want = sizeNum(variants[index]!.size);
+  if (want == null) return null;
+  let best: { dist: number; size: number; q: ReturnType<typeof quoteFromRawVariant> } | null = null;
+  variants.forEach((v, i) => {
+    if (i === index) return;
+    const s = sizeNum(v.size);
+    if (s == null) return;
+    const q = quoteFromRawVariant(v, product, median);
+    if (q.standardChf == null && q.expressChf == null) return;
+    const dist = Math.abs(s - want);
+    if (!best || dist < best.dist || (dist === best.dist && s < best.size)) best = { dist, size: s, q };
+  });
+  return best ? { ...(best as { q: typeof own }).q, extrapolated: true } : null;
+}
+
+async function fetchQuotes(gtins: string[]): Promise<Map<string, StxBuyQuote | null>> {
+  const out = new Map<string, StxBuyQuote | null>();
+  const rows = await prisma.kickDBVariant.findMany({
+    where: {
+      OR: [{ gtin: { in: expandGtinsForDbLookup(gtins) } }, { ean: { in: expandGtinsForDbLookup(gtins) } }],
+    },
+    select: { gtin: true, ean: true, product: { select: { rawJson: true } } },
+  });
+  for (const g of gtins) {
+    out.set(g, null);
+    for (const row of rows) {
+      const raw = row.product?.rawJson as { variants?: unknown } | null;
+      const variants = Array.isArray(raw?.variants) ? (raw!.variants as RawVariant[]) : [];
+      const idx = variants.findIndex((v) => kickdbVariantMatchesGtin(v as never, g));
+      if (idx < 0) continue;
+      out.set(g, quoteForVariant(variants, idx, raw));
+      break;
+    }
+  }
+  return out;
+}
+
+/** Quotes for every GTIN (cached 60 s). GTINs StockX does not know map to null. */
+export async function loadStxQuotes(
+  gtins: Iterable<string | null | undefined>
+): Promise<Map<string, StxBuyQuote | null>> {
+  const result = new Map<string, StxBuyQuote | null>();
+  const missing: string[] = [];
+  const now = Date.now();
   for (const g of gtins) {
     const raw = String(g ?? "").trim();
     const k = key(raw);
-    if (!k || queued.has(k)) continue;
-    const e = cache.get(k);
-    if (e && Date.now() - e.at < (e.price != null ? TTL_OK_MS : TTL_FAIL_MS)) continue;
-    queued.add(k);
-    queue.push(raw);
+    if (!k || result.has(raw)) continue;
+    const hit = cache.get(k);
+    if (hit && now - hit.at < TTL_MS) result.set(raw, hit.quote);
+    else missing.push(raw);
   }
-  pump();
+  if (missing.length) {
+    const fresh = await fetchQuotes(missing).catch((e) => {
+      console.warn("[tv] stx quotes failed", e instanceof Error ? e.message : e);
+      return null;
+    });
+    for (const g of missing) {
+      const quote = fresh?.get(g) ?? null;
+      if (fresh) cache.set(key(g), { at: now, quote });
+      result.set(g, quote);
+    }
+  }
+  return result;
 }
 
-function pump() {
-  while (running < CONCURRENCY && queue.length) {
-    const raw = queue.shift()!;
-    running += 1;
-    void fetchOne(raw)
-      .catch(() => null)
-      .then((price) => {
-        cache.set(key(raw), { at: Date.now(), price: price ?? null });
-      })
-      .finally(() => {
-        queued.delete(key(raw));
-        running -= 1;
-        pump();
-      });
-  }
-}
-
-async function fetchOne(gtin: string): Promise<number | null> {
-  const row = await prisma.kickDBVariant.findFirst({
-    where: { gtin: { in: expandGtinsForDbLookup([gtin]) } },
-    select: { product: { select: { kickdbProductId: true, urlKey: true } } },
-  });
-  const id = row?.product?.urlKey || row?.product?.kickdbProductId;
-  if (!id) return null;
-
-  const { product } = await Promise.race([
-    fetchStockxProductByIdOrSlugRaw(id),
-    new Promise<never>((_, rej) => setTimeout(() => rej(new Error("kickdb timeout")), CALL_TIMEOUT_MS)),
-  ]);
-  const variants = (product as { variants?: unknown[] })?.variants;
-  if (!Array.isArray(variants)) return null;
-  const variant = variants.find((v) => kickdbVariantMatchesGtin(v as never, gtin));
-  if (!variant) return null;
-  const name = String((product as { title?: unknown })?.title ?? (product as { name?: unknown })?.name ?? "") || null;
-  const lanes = buildStxDualPriceFields(variant as { prices?: unknown }, product as never, name, {
-    productAskMedian: stxProductAskMedian(variants),
-  });
-  const price = lanes?.standardBuyPrice ?? lanes?.price ?? null;
-  return price != null && price > 0 ? price : null;
+/** Lane the buyer would use: the express ask for express orders, else standard, else the other. */
+export function pickBuyChf(quote: StxBuyQuote | null | undefined, express: boolean): number | undefined {
+  if (!quote) return undefined;
+  const first = express ? quote.expressChf : quote.standardChf;
+  const second = express ? quote.standardChf : quote.expressChf;
+  return first ?? second ?? undefined;
 }

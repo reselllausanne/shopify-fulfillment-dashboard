@@ -9,18 +9,18 @@ import { toNumberSafe } from "@/app/utils/numbers";
  * A protection match must not replace the pair's cost. Unmatched pairs stay estimated.
  */
 
-const FALLBACK_MARGIN = 0.2;
-
-/** Ask is not a purchase. Use it only when it still sits under the sale price. */
+/**
+ * Margin of a pair we have not bought yet: sale minus the StockX all-in price.
+ * A loss stays a loss. No price = null (unknown), never an invented percentage.
+ */
 export function estimateUnboughtMarginChf(
   revenue: number,
   qty: number,
   unitBuy: number | undefined
-): number {
+): number | null {
+  if (!unitBuy || !(unitBuy > 0)) return null;
   const q = Math.max(1, qty || 1);
-  const unitRev = revenue / q;
-  if (unitBuy && unitBuy > 0 && unitBuy < unitRev) return (unitRev - unitBuy) * q;
-  return revenue * FALLBACK_MARGIN;
+  return revenue - unitBuy * q;
 }
 
 /**
@@ -81,7 +81,6 @@ export type TvSalePresentation = {
   salesChf: number;
   marginChf: number | null;
   marginEstimated: boolean;
-  refreshGtins: string[];
 };
 
 export function lineItemIdKeys(id: string | null | undefined): string[] {
@@ -198,7 +197,9 @@ export function presentShopifyLiveSale(args: {
   lines: TvLiveLine[];
   matches: TvCostMatch[];
   physicalLineIds?: string[];
-  buyUnitChf?: (gtin: string) => number | undefined;
+  /** StockX all-in unit price for a GTIN. `express` = the order ships express. */
+  buyUnitChf?: (gtin: string, express: boolean) => number | undefined;
+  express?: boolean;
 }): TvSalePresentation {
   const buyUnitChf = args.buyUnitChf ?? (() => undefined);
   const physicalKeys = new Set((args.physicalLineIds ?? []).flatMap((id) => lineItemIdKeys(id)));
@@ -208,7 +209,7 @@ export function presentShopifyLiveSale(args: {
   let margin = 0;
   let known = 0;
   let estimated = false;
-  const refreshGtins: string[] = [];
+  let unknown = false;
 
   const consider = (li: TvLiveLine) => {
     const gross = liveGross(li);
@@ -250,9 +251,13 @@ export function presentShopifyLiveSale(args: {
     }
     if (gross <= 0) return;
     const gtin = String(li.gtin ?? "").trim();
-    if (gtin) refreshGtins.push(gtin);
-    const unit = gtin ? buyUnitChf(gtin) : undefined;
-    margin += estimateUnboughtMarginChf(gross, li.quantity ?? 1, unit);
+    const unit = gtin ? buyUnitChf(gtin, args.express ?? false) : undefined;
+    const est = estimateUnboughtMarginChf(gross, li.quantity ?? 1, unit);
+    if (est == null) {
+      unknown = true;
+      return;
+    }
+    margin += est;
     estimated = true;
     known += 1;
   };
@@ -277,9 +282,8 @@ export function presentShopifyLiveSale(args: {
     extraItems,
     imageUrl,
     salesChf: 0,
-    marginChf: known > 0 ? round2(margin) : null,
+    marginChf: known > 0 && !unknown ? round2(margin) : null,
     marginEstimated: estimated,
-    refreshGtins,
   };
 }
 
@@ -308,6 +312,5 @@ export function summarizeDbShopifyOrder(matches: TvCostMatch[]): TvSalePresentat
     salesChf: round2(sales),
     marginChf: round2(margin),
     marginEstimated: false,
-    refreshGtins: [],
   };
 }

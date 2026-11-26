@@ -11,7 +11,9 @@ import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
 import { isNerGalaxusMarketplaceLine, nerMarginFromCaChf } from "@/galaxus/orders/nerMarketplaceMargin";
 import { galaxusLineStockxCostChfByLineId } from "@/galaxus/orders/galaxusLineStockxCostMetrics";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
-import { liveBuyChfCached, refreshLiveBuy } from "@/app/lib/tvLiveBuy";
+import { loadStxQuotes, pickBuyChf } from "@/app/lib/tvLiveBuy";
+import { restateStoredBuyChf } from "@/app/lib/stockxAllIn";
+import { detectShopifyExpress } from "@/lib/stockxAutoCheckout/detectShopifyExpress";
 import { isPhysicalFulfillmentLocationName } from "@/shopify/orders/physicalFulfillmentLocations";
 
 export const runtime = "nodejs";
@@ -48,6 +50,11 @@ const SHOPIFY_TODAY_QUERY = /* GraphQL */ `
         name
         createdAt
         cancelledAt
+        shippingLines(first: 3) {
+          nodes {
+            title
+          }
+        }
         currentTotalPriceSet {
           shopMoney {
             amount
@@ -99,6 +106,7 @@ type ShopifyOrderNode = {
   name: string;
   createdAt: string;
   cancelledAt: string | null;
+  shippingLines?: { nodes?: Array<{ title?: string | null }> };
   currentTotalPriceSet?: { shopMoney?: { amount?: string } };
   fulfillmentOrders?: {
     nodes?: Array<{
@@ -295,14 +303,25 @@ async function build() {
   let shopifyMargin = 0;
   let shopifyMarginEstimated = 0;
 
+  const costById = await galaxusLineStockxCostChfByLineId(galaxusLines);
+  const gxPrices = await loadBuyPrices(
+    galaxusLines.map((l) => l.supplierVariantId ?? ""),
+    galaxusLines.map((l) => l.gtin ?? "")
+  );
   const shopPrices = await loadBuyPrices(
     [],
     (shopifyLive ?? []).flatMap((o) => (o.lineItems?.nodes ?? []).map((li) => li.variant?.barcode ?? ""))
   );
-  const buyUnitChf = (gtin: string) => liveBuyChfCached(gtin) ?? (gtin ? shopPrices.byGtin.get(gtin) : undefined);
+  const shopifyGtins = (shopifyLive ?? []).flatMap((o) => (o.lineItems?.nodes ?? []).map((li) => li.variant?.barcode ?? ""));
+  const galaxusPendingGtins = galaxusLines
+    .filter((l) => !isNerGalaxusMarketplaceLine(l) && (costById.get(l.id) ?? 0) <= 0)
+    .map((l) => l.gtin);
+  const quotes = await loadStxQuotes([...shopifyGtins, ...galaxusPendingGtins]);
+  const storedBuy = (stored: number | undefined) => (stored && stored > 0 ? restateStoredBuyChf(stored) : undefined);
+  const buyUnitChf = (gtin: string, express: boolean) =>
+    pickBuyChf(quotes.get(gtin.trim()), express) ?? (gtin ? storedBuy(shopPrices.byGtin.get(gtin)) : undefined);
 
   if (shopifyLive) {
-    const refreshGtins: Array<string | null | undefined> = [];
     for (const o of shopifyLive) {
       if (o.cancelledAt) continue;
       const total = toNumberSafe(o.currentTotalPriceSet?.shopMoney?.amount, 0);
@@ -331,8 +350,10 @@ async function build() {
         matches: matchesByOrder.get(o.name) ?? [],
         physicalLineIds,
         buyUnitChf,
+        express: detectShopifyExpress({
+          shippingLineTitles: (o.shippingLines?.nodes ?? []).map((n) => n.title),
+        }),
       });
-      refreshGtins.push(...presented.refreshGtins);
       if (presented.marginChf != null) {
         shopifyMargin += presented.marginChf;
         if (presented.marginEstimated) shopifyMarginEstimated += presented.marginChf;
@@ -350,7 +371,6 @@ async function build() {
         at: o.createdAt,
       });
     }
-    refreshLiveBuy(refreshGtins);
   } else {
     // Fallback: DB matches only (may lag live orders).
     for (const [orderName, rows] of matchesByOrder) {
@@ -380,7 +400,6 @@ async function build() {
     : 0;
 
   // ---- Galaxus ----
-  const costById = await galaxusLineStockxCostChfByLineId(galaxusLines);
   const gxOrders = new Map<
     string,
     { ref: string; title: string; lines: number; sales: number; margin: number; hasMargin: boolean; estimated: boolean; at: Date }
@@ -388,19 +407,8 @@ async function build() {
   let galaxusSales = 0;
   let galaxusMargin = 0;
   let galaxusMarginEstimated = 0;
-  const gxPrices = await loadBuyPrices(
-    galaxusLines.map((l) => l.supplierVariantId ?? ""),
-    galaxusLines.map((l) => l.gtin ?? "")
-  );
-  // Fallback when no buy price exists anywhere, or the ask is already above the sale: 20%.
   const isLocal = (m: { stockxOrderNumber?: string | null }) =>
     String(m.stockxOrderNumber ?? "").toUpperCase().startsWith("LOCAL-STOCK");
-  // Live KicksDB buy price for every STX pair still without a real purchase (refreshes in background).
-  refreshLiveBuy(
-    galaxusLines
-      .filter((l) => !isNerGalaxusMarketplaceLine(l) && (costById.get(l.id) ?? 0) <= 0)
-      .map((l) => l.gtin)
-  );
 
   for (const line of galaxusLines) {
     const revenue = galaxusLineNetRevenueChf({
@@ -443,14 +451,15 @@ async function build() {
         const bought = realCost > 0 ? Math.min(qty, Math.max(1, boughtUnits)) : 0;
         const owned = Math.min(qty - bought, ownedUnits);
         const rest = Math.max(0, qty - bought - owned);
-        let m = owned * unitRev;
+        let m: number | null = owned * unitRev;
         if (bought > 0) m += bought * unitRev - realCost;
         if (rest > 0) {
           const unit =
-            liveBuyChfCached(line.gtin) ??
-            (line.supplierVariantId ? gxPrices.byVariantId.get(line.supplierVariantId) : undefined) ??
-            (line.gtin ? gxPrices.byGtin.get(line.gtin) : undefined);
-          m += estimateUnboughtMarginChf(rest * unitRev, rest, unit);
+            pickBuyChf(quotes.get(String(line.gtin ?? "").trim()), false) ??
+            storedBuy(line.supplierVariantId ? gxPrices.byVariantId.get(line.supplierVariantId) : undefined) ??
+            storedBuy(line.gtin ? gxPrices.byGtin.get(line.gtin) : undefined);
+          const est = estimateUnboughtMarginChf(rest * unitRev, rest, unit);
+          m = est == null ? null : m + est;
           estimated = true;
         }
         margin = m;
