@@ -72,6 +72,14 @@ const FOOTWEAR_RE =
 const RUNNING_SHOE_RE =
   /\b(gel-?(nimbus|kayano|cumulus|pulse)|cloud(flow|monster|surfer|runner|swift|boom)|speedgoat|clifton|bondi|pegasus|vomero|invincible|alphafly|vaporfly|adizero (evo|adios|boston|takumi)|fuelcell rebel|endorphin|glycerin|wave rider|hoka .*challenger)\b/i;
 const HOODIE_TITLE_RE = /\b(hoodie|hooded sweat\w*|sweatshirt|crewneck|pullover)\b/i;
+const FOOTBALL_BOOT_RE =
+  /\b(predator|f50|copa (pure|mundial|icon)|mercurial|phantom (gx|luna|nemesis)|tiempo|x crazyfast|firm ground|artificial grass|soft ground)\b/i;
+const COLLECTIBLE_FIGURE_RE =
+  /\b(bearbrick|be@rbrick|vinyl figure|action figure|figurine|youtooz|kaws|medicom|funko|statue|collectible figure|blind box)\b/i;
+const GLOVE_TITLE_RE = /\b(gloves?|mittens?|handschuhe?)\b/i;
+const BELT_TITLE_RE = /\b(belt|gürtel|ceinture)\b/i;
+const SCARF_TITLE_RE = /\b(scarf|scarves|schal|écharpe)\b/i;
+const BALACLAVA_TITLE_RE = /\b(balaclava|neck ?warmer|neck gaiter|face mask|sturmhaube)\b/i;
 const FLIP_FLOP_TITLE_RE = /\b(flip[- ]?flops?|thongs?)\b/i;
 const ADILETTE_RE = /\badilette\b/i;
 const SHORTS_RE = /\b(shorts?|sweatshort|sweat short)\b/i;
@@ -237,6 +245,7 @@ function classifyUggFootwearKind(title?: string | null): GalaxusProductKind {
 
 const FOOTWEAR_KINDS = new Set<GalaxusProductKind>([
   "sneakers",
+  "football_boots",
   "slippers",
   "boots",
   "halbschuhe",
@@ -326,7 +335,21 @@ export function isGalaxusLengthCmKind(kind: GalaxusProductKind): boolean {
  */
 function refineGenericKindByTitle(kind: GalaxusProductKind, title: string): GalaxusProductKind {
   if (!title) return kind;
+  if (kind === "cap") {
+    // StockX "accessories" alias lands every accessory in Cap — send obvious non-caps elsewhere.
+    if (GLOVE_TITLE_RE.test(title)) return "gloves";
+    if (BELT_TITLE_RE.test(title)) return "belt";
+    if (SCARF_TITLE_RE.test(title)) return "scarf";
+    if (BALACLAVA_TITLE_RE.test(title)) return "ski_mask";
+    return kind;
+  }
+  if (kind === "tradingcard") {
+    // StockX "collectibles" alias → Sammelkarten; figures / vinyl / Bearbrick are not cards.
+    if (COLLECTIBLE_FIGURE_RE.test(title)) return "collectible_figure";
+    return kind;
+  }
   if (kind === "sneakers") {
+    if (FOOTBALL_BOOT_RE.test(title)) return "football_boots";
     if (RUNNING_SHOE_RE.test(title)) return "running_shoes";
     if (FLIP_FLOP_TITLE_RE.test(title)) return "flip_flops";
     if (SANDALS_RE.test(title) || ADILETTE_RE.test(title)) return "sandals";

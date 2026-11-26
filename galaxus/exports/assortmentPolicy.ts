@@ -193,6 +193,8 @@ const FASHION_EXEMPT_SUPPLIERS = new Set(["rei"]);
 /** Hobby / toy kinds always delisted (independent of fashion-only). */
 const HOBBY_TOY_BLOCKED_KINDS = new Set<GalaxusProductKind>([
   "tradingcard",
+  // Was tradingcard via StockX "collectibles" alias; keep blocked (no new listings from re-categorising).
+  "collectible_figure",
   "controller",
   "console",
   "boardgame",

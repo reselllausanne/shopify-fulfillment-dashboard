@@ -231,6 +231,8 @@ export type GalaxusProductKind =
   | "robot_accessory"
   /** Manufactum / XNT home + fashion accessories (partner category hints; Galaxus AI remaps). */
   | "belt"
+  | "football_boots"
+  | "collectible_figure"
   | "gloves"
   | "scarf"
   | "dress"
@@ -493,6 +495,10 @@ export const GALAXUS_CATEGORY_PATHS: Record<GalaxusProductKind, string> = {
   robot_accessory:
     "IT + Multimedia > Drohnen + Elektronik > Robotik + Elektrotechnik > Robotik > Robotik Zubehör",
   belt: "Mode > Alles in Mode > Accessoires > Gürtel",
+  // Producttypes.xlsx (Partner Help Center): Sports > Ball sports > Football > Football boots
+  football_boots: "Sport > Ballsport > Fussball > Fussballschuhe",
+  // Producttypes.xlsx: Toys > Dolls + Soft toys > Collectable figures
+  collectible_figure: "Spielzeug > Puppen + Kuscheltiere > Sammelfiguren",
   gloves: "Mode > Alles in Mode > Accessoires > Handschuhe",
   scarf: "Mode > Alles in Mode > Accessoires > Schals + Tücher",
   dress: "Mode > Alles in Mode > Bekleidung > Kleider",

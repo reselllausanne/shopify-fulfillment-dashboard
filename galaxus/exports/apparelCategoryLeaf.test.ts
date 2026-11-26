@@ -58,4 +58,19 @@ describe("apparel category leaves", () => {
       expect(resolveGalaxusProductCategoryPath({ title, productType })).toContain(leaf);
     }
   });
+
+  it("accessories, figures and football boots leave the coarse StockX alias buckets", () => {
+    const cases: Array<[string, string, string]> = [
+      ["Supreme Franklin CFX Pro Batting Glove Black", "accessories", "Handschuhe"],
+      ["Nike Country Belt Black/Silver", "accessories", "Gürtel"],
+      ["Supreme Box Logo Beanie Black", "beanies", "Hut"],
+      ["Bearbrick Superalloy Keith Haring 200% Multi", "collectibles", "Sammelfiguren"],
+      ["Youtooz Funneh Vinyl Figure", "collectibles", "Sammelfiguren"],
+      ["adidas Predator League Fold-Over Tongue Firm Ground", "sneakers", "Fussballschuhe"],
+      ["adidas Campus 00s Core Black", "sneakers", "Sneakers"],
+    ];
+    for (const [title, productType, leaf] of cases) {
+      expect(resolveGalaxusProductCategoryPath({ title, productType })).toContain(leaf);
+    }
+  });
 });
