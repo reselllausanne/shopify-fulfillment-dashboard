@@ -82,4 +82,29 @@ describe("accumulateBestCandidates preferInStock", () => {
     accumulateBestCandidates([mapping("stx", 60, 0), mapping("ner", 187, 3)], best, { requireImage: false });
     expect(best.get(GTIN)?.providerKey).toMatch(/^STX_/i);
   });
+
+  it("reconstructs providerKey for STX feed gate when slim offer/stock select omits providerKey", () => {
+    const slimOfferMapping = {
+      id: "m1",
+      gtin: "0711719577171",
+      supplierVariantId: "stx_manual_0711719577171",
+      supplierVariant: {
+        supplierVariantId: "stx_manual_0711719577171",
+        supplierProductName: "Sony PlayStation 5 Slim Disc Edition",
+        supplierBrand: "Sony",
+        sourceImageUrl: "https://img/ps5.jpg",
+        price: 1023.55,
+        stock: 1,
+      },
+    };
+    const best = new Map();
+    accumulateBestCandidates([slimOfferMapping], best, {
+      keyBy: "gtin",
+      normalizeGtinKey: true,
+      requireImage: true,
+      preferInStock: true,
+    });
+    expect(best.size).toBe(1);
+    expect(Array.from(best.values())[0].providerKey).toBe("STX_0711719577171");
+  });
 });

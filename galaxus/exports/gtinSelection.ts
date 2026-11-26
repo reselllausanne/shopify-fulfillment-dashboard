@@ -170,9 +170,16 @@ function tryBuildVariantCandidate(
   // brands > CHF 500 dropped, hand-curated aberrant overrides always dropped.
   // Focus + luxury/haute-couture (incl. Bearbrick / KAWS / Travis Scott) stay.
   {
+    const gateProviderKey =
+      variant?.providerKey ??
+      mapping?.providerKey ??
+      buildProviderKey(
+        String(mapping?.gtin ?? variant?.gtin ?? "").trim(),
+        variant?.supplierVariantId ?? mapping?.supplierVariantId
+      );
     const stxGate = shouldOmitStxFromGalaxusFeed({
       supplierKey,
-      providerKey: variant?.providerKey ?? mapping?.providerKey,
+      providerKey: gateProviderKey,
       supplierVariantId: variant?.supplierVariantId ?? mapping?.supplierVariantId,
       supplierBrand: variant?.supplierBrand,
       price: variant?.price ?? null,
