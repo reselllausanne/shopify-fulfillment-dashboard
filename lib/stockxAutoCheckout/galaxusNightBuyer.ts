@@ -30,6 +30,8 @@ import {
 import { linkStockxBuyToGalaxus } from "@/lib/stockxAutoCheckout/linkAfterBuyGalaxus";
 import { isClearlyNotStockxBuyable } from "@/lib/stockxAutoCheckout/nonStockxBuyable";
 import { raiseCardDeclined } from "@/lib/stockxBuyer/cardAlert";
+import { addFail, capHit, failureClass, maxAttemptsBlocks, maxAttemptsReason } from "@/lib/stockxBuyer/attemptCap";
+import { noteStuckLine } from "@/lib/stockxBuyer/stuckAlert";
 import {
   CARD_DECLINED_HALT_REASON,
   CARD_DECLINED_REASON,
@@ -80,6 +82,8 @@ export type PairState = {
   lane?: string | null;
   title?: string;
   orderId?: string;
+  /** Durable failure counters per error class (attemptCap.ts). */
+  failCounts?: Record<string, number>;
 };
 
 /** How long a non-bought verdict stays before the pair is re-checked (prices move). */
@@ -170,6 +174,7 @@ export function pairKey(p: Pick<NightPair, "lineId" | "unitIndex">): string {
 /** Pure: is a stored state still blocking a re-run? */
 export function stateBlocks(s: PairState | undefined, now: number): boolean {
   if (!s) return false;
+  if (maxAttemptsBlocks(s)) return true; // capped line: only a release / higher limit frees it
   return now - s.at < RECHECK_MS[s.status];
 }
 
@@ -679,7 +684,22 @@ export async function processPair(
   const isOn =
     opts?.isOn ?? (() => fs.stat(ON_FILE).then(() => true).catch(() => false));
   const key = pairKey(pair);
-  const base = { title: pair.productName, orderId: pair.galaxusOrderId, at: Date.now() };
+  // Durable counters survive passes: carried in `base`, so every state written below keeps them.
+  let failCounts: Record<string, number> = { ...(state[key]?.failCounts ?? {}) };
+  const base = { title: pair.productName, orderId: pair.galaxusOrderId, at: Date.now(), failCounts };
+  const countAndCap = async (reason: string, detail: string | null | undefined): Promise<boolean> => {
+    const cls = failureClass(reason, detail);
+    if (!cls) return false;
+    failCounts = addFail(failCounts, cls);
+    base.failCounts = failCounts;
+    const hit = capHit(failCounts);
+    if (!hit) return false;
+    state[key] = { ...base, status: "needs_review", reason: maxAttemptsReason(hit.cls), detail: String(detail ?? "").slice(0, 200), tries: hit.count };
+    await fs.rm(INFLIGHT_FILE, { force: true });
+    console.warn(`[NIGHT-BUYER] ${pair.galaxusOrderId} ${pair.productName} → needs_review ${maxAttemptsReason(hit.cls)} (x${hit.count}, no more retries)`);
+    await noteStuckLine({ key: `galaxus:${key}`, source: "galaxus", orderRef: pair.galaxusOrderId, title: pair.productName, cls: hit.cls, count: hit.count, detail: detail ?? null });
+    return true;
+  };
   const resolved = await resolvePair(pair);
   if (!resolved.ok) {
     state[key] = { ...base, status: resolved.status, reason: resolved.reason };
@@ -709,6 +729,7 @@ export async function processPair(
         ("detail" in out && out.detail ? ` | ${String(out.detail).slice(0, 160)}` : "")
     );
     if (session) session.consecutiveFails = out.kind === "retry" ? session.consecutiveFails + 1 : 0;
+    if (out.kind === "retry" && (await countAndCap(out.reason, out.detail))) return;
 
     if (out.kind === "bought") {
       noOrderStreak = nextPaymentStreak(noOrderStreak, "order");
@@ -730,6 +751,7 @@ export async function processPair(
       return;
     }
     if (out.kind === "verdict") {
+      if (out.status === "needs_review" && ["size_us_map", "size_grid", "slug"].includes(out.reason) && (await countAndCap(out.reason, out.detail))) return;
       state[key] = { ...base, status: out.status, reason: out.reason, detail: out.detail };
       await fs.rm(INFLIGHT_FILE, { force: true });
       return;

@@ -170,3 +170,67 @@ describe("card declined → global halt, never a retry", () => {
     expect(classifyResult({ kind: "needs_human", reason: "bot_fail", detail: "Place Order missing" }).kind).toBe("retry");
   });
 });
+
+describe("durable per-line attempt cap", () => {
+  const retry = (reason: string, detail: string) => ({ kind: "retry" as const, reason, detail, rotateSession: false });
+  const run = (n: number, out: ReturnType<typeof retry>, prev?: JobState) => {
+    let st = prev;
+    for (let i = 0; i < n; i += 1) st = applyOutcome(st, base, out, 1_000 + i);
+    return st as JobState;
+  };
+  it("19 identical payment failures: still retry/parked, never capped", () => {
+    const st = run(19, retry("bot_fail", "Payment not completed (no charge): x"));
+    expect(st.status === "parked" || st.status === "retry").toBe(true);
+    expect(st.failCounts?.payment_not_completed).toBe(19);
+  });
+  it("20th identical failure → needs_review max_attempts:<class>, blocked for ever", () => {
+    const st = run(20, retry("bot_fail", "Payment not completed (no charge): x"));
+    expect(st.status).toBe("needs_review");
+    expect(st.reason).toBe("max_attempts:payment_not_completed");
+    expect(stateBlocks(st, st.at + 365 * 24 * 3600_000)).toBe(true);
+  });
+  it("a capped line does not touch another line", () => {
+    const capped = run(20, retry("size_grid", "grid"));
+    const other = applyOutcome(undefined, { ...base, key: "shopify:2" }, retry("bot_fail", "Buy Now not found"), 5);
+    expect(capped.status).toBe("needs_review");
+    expect(other.status).toBe("retry");
+    expect(other.failCounts).toEqual({ bot_fail: 1 });
+  });
+  it("different classes count separately", () => {
+    let st: JobState | undefined;
+    for (let i = 0; i < 12; i += 1) {
+      st = applyOutcome(st, base, retry("bot_fail", "Buy Now not found"), i);
+      st = applyOutcome(st, base, retry("no_lane_under_cap", "lanes=[]"), i);
+    }
+    expect(st?.status).not.toBe("needs_review");
+    expect(st?.failCounts).toEqual({ bot_fail: 12, no_lane_under_cap: 12 });
+  });
+  it("infra errors (proxy_blank) tolerate an outage: 20 is fine, 60 caps", () => {
+    const d = "checkout hydrate timeout — shell/no CHF lanes after reloads";
+    expect(run(20, retry("proxy_blank", d)).status).toBe("parked");
+    expect(run(60, retry("proxy_blank", d)).reason).toBe("max_attempts:proxy_blank");
+  });
+  it("paid_no_number is never counted (still verified through the buying API)", () => {
+    let st: JobState | undefined;
+    for (let i = 0; i < 30; i += 1) st = applyOutcome(st, base, { kind: "paid_no_number", totalChf: 100, lane: "STANDARD" }, i);
+    expect(st?.reason).toBe("paid_no_number");
+    expect(st?.failCounts).toBeUndefined();
+  });
+  it("card halt is not a line failure: one halt, no counters", () => {
+    const st = applyOutcome(undefined, base, { kind: "halt", reason: "card declined — fund/unlock card: x" }, 1);
+    expect(st.status).toBe("needs_review");
+    expect(st.failCounts).toBeUndefined();
+  });
+  it("verdict size_us_map counts toward its class; too_expensive does not", () => {
+    let st: JobState | undefined;
+    for (let i = 0; i < 20; i += 1) st = applyOutcome(st, base, { kind: "verdict", status: "needs_review", reason: "size_us_map", detail: "x" }, i);
+    expect(st?.reason).toBe("max_attempts:size_us_map");
+    const tooExp = applyOutcome(undefined, base, { kind: "verdict", status: "too_expensive", reason: "margin", detail: "x" }, 1);
+    expect(tooExp.failCounts).toBeUndefined();
+  });
+  it("bought clears the counters", () => {
+    const failing = run(5, retry("bot_fail", "Buy Now not found"));
+    const bought = applyOutcome(failing, base, { kind: "bought", stockxOrderNumber: "03-ABC", totalChf: 1, lane: "STANDARD" }, 99);
+    expect(bought.failCounts).toBeUndefined();
+  });
+});

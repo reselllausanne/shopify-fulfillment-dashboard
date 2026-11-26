@@ -18,6 +18,7 @@ import {
   renderReport,
 } from "@/lib/stockxBuyer/ledger";
 import { clearCardAlert, readCardAlert } from "@/lib/stockxBuyer/cardAlert";
+import { clearStuckLine } from "@/lib/stockxBuyer/stuckAlert";
 import { loadState as loadNightState, saveState as saveNightState } from "@/lib/stockxAutoCheckout/galaxusNightBuyer";
 import { readLearnings, renderLearnings, summarizeLearnings } from "@/lib/stockxBuyer/learnings";
 import { RECHECK_MS, stateBlocks, type JobState } from "@/lib/stockxBuyer/policy";
@@ -121,6 +122,20 @@ export async function hold(key: string, reason: string): Promise<JobState> {
 
 export async function release(key: string): Promise<string> {
   await appendEvent({ t: Date.now(), ev: "release", key, by: "manual" });
+  await clearStuckLine(key).catch(() => undefined);
+  // Galaxus lines are gated by the night-buyer state (lineId:unitIndex): drop it too.
+  const m = /^galaxus:(.+)$/.exec(key);
+  if (m) {
+    try {
+      const night = await loadNightState();
+      if ((night as Record<string, unknown>)[m[1]]) {
+        delete (night as Record<string, unknown>)[m[1]];
+        await saveNightState(night);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
   return `released ${key}`;
 }
 
