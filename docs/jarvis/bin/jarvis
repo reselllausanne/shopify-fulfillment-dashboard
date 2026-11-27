@@ -4,7 +4,7 @@
 # Usage: jarvis <cmd> [args]
 #   sources                 print source map
 #   decision <term>         search dated decisions (docs/jarvis/memory/decisions.md)
-#   sql "<select ...>"      read-only SQL on prod DB (VPS, read-only session; health_* blocked)
+#   sql "<select ...>"      read-only SQL on prod DB (VPS, BEGIN READ ONLY transaction, one statement; health_* blocked)
 #   shopify-orders          live Shopify order count (Admin API, via VPS env)
 #   decathlon-ping          Mirakl API version (via VPS env)
 #   gads                    Google Ads account name (via VPS env)
@@ -15,16 +15,25 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 VPS="${JARVIS_VPS:-resell-vps}"
 APP="/opt/resell"
 
-vps_psql() { # $1 = sql
+vps_psql() { # $1 = sql  (single SELECT-like statement)
   local sql="$1"
-  if printf '%s' "$sql" | grep -Eiq '(^|[^a-z_])(insert|update|delete|drop|alter|truncate|create|grant|copy|call|do)[[:space:]]'; then
-    echo "refused: write keyword" >&2; exit 2; fi
+  # single statement only: a trailing ';' is fine, any other ';' is refused (no way to close the read-only tx)
+  sql="$(printf '%s' "$sql" | sed -E 's/[[:space:];]+$//')"
+  if printf '%s' "$sql" | grep -q ';'; then
+    echo "refused: one statement only" >&2; exit 2; fi
+  if printf '%s' "$sql" | grep -Eiq '(^|[^a-z_])(insert|update|delete|drop|alter|truncate|create|grant|revoke|copy|call|do|commit|end|abort|rollback|begin|start|savepoint|release|set|reset|vacuum|lock|listen|notify|prepare|execute|refresh|reindex|cluster|comment|security|discard)[^a-z_]'; then
+    echo "refused: write or transaction-control keyword" >&2; exit 2; fi
+  if printf '%s' "$sql" | grep -Eiq 'set_config|pg_advisory|pg_terminate|pg_cancel|pg_sleep|dblink|lo_import|lo_export|nextval|setval'; then
+    echo "refused: function with side effects" >&2; exit 2; fi
   if printf '%s' "$sql" | grep -Eiq 'health_|StockXToken|PartnerUser'; then
     echo "refused: table outside Jarvis scope (health/credentials)" >&2; exit 2; fi
-  local b64; b64="$(printf '%s' "$sql" | base64 | tr -d '\n')"
+  # READ-ONLY IS TRANSACTION-SCOPED ON PURPOSE. DIRECT_URL is the Supabase POOLER, not a direct connection:
+  # a session/startup setting (PGOPTIONS default_transaction_read_only) can leak into pooled connections used by
+  # the app and workers (production read-only errors, 2026-11-27). BEGIN READ ONLY ... ROLLBACK leaves no state.
+  local wrapped="BEGIN READ ONLY; SET LOCAL statement_timeout = 30000; ${sql}; ROLLBACK;"
+  local b64; b64="$(printf '%s' "$wrapped" | base64 | tr -d '\n')"
   ssh -o BatchMode=yes "$VPS" "cd $APP && U=\$(docker compose exec -T web printenv DIRECT_URL | tr -d '\r'); U=\${U%%\?*}; \
-    export PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=30000'; \
-    echo '$b64' | base64 -d | psql \"\$U\" -v ON_ERROR_STOP=1 -P pager=off -A -F ' | '"
+    echo '$b64' | base64 -d | psql \"\$U\" -X -q -t -v ON_ERROR_STOP=1 -P pager=off -A -F ' | ' 2>&1 | rg -v '^(BEGIN|SET|ROLLBACK)\$' || true"
 }
 
 vps_node() { # $1 = js (runs inside web container, env stays server-side)
