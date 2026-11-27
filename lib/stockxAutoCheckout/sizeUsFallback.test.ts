@@ -38,6 +38,20 @@ describe("convertEuToUs", () => {
     expect(convertEuToUs("2XL", { brand: "Nike" })).toBe("2XL");
   });
 
+  it("does not treat longsleeve as grade-school or map size 1 to 1Y", () => {
+    expect(
+      convertEuToUs("1", {
+        title: "Kanye West Bully Longsleeve White",
+        slug: "kanye-west-bully-longsleeve-white",
+        assumeUsIfSmall: true,
+      })
+    ).toBe("1");
+  });
+
+  it("still maps a real GS title to a youth size token", () => {
+    expect(convertEuToUs("36", { title: "Nike Dunk Low GS", brand: "Nike" })).toMatch(/Y$/);
+  });
+
   it("appends W for women's footwear StockX deep-link (?size=8W)", () => {
     expect(
       convertEuToUs("EU 40", {

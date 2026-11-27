@@ -19,54 +19,61 @@ function norm(value: string | null | undefined): string {
 
 /** Tag the review-page discount input + ADD button. Clicks the disclosure once if the field is hidden. */
 async function tagDiscountControls(page: Page, clickToggle: boolean): Promise<boolean> {
-  return page.evaluate((click) => {
-    const normText = (value: string | null | undefined) => (value || "").replace(/\s+/g, " ").trim();
-    const visible = (el: Element) => {
-      const box = (el as HTMLElement).getBoundingClientRect();
-      const style = window.getComputedStyle(el);
+  // String IIFE: tsx keepNames injects __name into nested functions, which the page does not have.
+  const click = clickToggle ? "true" : "false";
+  return page.evaluate(`(function(click){
+    function normText(value){ return (value || "").replace(/\\s+/g, " ").trim(); }
+    function visible(el){
+      var box = el.getBoundingClientRect();
+      var style = window.getComputedStyle(el);
       return box.width > 2 && box.height > 2 && style.visibility !== "hidden" && style.display !== "none";
-    };
-    const scoreInput = (el: HTMLInputElement) => {
-      if (!visible(el) || el.disabled || el.type === "hidden" || el.type === "checkbox" || el.type === "radio") {
-        return 0;
-      }
-      const blob = `${el.name} ${el.placeholder} ${el.getAttribute("aria-label") || ""} ${el.id}`.toLowerCase();
+    }
+    function scoreInput(el){
+      if (!visible(el) || el.disabled || el.type === "hidden" || el.type === "checkbox" || el.type === "radio") return 0;
+      var blob = (el.name + " " + (el.placeholder || "") + " " + (el.getAttribute("aria-label") || "") + " " + el.id).toLowerCase();
       if (/search|recherche|query/.test(blob)) return 0;
       if (/discount|promo|coupon|réduction|reduction/.test(blob)) return 2;
-      if (/\bcode\b/.test(blob)) return 1;
+      if (/\\bcode\\b/.test(blob)) return 1;
       return 0;
-    };
-    const tag = () => {
-      const inputs = Array.from(document.querySelectorAll("input")) as HTMLInputElement[];
-      let best: HTMLInputElement | null = null;
-      let bestScore = 0;
-      for (const input of inputs) {
-        const score = scoreInput(input);
-        if (score > bestScore) {
-          best = input;
-          bestScore = score;
-        }
+    }
+    function tag(){
+      var inputs = Array.prototype.slice.call(document.querySelectorAll("input"));
+      var best = null, bestScore = 0;
+      for (var i = 0; i < inputs.length; i++) {
+        var score = scoreInput(inputs[i]);
+        if (score > bestScore) { best = inputs[i]; bestScore = score; }
       }
       if (!best) return false;
       best.setAttribute("data-stx-promo", "1");
-      const scope = best.closest("form, section, li, div") || document.body;
-      const buttons = Array.from(scope.querySelectorAll("button, [role='button']"));
-      const labelOk = (el: Element) => /^(add|ajouter|apply|appliquer)(?:\s+code)?$/i.test(normText(el.textContent));
-      const button = buttons.find((el) => visible(el) && labelOk(el))
-        || Array.from(document.querySelectorAll("button")).find((el) => visible(el) && labelOk(el));
+      var scope = best.closest("form, section, li, div") || document.body;
+      var buttons = Array.prototype.slice.call(scope.querySelectorAll("button, [role='button']"));
+      function labelOk(el){ return /^(add|ajouter|apply|appliquer)(?:\\s+code)?$/i.test(normText(el.textContent)); }
+      var button = null;
+      for (var b = 0; b < buttons.length; b++) {
+        if (visible(buttons[b]) && labelOk(buttons[b])) { button = buttons[b]; break; }
+      }
+      if (!button) {
+        var all = Array.prototype.slice.call(document.querySelectorAll("button"));
+        for (var a = 0; a < all.length; a++) {
+          if (visible(all[a]) && labelOk(all[a])) { button = all[a]; break; }
+        }
+      }
       if (!button) return false;
       button.setAttribute("data-stx-promo-add", "1");
       return true;
-    };
+    }
     if (tag()) return true;
     if (!click) return false;
-    const toggle = Array.from(document.querySelectorAll("button, a, label, span, div, p")).find((el) => {
-      const text = normText(el.textContent);
-      return text.length > 0 && text.length < 48 && /discount code|code promo|code de r[ée]duction|promo code|add promo|ajouter un code/i.test(text);
-    });
-    if (toggle) (toggle as HTMLElement).click();
+    var nodes = Array.prototype.slice.call(document.querySelectorAll("button, a, label, span, div, p"));
+    for (var n = 0; n < nodes.length; n++) {
+      var text = normText(nodes[n].textContent);
+      if (text.length > 0 && text.length < 48 && /discount code|code promo|code de r[ée]duction|promo code|add promo|ajouter un code/i.test(text)) {
+        nodes[n].click();
+        break;
+      }
+    }
     return false;
-  }, clickToggle);
+  })(${click})`);
 }
 
 async function clearTaggedField(page: Page): Promise<void> {
@@ -94,7 +101,13 @@ export async function applyOneStockxPromo(
     return { appliedCode: null, totalChf: totalBefore, outcome };
   };
 
-  let ready = await tagDiscountControls(page, true);
+  let ready = false;
+  try {
+    ready = await tagDiscountControls(page, true);
+  } catch (error) {
+    console.warn(`[STOCKX-PROMO] ${account} discount field failed (${(error as Error)?.message || error}) — pay without code`);
+    return failOpen("no_field");
+  }
   if (!ready) {
     await page.waitForTimeout(400);
     ready = await tagDiscountControls(page, false);

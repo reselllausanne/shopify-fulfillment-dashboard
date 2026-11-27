@@ -64,7 +64,24 @@ export function skuCandidates(raw: string): string[] {
   return out;
 }
 
+/** Shopify line SKUs are often `<kickdbProductId>-<size>`, not a style id. */
+export function kickdbIdFromSupplierSku(sku: string | null | undefined): string | null {
+  const m = String(sku || "").match(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+  );
+  return m ? m[0].toLowerCase() : null;
+}
+
 export async function urlKeyForSku(sku: string): Promise<string | null> {
+  const kickdbId = kickdbIdFromSupplierSku(sku);
+  if (kickdbId) {
+    const byId = await prisma.kickDBProduct.findFirst({
+      where: { kickdbProductId: kickdbId, urlKey: { not: null } },
+      select: { urlKey: true },
+    });
+    const fromId = byId?.urlKey?.trim();
+    if (fromId) return fromId;
+  }
   for (const styleId of skuCandidates(sku)) {
     const product = await prisma.kickDBProduct.findFirst({
       where: { styleId: { equals: styleId, mode: "insensitive" }, urlKey: { not: null } },
