@@ -47,6 +47,7 @@ import {
   parseLaneCardsFromText,
   parseSingleXpressItemPriceChf,
 } from "@/lib/stockxAutoCheckout/chooseLane";
+import { ensureStockxDisplayChf } from "@/lib/stockxAutoCheckout/displayCurrency";
 import {
   detectShopifyExpress,
   desiredStockxLaneFromShopify,
@@ -854,6 +855,21 @@ export async function selectAndVerifyStockxLane(
   | { ok: false; reason: string; lanes: StockxLaneCard[]; detail?: string }
 > {
   const maxAllInChf = options.maxAllInChf ?? MAX_ALL_IN_CHF;
+  // Galaxus account preference can render euros while the cookie already says CHF.
+  // Switch the footer currency to CHF before reading lanes. A leftover euro page
+  // must not be parsed as francs (see displayCurrency.ts).
+  const display = await ensureStockxDisplayChf(page).catch((e) => {
+    console.warn(`[STOCKX-CHECKOUT] display CHF switch failed: ${e?.message || e}`);
+    return "unknown" as const;
+  });
+  if (display === "eur") {
+    return {
+      ok: false,
+      reason: "currency_eur",
+      lanes: [],
+      detail: "checkout still in EUR after CHF switch — not buying euro prices as CHF",
+    };
+  }
   // Shipping cards paint late. Product/size chrome alone (~200 chars, gray panel) is NOT
   // ready — require CHF + lane/date/subtotal, or true OOS copy. Reload on skeleton shells.
   const waitShipBody = async (timeoutMs = 28_000) =>

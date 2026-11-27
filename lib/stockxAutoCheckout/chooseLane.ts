@@ -86,7 +86,11 @@ export function parseSingleXpressItemPriceChf(
   ];
   for (const re of patterns) {
     const m = t.match(re);
-    const n = moneyToNumber(m?.[1] ?? null);
+    if (!m || m.index == null) continue;
+    const span = t.slice(m.index, m.index + m[0].length + 4);
+    // "233 €" is not 233 CHF. Optional CHF in the pattern must not swallow euros.
+    if (/€|\bEUR\b/i.test(span) && !/CHF/i.test(span)) continue;
+    const n = moneyToNumber(m[1] ?? null);
     if (n != null && n >= XPRESS_ITEM_MIN_CHF) return n;
   }
   return null;
@@ -216,6 +220,8 @@ export function parseLaneCardsFromText(text: string): StockxLaneCard[] {
   );
   for (const match of text.matchAll(namedRe)) {
     const rawLabel = String(match[1] || "").trim();
+    const span = text.slice(match.index ?? 0, (match.index ?? 0) + match[0].length + 3);
+    if (/€|\bEUR\b/i.test(span) && !/CHF/i.test(span)) continue;
     const totalChf = moneyToNumber(match[2]);
     if (totalChf == null || totalChf <= 0) continue;
     const between = String(match[0] || "").slice(rawLabel.length);
