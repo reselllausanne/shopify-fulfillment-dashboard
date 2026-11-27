@@ -1,0 +1,25 @@
+{
+  "name": "biloo-barber-shop-mockup",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mock-up statique (démo) pour BİLOO Barber Shop, Lausanne. Non déployé.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "serve": "serve out -l 3000",
+    "screenshots": "node scripts/screenshots.mjs"
+  },
+  "dependencies": {
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "playwright-core": "^1.65.1",
+    "serve": "^14.2.8",
+    "typescript": "^5.9.0"
+  }
+}
