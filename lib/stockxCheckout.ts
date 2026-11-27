@@ -545,15 +545,17 @@ async function clickBuyNow(page: Page) {
       }
     }
   }
-  const clicked = await page.evaluate(() => {
-    const nodes = Array.from(document.querySelectorAll("button,a,[role=button]"));
-    const hit = nodes.find((n) =>
-      /acheter maintenant|buy now/i.test((n.textContent || "").replace(/\s+/g, " "))
-    );
+  const clicked = await page.evaluate(`(function(){
+    var nodes = Array.prototype.slice.call(document.querySelectorAll("button,a,[role=button]"));
+    var hit = null;
+    for (var i = 0; i < nodes.length; i++) {
+      var t = (nodes[i].textContent || "").replace(/\\s+/g, " ");
+      if (/acheter maintenant|buy now/i.test(t)) { hit = nodes[i]; break; }
+    }
     if (!hit) return false;
-    (hit as HTMLElement).click();
+    hit.click();
     return true;
-  });
+  })()`);
   return !!clicked;
 }
 
@@ -575,17 +577,18 @@ async function clickPlaceOrder(page: Page, opts?: { dry?: boolean }): Promise<bo
     console.warn(`[STOCKX-CHECKOUT] place order click label=${label.slice(0, 80)}`);
     return true;
   }
-  const clicked = await page.evaluate((dry) => {
-    const re =
-      /passer la commande|passer commande|place order|pay now|payer maintenant|\bpayer\b|submit order|confirm order|\bcommander\b/i;
-    const el = Array.from(document.querySelectorAll("button,a,[role='button']")).find((node) => {
-      const t = (node.textContent || "").replace(/\s+/g, " ").trim();
-      return re.test(t) && !/confirm offer/i.test(t);
-    });
+  const clicked = await page.evaluate(`(function(dry){
+    var re = /passer la commande|passer commande|place order|pay now|payer maintenant|\\bpayer\\b|submit order|confirm order|\\bcommander\\b/i;
+    var nodes = Array.prototype.slice.call(document.querySelectorAll("button,a,[role='button']"));
+    var el = null;
+    for (var i = 0; i < nodes.length; i++) {
+      var t = (nodes[i].textContent || "").replace(/\\s+/g, " ").trim();
+      if (re.test(t) && !/confirm offer/i.test(t)) { el = nodes[i]; break; }
+    }
     if (!el) return "";
-    if (!dry) (el as HTMLElement).click();
-    return ((el.textContent || "").replace(/\s+/g, " ").trim() || "click").slice(0, 80);
-  }, Boolean(opts?.dry));
+    if (!dry) el.click();
+    return ((el.textContent || "").replace(/\\s+/g, " ").trim() || "click").slice(0, 80);
+  })(${opts?.dry ? "true" : "false"})`);
   if (!clicked) return false;
   console.warn(`[STOCKX-CHECKOUT] place order click label=${clicked}`);
   return true;
@@ -636,18 +639,23 @@ async function clickReviewOrder(page: Page): Promise<boolean> {
     await byRole.click({ force: true });
     return true;
   }
-  const clicked = await page.evaluate(() => {
-    const el =
-      document.querySelector('[data-testid="checkout-confirm-button"]') ||
-      Array.from(document.querySelectorAll("button")).find((b) =>
-        /vérifier la commande|confirm and continue|review order/i.test(
-          (b.textContent || "").replace(/\s+/g, " ")
-        )
-      );
+  const clicked = await page.evaluate(`(function(){
+    var el = document.querySelector('[data-testid="checkout-confirm-button"]');
+    if (!el) {
+      var buttons = Array.prototype.slice.call(document.querySelectorAll("button,[role=button],a"));
+      for (var i = 0; i < buttons.length; i++) {
+        var t = (buttons[i].textContent || "").replace(/\\s+/g, " ").trim();
+        if (t.length > 80) continue;
+        if (/v[ée]rifier la commande|confirm and continue|review order/i.test(t) && !/offer|offre/i.test(t)) {
+          el = buttons[i];
+          break;
+        }
+      }
+    }
     if (!el) return false;
-    (el as HTMLElement).click();
+    el.click();
     return true;
-  });
+  })()`);
   if (!clicked) {
     const diag = await page
       .evaluate(() => {
@@ -1696,11 +1704,9 @@ export async function confirmStockxCheckout(options: {
     if (!error && (liveTotal == null || Math.abs(liveTotal - preview.totalChf) > 0.5)) {
       error = `Live total changed (preview ${preview.totalChf}, live ${liveTotal})`;
     } else if (!error) {
-      const pay = page.getByRole("button", { name: /Passer commande|Place Order/i }).first();
-      if (!(await pay.isVisible({ timeout: 8000 }).catch(() => false))) {
+      if (!(await clickPlaceOrder(page))) {
         error = "Place Order button not found";
       } else {
-        await pay.click();
         await page.waitForTimeout(8000);
         const after = `${page.url()}\n${await page.locator("body").innerText().catch(() => "")}`;
         const orderMatch =
@@ -2182,8 +2188,8 @@ export async function runStockxAutoCheckoutForOrder(options: {
       });
     }
 
-    const pay = page.getByRole("button", { name: /Passer commande|Place Order/i }).first();
-    if (!(await pay.isVisible({ timeout: 8000 }).catch(() => false))) {
+    // "Passer la commande" is a different button from "Passer commande".
+    if (!(await clickPlaceOrder(page, { dry: true }))) {
       return fail("bot_fail", {
         lanes,
         recommended: pick.lane,
@@ -2215,7 +2221,13 @@ export async function runStockxAutoCheckoutForOrder(options: {
       }
     }
 
-    await pay.click();
+    if (!(await clickPlaceOrder(page))) {
+      return fail("bot_fail", {
+        lanes,
+        recommended: pick.lane,
+        detail: "Place Order click failed",
+      });
+    }
     await page.waitForTimeout(8000);
     const afterBody = await page.locator("body").innerText().catch(() => "");
     const after = `${page.url()}\n${afterBody}`;

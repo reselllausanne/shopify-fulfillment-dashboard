@@ -19,7 +19,8 @@ function normalizeGender(value?: string | null, sizeRaw?: string | null): "men" 
   if (/\b(women|womens|woman|wmns|wmn|female)\b/.test(lower)) return "women";
   if (/(?:-w|-wmns)$/.test(lower)) return "women";
   if (/\(\s*w\s*\)/.test(lower)) return "women";
-  if (/(youth|kids|kid|gs|grade school|preschool|\bps\b|child|children)/.test(lower)) return "youth";
+  // Word boundaries: "gs" inside "longsleeve" is not Grade School, "kid" is not inside other words.
+  if (/\b(youth|kids|kid|gs|preschool|child|children)\b/.test(lower) || /\bgrade school\b/.test(lower) || /\bps\b/.test(lower)) return "youth";
   const size = (sizeRaw ?? "").toUpperCase();
   if (/(^|\b)\d+(\.\d+)?\s*Y\b/.test(size)) return "youth";
   if (/(^|\b)GS\b/.test(size)) return "youth";
