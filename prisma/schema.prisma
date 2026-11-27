@@ -1223,6 +1223,7 @@ model SupplierVariant {
   @@index([providerKey])
   @@index([gtin])
   @@index([supplierSku])
+  @@index([updatedAt(sort: Desc)], map: "SupplierVariant_updatedAt_idx")
   @@schema("public")
 }
 
