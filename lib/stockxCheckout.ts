@@ -545,7 +545,7 @@ async function clickBuyNow(page: Page) {
       }
     }
   }
-  const clicked = await page.evaluate(`(function(){
+  const clicked = Boolean(await page.evaluate(`(function(){
     var nodes = Array.prototype.slice.call(document.querySelectorAll("button,a,[role=button]"));
     var hit = null;
     for (var i = 0; i < nodes.length; i++) {
@@ -577,7 +577,7 @@ async function clickPlaceOrder(page: Page, opts?: { dry?: boolean }): Promise<bo
     console.warn(`[STOCKX-CHECKOUT] place order click label=${label.slice(0, 80)}`);
     return true;
   }
-  const clicked = await page.evaluate(`(function(dry){
+  const clicked = String(await page.evaluate(`(function(dry){
     var re = /passer la commande|passer commande|place order|pay now|payer maintenant|\\bpayer\\b|submit order|confirm order|\\bcommander\\b/i;
     var nodes = Array.prototype.slice.call(document.querySelectorAll("button,a,[role='button']"));
     var el = null;
@@ -639,7 +639,7 @@ async function clickReviewOrder(page: Page): Promise<boolean> {
     await byRole.click({ force: true });
     return true;
   }
-  const clicked = await page.evaluate(`(function(){
+  const clicked = Boolean(await page.evaluate(`(function(){
     var el = document.querySelector('[data-testid="checkout-confirm-button"]');
     if (!el) {
       var buttons = Array.prototype.slice.call(document.querySelectorAll("button,[role=button],a"));
