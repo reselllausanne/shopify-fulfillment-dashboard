@@ -28,6 +28,11 @@ describe("failureClass", () => {
     expect(failureClass("proxy_402", "x")).toBeNull();
     expect(failureClass("", "x")).toBeNull();
   });
+  it("a rejected promo code does not count, and is not a card decline", () => {
+    const detail = "Payment not completed (no charge): This discount code is invalid";
+    expect(failureClass("bot_fail", detail)).toBeNull();
+    expect(failureClass("bot_fail", "Ce code promo est invalide ou a expiré.")).toBeNull();
+  });
 });
 
 describe("caps", () => {

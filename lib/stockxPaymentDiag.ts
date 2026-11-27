@@ -3,6 +3,8 @@
  * And the payment circuit breaker (card dead => stop clicking Place Order).
  */
 
+import { isPromoCodeRejection } from "@/lib/stockxPromo/codes";
+
 /** Words that make a checkout text snippet useful (payment outcome), vs nav boilerplate. */
 const DIAG_KEYWORDS_RE =
   /payment|paiement|card|carte|declin|refus|error|erreur|try again|r[ée]essay|3-?D Secure|verify|authenticat|insufficient|expired|problem/i;
@@ -35,7 +37,9 @@ export const PAYMENT_REFUSED_RE =
 export function isPaymentRefused(text: string, url = ""): boolean {
   // Orders list / order page: if StockX moved us there, it is not a refusal screen.
   if (/\/buying\//.test(url)) return false;
-  return PAYMENT_REFUSED_RE.test(String(text ?? ""));
+  const flat = String(text ?? "");
+  if (isPromoCodeRejection(flat) && !CARD_DECLINED_RE.test(flat.replace(/\s+/g, " "))) return false;
+  return PAYMENT_REFUSED_RE.test(flat);
 }
 
 export const PAYMENT_NOT_COMPLETED_PREFIX = "Payment not completed";
@@ -89,7 +93,16 @@ export const CARD_DECLINED_RE = new RegExp(
 /** Strict card-declined test. Never true on /buying/ pages (orders list, order detail). */
 export function isCardDeclined(text: string, url = ""): boolean {
   if (/\/buying\//.test(url)) return false;
-  return CARD_DECLINED_RE.test(String(text ?? "").replace(/\s+/g, " "));
+  const flat = String(text ?? "").replace(/\s+/g, " ");
+  if (!CARD_DECLINED_RE.test(flat)) return false;
+  // A promo-code banner must not halt the buyer. A real card phrase still does.
+  if (
+    isPromoCodeRejection(flat) &&
+    !/payment method|mode de paiement|insufficient funds|fonds insuffisants/i.test(flat)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export const CARD_DECLINED_REASON = "payment_declined";

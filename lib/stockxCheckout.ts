@@ -21,6 +21,8 @@ import {
   CARD_DECLINED_REASON,
   PAYMENT_NOT_COMPLETED_PREFIX,
 } from "@/lib/stockxPaymentDiag";
+import { applyOneStockxPromo } from "@/lib/stockxPromo/apply";
+import { markPromoUsed, releasePromoHold } from "@/lib/stockxPromo/store";
 import {
   chooseLane,
   chooseLaneByCsAtMargin,
@@ -1958,6 +1960,7 @@ export async function runStockxAutoCheckoutForOrder(options: {
 
   let ctx: BrowserContext | null = null;
   let ownsContext = false;
+  let appliedPromo: string | null = null;
   try {
     let page: Page;
     if (options.reuse?.page) {
@@ -2110,7 +2113,7 @@ export async function runStockxAutoCheckoutForOrder(options: {
     const text = await page.locator("body").innerText().catch(() => "");
     const totals = parseCheckoutTotals(text);
     // Pre-pay LIVE total only — never OCR confirm screen for cost.
-    const totalChf = totals.totalChf ?? selected.subtotalChf;
+    let totalChf = totals.totalChf ?? selected.subtotalChf;
 
     if (totalChf == null || totalChf > maxAllInChf) {
       return fail("cap", {
@@ -2141,6 +2144,14 @@ export async function runStockxAutoCheckoutForOrder(options: {
         recommended: pick.lane,
         detail: `Place Order blocked — live total ${totalChf} matches Express (picked STANDARD ${pick.lane.totalChf})`,
       });
+    }
+
+    if (!options.dryRun && totalChf != null) {
+      const promo = await applyOneStockxPromo(page, "shopify", totalChf);
+      if (promo.appliedCode) {
+        appliedPromo = promo.appliedCode;
+        if (promo.totalChf != null) totalChf = promo.totalChf;
+      }
     }
 
     if (!marginOk(shopify.saleChf, totalChf)) {
@@ -2243,6 +2254,12 @@ export async function runStockxAutoCheckoutForOrder(options: {
         );
       }
     }
+    if (stockxOrderNumber && appliedPromo) {
+      await markPromoUsed(appliedPromo).catch((error: unknown) => {
+        console.warn(`[STOCKX-PROMO] mark used failed: ${(error as Error)?.message || error}`);
+      });
+      appliedPromo = null;
+    }
     if (!stockxOrderNumber) {
       if (isCardDeclined(shopifyClickSnippet, page.url())) {
         return fail(CARD_DECLINED_REASON, {
@@ -2335,6 +2352,7 @@ export async function runStockxAutoCheckoutForOrder(options: {
     });
     return { kind: "needs_human", reason: "bot_fail", detail: e?.message, needsHuman: nh };
   } finally {
+    if (appliedPromo) await releasePromoHold(appliedPromo).catch(() => undefined);
     if (ownsContext) await ctx?.close().catch(() => undefined);
   }
 }
@@ -2411,6 +2429,7 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
 
   let ctx: BrowserContext | null = null;
   let ownsContext = false;
+  let appliedPromo: string | null = null;
   try {
     let page: Page;
     if (options.reuse?.page) {
@@ -2508,7 +2527,7 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
 
     const text = await page.locator("body").innerText().catch(() => "");
     const totals = parseCheckoutTotals(text);
-    const totalChf = totals.totalChf ?? selected.subtotalChf;
+    let totalChf = totals.totalChf ?? selected.subtotalChf;
 
     if (totalChf == null || totalChf > maxAllInChf) {
       return {
@@ -2527,6 +2546,14 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
         lane: selected.lane.label,
         pickReason: selected.pickReason,
       };
+    }
+
+    if (!dryRun && totalChf != null) {
+      const promo = await applyOneStockxPromo(page, "galaxus", totalChf);
+      if (promo.appliedCode) {
+        appliedPromo = promo.appliedCode;
+        if (promo.totalChf != null) totalChf = promo.totalChf;
+      }
     }
 
     const m = laneMarginPct(c.sellChf, totalChf);
@@ -2632,6 +2659,13 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
       }
     }
 
+    if (stockxOrderNumber && appliedPromo) {
+      await markPromoUsed(appliedPromo).catch((error: unknown) => {
+        console.warn(`[STOCKX-PROMO] mark used failed: ${(error as Error)?.message || error}`);
+      });
+      appliedPromo = null;
+    }
+
     if (!stockxOrderNumber) {
       // Evidence = the checkout page right after the click (captured above), not the
       // orders list we navigated to for recovery.
@@ -2729,6 +2763,7 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
       detail: e?.message || String(e),
     };
   } finally {
+    if (appliedPromo) await releasePromoHold(appliedPromo).catch(() => undefined);
     if (ownsContext) await ctx?.close().catch(() => undefined);
   }
 }

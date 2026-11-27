@@ -52,6 +52,23 @@ if [ $# -eq 0 ] && [ -f /app/.data/stockx-buyer/buyer.on ]; then
   ) &
 fi
 
+# StockX promo codes from the OTP Gmail box. Web container only. Does not touch buyer Chrome.
+if [ $# -eq 0 ]; then
+  (
+    sleep 20
+    while true; do
+      if [ -z "${STOCKX_OTP_IMAP_USER:-}" ] && [ -f /app/.data/stockx-buyer/buyer.env ]; then
+        set -a
+        # shellcheck disable=SC1091
+        . /app/.data/stockx-buyer/buyer.env
+        set +a
+      fi
+      npx tsx scripts/stockx-promo-scan.ts >>/app/.data/stockx-promo-scan.log 2>&1 || true
+      sleep "${STOCKX_PROMO_SCAN_INTERVAL_SEC:-1800}"
+    done
+  ) &
+fi
+
 if [ $# -gt 0 ]; then
   exec "$@"
 else
