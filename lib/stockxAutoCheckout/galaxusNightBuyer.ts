@@ -44,6 +44,7 @@ import {
   PAYMENT_BREAKER_MESSAGE,
 } from "@/lib/stockxPaymentDiag";
 import { postSlack } from "@/lib/stockxAuthAlert";
+import { keysReleasedByRefund, linkedBuyBlocksNewPurchase } from "@/lib/stockxBuyer/refundRelease";
 
 export const DATA_DIR = process.env.NIGHT_BUYER_DATA_DIR || path.join(process.cwd(), ".data");
 export const ON_FILE = path.join(DATA_DIR, "night-buyer.on");
@@ -242,7 +243,7 @@ export async function buildNightQueue(opts: {
   const [matches, externals] = await Promise.all([
     (prisma as any).galaxusStockxMatch.findMany({
       where: { galaxusOrderLineId: { in: lineIds }, stockxOrderNumber: { not: "" } },
-      select: { galaxusOrderLineId: true, unitIndex: true },
+      select: { galaxusOrderLineId: true, unitIndex: true, stockxOrderNumber: true, stockxStatus: true },
     }),
     (prisma as any).galaxusExternalBuy.findMany({
       where: { galaxusOrderLineId: { in: lineIds } },
@@ -250,7 +251,11 @@ export async function buildNightQueue(opts: {
     }),
   ]);
   const taken = new Map<string, Array<{ unitIndex: number }>>();
-  for (const m of [...matches, ...externals]) {
+  // A refunded/cancelled StockX buy does not occupy the unit. A live one does.
+  const liveMatches = matches.filter((m: { stockxOrderNumber?: string | null; stockxStatus?: string | null }) =>
+    linkedBuyBlocksNewPurchase(m)
+  );
+  for (const m of [...liveMatches, ...externals]) {
     const arr = taken.get(m.galaxusOrderLineId) ?? [];
     arr.push({ unitIndex: m.unitIndex });
     taken.set(m.galaxusOrderLineId, arr);
@@ -290,6 +295,30 @@ async function writeJson(file: string, value: unknown): Promise<void> {
   const tmp = `${file}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(value, null, 1), "utf8");
   await fs.rename(tmp, file);
+}
+
+/**
+ * Drop night-buyer "bought" rows whose linked StockX order is CANCELLED/REFUNDED.
+ * An active order number on the same unit is left alone (no second purchase).
+ */
+export async function releaseRefundedNightBuys(state: Record<string, PairState>): Promise<string[]> {
+  const bought = Object.entries(state).filter(([, s]) => s.status === "bought");
+  if (!bought.length) return [];
+  const lineIds = [...new Set(bought.map(([k]) => k.split(":")[0]).filter(Boolean))];
+  const rows = await (prisma as any).galaxusStockxMatch.findMany({
+    where: { galaxusOrderLineId: { in: lineIds } },
+    select: { galaxusOrderLineId: true, unitIndex: true, stockxOrderNumber: true, stockxStatus: true },
+  });
+  const links = rows.map(
+    (r: { galaxusOrderLineId: string; unitIndex?: number | null; stockxOrderNumber?: string | null; stockxStatus?: string | null }) => ({
+      key: `${r.galaxusOrderLineId}:${Math.max(0, Number(r.unitIndex ?? 0) || 0)}`,
+      stockxOrderNumber: r.stockxOrderNumber,
+      stockxStatus: r.stockxStatus,
+    })
+  );
+  const released = keysReleasedByRefund(state, links);
+  for (const key of released) delete state[key];
+  return released;
 }
 
 export async function loadState(): Promise<Record<string, PairState>> {
