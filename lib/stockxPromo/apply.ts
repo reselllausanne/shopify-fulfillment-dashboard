@@ -21,7 +21,7 @@ function norm(value: string | null | undefined): string {
 async function tagDiscountControls(page: Page, clickToggle: boolean): Promise<boolean> {
   // String IIFE: tsx keepNames injects __name into nested functions, which the page does not have.
   const click = clickToggle ? "true" : "false";
-  return page.evaluate(`(function(click){
+  return Boolean(await page.evaluate(`(function(click){
     function normText(value){ return (value || "").replace(/\\s+/g, " ").trim(); }
     function visible(el){
       var box = el.getBoundingClientRect();
