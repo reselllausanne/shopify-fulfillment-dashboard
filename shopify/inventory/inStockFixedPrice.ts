@@ -35,6 +35,13 @@ export const SUPREME_BOXER_SELL_CHF = 49;
 /** Supreme boxers express metafield. Only when physical location stock > 0. */
 export const SUPREME_BOXER_EXPRESS_CHF = 69;
 
+/** Eden/Black Bird Head beanie — owned stock 10, Shopify 79 (hard target), express +20. */
+export const EDEN_BEANIE_SELL_CHF = 79;
+export const EDEN_BEANIE_EXPRESS_CHF = 99;
+/** Nike Tech Fleece Dark Grey Heather/Black (joggers FB8002-063, windrunner FB7921-063) S/M/L. */
+export const NIKE_TECH_GREY_SELL_CHF = 99;
+export const NIKE_TECH_GREY_EXPRESS_CHF = 119;
+
 export type InStockFixedPriceConfig = {
   costChf: number;
   label: string;
@@ -45,6 +52,8 @@ export type InStockFixedPriceConfig = {
   expressChf?: number;
   /** Never offer express for this lane (standard shipping only), even with physical stock. */
   noExpress?: boolean;
+  /** Registry sell is exact: never kept at a higher existing shelf price (default lanes keep the max). */
+  hardSell?: boolean;
   /** Galaxus invoice ex VAT. Shopify shelf stays sellChf. The sync job must not copy sellChf here. */
   galaxusExVatChf?: number;
 };
@@ -64,6 +73,9 @@ const CROCS_MCQUEEN_COST_CHF = 42;
 const BAPE_COST_CHF = 40;
 const AUDEMARS_TRAVIS_COST_CHF = 40;
 const SUPREME_BOXER_COST_CHF = 20;
+/** Placeholder COGS (CHF) — owned units, real invoice cost not in repo. Used for Galaxus local-stock margin only. */
+const EDEN_BEANIE_COST_CHF = 40;
+const NIKE_TECH_GREY_COST_CHF = 60;
 
 export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
   {
@@ -169,6 +181,32 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     titlePatterns: [/Supreme Hanes Boxer Briefs \(4 Pack\)/i],
   },
   {
+    costChf: EDEN_BEANIE_COST_CHF,
+    sellChf: EDEN_BEANIE_SELL_CHF,
+    expressChf: EDEN_BEANIE_EXPRESS_CHF,
+    hardSell: true,
+    label: "Arc'teryx Bird Head Beanie Eden/Black (in stock)",
+    matchReason: "Arc'teryx Eden/Black beanie (fixed 79/99, express only)",
+    productIds: ["15233996095874"], // Arc'teryx Bird Head Toque Beanie Eden/Black (single One Size variant)
+  },
+  {
+    costChf: NIKE_TECH_GREY_COST_CHF,
+    sellChf: NIKE_TECH_GREY_SELL_CHF,
+    expressChf: NIKE_TECH_GREY_EXPRESS_CHF,
+    hardSell: true,
+    label: "Nike Tech Fleece Dark Grey Heather (in stock)",
+    matchReason: "Nike Tech grey joggers/windrunner S/M/L (fixed 99/119, express only)",
+    // Exact variant SKUs only: other sizes of these products stay dropship at StockX pricing.
+    skuBases: [
+      "CU4495-063-S", // Joggers FB8002-063 (Shopify SKU still CU4495-063)
+      "CU4495-063-M",
+      "CU4495-063-L",
+      "281c30b7-d092-4607-a39d-37d27b5a3ac9-S", // Windrunner FB7921-063
+      "FB7921-063-M",
+      "281c30b7-d092-4607-a39d-37d27b5a3ac9-L",
+    ],
+  },
+  {
     costChf: CROCS_MCQUEEN_COST_CHF,
     label: "Crocs Lightning McQueen (warehouse)",
     matchReason: "Crocs Lightning McQueen warehouse buy 42",
@@ -241,6 +279,7 @@ export function resolveInStockFixedPrice(input: {
     sellChf: rule.sellChf,
     expressChf: rule.expressChf,
     noExpress: rule.noExpress,
+    hardSell: rule.hardSell,
     galaxusExVatChf: rule.galaxusExVatChf,
   };
 }

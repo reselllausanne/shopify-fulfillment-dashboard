@@ -119,4 +119,37 @@ describe("inStockFixedPrice", () => {
       })
     ).toBe(false);
   });
+  it("resolves Eden/Black beanie by productId at hard 79 / express 99", () => {
+    const r = resolveInStockFixedPrice({ productId: "gid://shopify/Product/15233996095874" });
+    expect(r?.sellChf).toBe(79);
+    expect(r?.expressChf).toBe(99);
+    expect(r?.hardSell).toBe(true);
+    // Sibling Arc'teryx colourways share SKU X000006756-OS and must stay untouched.
+    expect(
+      resolveInStockFixedPrice({
+        sku: "X000006756-OS",
+        productId: "gid://shopify/Product/15396946116994",
+        title: "Arc'teryx Bird Head Toque Beanie Black/Void",
+      })
+    ).toBeNull();
+  });
+
+  it("resolves only S/M/L of the grey Nike Tech joggers + windrunner at hard 99 / express 119", () => {
+    for (const sku of [
+      "CU4495-063-S",
+      "CU4495-063-M",
+      "CU4495-063-L",
+      "281c30b7-d092-4607-a39d-37d27b5a3ac9-S",
+      "FB7921-063-M",
+      "281c30b7-d092-4607-a39d-37d27b5a3ac9-L",
+    ]) {
+      const r = resolveInStockFixedPrice({ sku });
+      expect(r?.sellChf, sku).toBe(99);
+      expect(r?.expressChf, sku).toBe(119);
+      expect(r?.hardSell, sku).toBe(true);
+    }
+    for (const sku of ["CU4495-063-XL", "FB8002-063-2XL", "FB7921-063-XXXL", "281c30b7-d092-4607-a39d-37d27b5a3ac9-XS"]) {
+      expect(resolveInStockFixedPrice({ sku }), sku).toBeNull();
+    }
+  });
 });
