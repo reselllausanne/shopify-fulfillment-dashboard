@@ -82,6 +82,7 @@ import {
   sessionSpendReached,
   spendCapHaltReason,
 } from "@/lib/stockxBuyer/spendCap";
+import { watchRefunds } from "@/lib/stockxBuyer/refundWatch";
 import {
   buildCancelRebuyJobs,
   buildShopifyJobs,
@@ -106,6 +107,8 @@ export type SupervisorConfig = {
   maxAllInChf: number;
   idleMs: number;
   rebuyEveryMs: number;
+  /** Mail + both-account StockX history. */
+  refundWatchMs: number;
   goatWatch: boolean;
   goatHoldMs: number;
   /** Session all-in ceiling (both accounts). Null = no cap. */
@@ -138,6 +141,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SupervisorC
     maxAllInChf: num(env.STOCKX_BUYER_MAX_ALL_IN_CHF, 1_000_000),
     idleMs: num(env.STOCKX_BUYER_IDLE_MS, 60_000),
     rebuyEveryMs: num(env.STOCKX_BUYER_REBUY_EVERY_MS, 15 * 60_000),
+    refundWatchMs: num(env.STOCKX_BUYER_REFUND_WATCH_MS, 30 * 60_000),
     goatWatch: bool(env.STOCKX_BUYER_GOAT_WATCH, true),
     goatHoldMs: num(env.GOAT_HOLD_MINUTES, 30) * 60_000,
     spendCapChf: parseSpendCapChf(env.STOCKX_BUYER_SPEND_CAP_CHF),
@@ -160,6 +164,7 @@ export type Runtime = {
   phase: string;
   startedAt: number;
   lastRebuyAt: number;
+  lastRefundWatchAt: number;
   rebuyJobs: ShopifyJob[];
   escalated: Map<string, number>;
   lastError: string | null;
@@ -683,6 +688,22 @@ export async function runCycle(rt: Runtime): Promise<CycleResult> {
     if (fresh) for (const k of [...rt.states.keys()]) if (!fresh.states.has(k)) rt.states.delete(k);
   }
 
+  if (!cfg.dryRun && now - rt.lastRefundWatchAt > cfg.refundWatchMs) {
+    rt.lastRefundWatchAt = now;
+    rt.phase = "refund-watch";
+    await watchRefunds(log);
+    const night = await loadNightState();
+    const released = await releaseRefundedNightBuys(night);
+    if (released.length) {
+      await saveNightState(night);
+      log(`refund release ${released.length}`);
+      for (const key of released) {
+        await appendEvent({ t: Date.now(), ev: "release", key: `galaxus:${key}`, by: "stockx_refund" });
+        rt.states.delete(`galaxus:${key}`);
+      }
+    }
+  }
+
   if (cfg.rebuy && now - rt.lastRebuyAt > cfg.rebuyEveryMs) {
     rt.lastRebuyAt = now;
     rt.phase = "rebuy-sweep";
@@ -742,6 +763,7 @@ export function createRuntime(cfg: SupervisorConfig, states: Map<string, JobStat
     phase: "start",
     startedAt: Date.now(),
     lastRebuyAt: 0,
+    lastRefundWatchAt: 0,
     rebuyJobs: [],
     escalated: new Map(),
     lastError: null,
