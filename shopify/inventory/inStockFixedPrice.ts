@@ -188,9 +188,12 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     expressChf: EDEN_BEANIE_EXPRESS_CHF,
     hardSell: true,
     skipLivraison48h: true,
-    label: "Arc'teryx Bird Head Beanie Eden/Black (in stock)",
-    matchReason: "Arc'teryx Eden/Black beanie (fixed 79/99, express only)",
-    productIds: ["15233996095874"], // Arc'teryx Bird Head Toque Beanie Eden/Black (single One Size variant)
+    label: "Arc'teryx Bird Head Beanie Eden/Black + Arctic Silk/Rune (in stock)",
+    matchReason: "Arc'teryx Eden/Black + Arctic Silk/Rune beanies (fixed 79/99, express only)",
+    productIds: [
+      "15233996095874", // Arc'teryx Bird Head Toque Beanie Eden/Black (single One Size variant)
+      "15240946155906", // Arc'teryx Bird Head Toque Beanie Arctic Silk/Rune (owned stock, bought 27 Nov)
+    ],
   },
   {
     costChf: NIKE_TECH_GREY_COST_CHF,

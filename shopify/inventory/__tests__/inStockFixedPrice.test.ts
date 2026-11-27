@@ -124,6 +124,10 @@ describe("inStockFixedPrice", () => {
     expect(r?.sellChf).toBe(79);
     expect(r?.expressChf).toBe(99);
     expect(r?.hardSell).toBe(true);
+    expect(r?.skipLivraison48h).toBe(true);
+    expect(
+      resolveInStockFixedPrice({ productId: "gid://shopify/Product/15240946155906" })?.sellChf
+    ).toBe(79);
     // Sibling Arc'teryx colourways share SKU X000006756-OS and must stay untouched.
     expect(
       resolveInStockFixedPrice({
