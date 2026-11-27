@@ -71,16 +71,40 @@ export async function loadStyleMeta(
 
 async function sizesForGtins(prisma: PrismaClient, gtins: string[]): Promise<Map<string, string>> {
   if (!gtins.length) return new Map();
+  // Nike available_gtins uses GTIN-14 (leading zeros). KickDB stores 12 or 13 digits.
   const rows = await prisma.$queryRawUnsafe<{ gtin: string; size: string | null }[]>(
     `
-    SELECT gtin, max("sizeEu") AS size
+    SELECT ltrim(gtin, '0') AS gtin, max("sizeEu") AS size
     FROM "KickDBVariant"
-    WHERE gtin = ANY($1::text[])
+    WHERE ltrim(gtin, '0') = ANY($1::text[])
+      AND "sizeEu" IS NOT NULL
     GROUP BY 1
     `,
-    gtins
+    gtins.map((g) => g.replace(/^0+/, ""))
   );
-  return new Map(rows.filter((r) => r.size).map((r) => [r.gtin, r.size as string]));
+  const byStripped = new Map(rows.filter((r) => r.size).map((r) => [r.gtin, r.size as string]));
+  const out = new Map<string, string>();
+  for (const gtin of gtins) {
+    const size = byStripped.get(gtin.replace(/^0+/, ""));
+    if (size) out.set(gtin, size);
+  }
+  return out;
+}
+
+/** Fill EU size on rows already stored, matching GTIN with or without leading zeros. */
+export async function backfillSizes(prisma: PrismaClient): Promise<number> {
+  return prisma.$executeRawUnsafe(`
+    UPDATE "AubonneStoreStock" s
+    SET "sizeEu" = v.size
+    FROM (
+      SELECT ltrim(gtin, '0') AS gtin, max("sizeEu") AS size
+      FROM "KickDBVariant"
+      WHERE gtin IS NOT NULL AND "sizeEu" IS NOT NULL
+      GROUP BY 1
+    ) v
+    WHERE ltrim(s.gtin, '0') = v.gtin
+      AND s."sizeEu" IS DISTINCT FROM v.size
+  `);
 }
 
 async function nikeGet(url: string): Promise<{ status: number; body: string }> {

@@ -105,13 +105,16 @@ export default function AubonnePage() {
                 <div className="font-medium truncate">{card.name || card.styleColor}</div>
                 <div className="text-xs text-zinc-400 mb-2">{card.styleColor}</div>
                 <div className="flex flex-wrap gap-1">
-                  {card.sizes.map((size) => (
+                  {card.sizes
+                    .slice()
+                    .sort((a, b) => (parseFloat(a.sizeEu || "999") || 999) - (parseFloat(b.sizeEu || "999") || 999))
+                    .map((size) => (
                     <span
                       key={size.gtin}
                       className={`text-[11px] px-1.5 py-0.5 rounded ${LEVEL_CLASS[size.level] || "bg-zinc-700"}`}
                       title={size.nikeModifiedAt || ""}
                     >
-                      {size.sizeEu || size.gtin.slice(-4)} {size.level}
+                      {size.sizeEu ? `EU ${size.sizeEu}` : "taille ?"} {size.level}
                     </span>
                   ))}
                 </div>
