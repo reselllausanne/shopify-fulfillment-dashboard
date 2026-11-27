@@ -235,6 +235,21 @@ services:
     depends_on:
       - web
 
+  # Nike Factory Store Aubonne levels. Daily letter-codes, weekly numeric codes.
+  worker-aubonne-stock:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=1024
+      - AUBONNE_CONCURRENCY=${AUBONNE_CONCURRENCY:-8}
+    command: ["npx", "tsx", "scripts/workers/aubonneStockWorker.ts"]
+    volumes:
+      - ./.data:/app/.data
+    restart: unless-stopped
+    depends_on:
+      - web
+
   # REMOVED 2026-10-24: continuous fast-reprice worker fought SSE/convergence.
   # One-shot still OK: docker compose run --rm web npx tsx scripts/reprice-shopify-fast.ts --apply --verify-bulk
   # Former service: worker-shopify-fast-reprice (shopifyFastRepriceWorker.ts)
