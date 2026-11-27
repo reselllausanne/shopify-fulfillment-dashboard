@@ -54,6 +54,8 @@ export type InStockFixedPriceConfig = {
   noExpress?: boolean;
   /** Registry sell is exact: never kept at a higher existing shelf price (default lanes keep the max). */
   hardSell?: boolean;
+  /** Keep the product out of the "Livraison 48H" collection (custom.physical_in_stock stays false). Express only. */
+  skipLivraison48h?: boolean;
   /** Galaxus invoice ex VAT. Shopify shelf stays sellChf. The sync job must not copy sellChf here. */
   galaxusExVatChf?: number;
 };
@@ -185,6 +187,7 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     sellChf: EDEN_BEANIE_SELL_CHF,
     expressChf: EDEN_BEANIE_EXPRESS_CHF,
     hardSell: true,
+    skipLivraison48h: true,
     label: "Arc'teryx Bird Head Beanie Eden/Black (in stock)",
     matchReason: "Arc'teryx Eden/Black beanie (fixed 79/99, express only)",
     productIds: ["15233996095874"], // Arc'teryx Bird Head Toque Beanie Eden/Black (single One Size variant)
@@ -194,6 +197,7 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     sellChf: NIKE_TECH_GREY_SELL_CHF,
     expressChf: NIKE_TECH_GREY_EXPRESS_CHF,
     hardSell: true,
+    skipLivraison48h: true,
     label: "Nike Tech Fleece Dark Grey Heather (in stock)",
     matchReason: "Nike Tech grey joggers/windrunner S/M/L (fixed 99/119, express only)",
     // Exact variant SKUs only: other sizes of these products stay dropship at StockX pricing.
@@ -280,6 +284,7 @@ export function resolveInStockFixedPrice(input: {
     expressChf: rule.expressChf,
     noExpress: rule.noExpress,
     hardSell: rule.hardSell,
+    skipLivraison48h: rule.skipLivraison48h,
     galaxusExVatChf: rule.galaxusExVatChf,
   };
 }
