@@ -4,7 +4,7 @@
 - Browser fetch: ONE headless browser owned by the script (Camoufox default, Patchright optional), never the
   Mac's Google Chrome. Images/media/fonts blocked, per-page byte cap, closed at end of run.
 - JSONL visit log outside the repo. No page body, cookie, key or proxy credential is ever written.
-- Secrets only from env: JARVIS_PROXY_URL (optional), SERPAPI_API_KEY (subject_research).
+- Secrets only from env: JARVIS_PROXY_URL (optional), SERPAPI_API_KEY (subject_research), YOUTUBE_API_KEY (youtube_*).
 
 Env: JARVIS_WEB_LOG (log path, default ~/.local/share/jarvis-resell/web-visits.jsonl), JARVIS_PROXY_URL,
 JARVIS_MAX_PAGE_MB (default 3), JARVIS_MIN_DELAY (seconds between requests, default 2).
@@ -29,7 +29,7 @@ DEFAULT_MAX_MB = 3.0
 BLOCKED_RESOURCES = {"image", "media", "font", "stylesheet"}
 MEDIA_URL_RE = re.compile(r"(//(scontent|video)[^/]*\.(cdninstagram\.com|fbcdn\.net)/)|(\.(mp4|webm|m4s|mp3|m4a|mov)(\?|$))", re.I)
 
-SECRET_ENV_NAMES = ("SERPAPI_API_KEY", "JARVIS_PROXY_URL")
+SECRET_ENV_NAMES = ("SERPAPI_API_KEY", "YOUTUBE_API_KEY", "JARVIS_PROXY_URL")
 
 
 class AntiBotError(Exception):
@@ -59,7 +59,7 @@ def mask(text, extra=()):
     s = str(text)
     for v in list(secret_values()) + [e for e in extra if e]:
         s = s.replace(v, "***")
-    s = re.sub(r"(api_key=)[^&\s\"']+", r"\1***", s, flags=re.I)
+    s = re.sub(r"((?:api_key|[?&]key)=)[^&\s\"']+", r"\1***", s, flags=re.I)
     s = re.sub(r"(//[^/\s:@]+:)[^@\s/]+@", r"\1***@", s)
     return s
 
@@ -155,7 +155,7 @@ def detect_antibot(status, body):
                                   "just a moment", "cf-chl", "px-captcha"))
 
 
-def http_get(url, max_bytes=None, timeout=20, opener=None, sleep=time.sleep, delay=None):
+def http_get(url, max_bytes=None, timeout=20, opener=None, sleep=time.sleep, delay=None, headers=None, any_type=False):
     """-> (status, html, nbytes). Raises AntiBotError (no retry) / FetchError after MAX_ATTEMPTS."""
     check_public_url(url)
     cap = max_bytes or max_page_bytes()
@@ -163,15 +163,16 @@ def http_get(url, max_bytes=None, timeout=20, opener=None, sleep=time.sleep, del
     last = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
         sleep(min_delay() if delay is None else delay)
-        req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "text/html,*/*;q=0.8",
-                                                   "Accept-Language": "fr-CH,fr;q=0.9,en;q=0.5"})
+        hdrs = {"User-Agent": UA, "Accept": "text/html,*/*;q=0.8", "Accept-Language": "fr-CH,fr;q=0.9,en;q=0.5"}
+        hdrs.update(headers or {})
+        req = urllib.request.Request(url, headers=hdrs)
         try:
             with op(req, timeout=timeout) as r:
                 raw = r.read(cap + 1)
                 if len(raw) > cap:
                     raw = raw[:cap]
                 ctype = (r.headers.get("Content-Type") or "").lower()
-                if ctype and "html" not in ctype and "xml" not in ctype and "text" not in ctype:
+                if ctype and not any_type and "html" not in ctype and "xml" not in ctype and "text" not in ctype:
                     raise FetchError(f"not html: {ctype[:40]}")
                 body = raw.decode(r.headers.get_content_charset() or "utf-8", "replace")
                 if detect_antibot(r.status, body):

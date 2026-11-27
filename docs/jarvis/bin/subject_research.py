@@ -39,7 +39,7 @@ import jarvis_web as jw
 EXIT_OK, EXIT_ERR, EXIT_USAGE, EXIT_AUTH = 0, 1, 2, 3
 SERP_ENDPOINT = "https://serpapi.com/search.json"
 HARD_MAX_QUERIES, HARD_MAX_PAGES = 5, 8
-PRIMARY_KINDS = {"kg", "answer"}
+PRIMARY_KINDS = {"kg", "answer", "meta"}  # "meta" = platform metadata (video_knowledge_base.py)
 SKIP_DOMAINS = {"youtube.com", "youtu.be", "instagram.com", "facebook.com", "tiktok.com", "pinterest.com", "pinterest.fr",
                 "x.com", "twitter.com", "reddit.com", "linkedin.com", "google.com", "google.ch", "google.fr", "t.co",
                 "stockx.com", "goat.com"}  # StockX/GOAT: never opened from here (anti-bot + out of scope)
@@ -127,7 +127,7 @@ def serp_call(engine, q, key, gl="ch", hl="fr", opener=None, sleep=time.sleep, t
 
 # ---------- facts ----------
 def mk_fact(kind, key, text, url, title="", date=None, via=""):
-    return {"kind": kind, "key": key, "text": one_line(text), "url": url, "title": one_line(title, 160), "date": date, "via": via}
+    return {"kind": kind, "key": re.sub(r"\s+", "-", str(key)), "text": one_line(text), "url": url, "title": one_line(title, 160), "date": date, "via": via}
 
 
 def fkey(*parts):
@@ -250,7 +250,7 @@ def fact_status(f):
 def add_fact(doc, f):
     """Merge one fact. Returns (is_new_fact, is_new_source)."""
     nurl = norm_url(f["url"])
-    dom = registrable(jw.domain_of(f["url"]))
+    dom = f.get("domain") or registrable(jw.domain_of(f["url"]))
     key = f["key"]
     cur = doc["facts"].get(key)
     new_fact = cur is None
@@ -277,10 +277,11 @@ def render_doc(doc):
         return f"- {f['text']} <!-- k:{f['key']} t:{f['kind']} --> — sources : {srcs}"
     L = ["---", f"subject: {json.dumps(doc['subject'], ensure_ascii=False)}", f"slug: {doc['slug']}",
          f"created: {doc['created']}", f"updated: {doc['updated']}", f"runs: {doc['runs']}", "---", "",
-         f"# Sujet : {doc['subject']}", "",
-         "> Fiche générée par `docs/jarvis/bin/subject_research.py` (lecture seule). Re-lancer le même sujet complète cette fiche.",
-         "> Confirmé = >= 2 domaines indépendants ou source primaire Google ; sinon Incertain. Chaque fait : sources + date de vue.", "",
-         "## Confirmé", ""]
+         f"# {doc.get('title_prefix', 'Sujet')} : {doc['subject']}", ""]
+    L += doc.get("preamble") or [
+        "> Fiche générée par `docs/jarvis/bin/subject_research.py` (lecture seule). Re-lancer le même sujet complète cette fiche.",
+        "> Confirmé = >= 2 domaines indépendants ou source primaire Google ; sinon Incertain. Chaque fait : sources + date de vue."]
+    L += ["", "## Confirmé", ""]
     L += [line(f) for f in conf] + doc["raw"]["confirmed"] or ["_(rien pour l'instant)_"]
     L += ["", "## Incertain", ""]
     L += [line(f) for f in unc] + doc["raw"]["uncertain"] or ["_(rien pour l'instant)_"]
@@ -370,6 +371,7 @@ def merge_run(doc, facts, now, run_info):
         J.append(f"- page ouverte : {p['url']} → {p['outcome']}")
     if run_info.get("price_range"):
         J.append(f"- prix observés (Google Shopping) : {run_info['price_range']}")
+    J += run_info.get("extra", [])
     J.append(f"- bilan : +{stats['new_facts']} faits, +{stats['new_sources']} sources, {stats['promoted']} promus en Confirmé "
              f"(total Confirmé {stats['confirmed_total']} / Incertain {stats['uncertain_total']})")
     if not n_fact:
