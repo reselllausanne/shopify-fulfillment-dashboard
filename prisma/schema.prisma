@@ -3628,3 +3628,34 @@ model StockxOrderAlert {
   @@index([sentAt])
   @@schema("public")
 }
+
+/// Nike Factory Store Aubonne availability. Level only (OOS/LOW/MEDIUM/HIGH), not a unit count.
+model AubonneStoreStock {
+  styleColor     String
+  gtin           String
+  level          String
+  nikeModifiedAt DateTime?
+  name           String?
+  imageUrl       String?
+  sizeEu         String?
+  lastCheckedAt  DateTime
+
+  @@id([styleColor, gtin])
+  @@index([level])
+  @@index([lastCheckedAt])
+  @@schema("public")
+}
+
+/// letter = daily Nike-format codes. numeric = weekly legacy 6-digit codes.
+model AubonneScanState {
+  id         String    @id
+  startedAt  DateTime?
+  finishedAt DateTime?
+  cursor     Int       @default(0)
+  total      Int       @default(0)
+  found      Int       @default(0)
+  errors     Int       @default(0)
+  updatedAt  DateTime  @updatedAt
+
+  @@schema("public")
+}
