@@ -82,7 +82,7 @@ const SHOPIFY_TODAY_QUERY = /* GraphQL */ `
             name
             sku
             quantity
-            discountedUnitPriceSet {
+            discountedUnitPriceAfterAllDiscountsSet {
               shopMoney {
                 amount
               }
@@ -121,7 +121,7 @@ type ShopifyOrderNode = {
       name?: string;
       sku?: string | null;
       quantity?: number;
-      discountedUnitPriceSet?: { shopMoney?: { amount?: string } };
+      discountedUnitPriceAfterAllDiscountsSet?: { shopMoney?: { amount?: string } };
       variant?: { barcode?: string | null; title?: string | null } | null;
       image?: { url?: string } | null;
     }>;
@@ -342,7 +342,7 @@ async function build() {
           name: li.name,
           sku: li.sku,
           quantity: li.quantity,
-          unitPrice: toNumberSafe(li.discountedUnitPriceSet?.shopMoney?.amount, 0),
+          unitPrice: toNumberSafe(li.discountedUnitPriceAfterAllDiscountsSet?.shopMoney?.amount, 0),
           imageUrl: li.image?.url ?? null,
           gtin: li.variant?.barcode ?? null,
           variantTitle: li.variant?.title ?? null,
