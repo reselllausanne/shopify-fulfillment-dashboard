@@ -1,9 +1,10 @@
 /**
  * Cron-safe Shopify ↔ StockX auto-link (same rules as dashboard HIGH auto-save).
  *
- * After StockX token refresh: fetch recent buys (PENDING + short HISTORICAL) on the
- * Shopify StockX account only, match unmatched paid Shopify lines via
- * `matchShopifyToSupplier`, persist HIGH-confidence links only.
+ * After StockX token refresh: fetch recent buys (PENDING + short HISTORICAL) on
+ * every known StockX account (dashboard + Galaxus), match unmatched paid Shopify
+ * lines via `matchShopifyToSupplier`, persist HIGH-confidence links only.
+ * A buy already claimed by a Galaxus line is not linked again.
  *
  * FIRST LINK only (never-matched lines):
  * - Age gate = Shopify order `days` lookback (default 30) — mega-old unmatched stay out.
@@ -34,7 +35,8 @@ import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
 import { getCachedStockxBuyingOrders } from "@/galaxus/stx/buyingOrdersCache";
 import type { StockxBuyingNode } from "@/galaxus/stx/stockxClient";
 import { shopifyGraphQL, type ShopifyGraphQLResult } from "@/lib/shopifyAdmin";
-import { resolveStockxBearerToken } from "@/lib/stockxToken";
+import { listStockxAccountTokens, resolveStockxBearerToken } from "@/lib/stockxToken";
+import { tokensForShopifyAutoLink } from "@/lib/stockxBuyer/shopifyStockxAccount";
 import {
   emailShopifyStockxMediumCandidates,
   type MediumMatchEmailItem,
@@ -561,7 +563,8 @@ async function fetchShopifyAccountBuys(token: string): Promise<StockxBuyingNode[
 }
 
 /**
- * Match recent unlinked Shopify lines to unclaimed StockX buys (Shopify account).
+ * Match recent unlinked Shopify lines to unclaimed StockX buys on every known
+ * account (dashboard + Galaxus). A buy already claimed by a Galaxus line is skipped.
  * HIGH confidence + cost only. Safe for hourly cron.
  */
 export async function runShopifyStockxAutoLinkSweep(
@@ -593,10 +596,16 @@ export async function runShopifyStockxAutoLinkSweep(
     items: [],
   };
 
-  const auth = options?.token
-    ? { token: options.token }
-    : await resolveStockxBearerToken();
-  if (!auth?.token) {
+  const listed = options?.token || options?.prefetchedBuys ? [] : await listStockxAccountTokens().catch(() => []);
+  const tokens = tokensForShopifyAutoLink(
+    options?.token,
+    listed.map((row) => row.token)
+  );
+  if (!options?.prefetchedBuys && tokens.length === 0) {
+    const auth = await resolveStockxBearerToken();
+    if (auth?.token) tokens.push(auth.token);
+  }
+  if (!options?.prefetchedBuys && tokens.length === 0) {
     return { ...result, ok: false, error: "no_stockx_token" };
   }
 
@@ -604,8 +613,14 @@ export async function runShopifyStockxAutoLinkSweep(
   result.unmatchedLines = lines.length;
   if (lines.length === 0) return result;
 
-  const rawBuys =
-    options?.prefetchedBuys ?? (await fetchShopifyAccountBuys(auth.token));
+  const fetched = options?.prefetchedBuys ?? (await Promise.all(tokens.map((token) => fetchShopifyAccountBuys(token)))).flat();
+  const deduped = new Map<string, StockxBuyingNode>();
+  for (const node of fetched) {
+    const key = String(node.orderNumber || node.orderId || "");
+    if (!key || deduped.has(key)) continue;
+    deduped.set(key, node);
+  }
+  const rawBuys = Array.from(deduped.values());
   result.buysFetched = rawBuys.length;
 
   const normalized: NormalizedSupplierOrder[] = [];
