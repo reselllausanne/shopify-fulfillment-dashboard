@@ -4,6 +4,7 @@ import "server-only";
 import type { GalaxusOrder, GalaxusOrderLine, Shipment } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { buildDocNumber } from "@/galaxus/edi/docNumbers";
+import { excludeSuperseded, isSupersededShipment } from "@/galaxus/warehouse/supersededShipment";
 import { allocateSscc } from "@/galaxus/sscc/generator";
 import { generateSsccLabelPdf } from "@/galaxus/labels/ssccLabel";
 import {
@@ -86,10 +87,13 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
     return { status: "error", shipments: [], message: "Order not found" };
   }
 
-  const existingShipments = await prisma.shipment.findMany({
-    where: { orderId: order.id },
-    orderBy: { createdAt: "asc" },
-  });
+  // Wrong-item shipments are kept for audit only; they never block a (re)ship.
+  const existingShipments = excludeSuperseded(
+    await prisma.shipment.findMany({
+      where: { orderId: order.id },
+      orderBy: { createdAt: "asc" },
+    })
+  );
   if (existingShipments.length > 0) {
     const hasPlaced = existingShipments.some((shipment) => Boolean((shipment as any).supplierOrderRef));
     return {
@@ -262,6 +266,7 @@ export async function createManualShipmentsForOrder(
     const delrStatus = String(shipment?.delrStatus ?? "").toUpperCase();
     const status = String(shipment?.status ?? "").toUpperCase();
     if (status === "MANUAL") return false;
+    if (isSupersededShipment(shipment)) return false;
     if (shipment?.delrSentAt) return false;
     if (delrStatus === "UPLOADED") return false;
     return true;

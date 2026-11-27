@@ -11,6 +11,7 @@ import {
   extractSwissPostTracking,
   requestSwissPostLabelForOrderWithTrackingHint,
 } from "@/galaxus/directDelivery/swissPostLabelFlow";
+import { excludeSuperseded } from "@/galaxus/warehouse/supersededShipment";
 import { isGalaxusGldSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
 
 export type DirectSwissPostLabelData = {
@@ -64,6 +65,7 @@ function alreadyFulfilledResult(params: {
 
 type ShipmentRow = {
   id: string;
+  status?: string | null;
   delrSentAt: Date | null;
   delrStatus: string | null;
   trackingNumber: string | null;
@@ -240,7 +242,7 @@ export async function runDirectSwissPostLabelForOrder(
     include: {
       lines: true,
       shipments: {
-        select: { id: true, delrSentAt: true, delrStatus: true, trackingNumber: true },
+        select: { id: true, status: true, delrSentAt: true, delrStatus: true, trackingNumber: true },
         orderBy: { createdAt: "asc" },
       },
     },
@@ -305,7 +307,7 @@ export async function runDirectSwissPostLabelForOrder(
       }
     }
 
-    const shipments = (order.shipments ?? []) as ShipmentRow[];
+    const shipments = excludeSuperseded((order.shipments ?? []) as ShipmentRow[]);
     const finalized = shipments.filter(isFinalizedShipment);
     const open = shipments.filter((s) => !isFinalizedShipment(s));
 
