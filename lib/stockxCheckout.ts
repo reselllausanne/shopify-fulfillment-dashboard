@@ -545,17 +545,23 @@ async function clickBuyNow(page: Page) {
       }
     }
   }
-  const clicked = Boolean(await page.evaluate(`(function(){
-    var nodes = Array.prototype.slice.call(document.querySelectorAll("button,a,[role=button]"));
-    var hit = null;
-    for (var i = 0; i < nodes.length; i++) {
-      var t = (nodes[i].textContent || "").replace(/\\s+/g, " ");
-      if (/acheter maintenant|buy now/i.test(t)) { hit = nodes[i]; break; }
-    }
-    if (!hit) return false;
-    hit.click();
-    return true;
-  })()`);
+  const clicked = Boolean(
+    await page.evaluate(
+      [
+        "(function(){",
+        "  var nodes = Array.prototype.slice.call(document.querySelectorAll('button,a,[role=button]'));",
+        "  var hit = null;",
+        "  for (var i = 0; i < nodes.length; i++) {",
+        "    var t = (nodes[i].textContent || '').replace(/\\s+/g, ' ');",
+        "    if (/acheter maintenant|buy now/i.test(t)) { hit = nodes[i]; break; }",
+        "  }",
+        "  if (!hit) return false;",
+        "  hit.click();",
+        "  return true;",
+        "})()",
+      ].join("\n")
+    )
+  );
   return !!clicked;
 }
 
@@ -577,18 +583,24 @@ async function clickPlaceOrder(page: Page, opts?: { dry?: boolean }): Promise<bo
     console.warn(`[STOCKX-CHECKOUT] place order click label=${label.slice(0, 80)}`);
     return true;
   }
-  const clicked = String(await page.evaluate(`(function(dry){
-    var re = /passer la commande|passer commande|place order|pay now|payer maintenant|\\bpayer\\b|submit order|confirm order|\\bcommander\\b/i;
-    var nodes = Array.prototype.slice.call(document.querySelectorAll("button,a,[role='button']"));
-    var el = null;
-    for (var i = 0; i < nodes.length; i++) {
-      var t = (nodes[i].textContent || "").replace(/\\s+/g, " ").trim();
-      if (re.test(t) && !/confirm offer/i.test(t)) { el = nodes[i]; break; }
-    }
-    if (!el) return "";
-    if (!dry) el.click();
-    return ((el.textContent || "").replace(/\\s+/g, " ").trim() || "click").slice(0, 80);
-  })(${opts?.dry ? "true" : "false"})`);
+  const clicked = String(
+    await page.evaluate(
+      [
+        "(function(dry){",
+        "  var re = /passer la commande|passer commande|place order|pay now|payer maintenant|\\bpayer\\b|submit order|confirm order|\\bcommander\\b/i;",
+        "  var nodes = Array.prototype.slice.call(document.querySelectorAll('button,a,[role=button]'));",
+        "  var el = null;",
+        "  for (var i = 0; i < nodes.length; i++) {",
+        "    var t = (nodes[i].textContent || '').replace(/\\s+/g, ' ').trim();",
+        "    if (re.test(t) && !/confirm offer/i.test(t)) { el = nodes[i]; break; }",
+        "  }",
+        "  if (!el) return '';",
+        "  if (!dry) el.click();",
+        "  return ((el.textContent || '').replace(/\\s+/g, ' ').trim() || 'click').slice(0, 80);",
+        "})(" + (opts?.dry ? "true" : "false") + ")",
+      ].join("\n")
+    )
+  );
   if (!clicked) return false;
   console.warn(`[STOCKX-CHECKOUT] place order click label=${clicked}`);
   return true;
@@ -639,23 +651,29 @@ async function clickReviewOrder(page: Page): Promise<boolean> {
     await byRole.click({ force: true });
     return true;
   }
-  const clicked = Boolean(await page.evaluate(`(function(){
-    var el = document.querySelector('[data-testid="checkout-confirm-button"]');
-    if (!el) {
-      var buttons = Array.prototype.slice.call(document.querySelectorAll("button,[role=button],a"));
-      for (var i = 0; i < buttons.length; i++) {
-        var t = (buttons[i].textContent || "").replace(/\\s+/g, " ").trim();
-        if (t.length > 80) continue;
-        if (/v[ée]rifier la commande|confirm and continue|review order/i.test(t) && !/offer|offre/i.test(t)) {
-          el = buttons[i];
-          break;
-        }
-      }
-    }
-    if (!el) return false;
-    el.click();
-    return true;
-  })()`);
+  const clicked = Boolean(
+    await page.evaluate(
+      [
+        "(function(){",
+        "  var el = document.querySelector('[data-testid=\"checkout-confirm-button\"]');",
+        "  if (!el) {",
+        "    var buttons = Array.prototype.slice.call(document.querySelectorAll('button,[role=button],a'));",
+        "    for (var i = 0; i < buttons.length; i++) {",
+        "      var t = (buttons[i].textContent || '').replace(/\\s+/g, ' ').trim();",
+        "      if (t.length > 80) continue;",
+        "      if (/v[ée]rifier la commande|confirm and continue|review order/i.test(t) && !/offer|offre/i.test(t)) {",
+        "        el = buttons[i];",
+        "        break;",
+        "      }",
+        "    }",
+        "  }",
+        "  if (!el) return false;",
+        "  el.click();",
+        "  return true;",
+        "})()",
+      ].join("\n")
+    )
+  );
   if (!clicked) {
     const diag = await page
       .evaluate(() => {
