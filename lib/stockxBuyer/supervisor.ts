@@ -21,6 +21,7 @@ import {
   pairKey,
   processPair,
   reconcileInflight,
+  releaseRefundedNightBuys,
   resolvePair,
   saveState as saveNightState,
   stateBlocks as nightStateBlocks,
@@ -41,6 +42,7 @@ import { redactSecrets } from "@/lib/stockxBuyer/redact";
 import { checkGoat, goatAlertText } from "@/lib/stockxBuyer/goatWatch";
 import {
   BUYER_DIR,
+  ON_FILE,
   REPORT_FILE,
   STATUS_FILE,
   appendEvent,
@@ -51,6 +53,7 @@ import {
   loadReduced,
   readEvents,
   readHalt,
+  readJson,
   type LedgerEvent,
   renderReport,
   writeJsonAtomic,
@@ -72,6 +75,13 @@ import {
   type JobState,
   type RawCheckoutResult,
 } from "@/lib/stockxBuyer/policy";
+import {
+  addPurchaseSpend,
+  parseSpendCapChf,
+  resumeSessionSpend,
+  sessionSpendReached,
+  spendCapHaltReason,
+} from "@/lib/stockxBuyer/spendCap";
 import {
   buildCancelRebuyJobs,
   buildShopifyJobs,
@@ -98,6 +108,8 @@ export type SupervisorConfig = {
   rebuyEveryMs: number;
   goatWatch: boolean;
   goatHoldMs: number;
+  /** Session all-in ceiling (both accounts). Null = no cap. */
+  spendCapChf: number | null;
 };
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SupervisorConfig {
@@ -128,11 +140,13 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SupervisorC
     rebuyEveryMs: num(env.STOCKX_BUYER_REBUY_EVERY_MS, 15 * 60_000),
     goatWatch: bool(env.STOCKX_BUYER_GOAT_WATCH, true),
     goatHoldMs: num(env.GOAT_HOLD_MINUTES, 30) * 60_000,
+    spendCapChf: parseSpendCapChf(env.STOCKX_BUYER_SPEND_CAP_CHF),
   };
 }
 
 const DATA_DIR = process.env.NIGHT_BUYER_DATA_DIR || path.join(process.cwd(), ".data");
 const PROFILE_DIRS = [path.join(DATA_DIR, "stockx-profile"), path.join(DATA_DIR, "stockx-profile-galaxus")];
+const SESSION_SPEND_FILE = path.join(BUYER_DIR, "session-spend.json");
 
 const log = (msg: string) => console.warn(`[STOCKX-BUYER] ${redactSecrets(msg)}`);
 
@@ -149,6 +163,10 @@ export type Runtime = {
   rebuyJobs: ShopifyJob[];
   escalated: Map<string, number>;
   lastError: string | null;
+  /** All-in CHF bought in this relaunch (Shopify + Galaxus). */
+  spentChf: number;
+  /** buyer.on contents: same text across an entrypoint restart keeps the spend. */
+  sessionId: string;
 };
 
 async function persistState(rt: Runtime, state: JobState): Promise<void> {
@@ -162,6 +180,31 @@ async function halt(rt: Runtime, rawReason: string): Promise<void> {
   log(`HALT ${reason}`);
   if (!rt.cfg.dryRun) await haltBuyer(reason);
   if (!rt.cfg.dryRun) await postSlack(`:octagonal_sign: StockX buyer HALT: ${reason}`).catch(() => false);
+}
+
+async function saveSessionSpend(rt: Runtime): Promise<void> {
+  if (rt.cfg.dryRun || rt.cfg.spendCapChf == null) return;
+  await writeJsonAtomic(SESSION_SPEND_FILE, {
+    session: rt.sessionId,
+    spentChf: rt.spentChf,
+    capChf: rt.cfg.spendCapChf,
+  }).catch(() => undefined);
+}
+
+/** Add one real purchase. Halt "cap 6k" once the run total reaches the ceiling. Not a card decline. */
+async function noteSpend(rt: Runtime, totalChf: number | null): Promise<"stop" | "continue"> {
+  if (rt.cfg.dryRun || rt.cfg.spendCapChf == null) return "continue";
+  rt.spentChf = addPurchaseSpend(rt.spentChf, totalChf);
+  await saveSessionSpend(rt);
+  if (!sessionSpendReached(rt.spentChf, rt.cfg.spendCapChf)) return "continue";
+  if (!(await isHalted())) await halt(rt, spendCapHaltReason(rt.cfg.spendCapChf));
+  return "stop";
+}
+
+async function capAlreadyHit(rt: Runtime): Promise<boolean> {
+  if (!sessionSpendReached(rt.spentChf, rt.cfg.spendCapChf)) return false;
+  if (!(await isHalted())) await halt(rt, spendCapHaltReason(rt.cfg.spendCapChf!));
+  return true;
 }
 
 /** Learn from a failure and apply the playbook remedy. Never throws. */
@@ -339,6 +382,8 @@ async function shopifyPhase(rt: Runtime, ordered: ShopifyJob[]): Promise<number>
       dryRun: rt.cfg.dryRun,
       confirmLive: !rt.cfg.dryRun,
       maxAllInChf: rt.cfg.maxAllInChf,
+      shouldStop: () => sessionSpendReached(rt.spentChf, rt.cfg.spendCapChf),
+      onBought: async (total) => ((await noteSpend(rt, total)) === "stop" ? "stop" : undefined),
     });
     for (const row of summary.items) {
       const idx = matchResult(batch, used, row);
@@ -387,6 +432,17 @@ function effectiveGalaxusUntil(staticUntil: Date | null): Date | null {
 
 async function galaxusPhase(rt: Runtime): Promise<number> {
   const night = await loadNightState();
+  if (!rt.cfg.dryRun) {
+    const released = await releaseRefundedNightBuys(night);
+    if (released.length) {
+      await saveNightState(night);
+      log(`stockx refund release ${released.length}: ${released.slice(0, 8).join(" ")}`);
+      for (const key of released) {
+        await appendEvent({ t: Date.now(), ev: "release", key: `galaxus:${key}`, by: "stockx_refund" });
+        rt.states.delete(`galaxus:${key}`);
+      }
+    }
+  }
   const queue = await buildNightQueue({
     since: rt.cfg.galaxusSince,
     until: effectiveGalaxusUntil(rt.cfg.galaxusUntil),
@@ -404,6 +460,7 @@ async function galaxusPhase(rt: Runtime): Promise<number> {
   for (const pair of todo) {
     if (browserTried >= rt.cfg.galaxusPerCycle || handled >= 400) break;
     if (!(await isOnSup()) || (await isHalted()) || (await exists(NIGHT_HALT_FILE))) break;
+    if (await capAlreadyHit(rt)) break;
     const key = jobKey("galaxus", { orderRef: pair.galaxusOrderId, lineId: pair.lineId, unitIndex: pair.unitIndex });
     rt.phase = `galaxus:${pair.galaxusOrderId}:${pair.unitIndex}`;
     if (await galaxusGoatHold(rt, pair, key)) continue;
@@ -424,6 +481,10 @@ async function galaxusPhase(rt: Runtime): Promise<number> {
     handled += 1;
     const after = night[pairKey(pair)];
     if (after && after !== before) await mirrorGalaxus(rt, pair, key, after);
+    if (after?.status === "bought") {
+      const stop = await noteSpend(rt, after.totalChf ?? null);
+      if (stop === "stop") break;
+    }
     if (after?.status === "not_stockx") continue;
     browserTried += 1;
     await sleep(2_500);
@@ -597,6 +658,8 @@ async function writeStatus(rt: Runtime, extra: Record<string, unknown> = {}): Pr
     dryRun: rt.cfg.dryRun,
     halted: await readHalt(),
     counters: rt.counters,
+    spentChf: rt.spentChf,
+    spendCapChf: rt.cfg.spendCapChf,
     lastError: rt.lastError,
     cardAlert: await readCardAlert(),
     ...extra,
@@ -629,6 +692,12 @@ export async function runCycle(rt: Runtime): Promise<CycleResult> {
     });
     if (cfg.onlyOrders) rt.rebuyJobs = rt.rebuyJobs.filter((j) => cfg.onlyOrders!.has(j.orderName));
     if (rt.rebuyJobs.length) log(`rebuy sweep: ${rt.rebuyJobs.length} cancelled pair(s) to rebuy`);
+  }
+
+  if (await capAlreadyHit(rt)) {
+    rt.phase = "idle";
+    await writeStatus(rt, { shopifyQueue, rebuyQueue: rt.rebuyJobs.length });
+    return { shopifyTried, galaxusTried, shopifyQueue, rebuyQueue: rt.rebuyJobs.length };
   }
 
   if (cfg.shopify) {
@@ -676,6 +745,8 @@ export function createRuntime(cfg: SupervisorConfig, states: Map<string, JobStat
     rebuyJobs: [],
     escalated: new Map(),
     lastError: null,
+    spentChf: 0,
+    sessionId: "",
   };
 }
 
@@ -687,6 +758,9 @@ export async function runSupervisor(cfg: SupervisorConfig): Promise<void> {
   await fs.mkdir(BUYER_DIR, { recursive: true });
   const reduced = await loadReduced();
   const rt = createRuntime(cfg, reduced.states);
+  rt.sessionId = (await fs.readFile(ON_FILE, "utf8").catch(() => "")).trim() || `pid:${process.pid}`;
+  const savedSpend = await readJson<{ session: string; spentChf: number; capChf: number } | null>(SESSION_SPEND_FILE, null);
+  rt.spentChf = resumeSessionSpend(savedSpend, rt.sessionId, cfg.spendCapChf);
   // Rebuild GOAT alert memory from the ledger notes.
   for (const e of await readEvents()) {
     if (e.ev === "note" && e.msg.startsWith("goat_alert:")) {
@@ -694,7 +768,10 @@ export async function runSupervisor(cfg: SupervisorConfig): Promise<void> {
       rt.alerted.set(e.msg.slice("goat_alert:".length, i), Number(e.msg.slice(i + 1)));
     }
   }
-  log(`start dry=${cfg.dryRun} shopify=${cfg.shopify} galaxus=${cfg.galaxus} rebuy=${cfg.rebuy} batch=${cfg.batchSize}`);
+  log(
+    `start dry=${cfg.dryRun} shopify=${cfg.shopify} galaxus=${cfg.galaxus} rebuy=${cfg.rebuy} batch=${cfg.batchSize}` +
+      (cfg.spendCapChf != null ? ` spend=${rt.spentChf}/${cfg.spendCapChf}` : "")
+  );
   try {
     await killLeftoverChrome();
     await reconcileShopifyInflight(rt, reduced.inflight);

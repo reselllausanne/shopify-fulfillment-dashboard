@@ -21,6 +21,7 @@ import {
   CARD_DECLINED_REASON,
   PAYMENT_NOT_COMPLETED_PREFIX,
 } from "@/lib/stockxPaymentDiag";
+import { linkedBuyBlocksNewPurchase } from "@/lib/stockxBuyer/refundRelease";
 import { applyOneStockxPromo } from "@/lib/stockxPromo/apply";
 import { markPromoUsed, releasePromoHold } from "@/lib/stockxPromo/store";
 import {
@@ -2406,15 +2407,20 @@ export async function runStockxAutoCheckoutForGalaxusLine(options: {
       unitIndex,
       stockxOrderNumber: { not: "" },
     },
-    select: { stockxOrderNumber: true },
+    select: { stockxOrderNumber: true, stockxStatus: true },
   });
-  if (existing?.stockxOrderNumber) {
+  if (existing && linkedBuyBlocksNewPurchase(existing)) {
     return {
       kind: "skipped",
       reason: "already_matched",
-      detail: `already linked ${existing.stockxOrderNumber}`,
+      detail: `already linked ${existing.stockxOrderNumber} (${existing.stockxStatus ?? "active"})`,
       stockxOrderNumber: existing.stockxOrderNumber,
     };
+  }
+  if (existing?.stockxOrderNumber) {
+    console.log(
+      `[STOCKX-AUTO] galaxus rebuy after ${existing.stockxStatus} ${c.galaxusOrderId ?? ""} prev=${existing.stockxOrderNumber}`
+    );
   }
 
   const sizeUS =

@@ -343,6 +343,10 @@ export async function runShopifyBatchBuy(options: {
   /** Must be true to Place Order. */
   confirmLive?: boolean;
   maxAllInChf?: number;
+  /** Session spend cap: true → stop before the next checkout. Not a failure. */
+  shouldStop?: () => boolean | Promise<boolean>;
+  /** After a real purchase. "stop" ends the batch (cap reached). */
+  onBought?: (totalChf: number | null) => void | Promise<void | "stop">;
 }): Promise<ShopifyBatchBuySummary> {
   const dryRun = options.confirmLive === true ? false : options.dryRun !== false;
   const maxAllInChf = Math.min(SHOPIFY_MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? SHOPIFY_MAX_ALL_IN_CHF));
@@ -371,6 +375,10 @@ export async function runShopifyBatchBuy(options: {
     session = await ensureWarmSession();
 
     for (const item of orderedItems) {
+      if (options.shouldStop && (await options.shouldStop())) {
+        console.warn("[SHOPIFY-BATCH-BUY] spend cap — stop before next order");
+        break;
+      }
       const orderName = item.orderName.startsWith("#")
         ? item.orderName
         : `#${item.orderName}`;
@@ -529,6 +537,15 @@ export async function runShopifyBatchBuy(options: {
         navMethod: session.proxy ? nav.method : "direct",
         result,
       });
+
+      if (result.kind === "easy_buy" && !dryRun && options.onBought) {
+        const total = "totalChf" in result ? result.totalChf ?? null : null;
+        const stop = await options.onBought(total);
+        if (stop === "stop") {
+          console.warn("[SHOPIFY-BATCH-BUY] spend cap — stop after this purchase");
+          break;
+        }
+      }
 
       // Card declined: never click Place Order on the next line of this batch.
       if (result.kind === "needs_human" && (result as { reason?: string }).reason === "payment_declined") {

@@ -307,7 +307,10 @@ export async function buildCancelRebuyJobs(opts: {
   const since = new Date(Date.now() - (opts.sinceDays ?? 30) * 86400_000);
   const matches = await prisma.orderMatch.findMany({
     where: {
-      stockxStatus: { contains: "CANCEL", mode: "insensitive" },
+      OR: [
+        { stockxStatus: { contains: "CANCEL", mode: "insensitive" } },
+        { stockxStatus: { contains: "REFUND", mode: "insensitive" } },
+      ],
       stockxOrderNumber: { not: "" },
       NOT: { stockxOrderNumber: { startsWith: "pp:" } },
       shopifyCreatedAt: { gte: since },
