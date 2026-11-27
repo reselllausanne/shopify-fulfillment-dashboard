@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec "${JARVIS_PYTHON:-python3}" "$(dirname "$0")/insta_reel.py" "$@"
