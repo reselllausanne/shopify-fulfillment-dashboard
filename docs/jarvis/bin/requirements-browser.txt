@@ -1,0 +1,8 @@
+# Optional browser engines for insta_reel.py (required) and subject_research.py (only when a page blocks plain HTTP).
+# Own venv, outside the repo:  python3 -m venv ~/.venvs/jarvis-web && ~/.venvs/jarvis-web/bin/pip install -r docs/jarvis/bin/requirements-browser.txt
+# Then:  ~/.venvs/jarvis-web/bin/python -m camoufox fetch        (default engine)
+#        ~/.venvs/jarvis-web/bin/python -m patchright install chromium   (only for --engine patchright)
+# Run the tools with that python (or set JARVIS_PYTHON for the insta-reel / subject-research wrappers).
+# Tests and --dry-run / --from-html need none of this (stdlib only).
+camoufox[geoip]>=0.5,<1
+patchright>=1.5
