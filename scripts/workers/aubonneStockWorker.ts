@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { checkStyle, loadStyleCodes, loadStyleMeta, type ScanLane } from "@/lib/aubonne/nikeStoreStock";
+import { backfillSizes, checkStyle, loadStyleCodes, loadStyleMeta, type ScanLane } from "@/lib/aubonne/nikeStoreStock";
 
 const prisma = new PrismaClient();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -76,6 +76,12 @@ async function runLane(lane: ScanLane) {
 
 async function main() {
   console.info("[aubonne] worker start");
+  try {
+    const n = await backfillSizes(prisma);
+    console.info(`[aubonne] size backfill ${n}`);
+  } catch (err) {
+    console.warn("[aubonne] size backfill failed", err instanceof Error ? err.message : err);
+  }
   for (;;) {
     try {
       await runLane("letter");
