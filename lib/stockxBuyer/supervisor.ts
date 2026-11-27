@@ -84,6 +84,12 @@ import {
 } from "@/lib/stockxBuyer/spendCap";
 import { watchRefunds } from "@/lib/stockxBuyer/refundWatch";
 import {
+  nextFailStreak,
+  shopifyResultStreakOutcome,
+  shouldYieldQueue,
+} from "@/lib/stockxBuyer/queueFairness";
+import { shopifyStockxAccount } from "@/lib/stockxBuyer/shopifyStockxAccount";
+import {
   buildCancelRebuyJobs,
   buildShopifyJobs,
   type ShopifyJob,
@@ -165,6 +171,9 @@ export type Runtime = {
   startedAt: number;
   lastRebuyAt: number;
   lastRefundWatchAt: number;
+  /** Consecutive hard failures on the current Shopify pass. */
+  shopifyFailStreak: number;
+  galaxusFailStreak: number;
   rebuyJobs: ShopifyJob[];
   escalated: Map<string, number>;
   lastError: string | null;
@@ -251,6 +260,11 @@ async function handleOutcome(
   out: JobOutcome
 ): Promise<void> {
   const next = applyOutcome(rt.states.get(base.key), base, out, Date.now());
+  if (base.source === "shopify" && out.kind === "retry" && out.reason === "bot_fail") {
+    next.status = "parked";
+    next.reason = "bot_fail";
+    next.nextAttemptAt = null;
+  }
   await persistState(rt, next);
   if (out.kind === "bought") rt.counters.bought += 1;
   else if (out.kind === "verdict") rt.counters.verdicts += 1;
@@ -387,8 +401,12 @@ async function shopifyPhase(rt: Runtime, ordered: ShopifyJob[]): Promise<number>
       dryRun: rt.cfg.dryRun,
       confirmLive: !rt.cfg.dryRun,
       maxAllInChf: rt.cfg.maxAllInChf,
-      shouldStop: () => sessionSpendReached(rt.spentChf, rt.cfg.spendCapChf),
+      shouldStop: () => sessionSpendReached(rt.spentChf, rt.cfg.spendCapChf) || shouldYieldQueue(rt.shopifyFailStreak),
       onBought: async (total) => ((await noteSpend(rt, total)) === "stop" ? "stop" : undefined),
+      onResult: (result) => {
+        rt.shopifyFailStreak = nextFailStreak(rt.shopifyFailStreak, shopifyResultStreakOutcome(result));
+        return shouldYieldQueue(rt.shopifyFailStreak);
+      },
     });
     for (const row of summary.items) {
       const idx = matchResult(batch, used, row);
@@ -488,7 +506,14 @@ async function galaxusPhase(rt: Runtime): Promise<number> {
     if (after && after !== before) await mirrorGalaxus(rt, pair, key, after);
     if (after?.status === "bought") {
       const stop = await noteSpend(rt, after.totalChf ?? null);
+      rt.galaxusFailStreak = nextFailStreak(rt.galaxusFailStreak, "success");
       if (stop === "stop") break;
+    } else if (after && after.status !== "not_stockx" && after.status !== "done") {
+      rt.galaxusFailStreak = nextFailStreak(rt.galaxusFailStreak, "fail");
+    }
+    if (shouldYieldQueue(rt.galaxusFailStreak)) {
+      log(`galaxus yield after ${rt.galaxusFailStreak} failures`);
+      break;
     }
     if (after?.status === "not_stockx") continue;
     browserTried += 1;
@@ -722,9 +747,14 @@ export async function runCycle(rt: Runtime): Promise<CycleResult> {
   }
 
   if (cfg.shopify) {
+    rt.shopifyFailStreak = 0;
     // Customers first: drain the Shopify queue (up to 4 batches) before any Galaxus work.
     const rounds = cfg.once ? 1 : 4;
     for (let round = 0; round < rounds; round += 1) {
+      if (shouldYieldQueue(rt.shopifyFailStreak)) {
+        log(`shopify yield after ${rt.shopifyFailStreak} failures — Galaxus next`);
+        break;
+      }
       rt.phase = "shopify-queue";
       const open = await buildShopifyJobs({
         since: cfg.shopifySince,
@@ -747,6 +777,7 @@ export async function runCycle(rt: Runtime): Promise<CycleResult> {
   }
 
   if (cfg.galaxus && !(await isHalted()) && !(await exists(NIGHT_HALT_FILE)) && (cfg.once || (await isOn()))) {
+    rt.galaxusFailStreak = 0;
     galaxusTried = await galaxusPhase(rt);
   }
   rt.phase = "idle";
@@ -764,6 +795,8 @@ export function createRuntime(cfg: SupervisorConfig, states: Map<string, JobStat
     startedAt: Date.now(),
     lastRebuyAt: 0,
     lastRefundWatchAt: 0,
+    shopifyFailStreak: 0,
+    galaxusFailStreak: 0,
     rebuyJobs: [],
     escalated: new Map(),
     lastError: null,
@@ -791,7 +824,7 @@ export async function runSupervisor(cfg: SupervisorConfig): Promise<void> {
     }
   }
   log(
-    `start dry=${cfg.dryRun} shopify=${cfg.shopify} galaxus=${cfg.galaxus} rebuy=${cfg.rebuy} batch=${cfg.batchSize}` +
+    `start dry=${cfg.dryRun} shopify=${cfg.shopify} galaxus=${cfg.galaxus} rebuy=${cfg.rebuy} batch=${cfg.batchSize} shopifyAccount=${shopifyStockxAccount()}` +
       (cfg.spendCapChf != null ? ` spend=${rt.spentChf}/${cfg.spendCapChf}` : "")
   );
   try {

@@ -200,7 +200,7 @@ SELECT o."galaxusOrderId" AS "galaxusOrderId", o."orderDate" AS "orderDate",
        l."productName" AS "productName", COALESCE(l.quantity, 0) AS qty
 FROM "GalaxusOrder" o
 JOIN "GalaxusOrderLine" l ON l."orderId" = o.id
-WHERE o."deliveryType" IN ('direct_delivery', 'warehouse_delivery')
+WHERE o."deliveryType" = 'direct_delivery'
   AND o."archivedAt" IS NULL
   AND o."cancelledAt" IS NULL
   AND o."orderDate" >= $1

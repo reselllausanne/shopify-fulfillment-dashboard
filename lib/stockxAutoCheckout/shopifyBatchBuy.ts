@@ -26,6 +26,7 @@ import {
 import { buildStockxBuyUrl } from "@/lib/stockxAutoCheckout/sizeUsFallback";
 import { detectShopifyExpress } from "@/lib/stockxAutoCheckout/detectShopifyExpress";
 import { SHOPIFY_MAX_ALL_IN_CHF, type StockxDesiredLane } from "@/lib/stockxAutoCheckout/types";
+import { shopifyStockxAccount } from "@/lib/stockxBuyer/shopifyStockxAccount";
 import type { BrowserContext, Page } from "playwright";
 
 /** Sit on CF then abort — never rotate through 20 stickies. */
@@ -266,6 +267,7 @@ async function openSession(opts: {
     );
   }
   const launched = await launchStockxContext({
+    account: shopifyStockxAccount(),
     proxy: opts.proxy,
     useStickyProxy: Boolean(opts.proxy),
   });
@@ -347,6 +349,8 @@ export async function runShopifyBatchBuy(options: {
   shouldStop?: () => boolean | Promise<boolean>;
   /** After a real purchase. "stop" ends the batch (cap reached). */
   onBought?: (totalChf: number | null) => void | Promise<void | "stop">;
+  /** After each item. true → leave the rest of this batch for the other queue. */
+  onResult?: (result: { kind?: string; reason?: string | null; stockxOrderNumber?: string | null }) => boolean | Promise<boolean>;
 }): Promise<ShopifyBatchBuySummary> {
   const dryRun = options.confirmLive === true ? false : options.dryRun !== false;
   const maxAllInChf = Math.min(SHOPIFY_MAX_ALL_IN_CHF, Number(options.maxAllInChf ?? SHOPIFY_MAX_ALL_IN_CHF));
@@ -545,6 +549,11 @@ export async function runShopifyBatchBuy(options: {
           console.warn("[SHOPIFY-BATCH-BUY] spend cap — stop after this purchase");
           break;
         }
+      }
+
+      if (options.onResult && (await options.onResult(result as { kind?: string; reason?: string | null; stockxOrderNumber?: string | null }))) {
+        console.warn("[SHOPIFY-BATCH-BUY] yield — stop batch after repeated failures");
+        break;
       }
 
       // Card declined: never click Place Order on the next line of this batch.
