@@ -8,8 +8,11 @@
  * Only that line stops; every other line keeps going. A card refusal is a separate global halt (cardAlert.ts).
  *
  * Never counted: paid_no_number (must be verified through the buying API before any retry),
- * payment_declined (global halt), proxy_402 (global halt). Pure helpers, unit tested.
+ * payment_declined (global halt), proxy_402 (global halt), a rejected StockX promo code
+ * (checkout pays without the code; it is not a card refusal). Pure helpers, unit tested.
  */
+
+import { isPromoCodeRejection } from "@/lib/stockxPromo/codes";
 
 export const MAX_ATTEMPTS_PREFIX = "max_attempts:";
 
@@ -46,6 +49,7 @@ export function failureClass(reason: string | null | undefined, detail?: string 
   if (!r) return null;
   if (r === "paid_no_number" || r === "payment_declined" || r === "proxy_402" || r.startsWith("card declined")) return null;
   const d = String(detail ?? "");
+  if (isPromoCodeRejection(d)) return null;
   if (/^Payment not completed/i.test(d)) return "payment_not_completed";
   if (/ERR_TUNNEL|ERR_CONNECTION|ERR_PROXY|ERR_TIMED_OUT|net::ERR/i.test(d)) return "network";
   if (/hydrate timeout|no CHF lanes/i.test(d)) return "proxy_blank";
