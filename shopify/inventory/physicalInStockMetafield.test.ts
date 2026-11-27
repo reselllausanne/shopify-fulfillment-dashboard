@@ -127,4 +127,21 @@ describe("syncPhysicalInStockMetafieldForProduct", () => {
     expect(changes.some((c) => c.includes("custom_label_0 cleared"))).toBe(false);
     expect(deleted).toBe(false);
   });
+
+  it("keeps physical_in_stock false for fixed-price skipLivraison48h lanes (Eden beanie)", async () => {
+    const sets: string[] = [];
+    (prisma.$queryRaw as any).mockResolvedValue([{ available: 10 }]);
+    mockGraphql({
+      product: {
+        physicalInStock: { value: "true" },
+        googleCustomLabel0: { id: "g1", value: "in_store" },
+        title: "Arc'teryx Bird Head Toque Beanie Eden/Black",
+        variants: { nodes: [{ id: "gid://shopify/ProductVariant/1", sku: "X000006756-OS" }] },
+      },
+      onSet: () => sets.push("set"),
+    });
+    const changes: string[] = [];
+    await syncPhysicalInStockMetafieldForProduct("gid://shopify/Product/15233996095874", changes);
+    expect(changes.join(" ")).toMatch(/physical_in_stock=false/);
+  });
 });

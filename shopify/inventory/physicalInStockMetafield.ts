@@ -1,5 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
+import { resolveInStockFixedPrice } from "@/shopify/inventory/inStockFixedPrice";
 
 /**
  * Product metafield `custom.physical_in_stock`.
@@ -57,8 +58,9 @@ query ProductPhysicalInStock($id: ID!) {
       id
       value
     }
+    title
     variants(first: 100) {
-      nodes { id }
+      nodes { id sku }
     }
   }
 }
@@ -238,7 +240,8 @@ export async function syncPhysicalInStockMetafieldForProduct(
       product: {
         physicalInStock: { value: string | null } | null;
         googleCustomLabel0: { id: string; value: string | null } | null;
-        variants: { nodes: Array<{ id: string }> };
+        title?: string | null;
+        variants: { nodes: Array<{ id: string; sku?: string | null }> };
       } | null;
     }>(PRODUCT_PHYSICAL_QUERY, { id: productId });
     if (errors?.length) throw new Error(errors.map((e) => e.message).join("; "));
@@ -247,7 +250,16 @@ export async function syncPhysicalInStockMetafieldForProduct(
     const currentLabel = String(data?.product?.googleCustomLabel0?.value ?? "").trim();
     const variantIds = (data?.product?.variants?.nodes ?? []).map((v) => v.id).filter(Boolean);
     const physicalQty = await physicalQtyForVariantIds(variantIds);
-    const want = physicalQty > 0;
+    // Fixed-price lanes flagged skipLivraison48h: express only, never the "Livraison 48H" collection.
+    const suppress48h = (data?.product?.variants?.nodes ?? []).some(
+      (v) =>
+        resolveInStockFixedPrice({
+          sku: v.sku ?? null,
+          title: data?.product?.title ?? null,
+          productId,
+        })?.skipLivraison48h === true
+    );
+    const want = physicalQty > 0 && !suppress48h;
 
     if (want !== enabled) {
       await writeProductPhysicalInStock(productId, want);
