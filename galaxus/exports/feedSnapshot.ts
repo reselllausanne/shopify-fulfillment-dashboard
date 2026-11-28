@@ -181,7 +181,7 @@ export async function getFeedSnapshotMeta() {
  * rebuilt earlier still carry rows the new rules drop, so uploads fall back to live.
  */
 /** Bump when assortment/pricing rules change so uploads skip stale snapshots until rebuild. */
-export const GALAXUS_FEED_RULES_CHANGED_AT = new Date("2026-11-13T15:30:00Z");
+export const GALAXUS_FEED_RULES_CHANGED_AT = new Date("2026-11-28T15:00:00Z");
 
 export async function isFeedSnapshotReady(scope: "stock" | "offer"): Promise<boolean> {
   const meta = await getFeedSnapshotMeta();

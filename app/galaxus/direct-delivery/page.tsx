@@ -16,6 +16,7 @@ import {
   orderListFullyLinked,
   orderListNeedsLink,
 } from "@/app/galaxus/direct-delivery/orderListTone";
+import { ExpressOrderBadge } from "@/app/galaxus/_components/ExpressOrderBadge";
 
 type OrderListItem = {
   id: string;
@@ -30,6 +31,7 @@ type OrderListItem = {
   hasPhysicalStock?: boolean;
   physicalStockLineCount?: number;
   physicalStockLabel?: string | null;
+  expressDelivery?: boolean;
   _count?: { lines: number; shipments: number };
 };
 
@@ -1200,6 +1202,7 @@ export default function GalaxusDirectDeliveryPage() {
                 >
                   <div className="font-medium flex items-center gap-1.5 flex-wrap">
                     <span>{order.orderNumber ?? order.galaxusOrderId}</span>
+                    <ExpressOrderBadge express={order.expressDelivery} />
                     {order.hasPhysicalStock ? (
                       <span
                         className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-green-600 text-white"
@@ -1328,7 +1331,8 @@ export default function GalaxusDirectDeliveryPage() {
                     {selectedOrder.recipientCountryCode ?? selectedOrder.recipientCountry ?? ""}
                   </div>
                   <div className="text-gray-600 mt-1">
-                    {selectedOrder.galaxusOrderId} · {selectedOrder.orderNumber ?? "—"}
+                    {selectedOrder.galaxusOrderId} · {selectedOrder.orderNumber ?? "—"}{" "}
+                    <ExpressOrderBadge express={orders.find((order) => order.id === selectedOrder.id)?.expressDelivery} />
                   </div>
                   {selectedOrder.cancelledAt ? (
                     <span className="block text-xs text-red-600 mt-0.5">
