@@ -5,6 +5,13 @@ Usage:
   galaxus_buy.py search "tapis de course zipro" [--limit 8] [--json]
   galaxus_buy.py buy --url <product url> [--dry-run] [--confirm-pay]
   galaxus_buy.py buy "zipro catwalk" --pick 1 [--dry-run]
+  galaxus_buy.py cart-list [--json]
+  galaxus_buy.py cart-remove --url URL [--dry-run]
+  galaxus_buy.py cart-clear --keep URL [--keep URL ...] [--dry-run]
+
+Cart commands are explicit only (search/buy never remove anything). They print the cart before and after,
+verify the result, and never open checkout or pay. cart-clear needs >=1 --keep and refuses if no --keep
+URL is in the cart (typo guard). Items are matched on the numeric product id at the end of the URL.
 
 Default `buy`: add to cart, compute delivered total, print summary + checkout link, STOP before payment.
 --dry-run : read-only HTTP at most. No cart mutation, no browser, no payment. Logged as status=dry_run.
@@ -183,48 +190,65 @@ def parse_products(html):
     return out
 
 
-def parse_listing(html):
-    """Galaxus listing cards (no JSON-LD there). Each product has several anchors /fr/s3/product/<slug>-<id>;
-    card text is between the first anchor of a product and the first anchor of the next:
-    '... Tapis de course CHF 139.- <name> <review count>' (verified on live page 2026-11-25)."""
-    first = {}
-    for m in re.finditer(r'href="(/fr/s3/product/([a-z0-9-]+?)-(\d{5,}))[^"]*"', html):
-        first.setdefault(m.group(3), (m.start(), m.group(1), m.group(2)))
-    items = sorted(first.values())
+def product_id(url):
+    """Numeric Galaxus product id: trailing digits of the slug (/fr/s12/product/<slug>-35585504[?x])."""
+    m = re.search(r"-(\d{5,})(?:$|[/?#])", url or "")
+    return m.group(1) if m else None
+
+
+def parse_search_graphql(payload):
+    """Galaxus search is client-rendered; the page calls POST /graphql/o/<hash>/useSearchDataQuery and renders
+    data.shopSearch.products.edges[].node (verified live 2026-11-28). Returns the same dicts as parse_products."""
+    try:
+        edges = payload["data"]["shopSearch"]["products"]["edges"] or []
+    except (KeyError, TypeError):
+        return []
     out = []
-    for i, (start, path, slug) in enumerate(items):
-        end = items[i + 1][0] if i + 1 < len(items) else start + 6000
-        t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html[start:end]))
-        pr = re.search(r"CHF\s*([\d'’.,]+)\S*\s+(.+?)\s+(\d{1,6})\s*(?:<|$|\S*\s*[A-Za-z])", t)
-        pm = re.search(r"CHF\s*([\d'’.,]+)", t)
-        name = None
-        if pm:
-            tail = t[pm.end():]
-            nm = re.match(r"\S*\s*(.+?)\s+(\d{1,6})(?:\s|$)", tail)
-            name = nm.group(1).strip() if nm else None
-        out.append({"name": name or slug.replace("-", " "), "price_chf": to_float(pm.group(1)) if pm else None,
-                    "rating": None, "reviews": int(nm.group(2)) if pm and nm else 0,
-                    "url": urllib.parse.urljoin(BASE, path), "delivery": None})
+    for e in edges:
+        n = (e or {}).get("node") or {}
+        name, rel = n.get("name"), n.get("relativeUrl")
+        if not name or not rel:
+            continue
+        brand = ((n.get("brand") or {}).get("name") or "").strip()
+        if brand and (n.get("brand") or {}).get("showNameInProductName", True) and not name.lower().startswith(brand.lower()):
+            name = f"{brand} {name}"
+        price = n.get("price") or {}
+        rating = n.get("ratingSummary") or {}
+        out.append({
+            "name": name,
+            "properties": (((n.get("nameExtensions") or {}).get("properties") or "").replace("\xa0", " ").strip() or None),
+            "price_chf": to_float(price.get("amountInclusive")),
+            "rating": to_float(rating.get("averageRating")) or None,
+            "reviews": int(to_float(rating.get("ratingCount")) or 0),
+            "url": urllib.parse.urljoin(BASE, rel),
+            "delivery": None,
+            "availability": (n.get("availability") or {}).get("availabilityClassification"),
+            "can_add_to_cart": n.get("canAddToCart"),
+        })
     return out
 
 
-def category_link(html, query):
-    """Generic queries land on a category page; return its producttype listing URL if any."""
-    words = [w for w in re.split(r"\W+", query.lower()) if len(w) > 2]
-    for href in dict.fromkeys(re.findall(r'href="((?:https://www\.galaxus\.ch)?/fr/s\d+/producttype/[a-z0-9-]+)', html)):
-        if all(w in href for w in words[:2]):
-            return urllib.parse.urljoin(BASE, href)
-    return None
-
-
-def search_products(fetch, query):
-    page = fetch(search_url(query))
-    res = parse_products(page) or parse_listing(page)
-    if not res:
-        cat = category_link(page, query)
-        if cat:
-            res = parse_listing(fetch(cat))
-    return res
+def parse_listing(html):
+    """DOM fallback for the rendered search page (used only if the GraphQL response was not captured).
+    Each card has several anchors /fr/s<N>/product/<slug>-<id>; the first carries aria-label='<brand> <name> (<props>)',
+    the card text between it and the next card holds 'CHF <price>'. Verified on live markup 2026-11-28."""
+    first = {}
+    for m in re.finditer(r'<a\b[^>]*href="(/[a-z]{2}/s\d+/product/([a-z0-9-]+?)-(\d{5,}))[^"]*"[^>]*>', html):
+        first.setdefault(m.group(3), (m.start(), m.group(1), m.group(2), m.group(0)))
+    items = sorted(first.values())
+    out = []
+    for i, (start, path, slug, tag) in enumerate(items):
+        end = items[i + 1][0] if i + 1 < len(items) else start + 6000
+        t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", htmllib.unescape(html[start:end])))
+        pm = re.search(r"CHF\s*([\d'’.,]+)", t)
+        am = re.search(r'aria-label="([^"]+)"', tag)
+        name = htmllib.unescape(am.group(1)).replace("\xa0", " ").strip() if am else None
+        if not name and pm:
+            nm = re.match(r"\S*\s*(.+?)\s+(\d{1,6})(?:\s|$)", t[pm.end():])
+            name = nm.group(1).strip() if nm else None
+        out.append({"name": name or slug.replace("-", " "), "price_chf": to_float(pm.group(1)) if pm else None,
+                    "rating": None, "reviews": 0, "url": urllib.parse.urljoin(BASE, path), "delivery": None})
+    return out
 
 
 def parse_delivery(html):
@@ -247,6 +271,37 @@ def compute_total(price, shipping):
     if price is None or shipping is None:
         return None
     return round(price + shipping, 2)
+
+
+def _text(fragment):
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", htmllib.unescape(fragment))).replace("\xa0", " ").strip()
+
+
+def parse_cart(html):
+    """Parse the /fr/cart page (server-rendered, verified live 2026-11-28). Only the active list
+    <ul aria-label="Produits dans le panier"> counts ('Mettre de côté' items and recommendations are ignored).
+    Returns {'items': [{'id','name','url','qty','price_chf','delivery'}], 'shipping_chf', 'total_chf'}."""
+    m = re.search(r'<ul[^>]*aria-label="Produits dans le panier"[^>]*>(.*?)</ul>', html, re.S)
+    region = m.group(1) if m else ""
+    items = []
+    for li in re.findall(r'<li\b[^>]*class="[^"]*cart-item[^"]*"[^>]*>(.*?)</li>', region, re.S):
+        href = re.search(r'href="(/[a-z]{2}/s\d+/product/[^"?]+)', li)
+        if not href:
+            continue
+        url = urllib.parse.urljoin(BASE, href.group(1))
+        nm = re.search(r"<strong>(.*?)</strong>\s*<span[^>]*>(.*?)</span>", li, re.S)
+        name = f"{_text(nm.group(1))} {_text(nm.group(2))}" if nm else (_text(re.search(r'alt="([^"]*)"', li).group(1)) if re.search(r'alt="([^"]*)"', li) else None)
+        txt = _text(li)
+        pq = re.search(r"\s(\d{1,3})\s+CHF\s*([\d'’.,]+)", txt)
+        dl = re.search(r"(Livré (?:le|entre) [^|]{3,40}?\d+/\d+(?:\s*(?:et|und|e)\s*\w{2,4},?\s*\d+/\d+)?)", txt)
+        items.append({"id": product_id(url), "name": name, "url": url, "qty": int(pq.group(1)) if pq else None,
+                      "price_chf": to_float(pq.group(2)) if pq else None, "delivery": dl.group(1).strip() if dl else None})
+    text = _text(html[html.find("</ul>", html.find('aria-label="Produits dans le panier"')):]) if m else ""
+    tot = re.search(r"\bTotal\s+CHF\s*([\d'’.,]+)", text)
+    sh = re.search(r"Envoi[^T]*?CHF\s*([\d'’.,]+)\s*(?:Compl|Total)", text)
+    free = re.search(r"Envoi\s+gratuit\b", text) or re.search(r"Envoi\s*(?:\([^)]*\))?\s*gratuit", text)
+    return {"list_found": bool(m), "items": items, "shipping_chf": to_float(sh.group(1)) if sh else (0.0 if free else None),
+            "total_chf": to_float(tot.group(1)) if tot else None}
 
 
 # ---------- HTTP (throttled, bounded) ----------
@@ -284,6 +339,12 @@ def fetch_rendered(url, min_delay=None):
     Env: JARVIS_BROWSER_DIR (default ~/Projects/jarvis-browser)."""
     import subprocess, tempfile
     d = os.path.expanduser(os.environ.get("JARVIS_BROWSER_DIR", "~/Projects/jarvis-browser"))
+    if not os.path.exists(f"{d}/jarvis_browser.py"):
+        b = BrowserBackend()
+        try:
+            return b.render(url)
+        finally:
+            b.close()
     out = tempfile.mktemp(suffix=".html")
     delay = float(os.environ.get("GALAXUS_MIN_DELAY", "3")) if min_delay is None else min_delay
     wait = delay - (time.time() - _last_req[0])
@@ -369,6 +430,88 @@ class BrowserBackend:
                 "items": text.split("Passer en caisse")[0].count("Supprimer"),  # active cart only (not 'saved for later')
                 "cart_url": f"{BASE}/fr/cart", "checkout_url": f"{BASE}/fr/checkout"}
 
+    def _throttle(self):
+        delay = float(os.environ.get("GALAXUS_MIN_DELAY", "3"))
+        wait = delay - (time.time() - _last_req[0])
+        if wait > 0:
+            time.sleep(wait)
+        _last_req[0] = time.time()
+
+    def _goto(self, url, wait_ms=0):
+        """Throttled navigation. 403/429 or an access-denied page => AntiBotError (never retried)."""
+        self._throttle()
+        resp = self.page.goto(url, wait_until="domcontentloaded")
+        status = resp.status if resp is not None else 200
+        if status in (403, 429):
+            detect_antibot(status, "")
+        if wait_ms:
+            self.page.wait_for_timeout(wait_ms)
+        self._guard()
+        return status
+
+    def render(self, url):
+        self._goto(url, 4000)
+        return self.page.content()
+
+    def search(self, query, limit=8):
+        """Galaxus renders search client-side: listen for the useSearchDataQuery GraphQL response the page itself
+        fires (logged-in profile = same prices as the account sees); fall back to parsing the rendered DOM.
+        Bounded retries (MAX_RETRIES) on timeouts/5xx only; captcha/403 raises AntiBotError at once."""
+        last = None
+        for attempt in range(MAX_RETRIES + 1):
+            payloads = []
+
+            def on_resp(r):
+                if "useSearchDataQuery" in r.url:
+                    if r.status in (403, 429):
+                        payloads.append(AntiBotError(f"anti-bot block (HTTP {r.status}) on search query"))
+                        return
+                    try:
+                        payloads.append(r.json())
+                    except Exception as e:  # body not ready / not JSON: retry
+                        payloads.append(FetchError(f"search response unreadable: {e}"))
+
+            self.page.on("response", on_resp)
+            try:
+                self._goto(search_url(query))
+                for _ in range(30):  # up to ~15s for the client-side query
+                    if payloads:
+                        break
+                    self.page.wait_for_timeout(500)
+            finally:
+                self.page.remove_listener("response", on_resp)
+            for p in payloads:
+                if isinstance(p, AntiBotError):
+                    raise p
+            good = [p for p in payloads if isinstance(p, dict)]
+            if good:
+                res = parse_search_graphql(good[-1])
+                if res or (good[-1].get("data") or {}).get("shopSearch"):
+                    return res[:limit]
+            self.page.wait_for_timeout(4000)
+            res = parse_listing(self.page.content())
+            if res:
+                return res[:limit]
+            last = payloads[-1] if payloads else "no search response captured"
+            if attempt < MAX_RETRIES:
+                time.sleep(2 ** (attempt + 1))
+        raise FetchError(f"search failed after {MAX_RETRIES + 1} attempts: {last}")
+
+    def cart_items(self):
+        """Read-only: open /fr/cart and parse it. Returns parse_cart() dict."""
+        self._goto(f"{BASE}/fr/cart", 4000)
+        return parse_cart(self.page.content())
+
+    def remove_item(self, pid):
+        """Click 'Supprimer' on the cart line whose product id is pid. Only touches the cart page; no checkout."""
+        self._goto(f"{BASE}/fr/cart", 4000)
+        for li in self.page.locator("li.cart-item").all():
+            if f"-{pid}" in (li.locator('a[href*="/product/"]').first.get_attribute("href") or ""):
+                li.get_by_role("button", name=re.compile(r"^(supprimer|entfernen|remove|delete)$", re.I)).first.click(timeout=8000)
+                self.page.wait_for_timeout(3000)
+                return True
+        return False
+
     def pay(self):
         """Click 'Acheter' on /fr/checkout (address + PayPal already saved on the logged-in account; verified
         2026-11-25 up to the button). Returns {'status': 'confirmed'|'needs_paypal'|'unknown', 'order': str|None,
@@ -440,15 +583,24 @@ def glob_site(d):
 def fmt_product(i, p):
     r = f"{p['rating']:.1f}/5 ({p['reviews']})" if p.get("rating") else "no rating"
     pr = f"CHF {p['price_chf']:.2f}" if p.get("price_chf") is not None else "price ?"
-    return f"{i}. {p['name']} | {pr} | {r} | delivery: {p.get('delivery') or '?'} | {p['url']}"
+    props = f" [{p['properties']}]" if p.get("properties") else ""
+    return f"{i}. {p['name']}{props} | {pr} | {r} | delivery: {p.get('delivery') or '?'} | {p['url']}"
 
 
-def cmd_search(a, fetch):
-    prods = search_products(fetch, a.query)[: a.limit]
+def run_search(backend_factory, query, limit):
+    backend = backend_factory()
+    try:
+        return backend.search(query, limit)
+    finally:
+        backend.close()
+
+
+def cmd_search(a, backend_factory):
+    prods = run_search(backend_factory, a.query, a.limit)
     if a.json:
         print(json.dumps(prods, ensure_ascii=False, indent=2))
     elif not prods:
-        print("no results parsed (markup may have changed)")
+        print("no results")
     for i, p in enumerate(prods, 1) if not a.json else []:
         print(fmt_product(i, p))
     return EXIT_OK
@@ -461,7 +613,7 @@ def cmd_buy(a, fetch, backend_factory, now_log):
         if not a.query:
             print("need --url or a query", file=sys.stderr)
             return EXIT_USAGE
-        res = search_products(fetch, a.query)
+        res = run_search(backend_factory, a.query, max(a.pick, 8))
         if not res or a.pick < 1 or a.pick > len(res):
             print("no such search result", file=sys.stderr)
             return EXIT_ERR
@@ -516,6 +668,96 @@ def cmd_buy(a, fetch, backend_factory, now_log):
         backend.close()
 
 
+def fmt_cart(title, cart):
+    lines = [f"-- {title}: {len(cart['items'])} item(s) --"]
+    for i in cart["items"]:
+        pr = f"{i['price_chf']:.2f}" if i.get("price_chf") is not None else "?"
+        lines.append(f"  [{i['id']}] {i['name']} | qty {i.get('qty') or '?'} | CHF {pr} | {i['url']}")
+    sh = cart.get("shipping_chf")
+    tot = cart.get("total_chf")
+    lines.append(f"  shipping: {f'{sh:.2f}' if sh is not None else '?'} | total: {f'{tot:.2f}' if tot is not None else '?'} CHF")
+    return "\n".join(lines)
+
+
+def cmd_cart_list(a, backend_factory):
+    backend = backend_factory()
+    try:
+        cart = backend.cart_items()
+    finally:
+        backend.close()
+    print(json.dumps(cart, ensure_ascii=False, indent=2) if a.json else fmt_cart("cart", cart))
+    if not cart.get("list_found"):
+        print("WARNING: no cart list on the page (empty cart, logged-out profile, or markup changed)", file=sys.stderr)
+    return EXIT_OK
+
+
+def _cart_apply(a, backend_factory, now_log, kind, select):
+    """Shared remove/clear flow: list before, pick items via select(items) -> (to_remove, error), remove (unless
+    --dry-run), list after, verify. Touches only the cart page (never adds, never pays)."""
+    lp = log_path(getattr(a, "log", None))
+    backend = backend_factory()
+    try:
+        before = backend.cart_items()
+        print(fmt_cart("cart BEFORE", before))
+        to_remove, err = select(before["items"])
+        if err:
+            print(err, file=sys.stderr)
+            now_log(lp, product=None, price_chf=None, link=None, status="cart_refused", reason=err, dry_run=a.dry_run)
+            return EXIT_ERR
+        if not to_remove:
+            print("nothing to remove")
+            return EXIT_OK
+        for it in to_remove:
+            print(f"{'WOULD REMOVE' if a.dry_run else 'REMOVING'}: [{it['id']}] {it['name']} (CHF {it.get('price_chf')}) {it['url']}")
+        if a.dry_run:
+            for it in to_remove:
+                now_log(lp, product=it["name"], price_chf=it.get("price_chf"), link=it["url"], status="dry_run_cart_remove", reason=kind, dry_run=True)
+            print("DRY-RUN: cart unchanged")
+            return EXIT_OK
+        for it in to_remove:
+            if not backend.remove_item(it["id"]):
+                print(f"ERROR: line not found on cart page: {it['id']}", file=sys.stderr)
+                return EXIT_ERR
+            now_log(lp, product=it["name"], price_chf=it.get("price_chf"), link=it["url"], status="cart_removed", reason=kind, dry_run=False)
+        after = backend.cart_items()
+        print(fmt_cart("cart AFTER", after))
+        removed = {i["id"] for i in to_remove}
+        expect = {i["id"] for i in before["items"]} - removed
+        got = {i["id"] for i in after["items"]}
+        if got & removed or got != expect:
+            print(f"VERIFY FAILED: expected ids {sorted(expect)}, got {sorted(got)}", file=sys.stderr)
+            return EXIT_ERR
+        print(f"VERIFIED: removed {sorted(removed)}, kept {sorted(got)}")
+        return EXIT_OK
+    finally:
+        backend.close()
+
+
+def cmd_cart_remove(a, backend_factory, now_log):
+    pid = product_id(a.url)
+    if not pid:
+        print("--url must be a galaxus product URL ending in the numeric product id", file=sys.stderr)
+        return EXIT_USAGE
+
+    def select(items):
+        hit = [i for i in items if i["id"] == pid]
+        return (hit, None) if hit else ([], f"product {pid} is not in the cart: nothing removed")
+    return _cart_apply(a, backend_factory, now_log, "cart-remove", select)
+
+
+def cmd_cart_clear(a, backend_factory, now_log):
+    keep = [product_id(u) for u in a.keep]
+    if not keep or None in keep:
+        print("each --keep must be a galaxus product URL ending in the numeric product id", file=sys.stderr)
+        return EXIT_USAGE
+
+    def select(items):
+        if not {i["id"] for i in items} & set(keep):
+            return [], f"none of the --keep products {keep} is in the cart: refusing to clear (typo guard)"
+        return [i for i in items if i["id"] not in keep], None
+    return _cart_apply(a, backend_factory, now_log, "cart-clear", select)
+
+
 def print_summary(p, ship, total, delivery, cart_url, checkout_url, state):
     print(f"== {state} ==")
     print(f"product : {p.get('name')}")
@@ -542,16 +784,33 @@ def build_parser():
     b.add_argument("--dry-run", action="store_true", help="no cart, no browser, no payment")
     b.add_argument("--confirm-pay", action="store_true", help="pay if under limits from achat.json")
     b.add_argument("--log", help="JSONL log path")
+    sub.add_parser("cart-list", help="read-only: list active cart lines").add_argument("--json", action="store_true")
+    r = sub.add_parser("cart-remove", help="remove ONE product from the cart (explicit, never from search/buy)")
+    r.add_argument("--url", required=True)
+    r.add_argument("--dry-run", action="store_true", help="show what would be removed, change nothing")
+    r.add_argument("--log", help="JSONL log path")
+    c = sub.add_parser("cart-clear", help="remove every cart line except the --keep products")
+    c.add_argument("--keep", action="append", required=True, help="product URL to keep (repeatable, >=1)")
+    c.add_argument("--dry-run", action="store_true", help="show what would be removed, change nothing")
+    c.add_argument("--log", help="JSONL log path")
     return ap
 
 
 def main(argv=None, fetch=fetch_rendered, backend_factory=BrowserBackend, now_log=log_attempt):
     a = build_parser().parse_args(argv)
     try:
-        return cmd_search(a, fetch) if a.cmd == "search" else cmd_buy(a, fetch, backend_factory, now_log)
+        if a.cmd == "search":
+            return cmd_search(a, backend_factory)
+        if a.cmd == "cart-list":
+            return cmd_cart_list(a, backend_factory)
+        if a.cmd == "cart-remove":
+            return cmd_cart_remove(a, backend_factory, now_log)
+        if a.cmd == "cart-clear":
+            return cmd_cart_clear(a, backend_factory, now_log)
+        return cmd_buy(a, fetch, backend_factory, now_log)
     except AntiBotError as e:
         print(f"ANTI-BOT: {e}", file=sys.stderr)
-        if a.cmd == "buy":
+        if a.cmd in ("buy", "cart-remove", "cart-clear"):
             now_log(log_path(getattr(a, "log", None)), product=None, price_chf=None, link=getattr(a, "url", None), status="blocked", reason=str(e))
         return EXIT_ANTIBOT
     except FetchError as e:

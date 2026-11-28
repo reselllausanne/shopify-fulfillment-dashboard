@@ -6,7 +6,7 @@
    "fp": "9282dc2c70c2",
    "key": "AGENTS.md::.cursor/CLOUD_AGENT_SETUP.md",
    "kind": "broken_ref",
-   "last_seen": "2026-11-25T10:07:57+00:00",
+   "last_seen": "2026-11-28T15:31:50+01:00",
    "msg": "AGENTS.md cite `.cursor/CLOUD_AGENT_SETUP.md` : fichier introuvable",
    "status": "open"
   },
@@ -16,7 +16,7 @@
    "fp": "673fdc68cfe2",
    "key": "AGENTS.md::.cursor/environment.json",
    "kind": "broken_ref",
-   "last_seen": "2026-11-25T10:07:57+00:00",
+   "last_seen": "2026-11-28T15:31:50+01:00",
    "msg": "AGENTS.md cite `.cursor/environment.json` : fichier introuvable",
    "status": "open"
   },
@@ -26,7 +26,7 @@
    "fp": "c4ef64f608ea",
    "key": "AGENTS.md::.cursor/rules/returns-customer-exchange.mdc",
    "kind": "broken_ref",
-   "last_seen": "2026-11-25T10:07:57+00:00",
+   "last_seen": "2026-11-28T15:31:50+01:00",
    "msg": "AGENTS.md cite `.cursor/rules/returns-customer-exchange.mdc` : fichier introuvable",
    "status": "open"
   },

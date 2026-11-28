@@ -1,0 +1,435 @@
+{
+ "data": {
+  "shopSearch": {
+   "products": {
+    "totalCount": 1000,
+    "pageInfo": {
+     "hasNextPage": true,
+     "endCursor": "NjA="
+    },
+    "edges": [
+     {
+      "node": {
+       "databaseId": 35585504,
+       "price": {
+        "amountInclusive": 13.6,
+        "currency": "CHF",
+        "amountExclusive": 12.58
+       },
+       "salesInformation": null,
+       "energyEfficiency": null,
+       "insteadOfPrice": null,
+       "orderQuantities": {
+        "minimum": 1
+       },
+       "productType": {
+        "databaseId": 3929,
+        "id": "UHJvZHVjdFR5cGUKaTM5Mjk=",
+        "name": "Rouleau d’étiquettes",
+        "navigationItem": {
+         "relativeUrl": "/fr/s12/producttype/rouleau-detiquettes-3929",
+         "id": "TmF2aWdhdGlvbkl0ZW0KZHNhOnJldGFpbC9zOjEyL3Q6NjkxL3Q6MTYxOS9wdDozOTI5"
+        }
+       },
+       "ratingSummary": {
+        "averageRating": 4.8,
+        "ratingCount": 16
+       },
+       "canAddToCart": true,
+       "labels": [],
+       "availability": {
+        "availabilityClassification": "TICK",
+        "id": "UHJvZHVjdEF2YWlsYWJpbGl0eQpkMzU1ODU1MDQ6MDo1MDczNDU3MA==",
+        "__typename": "ProductAvailability"
+       },
+       "variantGroups": {
+        "groupedVariantLabels": [],
+        "groupedVariantLabelsTrackingId": null,
+        "hasValidVariants": false
+       },
+       "trackingId": 35585504,
+       "name": "Etiquettes thermiques 15x50 mm, 130 pcs",
+       "nameExtensions": {
+        "properties": "15 mm"
+       },
+       "relativeUrl": "/fr/s12/product/niimbot-etiquettes-thermiques-15x50-mm-130-pcs-15-mm-rouleau-detiquettes-35585504",
+       "brand": {
+        "showNameInProductName": true,
+        "name": "Niimbot",
+        "id": "QnJhbmQKaTk0NTE4",
+        "databaseId": 94518
+       },
+       "incentives": {
+        "text": null
+       },
+       "dataSheet": null,
+       "pricePerUnit": null,
+       "defaultVolumeDiscountPrice": null,
+       "promotion": null,
+       "previewImage": {
+        "relativeUrl": "/productimages/5/5/3/5/3/9/7/4/4/9/6/0/6/7/8/8/3/1/5/e116f626-f779-484d-a888-5f5400313e2f.jpg"
+       },
+       "__typename": "Product"
+      },
+      "cursor": "ProductIdentifier { ProductId = 35585504, OfferType = RetailShopOfferId, OfferId = 406802, FeatureFlag =  }"
+     },
+     {
+      "node": {
+       "databaseId": 41227283,
+       "price": {
+        "amountInclusive": 7.85,
+        "currency": "CHF",
+        "amountExclusive": 7.26
+       },
+       "salesInformation": null,
+       "energyEfficiency": null,
+       "insteadOfPrice": null,
+       "orderQuantities": {
+        "minimum": 1
+       },
+       "productType": {
+        "databaseId": 3929,
+        "id": "UHJvZHVjdFR5cGUKaTM5Mjk=",
+        "name": "Rouleau d’étiquettes",
+        "navigationItem": {
+         "relativeUrl": "/fr/s12/producttype/rouleau-detiquettes-3929",
+         "id": "TmF2aWdhdGlvbkl0ZW0KZHNhOnJldGFpbC9zOjEyL3Q6NjkxL3Q6MTYxOS9wdDozOTI5"
+        }
+       },
+       "ratingSummary": {
+        "averageRating": 4.8,
+        "ratingCount": 10
+       },
+       "canAddToCart": true,
+       "labels": [
+        "VOLUME_DISCOUNT"
+       ],
+       "availability": {
+        "availabilityClassification": "TICK",
+        "id": "UHJvZHVjdEF2YWlsYWJpbGl0eQpkNDEyMjcyODM6MDo3NTM2Njg0Mg==",
+        "__typename": "ProductAvailability"
+       },
+       "variantGroups": {
+        "groupedVariantLabels": [],
+        "groupedVariantLabelsTrackingId": null,
+        "hasValidVariants": false
+       },
+       "trackingId": 41227283,
+       "name": "Etiquettes thermiques pour B21",
+       "nameExtensions": {
+        "properties": ""
+       },
+       "relativeUrl": "/fr/s12/product/niimbot-etiquettes-thermiques-pour-b21-rouleau-detiquettes-41227283",
+       "brand": {
+        "showNameInProductName": true,
+        "name": "Niimbot",
+        "id": "QnJhbmQKaTk0NTE4",
+        "databaseId": 94518
+       },
+       "incentives": {
+        "text": null
+       },
+       "dataSheet": null,
+       "pricePerUnit": null,
+       "defaultVolumeDiscountPrice": {
+        "minAmount": 2,
+        "price": {
+         "amountInclusive": 7.3,
+         "amountExclusive": 6.75,
+         "currency": "CHF"
+        },
+        "pricePerUnit": null
+       },
+       "promotion": null,
+       "previewImage": {
+        "relativeUrl": "/productimages/1/0/3/7/4/1/2/2/0/2/5/3/9/1/7/1/9/4/7/01a0e770-0fc9-7054-8111-edd257dd0a05"
+       },
+       "__typename": "Product"
+      },
+      "cursor": "ProductIdentifier { ProductId = 41227283, OfferType = RetailShopOfferId, OfferId = 406802, FeatureFlag =  }"
+     },
+     {
+      "node": {
+       "databaseId": 280356,
+       "price": {
+        "amountInclusive": 10.9,
+        "currency": "CHF",
+        "amountExclusive": 10.08
+       },
+       "salesInformation": null,
+       "energyEfficiency": null,
+       "insteadOfPrice": null,
+       "orderQuantities": {
+        "minimum": 1
+       },
+       "productType": {
+        "databaseId": 423,
+        "id": "UHJvZHVjdFR5cGUKaTQyMw==",
+        "name": "Étiquettes",
+        "navigationItem": {
+         "relativeUrl": "/fr/s12/producttype/etiquettes-423",
+         "id": "TmF2aWdhdGlvbkl0ZW0KZHNhOnJldGFpbC9zOjEyL3Q6MTYyMy90OjEyMzAvcHQ6NDIz"
+        }
+       },
+       "ratingSummary": {
+        "averageRating": 4.8,
+        "ratingCount": 948
+       },
+       "canAddToCart": true,
+       "labels": [
+        "VOLUME_DISCOUNT"
+       ],
+       "availability": {
+        "availabilityClassification": "TICK",
+        "id": "UHJvZHVjdEF2YWlsYWJpbGl0eQpkMjgwMzU2OjA6MTE5Mzky",
+        "__typename": "ProductAvailability"
+       },
+       "variantGroups": {
+        "groupedVariantLabels": [],
+        "groupedVariantLabelsTrackingId": null,
+        "hasValidVariants": false
+       },
+       "trackingId": 280356,
+       "name": "Étiquettes universelles",
+       "nameExtensions": {
+        "properties": ""
+       },
+       "relativeUrl": "/fr/s12/product/avery-etiquettes-universelles-etiquettes-280356",
+       "brand": {
+        "showNameInProductName": true,
+        "name": "Avery",
+        "id": "QnJhbmQKaTY5ODY=",
+        "databaseId": 6986
+       },
+       "incentives": {
+        "text": null
+       },
+       "dataSheet": null,
+       "pricePerUnit": null,
+       "defaultVolumeDiscountPrice": {
+        "minAmount": 4,
+        "price": {
+         "amountInclusive": 9.65,
+         "amountExclusive": 8.93,
+         "currency": "CHF"
+        },
+        "pricePerUnit": null
+       },
+       "promotion": null,
+       "previewImage": {
+        "relativeUrl": "/productimages/7/9/0/6/2/8/9/0/6/8/3/2/3/3/4/0/8/5/6/9415c454-d0f0-49de-a261-46d96cfdcb8b.png"
+       },
+       "__typename": "Product"
+      },
+      "cursor": "ProductIdentifier { ProductId = 280356, OfferType = RetailShopOfferId, OfferId = 406802, FeatureFlag =  }"
+     },
+     {
+      "node": {
+       "databaseId": 44763590,
+       "price": {
+        "amountInclusive": 12.4,
+        "currency": "CHF",
+        "amountExclusive": 11.47
+       },
+       "salesInformation": null,
+       "energyEfficiency": null,
+       "insteadOfPrice": {
+        "rebate": 8,
+        "type": "SALES_PRICE_BEFORE",
+        "price": {
+         "amountInclusive": 13.5,
+         "amountExclusive": 12.49,
+         "currency": "CHF"
+        }
+       },
+       "orderQuantities": {
+        "minimum": 1
+       },
+       "productType": {
+        "databaseId": 3929,
+        "id": "UHJvZHVjdFR5cGUKaTM5Mjk=",
+        "name": "Rouleau d’étiquettes",
+        "navigationItem": {
+         "relativeUrl": "/fr/s12/producttype/rouleau-detiquettes-3929",
+         "id": "TmF2aWdhdGlvbkl0ZW0KZHNhOnJldGFpbC9zOjEyL3Q6NjkxL3Q6MTYxOS9wdDozOTI5"
+        }
+       },
+       "ratingSummary": {
+        "averageRating": 4.7,
+        "ratingCount": 10
+       },
+       "canAddToCart": true,
+       "labels": [
+        "DISCOUNT"
+       ],
+       "availability": {
+        "availabilityClassification": "TICK",
+        "id": "UHJvZHVjdEF2YWlsYWJpbGl0eQpkNDQ3NjM1OTA6MDo3NTE4NDU4Nw==",
+        "__typename": "ProductAvailability"
+       },
+       "variantGroups": {
+        "groupedVariantLabels": [],
+        "groupedVariantLabelsTrackingId": null,
+        "hasValidVariants": false
+       },
+       "trackingId": 44763590,
+       "name": "Étiquettes thermiques",
+       "nameExtensions": {
+        "properties": ""
+       },
+       "relativeUrl": "/fr/s12/product/niimbot-etiquettes-thermiques-rouleau-detiquettes-44763590",
+       "brand": {
+        "showNameInProductName": true,
+        "name": "Niimbot",
+        "id": "QnJhbmQKaTk0NTE4",
+        "databaseId": 94518
+       },
+       "incentives": {
+        "text": null
+       },
+       "dataSheet": null,
+       "pricePerUnit": null,
+       "defaultVolumeDiscountPrice": null,
+       "promotion": null,
+       "previewImage": {
+        "relativeUrl": "/productimages/5/5/1/5/3/8/0/6/4/5/6/1/7/8/3/7/1/2/1/019c573e-4c20-7240-af82-70962b389996"
+       },
+       "__typename": "Product"
+      },
+      "cursor": "ProductIdentifier { ProductId = 44763590, OfferType = RetailShopOfferId, OfferId = 406802, FeatureFlag =  }"
+     },
+     {
+      "node": {
+       "databaseId": 39602555,
+       "price": {
+        "amountInclusive": 19.5,
+        "currency": "CHF",
+        "amountExclusive": 18.04
+       },
+       "salesInformation": null,
+       "energyEfficiency": null,
+       "insteadOfPrice": null,
+       "orderQuantities": {
+        "minimum": 1
+       },
+       "productType": {
+        "databaseId": 3929,
+        "id": "UHJvZHVjdFR5cGUKaTM5Mjk=",
+        "name": "Rouleau d’étiquettes",
+        "navigationItem": {
+         "relativeUrl": "/fr/s12/producttype/rouleau-detiquettes-3929",
+         "id": "TmF2aWdhdGlvbkl0ZW0KZHNhOnJldGFpbC9zOjEyL3Q6NjkxL3Q6MTYxOS9wdDozOTI5"
+        }
+       },
+       "ratingSummary": {
+        "averageRating": 4.6,
+        "ratingCount": 9
+       },
+       "canAddToCart": true,
+       "labels": [],
+       "availability": {
+        "availabilityClassification": "TICK",
+        "id": "UHJvZHVjdEF2YWlsYWJpbGl0eQpkMzk2MDI1NTU6MDo3NTE4ODU4NQ==",
+        "__typename": "ProductAvailability"
+       },
+       "variantGroups": {
+        "groupedVariantLabels": [],
+        "groupedVariantLabelsTrackingId": null,
+        "hasValidVariants": false
+       },
+       "trackingId": 39602555,
+       "name": "Étiquettes thermiques",
+       "nameExtensions": {
+        "properties": ""
+       },
+       "relativeUrl": "/fr/s12/product/niimbot-etiquettes-thermiques-rouleau-detiquettes-39602555",
+       "brand": {
+        "showNameInProductName": true,
+        "name": "Niimbot",
+        "id": "QnJhbmQKaTk0NTE4",
+        "databaseId": 94518
+       },
+       "incentives": {
+        "text": null
+       },
+       "dataSheet": null,
+       "pricePerUnit": null,
+       "defaultVolumeDiscountPrice": null,
+       "promotion": null,
+       "previewImage": {
+        "relativeUrl": "/productimages/4/8/9/9/0/2/5/4/5/9/6/0/1/3/8/6/4/0/5/01a14564-4be7-74e8-8c2d-b3905c41d0de"
+       },
+       "__typename": "Product"
+      },
+      "cursor": "ProductIdentifier { ProductId = 39602555, OfferType = RetailShopOfferId, OfferId = 406802, FeatureFlag =  }"
+     },
+     {
+      "node": {
+       "databaseId": 35820777,
+       "price": {
+        "amountInclusive": 18.5,
+        "currency": "CHF",
+        "amountExclusive": 17.11
+       },
+       "salesInformation": null,
+       "energyEfficiency": null,
+       "insteadOfPrice": null,
+       "orderQuantities": {
+        "minimum": 1
+       },
+       "productType": {
+        "databaseId": 3929,
+        "id": "UHJvZHVjdFR5cGUKaTM5Mjk=",
+        "name": "Rouleau d’étiquettes",
+        "navigationItem": {
+         "relativeUrl": "/fr/s12/producttype/rouleau-detiquettes-3929",
+         "id": "TmF2aWdhdGlvbkl0ZW0KZHNhOnJldGFpbC9zOjEyL3Q6NjkxL3Q6MTYxOS9wdDozOTI5"
+        }
+       },
+       "ratingSummary": {
+        "averageRating": 4.4,
+        "ratingCount": 8
+       },
+       "canAddToCart": true,
+       "labels": [],
+       "availability": {
+        "availabilityClassification": "TICK",
+        "id": "UHJvZHVjdEF2YWlsYWJpbGl0eQpkMzU4MjA3Nzc6MDo1MzUxOTgxNg==",
+        "__typename": "ProductAvailability"
+       },
+       "variantGroups": {
+        "groupedVariantLabels": [],
+        "groupedVariantLabelsTrackingId": null,
+        "hasValidVariants": false
+       },
+       "trackingId": 35820777,
+       "name": "Étiquettes thermiques",
+       "nameExtensions": {
+        "properties": ""
+       },
+       "relativeUrl": "/fr/s12/product/niimbot-etiquettes-thermiques-rouleau-detiquettes-35820777",
+       "brand": {
+        "showNameInProductName": true,
+        "name": "Niimbot",
+        "id": "QnJhbmQKaTk0NTE4",
+        "databaseId": 94518
+       },
+       "incentives": {
+        "text": null
+       },
+       "dataSheet": null,
+       "pricePerUnit": null,
+       "defaultVolumeDiscountPrice": null,
+       "promotion": null,
+       "previewImage": {
+        "relativeUrl": "/productimages/9/1/2/4/8/8/9/8/8/7/5/7/8/2/4/0/4/0/7/4e6d76e7-5124-4089-af04-c740b3d939cb_cropped.jpg"
+       },
+       "__typename": "Product"
+      },
+      "cursor": "ProductIdentifier { ProductId = 35820777, OfferType = RetailShopOfferId, OfferId = 406802, FeatureFlag =  }"
+     }
+    ]
+   }
+  }
+ }
+}
