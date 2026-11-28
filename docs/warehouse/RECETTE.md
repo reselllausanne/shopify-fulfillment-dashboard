@@ -177,7 +177,7 @@ Côté responsable : `WAREHOUSE_WRITES_ENABLED=false` arrête toutes les écritu
 
 - Les mesures viennent d'un poste de développement (§3). Elles valident le code et les index, pas le VPS.
 - L'impression n'a été exercée que jusqu'à la file et au rendu PDF / SVG ; QZ Tray et l'imprimante réelle restent à brancher.
-- Les écrans n'ont pas de tests automatiques ; ils ont été parcourus à la main sur le serveur de recette local.
+- Les écrans n'ont pas de tests dans la suite automatique. `scripts/warehouse/ui-smoke.mjs` les charge tous dans un navigateur sans affichage (erreurs de script, appels API en échec, captures) ; les gestes n'ont été joués dans le navigateur que sur le lot de réception (§1).
 - Le portail partenaire garde l'authentification existante : un accès par partenaire, pas par personne (Q-15), et la connexion rapide accepte une clé seule tant que `PARTNER_ACCESS_<KEY>` n'est pas défini (constat R2 de `AUDIT.md`).
 - L'espace disque du serveur de base ne se lit pas depuis l'application : l'alerte correspondante est à poser chez l'hébergeur.
 - La preuve d'identification d'un article est un texte ; pas de photo en lot 1.
