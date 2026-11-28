@@ -4,6 +4,8 @@ import { applyInventoryOrderLine } from "@/inventory/applyOrderLines";
 import { ensureLocalStockMatchesForOrder } from "@/galaxus/orders/localStockMatch";
 import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
 import { rewriteGalaxusOrderLinesPreservingLinks } from "@/galaxus/orders/rewriteLinesPreservingLinks";
+import { GALAXUS_DELIVERY_ROUTE_48H } from "@/galaxus/warehouse/delivery48h";
+import { isLegacy48hPromise } from "@/galaxus/orders/expressDelivery";
 
 type IngestResult = {
   galaxusOrderId: string;
@@ -248,6 +250,25 @@ function normalizeOrder(order: GalaxusOrderInput) {
   };
 }
 
+async function shouldStampExpressDelivery(
+  orderDate: Date,
+  lines: Array<{ providerKey: string | null; arrivalDateEnd: Date | null }>
+): Promise<boolean> {
+  if (lines.some((line) => isLegacy48hPromise(orderDate, line.arrivalDateEnd))) return true;
+  const keys = Array.from(
+    new Set(lines.map((line) => String(line.providerKey ?? "").trim()).filter(Boolean))
+  );
+  if (keys.length === 0) return false;
+  const rows = await prisma.galaxusFeedStockSnapshot.findMany({
+    where: { providerKey: { in: keys } },
+    select: { rowJson: true },
+  });
+  return rows.some((row) => {
+    const routeId = (row.rowJson as { DeliveryRouteId?: string } | null)?.DeliveryRouteId;
+    return String(routeId ?? "").trim() === GALAXUS_DELIVERY_ROUTE_48H;
+  });
+}
+
 export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<IngestResult[]> {
   if (!Array.isArray(orders) || orders.length === 0) {
     throw new Error("No orders provided.");
@@ -280,6 +301,7 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
       arrivalDateEnd: line.arrivalDateEnd ? parseDate(line.arrivalDateEnd, "arrivalDateEnd") ?? null : null,
       currencyCode: line.currencyCode ?? normalized.currencyCode,
     }));
+    const stampExpress = await shouldStampExpressDelivery(normalized.orderDate, lines);
 
     const shipments = order.shipments ?? [];
     const statusEvents = order.statusEvents ?? [];
@@ -508,6 +530,7 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
               ordrMode: normalized.ordrMode,
               ingestedAt: new Date(),
               ordrStatus: normalized.ordrSentAt ? "SENT" : "PENDING",
+              expressDelivery: stampExpress,
               buyerPartyId: normalized.buyerPartyId,
               buyerPartyGln: normalized.buyerPartyGln,
               supplierPartyId: normalized.supplierPartyId,
@@ -515,6 +538,13 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
               marketplacePartyId: normalized.marketplacePartyId,
             },
           });
+
+      if (stampExpress) {
+        await tx.galaxusOrder.update({
+          where: { id: savedOrder.id },
+          data: { expressDelivery: true },
+        });
+      }
 
       const existingLines = await tx.galaxusOrderLine.findMany({
         where: { orderId: savedOrder.id },
