@@ -1,0 +1,46 @@
+{
+  "_comment": "Reference texts encoded in labels already printed. NEVER edit an entry: add a new one for each new format. A reader, API, schema or server change must keep resolving every text below to the same identity (roadmap §1.1, §9, C03).",
+  "units": [
+    {
+      "format": "UUID_SITE_V1",
+      "text": "3f2b8c1e-7a4d-4e9b-9c2f-5d6a7b8c9d0e-ZQ16",
+      "unitId": "3f2b8c1e-7a4d-4e9b-9c2f-5d6a7b8c9d0e",
+      "issuingSiteCode": "ZQ16",
+      "issuedAt": "2016-11-28T09:00:00.000Z",
+      "scenario": "ARCHIVED_OUT",
+      "note": "Pair issued ten years ago, sold, history archived."
+    },
+    {
+      "format": "UUID_SITE_V1",
+      "text": "a81d4fae-7dec-41d0-a765-00a0c91e6bf6-ZQ16",
+      "unitId": "a81d4fae-7dec-41d0-a765-00a0c91e6bf6",
+      "issuingSiteCode": "ZQ16",
+      "issuedAt": "2024-03-02T14:30:00.000Z",
+      "scenario": "TRANSFERRED",
+      "note": "Pair issued at ZQ16, transferred to ZQ17: the suffix stays the issuing site."
+    },
+    {
+      "format": "UUID_SITE_V1",
+      "text": "0e9d3c7a-51b2-4f68-b0a4-c3d2e1f00a9b-ZQ16",
+      "unitId": "0e9d3c7a-51b2-4f68-b0a4-c3d2e1f00a9b",
+      "issuingSiteCode": "ZQ16",
+      "issuedAt": "2026-11-27T08:15:00.000Z",
+      "scenario": "ACTIVE",
+      "note": "Pair on a shelf."
+    }
+  ],
+  "scannerVariants": [
+    { "of": "3f2b8c1e-7a4d-4e9b-9c2f-5d6a7b8c9d0e-ZQ16", "text": "3F2B8C1E-7A4D-4E9B-9C2F-5D6A7B8C9D0E-ZQ16\r\n", "why": "caps-lock keyboard wedge + CR/LF suffix" },
+    { "of": "3f2b8c1e-7a4d-4e9b-9c2f-5d6a7b8c9d0e-ZQ16", "text": "]Q13f2b8c1e-7a4d-4e9b-9c2f-5d6a7b8c9d0e-zq16\t", "why": "AIM symbology prefix + TAB suffix + lower-case site" },
+    { "of": "a81d4fae-7dec-41d0-a765-00a0c91e6bf6-ZQ16", "text": "  a81d4fae-7dec-41d0-a765-00a0c91e6bf6-ZQ16  ", "why": "surrounding spaces" }
+  ],
+  "locations": [
+    { "text": "ZQ16-A-R01-T03-N02", "shortCode": "A-01-03-2", "scenario": "LEVEL", "note": "Level label printed before a rename." },
+    { "text": "ZQ16-REC-01", "scenario": "RECEIVING", "note": "Receiving zone." }
+  ],
+  "neverOurs": [
+    { "text": "3f2b8c1e-7a4d-1e9b-9c2f-5d6a7b8c9d0e-ZQ16", "why": "UUID v1 with our suffix: an external reference, never an identity" },
+    { "text": "3f2b8c1e-7a4d-4e9b-9c2f-5d6a7b8c9d0e", "why": "bare UUID without issuing site" },
+    { "text": "1.98481E+11", "why": "GTIN mangled by a spreadsheet" }
+  ]
+}

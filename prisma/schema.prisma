@@ -1575,6 +1575,11 @@ model Partner {
   alternativeProductUploads AlternativeProductUpload[]
   alternativeProducts       AlternativeProduct[]
   orders                    PartnerOrder[]
+  /// Warehouse module (lot 1): stock held for this partner.
+  warehouseUnits            WarehouseUnit[]
+  warehouseBatches          WarehouseBatch[]
+  warehouseAgreements       WarehouseDepositAgreement[]
+  warehouseRequests         WarehousePartnerRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3657,5 +3662,869 @@ model AubonneScanState {
   errors     Int       @default(0)
   updatedAt  DateTime  @updatedAt
 
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Warehouse module (Entrepôt) — lot 1. Additive, internal-only tables.
+// Nothing here is read by feed / Shopify / Galaxus / Decathlon jobs.
+// String states are enforced by CHECK constraints in the migration SQL.
+// Contract + invariants: docs/warehouse/CONTRACTS.md
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Physical site (warehouse). `code` is the issuing-site suffix printed in pair QR codes (CH01).
+model WarehouseSite {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  countryCode String
+  timezone    String   @default("Europe/Zurich")
+  /// ACTIVE | RETIRED (retired sites still resolve their issued codes)
+  status      String   @default("ACTIVE")
+  /// Synthetic / recette site — never used for real stock.
+  isTest      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  locations    WarehouseLocation[]
+  stations     WarehouseStation[]
+  printers     WarehousePrinter[]
+  batches      WarehouseBatch[]
+  issuedUnits  WarehouseUnit[]     @relation("WarehouseUnitIssuingSite")
+  currentUnits WarehouseUnit[]     @relation("WarehouseUnitCurrentSite")
+
+  @@schema("public")
+}
+
+/// Address inside a site. Structural nodes (SECTOR/ROW/RACK) do not hold units.
+model WarehouseLocation {
+  id            String    @id @default(uuid())
+  siteId        String
+  parentId      String?
+  /// Current primary scannable code, e.g. CH01-A-R01-T03-N02. Historic codes live in WarehouseLocationCode.
+  code          String    @unique
+  /// Short code shown big on the shelf front, e.g. A-01-03-2.
+  shortCode     String
+  /// SECTOR | ROW | RACK | LEVEL | RECEIVING | CART | PACKING | RETURNS | QUARANTINE
+  kind          String
+  holdsUnits    Boolean   @default(false)
+  sector        String?
+  rowNo         Int?
+  rackNo        Int?
+  levelNo       Int?
+  /// Walking order inside the site (lower first).
+  walkSequence  Int       @default(0)
+  /// Max units. NULL = unbounded (receiving zone, cart).
+  capacity      Int?
+  /// Box-size compatibility profile (STANDARD | LARGE | ...).
+  sizeProfile   String    @default("STANDARD")
+  /// ACTIVE | BLOCKED | RETIRED
+  status        String    @default("ACTIVE")
+  statusReason  String?
+  /// Denormalized counters, updated in the same transaction as the unit / task change.
+  occupiedCount Int       @default(0)
+  reservedCount Int       @default(0)
+  retiredAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  site          WarehouseSite           @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  parent        WarehouseLocation?      @relation("WarehouseLocationTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children      WarehouseLocation[]     @relation("WarehouseLocationTree")
+  codes         WarehouseLocationCode[]
+  units         WarehouseUnit[]         @relation("WarehouseUnitCurrentLocation")
+  fromTasks     WarehousePutawayTask[]  @relation("WarehouseTaskFromLocation")
+  proposedTasks WarehousePutawayTask[]  @relation("WarehouseTaskProposedLocation")
+  countSessions WarehouseCountSession[]
+
+  @@index([siteId, holdsUnits, status, walkSequence])
+  @@index([parentId])
+  @@schema("public")
+}
+
+/// Every scannable code ever issued for a location (primary + aliases). Never reassigned.
+model WarehouseLocationCode {
+  code       String   @id
+  locationId String
+  isPrimary  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  location WarehouseLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@index([locationId])
+  @@schema("public")
+}
+
+/// Stable warehouse-side snapshot of a catalog variant (model + size). Catalog rows
+/// (SupplierVariant / KickDBVariant) are volatile feed caches, so they are soft refs here.
+model WarehouseItem {
+  id                String   @id @default(uuid())
+  /// Primary GTIN as text (leading zeros preserved). NULL for provisional items.
+  gtin              String?
+  brand             String?
+  name              String
+  /// Manufacturer reference / style code (e.g. HM9965-010).
+  styleCode         String?
+  colorway          String?
+  /// Size system + raw label as given by the source (no blind conversion).
+  sizeSystem        String?
+  sizeLabel         String?
+  sizeEu            String?
+  sizeUs            String?
+  imageUrl          String?
+  /// Soft refs to the existing catalog (no FK: feed jobs may purge those rows).
+  kickdbVariantId   String?
+  supplierVariantId String?
+  /// KICKDB | SUPPLIER_VARIANT | MANUAL
+  catalogSource     String   @default("MANUAL")
+  /// ACTIVE | PROVISIONAL | MERGED
+  status            String   @default("ACTIVE")
+  mergedIntoId      String?
+  /// Lowercased brand + name + style + size, for server-side search.
+  searchText        String   @default("")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  aliases WarehouseItemAlias[]
+  units   WarehouseUnit[]
+
+  @@index([gtin])
+  @@index([styleCode])
+  @@schema("public")
+}
+
+/// Identifier that resolves to one item. (namespace, value) is unique → no ambiguous auto-match.
+model WarehouseItemAlias {
+  id        String   @id @default(uuid())
+  itemId    String
+  /// GTIN | SKU | MPN | STOCKX_VARIANT | KICKDB_VARIANT | SUPPLIER_VARIANT | EXTERNAL
+  namespace String
+  value     String
+  createdAt DateTime @default(now())
+
+  item WarehouseItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@unique([namespace, value])
+  @@index([itemId])
+  @@schema("public")
+}
+
+/// Individual operator (staff auth is a shared role password; sensitive gestures need a person).
+model WarehouseOperator {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  pinHash   String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@schema("public")
+}
+
+/// Deposit / consignment agreement version for a partner.
+model WarehouseDepositAgreement {
+  id             String    @id @default(uuid())
+  partnerId      String
+  version        Int       @default(1)
+  /// DRAFT | ACTIVE | ENDED
+  status         String    @default("DRAFT")
+  saleAllowed    Boolean   @default(false)
+  channels       String[]  @default([])
+  /// MANUAL | STOCKX_BUYNOW_FACTOR
+  pricingMode    String    @default("MANUAL")
+  /// e.g. 0.7000 for "StockX Buy Now × 0.70"
+  pricingFactor  Decimal?  @db.Decimal(6, 4)
+  /// What the computed amount means: PUBLIC_PRICE | SELLER_NET | UNCONFIRMED
+  pricingBasisIs String    @default("UNCONFIRMED")
+  commissionRate Decimal?  @db.Decimal(5, 4)
+  fixedFee       Decimal?  @db.Decimal(10, 2)
+  currency       String    @default("CHF")
+  validFrom      DateTime?
+  validTo        DateTime?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
+
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+
+  @@unique([partnerId, version])
+  @@schema("public")
+}
+
+/// Receiving / stock-take batch (lot).
+model WarehouseBatch {
+  id                  String    @id @default(uuid())
+  siteId              String
+  /// Human reference, e.g. REP-CH01-20261128-01
+  reference           String    @unique
+  /// STOCK_TAKE | RECEIVING
+  kind                String
+  /// CONSIGNMENT | OWN_STOCK | SUPPLIER | ORDER_TRANSIT | CUSTOMER_RETURN
+  flow                String
+  title               String?
+  /// OWN | PARTNER | UNKNOWN
+  ownerKind           String
+  ownerPartnerId      String?
+  agreementId         String?
+  supplierName        String?
+  sourceDocType       String?
+  sourceDocRef        String?
+  /// Temporary position for received units (receiving zone or cart).
+  receivingLocationId String?
+  /// Last level being counted (stock-take resume). Re-validated by a scan after resume.
+  activeLocationId    String?
+  /// OPEN | PAUSED | CLOSED | CANCELLED
+  status              String    @default("OPEN")
+  /// Stock-take counting date.
+  countedAt           DateTime?
+  expectedKnown       Boolean   @default(false)
+  notes               String?
+  createdByOperatorId String?
+  closedAt            DateTime?
+  closeSummary        Json?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @default(now()) @updatedAt
+
+  site          WarehouseSite           @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  ownerPartner  Partner?                @relation(fields: [ownerPartnerId], references: [id], onDelete: Restrict)
+  lines         WarehouseBatchLine[]
+  parcels       WarehouseBatchParcel[]
+  units         WarehouseUnit[]
+  countSessions WarehouseCountSession[]
+
+  @@index([siteId, status, createdAt])
+  @@index([ownerPartnerId])
+  @@schema("public")
+}
+
+/// Expected line of a batch (count may be unknown for a stock-take).
+model WarehouseBatchLine {
+  id          String   @id @default(uuid())
+  batchId     String
+  lineNo      Int
+  itemId      String?
+  gtin        String?
+  description String?
+  sizeLabel   String?
+  expectedQty Int?
+  receivedQty Int      @default(0)
+  externalRef String?
+  importRowId String?
+  /// OPEN | CLOSED
+  status      String   @default("OPEN")
+  closeReason String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  batch WarehouseBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, lineNo])
+  @@index([batchId, gtin])
+  @@schema("public")
+}
+
+/// Carton / parcel announced for a batch (tracking), received independently of its units.
+model WarehouseBatchParcel {
+  id             String    @id @default(uuid())
+  batchId        String
+  carrier        String?
+  trackingNumber String?
+  externalRef    String?
+  /// EXPECTED | RECEIVED
+  status         String    @default("EXPECTED")
+  receivedAt     DateTime?
+  note           String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
+
+  batch WarehouseBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@index([batchId])
+  @@index([trackingNumber])
+  @@schema("public")
+}
+
+/// One counting session of one level inside a stock-take batch. One OPEN session per location (partial unique index).
+model WarehouseCountSession {
+  id           String    @id @default(uuid())
+  batchId      String
+  locationId   String
+  round        Int       @default(1)
+  /// OPEN | CLOSED
+  status       String    @default("OPEN")
+  operatorId   String?
+  stationId    String?
+  countedUnits Int       @default(0)
+  openedAt     DateTime  @default(now())
+  closedAt     DateTime?
+
+  batch    WarehouseBatch       @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  location WarehouseLocation    @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  scans    WarehouseCountScan[]
+
+  @@index([batchId, locationId])
+  @@schema("public")
+}
+
+model WarehouseCountScan {
+  id         String   @id @default(uuid())
+  sessionId  String
+  batchId    String
+  unitId     String
+  locationId String
+  round      Int      @default(1)
+  /// CREATED | FOUND_HERE | MOVED_HERE
+  result     String
+  createdAt  DateTime @default(now())
+
+  session WarehouseCountSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  unit    WarehouseUnit         @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  @@unique([sessionId, unitId])
+  @@index([batchId, unitId])
+  @@schema("public")
+}
+
+/// Physical unit (one pair). `id` is the permanent UUID v4 printed in the QR. Never deleted.
+model WarehouseUnit {
+  /// UUID v4 generated by the application (crypto.randomUUID), unique forever.
+  id                String    @id
+  /// Original QR text `<uuid>-<issuing site>` — immutable.
+  labelCode         String    @unique
+  issuingSiteId     String
+  issuingSiteCode   String
+  itemId            String
+  /// OWN | PARTNER | UNKNOWN
+  ownerKind         String
+  ownerPartnerId    String?
+  agreementId       String?
+  /// STOCK_TAKE | CONSIGNMENT | OWN_STOCK | SUPPLIER | ORDER_TRANSIT | CUSTOMER_RETURN | RECOVERED
+  originType        String
+  originBatchId     String?
+  originLineId      String?
+  /// Where is it physically: PRESENT | IN_TRANSIT | THIRD_PARTY | MISSING | OUT
+  presence          String
+  currentSiteId     String?
+  currentLocationId String?
+  /// Control: PENDING | PASSED | QUARANTINE
+  qcState           String    @default("PENDING")
+  /// Sale authorization: STORAGE_ONLY | SALE_AUTHORIZED | BLOCKED
+  saleState         String    @default("STORAGE_ONLY")
+  /// NEW | USED | DAMAGED | UNKNOWN
+  condition         String    @default("UNKNOWN")
+  /// GOOD | DAMAGED | MISSING | UNKNOWN
+  boxCondition      String    @default("UNKNOWN")
+  conditionNote     String?
+  /// SOLD | WITHDRAWN | RETURNED_TO_SUPPLIER | DISPOSED | OTHER (when presence = OUT)
+  outReason         String?
+  outAt             DateTime?
+  labelVerifiedAt   DateTime?
+  labelPrintCount   Int       @default(0)
+  /// Optimistic concurrency + audit ordering.
+  version           Int       @default(1)
+  /// Last physical observation (scan in front of the box).
+  observedAt        DateTime
+  receivedAt        DateTime  @default(now())
+  historyArchivedAt DateTime?
+  historyArchiveRef String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @default(now()) @updatedAt
+
+  item            WarehouseItem              @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  ownerPartner    Partner?                   @relation(fields: [ownerPartnerId], references: [id], onDelete: Restrict)
+  issuingSite     WarehouseSite              @relation("WarehouseUnitIssuingSite", fields: [issuingSiteId], references: [id], onDelete: Restrict)
+  currentSite     WarehouseSite?             @relation("WarehouseUnitCurrentSite", fields: [currentSiteId], references: [id], onDelete: Restrict)
+  currentLocation WarehouseLocation?         @relation("WarehouseUnitCurrentLocation", fields: [currentLocationId], references: [id], onDelete: Restrict)
+  originBatch     WarehouseBatch?            @relation(fields: [originBatchId], references: [id], onDelete: Restrict)
+  labelCodes      WarehouseLabelCode[]
+  externalRefs    WarehouseUnitExternalRef[]
+  tasks           WarehousePutawayTask[]
+  movements       WarehouseMovement[]
+  prices          WarehouseUnitPrice[]
+  allocations     WarehouseSaleAllocation[]
+  transferUnits   WarehouseTransferUnit[]
+  countScans      WarehouseCountScan[]
+
+  @@index([currentLocationId])
+  @@index([currentSiteId, presence, receivedAt, id])
+  @@index([ownerPartnerId, presence, itemId])
+  @@index([ownerPartnerId, receivedAt, id])
+  @@index([itemId, presence])
+  @@index([originBatchId])
+  @@index([receivedAt, id])
+  @@schema("public")
+}
+
+/// Scan registry: every code ever issued for a unit (original QR + later aliases).
+/// Rows are immutable and never deleted (DB trigger) — an issued value never changes unit.
+model WarehouseLabelCode {
+  code            String   @id
+  unitId          String
+  /// UUID_SITE_V1 | ALIAS
+  format          String
+  isOriginal      Boolean  @default(true)
+  issuingSiteCode String
+  issuedAt        DateTime @default(now())
+  note            String?
+
+  unit WarehouseUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  @@index([unitId])
+  @@schema("public")
+}
+
+/// External references kept for reconciliation (StockX order, carrier tracking, supplier label…). Not identifiers.
+model WarehouseUnitExternalRef {
+  id        String   @id @default(uuid())
+  unitId    String
+  namespace String
+  value     String
+  note      String?
+  createdAt DateTime @default(now())
+
+  unit WarehouseUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  @@index([namespace, value])
+  @@index([unitId])
+  @@schema("public")
+}
+
+/// Append-only issuance journal, exported to an independent sink (file / object storage)
+/// so issued QR codes survive the loss or rollback of the primary database.
+model WarehouseLabelJournal {
+  seq         BigInt    @id @default(autoincrement())
+  code        String    @unique
+  unitId      String
+  payload     Json
+  payloadHash String
+  issuedAt    DateTime  @default(now())
+  exportedAt  DateTime?
+  exportSink  String?
+  exportRef   String?
+
+  @@index([exportedAt])
+  @@schema("public")
+}
+
+/// Putaway task. At most one active (PENDING/RESERVED) task per unit (partial unique index).
+model WarehousePutawayTask {
+  id                   String    @id @default(uuid())
+  unitId               String
+  siteId               String
+  batchId              String?
+  cartLocationId       String?
+  /// Confirmed real position when the task was created / last resumed.
+  fromLocationId       String
+  /// Proposed destination: a capacity reservation, not a movement.
+  proposedLocationId   String?
+  /// PENDING | RESERVED | DONE | CANCELLED
+  status               String    @default("PENDING")
+  /// Why a PENDING task has no destination (NO_COMPATIBLE_SLOT, AWAITING_DECISION, RESERVATION_EXPIRED…)
+  holdReason           String?
+  reservedAt           DateTime?
+  reservationExpiresAt DateTime?
+  confirmedLocationId  String?
+  confirmedAt          DateTime?
+  operatorId           String?
+  cancelReason         String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @default(now()) @updatedAt
+
+  unit             WarehouseUnit      @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  fromLocation     WarehouseLocation  @relation("WarehouseTaskFromLocation", fields: [fromLocationId], references: [id], onDelete: Restrict)
+  proposedLocation WarehouseLocation? @relation("WarehouseTaskProposedLocation", fields: [proposedLocationId], references: [id], onDelete: Restrict)
+
+  @@index([siteId, status, createdAt])
+  @@index([proposedLocationId, status])
+  @@index([batchId, status])
+  @@index([unitId])
+  @@schema("public")
+}
+
+/// Audit journal. State change and movement row are written in the same transaction.
+model WarehouseMovement {
+  id             String   @id @default(uuid())
+  seq            BigInt   @unique @default(autoincrement())
+  unitId         String
+  /// RECEIVE | STOCK_TAKE | PUTAWAY | RELOCATE | TRANSFER_OUT | TRANSFER_IN | MARK_MISSING | FOUND |
+  /// QC | SALE_STATE | OWNER_CHANGE | ITEM_CORRECTION | CONDITION | LABEL_PRINT | LABEL_REPRINT |
+  /// LABEL_VERIFIED | ALLOCATE | RELEASE | OUT | CORRECTION | RECOVERED
+  type           String
+  fromSiteId     String?
+  fromLocationId String?
+  toSiteId       String?
+  toLocationId   String?
+  changes        Json?
+  reason         String?
+  note           String?
+  operatorId     String?
+  actorRole      String?
+  stationId      String?
+  batchId        String?
+  taskId         String?
+  transferId     String?
+  opKey          String?
+  unitVersion    Int
+  /// When it was physically observed vs when it was recorded (createdAt).
+  observedAt     DateTime
+  createdAt      DateTime @default(now())
+
+  unit WarehouseUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  @@index([unitId, seq])
+  @@index([createdAt])
+  @@index([batchId])
+  @@index([opKey])
+  @@schema("public")
+}
+
+/// Detailed history moved out of the hot journal. The unit keeps `historyArchiveRef`.
+model WarehouseMovementArchive {
+  id         String   @id
+  seq        BigInt
+  unitId     String
+  archiveRef String
+  row        Json
+  archivedAt DateTime @default(now())
+
+  @@index([unitId, seq])
+  @@index([archiveRef])
+  @@schema("public")
+}
+
+/// Idempotency ledger: one row per client action key. A retry returns the stored result.
+model WarehouseOperation {
+  opKey       String   @id
+  kind        String
+  requestHash String
+  /// DONE | REJECTED
+  status      String
+  result      Json
+  actorRole   String?
+  operatorId  String?
+  stationId   String?
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@schema("public")
+}
+
+/// Discrepancy / control queue.
+model WarehouseException {
+  id                   String    @id @default(uuid())
+  siteId               String?
+  /// UNKNOWN_GTIN | AMBIGUOUS_GTIN | UNKNOWN_CODE | WRONG_CODE_TYPE | SURPLUS | MISSING | WRONG_VARIANT |
+  /// OWNER_SUSPECT | DUPLICATE_SCAN | DUPLICATE_LABEL | LABEL_LOST | LEVEL_FULL | CAPACITY_MISMATCH |
+  /// WRONG_LOCATION | UNIT_NOT_FOUND | PRINT_UNCERTAIN | RECOVERY_RECONCILE | COUNT_MISMATCH | OTHER
+  type                 String
+  /// OPEN | RESOLVED | DISMISSED
+  status               String    @default("OPEN")
+  unitId               String?
+  locationId           String?
+  batchId              String?
+  rawCode              String?
+  details              Json?
+  resolution           String?
+  resolutionReason     String?
+  proofRef             String?
+  createdByRole        String?
+  createdByOperatorId  String?
+  resolvedByOperatorId String?
+  resolvedAt           DateTime?
+  opKey                String?   @unique
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @default(now()) @updatedAt
+
+  @@index([siteId, status, createdAt])
+  @@index([unitId])
+  @@index([batchId])
+  @@index([type, status])
+  @@schema("public")
+}
+
+/// Workstation (scan table). Independent of the operator account; bound to one site.
+model WarehouseStation {
+  id         String    @id @default(uuid())
+  siteId     String
+  code       String    @unique
+  name       String
+  /// ACTIVE | DISABLED
+  status     String    @default("ACTIVE")
+  /// sha256 of the pairing token stored in the paired browser.
+  tokenHash  String?
+  pairedAt   DateTime?
+  lastSeenAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @default(now()) @updatedAt
+
+  site      WarehouseSite           @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  routes    WarehouseStationRoute[]
+  printJobs WarehousePrintJob[]
+
+  @@index([siteId])
+  @@schema("public")
+}
+
+/// Printer destination. Added / disabled from the admin UI, no code change.
+model WarehousePrinter {
+  id                 String    @id @default(uuid())
+  siteId             String
+  name               String
+  /// QZ_TRAY (browser → QZ Tray → OS queue, existing chain) | PDF_MANUAL (preview / manual print)
+  adapter            String
+  /// OS / QZ queue name as seen by the station that owns the printer.
+  systemName         String?
+  mediaWidthMm       Float
+  mediaHeightMm      Float
+  dpi                Int?
+  /// portrait | landscape
+  orientation        String    @default("landscape")
+  marginMm           Float     @default(0)
+  useDriverPaperSize Boolean   @default(false)
+  /// PAIR | LOCATION | PARCEL | SHIPPING | RETURN
+  supportedKinds     String[]  @default([])
+  /// ACTIVE | DISABLED
+  status             String    @default("ACTIVE")
+  /// Set only after an operator confirmed a physical test label.
+  verifiedAt         DateTime?
+  verifiedNote       String?
+  lastError          String?
+  lastErrorAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now()) @updatedAt
+
+  site           WarehouseSite           @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  routes         WarehouseStationRoute[] @relation("WarehouseRoutePrinter")
+  fallbackRoutes WarehouseStationRoute[] @relation("WarehouseRouteFallbackPrinter")
+  printJobs      WarehousePrintJob[]
+
+  @@unique([siteId, name])
+  @@schema("public")
+}
+
+/// Default + fallback printer per station and label kind.
+model WarehouseStationRoute {
+  id                String   @id @default(uuid())
+  stationId         String
+  labelKind         String
+  printerId         String
+  fallbackPrinterId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  station         WarehouseStation  @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  printer         WarehousePrinter  @relation("WarehouseRoutePrinter", fields: [printerId], references: [id], onDelete: Restrict)
+  fallbackPrinter WarehousePrinter? @relation("WarehouseRouteFallbackPrinter", fields: [fallbackPrinterId], references: [id], onDelete: Restrict)
+
+  @@unique([stationId, labelKind])
+  @@schema("public")
+}
+
+/// Durable print request. Created in the same transaction as the validated gesture.
+/// QUEUED → CLAIMED → SENT → CONFIRMED | FAILED | UNCERTAIN | CANCELLED. Never auto-resent once claimed.
+model WarehousePrintJob {
+  id                    String    @id @default(uuid())
+  siteId                String
+  stationId             String
+  printerId             String?
+  /// PAIR | LOCATION | TEST
+  labelKind             String
+  /// UNIT | LOCATION | PRINTER
+  objectType            String
+  objectId              String
+  labelCode             String?
+  payload               Json
+  widthMm               Float
+  heightMm              Float
+  opKey                 String    @unique
+  isReprint             Boolean   @default(false)
+  reprintOfJobId        String?
+  reason                String?
+  status                String    @default("QUEUED")
+  attempts              Int       @default(0)
+  claimToken            String?
+  claimedAt             DateTime?
+  sentAt                DateTime?
+  completedAt           DateTime?
+  timeoutAt             DateTime?
+  lastError             String?
+  requestedByOperatorId String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @default(now()) @updatedAt
+
+  station WarehouseStation  @relation(fields: [stationId], references: [id], onDelete: Restrict)
+  printer WarehousePrinter? @relation(fields: [printerId], references: [id], onDelete: Restrict)
+
+  @@index([stationId, status, createdAt])
+  @@index([objectType, objectId])
+  @@index([status, timeoutAt])
+  @@index([siteId, createdAt])
+  @@schema("public")
+}
+
+/// Price attached to one unit. One VALIDATED row per unit (partial unique index). History is kept.
+model WarehouseUnitPrice {
+  id                String    @id @default(uuid())
+  unitId            String
+  /// Item the price was set for; a later item correction supersedes the price.
+  itemId            String
+  agreementId       String?
+  currency          String    @default("CHF")
+  publicPrice       Decimal?  @db.Decimal(10, 2)
+  sellerNet         Decimal?  @db.Decimal(10, 2)
+  fees              Decimal?  @db.Decimal(10, 2)
+  margin            Decimal?  @db.Decimal(10, 2)
+  /// MANUAL | STOCKX_BUYNOW_FACTOR
+  source            String
+  basisAmount       Decimal?  @db.Decimal(10, 2)
+  basisCurrency     String?
+  basisRef          String?
+  basisIncludesFees Boolean?
+  basisObservedAt   DateTime?
+  factor            Decimal?  @db.Decimal(6, 4)
+  /// PROPOSED | VALIDATED | REJECTED | SUPERSEDED
+  status            String    @default("PROPOSED")
+  note              String?
+  setByRole         String?
+  setByOperatorId   String?
+  validatedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @default(now()) @updatedAt
+
+  unit WarehouseUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  @@index([unitId, status])
+  @@index([status, createdAt])
+  @@schema("public")
+}
+
+/// Partner → team request (price change, discrepancy). Handled by an admin.
+model WarehousePartnerRequest {
+  id                   String    @id @default(uuid())
+  partnerId            String
+  unitId               String?
+  /// PRICE_CHANGE | DISCREPANCY | OTHER
+  type                 String
+  message              String
+  requestedPublicPrice Decimal?  @db.Decimal(10, 2)
+  currency             String    @default("CHF")
+  /// OPEN | ANSWERED | CLOSED
+  status               String    @default("OPEN")
+  response             String?
+  answeredAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @default(now()) @updatedAt
+
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+
+  @@index([partnerId, status, createdAt])
+  @@index([status, createdAt])
+  @@schema("public")
+}
+
+/// Site-to-site transfer header.
+model WarehouseTransfer {
+  id         String    @id @default(uuid())
+  reference  String    @unique
+  fromSiteId String
+  toSiteId   String
+  /// OPEN | IN_TRANSIT | RECEIVED | PARTIAL | CLOSED
+  status     String    @default("OPEN")
+  note       String?
+  shippedAt  DateTime?
+  closedAt   DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @default(now()) @updatedAt
+
+  units WarehouseTransferUnit[]
+
+  @@index([fromSiteId, status])
+  @@index([toSiteId, status])
+  @@schema("public")
+}
+
+/// Unit on a transfer. One IN_TRANSIT row per unit (partial unique index).
+model WarehouseTransferUnit {
+  id                 String    @id @default(uuid())
+  transferId         String
+  unitId             String
+  /// IN_TRANSIT | RECEIVED | MISSING
+  status             String    @default("IN_TRANSIT")
+  receivedAt         DateTime?
+  receivedLocationId String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now()) @updatedAt
+
+  transfer WarehouseTransfer @relation(fields: [transferId], references: [id], onDelete: Restrict)
+  unit     WarehouseUnit     @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  @@unique([transferId, unitId])
+  @@index([unitId])
+  @@schema("public")
+}
+
+/// Reservation of one unit for an order line (wired to channels in lot 2).
+/// One ACTIVE allocation per unit (partial unique index).
+model WarehouseSaleAllocation {
+  id         String    @id @default(uuid())
+  unitId     String
+  channel    String
+  orderRef   String
+  lineRef    String?
+  /// Immutable sale terms captured at allocation time.
+  terms      Json?
+  /// ACTIVE | RELEASED | SHIPPED
+  status     String    @default("ACTIVE")
+  opKey      String?   @unique
+  releasedAt DateTime?
+  shippedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @default(now()) @updatedAt
+
+  unit WarehouseUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  @@index([unitId, status])
+  @@index([channel, orderRef])
+  @@schema("public")
+}
+
+/// Assisted import (locations, expected lines). File + per-row identity → resumable, previewable.
+model WarehouseImport {
+  id          String   @id @default(uuid())
+  /// LOCATIONS | BATCH_LINES
+  kind        String
+  filename    String
+  sha256      String
+  targetId    String?
+  /// PREVIEW | APPLYING | APPLIED | PARTIAL
+  status      String   @default("PREVIEW")
+  totalRows   Int      @default(0)
+  appliedRows Int      @default(0)
+  errorRows   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  rows WarehouseImportRow[]
+
+  @@unique([kind, sha256, targetId])
+  @@schema("public")
+}
+
+model WarehouseImportRow {
+  id        String   @id @default(uuid())
+  importId  String
+  rowNumber Int
+  raw       Json
+  /// PENDING | APPLIED | ERROR | SKIPPED
+  status    String   @default("PENDING")
+  error     String?
+  resultRef String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  import WarehouseImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@unique([importId, rowNumber])
   @@schema("public")
 }

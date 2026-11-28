@@ -1,0 +1,36 @@
+{
+  "at": "2026-11-28T03:50:36.913Z",
+  "request": {
+    "active": 200000,
+    "codes": 0,
+    "movements": 1000000
+  },
+  "seconds": 27.8,
+  "timingsSeconds": {
+    "partners+items": 0,
+    "sites+racks (services)": 4.6,
+    "active units (bulk)": 9.4,
+    "movement history padding": 8,
+    "analyze": 5.6
+  },
+  "summary": {
+    "activeUnits": 200000,
+    "outUnits": 0,
+    "archivedUnits": 0,
+    "labelCodes": 200000,
+    "distinctCodes": 200000,
+    "journal": 200000,
+    "movements": 1000000,
+    "archivedMovements": 0,
+    "sites": 3,
+    "levels": 21900,
+    "partners": 60,
+    "items": 6000,
+    "overCapacityLevels": 0,
+    "counterDrift": 0,
+    "topItemShare": 0.0553,
+    "topPartnerUnits": 27167,
+    "smallestPartnerUnits": 1299
+  },
+  "checksum": "a76fdce39519"
+}

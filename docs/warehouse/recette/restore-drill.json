@@ -1,0 +1,131 @@
+{
+  "at": "2026-11-28T03:54:37.523Z",
+  "sink": {
+    "dir": "/var/folders/j3/51kdzzcn727bxy02m2htpxdh0000gn/T/warehouse-journal-sink-C6Ffwr",
+    "note": "Stand-in for the off-primary journal target (another disk / object storage in production)."
+  },
+  "references": [
+    {
+      "text": "28f7b220-fdfe-4d14-b8e3-6babbfd3af2b-SC01",
+      "unitId": "28f7b220-fdfe-4d14-b8e3-6babbfd3af2b",
+      "presence": "PRESENT",
+      "issuedYear": 2026,
+      "archived": false,
+      "transferred": true
+    },
+    {
+      "text": "54420831-dc94-428a-b7c7-51f4cb858ea3-SC01",
+      "unitId": "54420831-dc94-428a-b7c7-51f4cb858ea3",
+      "presence": "PRESENT",
+      "issuedYear": 2023,
+      "archived": false,
+      "transferred": false
+    },
+    {
+      "text": "6ef0f89a-62c7-4bc5-b103-73256e6c69a5-SC02",
+      "unitId": "6ef0f89a-62c7-4bc5-b103-73256e6c69a5",
+      "presence": "OUT",
+      "issuedYear": 2019,
+      "archived": false,
+      "transferred": false
+    },
+    {
+      "text": "ba83f1ce-212c-4d33-b76a-c1abad3cd2a3-SC01",
+      "unitId": "ba83f1ce-212c-4d33-b76a-c1abad3cd2a3",
+      "presence": "OUT",
+      "issuedYear": 2015,
+      "archived": true,
+      "transferred": false
+    }
+  ],
+  "backup": {
+    "atT0": {
+      "units": 1001194,
+      "codes": 1001194,
+      "movements": 2440748
+    },
+    "journalFlushedBeforeBackup": 6053,
+    "copyAndStartSeconds": 5.3,
+    "sizeMb": 7826
+  },
+  "afterBackup": {
+    "pairsReceivedAndLabelled": 25,
+    "putAway": 10,
+    "oldPairsMoved": 10,
+    "journalLinesAppended": 25,
+    "journalPendingOnPrimary": 0
+  },
+  "referenceQrAfterRestore": {
+    "checked": 4,
+    "allResolveToSameUuid": true,
+    "stateIdenticalToT0": true,
+    "details": [
+      {
+        "text": "28f7b220-fdfe-4d14-b8e3-6babbfd3af2b-SC01",
+        "sameUuid": true
+      },
+      {
+        "text": "54420831-dc94-428a-b7c7-51f4cb858ea3-SC01",
+        "sameUuid": true
+      },
+      {
+        "text": "6ef0f89a-62c7-4bc5-b103-73256e6c69a5-SC02",
+        "sameUuid": true
+      },
+      {
+        "text": "ba83f1ce-212c-4d33-b76a-c1abad3cd2a3-SC01",
+        "sameUuid": true
+      }
+    ]
+  },
+  "gluedAfterBackup": {
+    "scanned": 25,
+    "reportedUnknown": 25,
+    "pairsCreatedByScanning": 0
+  },
+  "journalReconcile": {
+    "journalEntriesRead": 6078,
+    "dryRun": {
+      "wouldRestore": 25,
+      "alreadyKnown": 6053,
+      "conflicts": 0,
+      "wroteNothing": true
+    },
+    "applied": {
+      "restored": 25,
+      "alreadyKnown": 6053,
+      "conflicts": 0,
+      "seconds": 0.1
+    },
+    "secondRun": {
+      "restored": 0,
+      "alreadyKnown": 6078
+    },
+    "gluedPairsFoundAgainWithSameUuid": 25,
+    "restoredAsMissingOwnerUnknownSaleBlocked": 25,
+    "reconciliationDiscrepanciesOpen": 25,
+    "sellableAmongRestored": 0
+  },
+  "movementsLostByRestore": {
+    "oldPairsMovedAfterBackup": 10,
+    "backAtTheirT0Address": 10,
+    "putawaysLost": 10,
+    "procedure": "Recount the levels touched since the backup (stock-take session per level): pairs found elsewhere are moved by scan, with a discrepancy."
+  },
+  "restoredDatabase": {
+    "identityTriggers": 7,
+    "warehouseMigrationsRecorded": 1,
+    "codes": 1001220,
+    "distinctCodes": 1001220,
+    "newIssueAfterRestore": "b715cdcf-9fc7-4eb3-bd77-c951758d135b-SC01",
+    "newIssueCollidesWithJournaledCode": false
+  },
+  "verdict": {
+    "identitiesPermanent": true,
+    "noPairCreatedFromScan": true,
+    "journalRecoversIdentities": true,
+    "rpoIdentities": "0 code lost when the journal sink is current (here: flushed after every batch).",
+    "rpoMovements": "Everything since the last ordinary backup (here: the T0 copy).",
+    "rtoMeasuredHere": "5.3 s to copy and start 7826 MB + 0.1 s journal reconcile — local disk, not the VPS."
+  }
+}
