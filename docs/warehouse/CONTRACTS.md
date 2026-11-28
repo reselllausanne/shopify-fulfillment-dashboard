@@ -95,13 +95,13 @@ Colonnes : **A** = réservé à l'administration ; **O** = geste physique (opér
 | POST | `locations/level` · `locations/special` | A | `{ siteId, sector, rowNo, rackNo, levelNo, capacity }` · `{ siteId, kind, number?, capacity?, label? }` | |
 | PATCH | `locations/:id` | A | `{ capacity?, sizeProfile?, walkSequence?, shortCode? }` | `LocationSummary` |
 | POST | `locations/:id/rename` | A | `{ newCode, newShortCode? }` | ancien code conservé en alias |
-| POST | `locations/:id/status` | O | `{ status: ACTIVE\|BLOCKED\|RETIRED, reason? }` | libère les réservations |
-| POST | `locations/print-labels` | | `{ opKey, locationIds[], stationId? }` | `{ queued, notQueued, jobs }` |
+| POST | `locations/:id/status` | O (`RETIRED` : A) | `{ status: ACTIVE\|BLOCKED\|RETIRED, reason? }` | libère les réservations ; `RETIRED` est définitif, 403 hors administration |
+| POST | `locations/print-labels` | | `{ opKey, locationIds[], stationId? }` | `{ queued, notQueued, jobs }` ; le poste est celui du navigateur, `stationId` n'est lu que pour un administrateur |
 | POST | `locations/reconcile` | A | `{ siteId, fix? }` | écarts compteur / réalité |
 | GET | `items/search?q=` · `items/catalog?q=` · `items/gtin?gtin=` · `items/:id` | | | variantes internes · candidats catalogue · `GtinResolution` |
 | POST | `items` · `items/from-candidate` | O | `CreateItemInput` · `{ candidate }` | `{ item, created }` |
 | GET | `units?siteId=&ownerKind=&ownerPartnerId=&presence=&qcState=&saleState=&itemId=&locationId=&batchId=&search=&cursor=&group=item` | | | `{ items: UnitSummary[], nextCursor }` ou agrégat par variante |
-| GET | `units/export?…` | | | CSV complet des paires filtrées. Au-delà de 250 000 lignes : 400 `INVALID_INPUT` avec `details.maxRows`, jamais un fichier tronqué |
+| GET | `units/export?…` | | | CSV complet des paires filtrées, avec les mêmes filtres que `units` (propriétaire, présence, qualité, vente, article, lot, emplacement, recherche). Au-delà de 250 000 lignes : 400 `INVALID_INPUT` avec `details.maxRows`, jamais un fichier tronqué |
 | GET | `units/:id` | | | `UnitDetail` (codes, mouvements, tâche, prix, écarts, impressions) |
 | GET | `units/:id/label?format=pdf\|svg` | | | étiquette 50 × 30 mm |
 | POST | `units/:id/qc` · `sale` · `condition` · `owner` · `item` · `missing` · `out` · `relocate` · `reprint` · `confirm-label` · `external-ref` | O | `{ opKey, expectedVersion?, reason?, note?, … }` | `{ unit, opKey, replayed }` |
@@ -109,7 +109,7 @@ Colonnes : **A** = réservé à l'administration ; **O** = geste physique (opér
 | GET | `batches/:id` | | | `BatchDetail` (`totals`, `lines`, `sessions`, `openSession`) |
 | POST | `batches/:id/lines` · `status` · `close` | O | `{ lines[] }` · `{ action: PAUSE\|RESUME\|CANCEL }` · `{ reason? }` | |
 | POST | `batches/:id/receive` | O | `{ opKey, itemId, lineId?, locationId?, condition?, boxCondition?, hold?, print? }` | `{ unit, print, taskId, line, exception }` |
-| POST | `batches/:id/sessions` | O | `{ locationId, takeOver? }` | `{ session, resumed }` |
+| POST | `batches/:id/sessions` | O | `{ locationId, takeOver? }` | `{ session, resumed }` ; 409 `SESSION_CONFLICT` avec `details.takeOver` si le comptage est tenu par un autre poste ; après reprise, les scans de l'ancien poste reçoivent 409 `details.takenOver` |
 | GET | `sessions/:id` | | | `CountSessionView` |
 | POST | `sessions/:id/create-unit` | O | `{ opKey, itemId, condition?, boxCondition?, ownerUncertain?, print? }` | `{ unit, print, countedInSession, exceptions }` |
 | POST | `sessions/:id/scan-unit` | O | `{ opKey, unitId, confirmMove?, acknowledgeOwner? }` | `{ result, unit, countedInSession, message }` ; `CONFIRMATION_REQUIRED` + `details.confirm` |
@@ -126,7 +126,7 @@ Colonnes : **A** = réservé à l'administration ; **O** = geste physique (opér
 | GET | `print-jobs?siteId=&stationId=&status=&objectId=` · `print-jobs/:id/label` | | | `PrintJobRow[]` · PDF |
 | POST | `print-jobs/:id/action` | O | `{ action: RETRY\|CANCEL\|REROUTE\|CONFIRM\|NOT_PRINTED\|MANUAL_SENT, printerId?, stationId? }` | `PrintJobRow` |
 | GET/POST | `agent/me` · `agent/claim` · `agent/report` | P | `{ jobId, claimToken, outcome: SENT\|FAILED, error? }` | `claim` → `{ job \| null }` avec `pdfBase64` et `printer` |
-| GET/POST/PATCH | `operators` · `operators/:id` · `operators/login` | A (écriture) | `{ operatorId, pin? }` | `login` → `{ operator, token }` |
+| GET/POST/PATCH | `operators` · `operators/:id` · `operators/login` | A (écriture) | `{ operatorId, pin? }` | `login` → `{ operator, token }` ; 401 si PIN faux, 429 `details.pinLocked` après 5 essais erronés (5 min) |
 | GET | `partners` · `partners/:id/agreements` | | | partenaires + compteurs + accord actif |
 | POST | `partners/:id/agreements` | A | `AgreementInput` | nouvelle version, l'ancienne est close |
 | GET | `prices?partnerId=&itemId=&only=UNPRICED\|PROPOSED\|PRICED` | | | `{ items: PartnerPriceRow[], nextCursor }` |
@@ -134,8 +134,8 @@ Colonnes : **A** = réservé à l'administration ; **O** = geste physique (opér
 | POST | `prices/stockx-proposal` | A | `{ opKey, partnerId, itemId, basisAmount, basisCurrency, basisRef, basisIncludesFees, basisObservedAt, factor? }` | propositions à valider, jamais appliquées seules |
 | POST | `prices/:id/decide` | A | `{ decision: VALIDATE\|REJECT, note? }` | |
 | GET/POST | `requests?partnerId=&status=` · `requests/:id/answer` | A (POST) | `{ response, status? }` | |
-| GET/POST | `transfers` · `transfers/:id` · `transfers/:id/ship` · `transfers/receive` · `transfers/missing` | A / O | `{ fromSiteId, toSiteId }` · `{ opKey, unitId }` · `{ opKey, unitId, toLocationId }` | la paire garde son UUID et son QR |
-| POST/GET | `imports/preview` · `imports/:id` · `imports/:id/apply` | | `{ kind: LOCATIONS\|BATCH_LINES, targetId, filename, csv }` | `ImportView` ; reprise sans doublon |
+| GET/POST | `transfers` · `transfers/:id` · `transfers/:id/ship` · `transfers/receive` · `transfers/missing` | A / O | `{ fromSiteId, toSiteId }` · `{ opKey, unitId }` · `{ opKey, unitId, toLocationId }` | la paire garde son UUID et son QR ; `receive` accepte aussi une paire déclarée manquante sur son transfert (arrivée tardive) |
+| POST/GET | `imports/preview` · `imports/:id` · `imports/:id/apply` | | `{ kind: LOCATIONS\|BATCH_LINES, targetId, filename, csv }` | `ImportView` ; reprise sans doublon ; `LOCATIONS` : aperçu et application réservés à l'administration |
 | GET/POST | `journal` · `journal/export` · `journal/reconcile` | A (reconcile) | `{ dryRun? }` | état du journal d'émission. L'export part tout seul après chaque émission et avant chaque prise de job ; `journal/export` reste disponible à la main. |
 
 ### Ajouts issus de la revue M2

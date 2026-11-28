@@ -12,6 +12,7 @@ import { getOverview } from "../overview";
 import * as partnerView from "../partnerView";
 import * as printing from "../printing";
 import * as putaway from "../putaway";
+import * as transfers from "../transfers";
 import type { CatalogCandidate } from "../types";
 import * as units from "../units";
 import { HAS_DB, admin, closeTestDb, count, expectCode, makeItem, makeReceivingBatch, makeWorld, op, randomGtin, receiveOne, testDb, type World } from "./harness";
@@ -649,6 +650,67 @@ d("M2 — count against a reserved place (C39)", () => {
     const done = await putaway.confirmPutaway(w.db, { opKey: op("put"), unitId: waiting.unit.id, locationId: next.proposedLocationId as string }, w.ctx);
     expect(done.unit.currentLocationId).toBe(next.proposedLocationId);
     expect(await count(w.db, `"WarehouseLocation" WHERE "siteId" = $1 AND ("occupiedCount" < 0 OR "reservedCount" < 0)`, w.site.id)).toBe(0);
+  });
+});
+
+d("Review follow-up — expected lines and transfers", () => {
+  it("a line named by hand is checked: a box is never counted against another variant's line, nor a closed one", async () => {
+    const w = await makeWorld();
+    const expected = await makeItem(w.db);
+    const other = await makeItem(w.db);
+    const batch = await makeReceivingBatch(w);
+    const [line] = await batches.addBatchLines(w.db, batch.id, [{ itemId: expected.id, expectedQty: 2 }]);
+
+    const wrong = await expectCode(batches.receiveUnit(w.db, { opKey: op("rcv"), batchId: batch.id, itemId: other.id, lineId: line.id }, w.ctx), "CONFLICT");
+    expect(wrong.details).toMatchObject({ lineId: line.id, wrongVariant: true });
+    expect(await count(w.db, `"WarehouseUnit" WHERE "originBatchId" = $1`, batch.id)).toBe(0);
+    expect((await batches.listBatchLines(w.db, batch.id))[0].receivedQty).toBe(0);
+
+    const right = await batches.receiveUnit(w.db, { opKey: op("rcv"), batchId: batch.id, itemId: expected.id, lineId: line.id }, w.ctx);
+    expect(right.unit.itemId).toBe(expected.id);
+    expect((await batches.listBatchLines(w.db, batch.id))[0].receivedQty).toBe(1);
+
+    await w.db.$executeRaw`UPDATE "WarehouseBatchLine" SET "status" = 'CLOSED' WHERE "id" = ${line.id}`;
+    await expectCode(batches.receiveUnit(w.db, { opKey: op("rcv"), batchId: batch.id, itemId: expected.id, lineId: line.id }, w.ctx), "CONFLICT");
+    expect(await count(w.db, `"WarehouseUnit" WHERE "originBatchId" = $1`, batch.id)).toBe(1);
+  });
+
+  it("a pair declared missing on its transfer and found at destination is received late, on the same transfer", async () => {
+    const from = await makeWorld();
+    const to = await makeWorld();
+    const item = await makeItem(from.db);
+    const batch = await makeReceivingBatch(from);
+    const r = await receiveOne(from, batch.id, item.id);
+    const transfer = await transfers.createTransfer(from.db, { fromSiteId: from.site.id, toSiteId: to.site.id });
+    await transfers.shipTransferUnit(from.db, { opKey: op("trf"), transferId: transfer.id, unitId: r.unit.id }, from.ctx);
+
+    // In transit: no stock exit that would leave the transfer open for ever.
+    await expectCode(units.markUnitOut(from.db, { opKey: op("out"), unitId: r.unit.id, outReason: "OTHER", reason: "Perdue en route" }, admin), "UNIT_STATE_CONFLICT");
+    expect((await transfers.getTransfer(from.db, transfer.id)).status).toBe("IN_TRANSIT");
+
+    const missing = await transfers.markTransferUnitMissing(to.db, { opKey: op("mis"), unitId: r.unit.id, reason: "Absente du carton" }, to.ctx);
+    expect(missing.unit.presence).toBe("MISSING");
+    expect((await transfers.getTransfer(to.db, transfer.id)).status).toBe("PARTIAL");
+    // The ordinary "found" gesture cannot change site…
+    await expectCode(putaway.relocateUnit(to.db, { opKey: op("fnd"), unitId: r.unit.id, toLocationId: to.receiving.id, reason: "Retrouvée" }, to.ctx), "SITE_MISMATCH");
+
+    // …the transfer reception can: the pair gets its address, the transfer and the discrepancy close.
+    const late = await transfers.receiveTransferUnit(to.db, { opKey: op("trf"), unitId: r.unit.id, toLocationId: to.receiving.id }, to.ctx);
+    expect(late.unit.presence).toBe("PRESENT");
+    expect(late.unit.currentSiteCode).toBe(to.site.code);
+    expect(late.transferReference).toBe(transfer.reference);
+    expect(late.taskId).toBeTruthy();
+    expect((await transfers.getTransfer(to.db, transfer.id)).status).toBe("RECEIVED");
+    expect(await count(to.db, `"WarehouseException" WHERE "unitId" = $1 AND "type" = 'UNIT_NOT_FOUND' AND "status" = 'OPEN'`, r.unit.id)).toBe(0);
+    expect(await count(to.db, `"WarehouseException" WHERE "id" = $1 AND "status" = 'RESOLVED'`, missing.exceptionId)).toBe(1);
+    const detail = await units.getUnitDetail(to.db, r.unit.id);
+    expect(detail.movements.map((m) => m.type)).toEqual(expect.arrayContaining(["TRANSFER_OUT", "MARK_MISSING", "TRANSFER_IN"]));
+    expect((await locations.getLocation(to.db, to.receiving.id)).occupiedCount).toBe(1);
+
+    // A pair lost on its own site (no transfer) is not a late arrival.
+    const local = await receiveOne(from, batch.id, item.id);
+    await units.markUnitMissing(from.db, { opKey: op("mis"), unitId: local.unit.id, reason: "Introuvable au rayon" }, from.ctx);
+    await expectCode(transfers.receiveTransferUnit(to.db, { opKey: op("trf"), unitId: local.unit.id, toLocationId: to.receiving.id }, to.ctx), "UNIT_STATE_CONFLICT");
   });
 });
 

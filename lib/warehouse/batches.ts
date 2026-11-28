@@ -394,9 +394,17 @@ export async function receiveUnit(db: WarehouseDb, input: ReceiveUnitInput, ctx:
     let line: { id: string; lineNo: number; expectedQty: number | null; receivedQty: number } | null = null;
     if (input.lineId) {
       const rows = await tx.$queryRaw<any[]>(Prisma.sql`
-        SELECT "id", "lineNo", "expectedQty", "receivedQty" FROM "WarehouseBatchLine"
-        WHERE "id" = ${input.lineId} AND "batchId" = ${batch.id} FOR UPDATE`);
+        SELECT bl."id", bl."lineNo", bl."expectedQty", bl."receivedQty", bl."status",
+               (bl."itemId" = ${item[0].id} OR (bl."itemId" IS NULL AND bl."gtin" IS NOT NULL AND bl."gtin" IN (
+                  SELECT "value" FROM "WarehouseItemAlias" WHERE "itemId" = ${item[0].id} AND "namespace" = 'GTIN'))) AS "sameVariant"
+        FROM "WarehouseBatchLine" bl
+        WHERE bl."id" = ${input.lineId} AND bl."batchId" = ${batch.id} FOR UPDATE OF bl`);
       if (!rows[0]) throw notFound("Ligne attendue");
+      // A line named by hand is still checked: a box is never counted against another variant's line.
+      if (rows[0].status !== "OPEN") throw conflict("CONFLICT", `La ligne ${rows[0].lineNo} est close : la boîte n'y est pas rattachée.`, { lineId: rows[0].id });
+      if (!rows[0].sameVariant) {
+        throw conflict("CONFLICT", `La ligne ${rows[0].lineNo} attend une autre variante que cette boîte. Rien n'a été enregistré.`, { lineId: rows[0].id, wrongVariant: true });
+      }
       line = rows[0];
     } else if (batch.expectedKnown) {
       const rows = await tx.$queryRaw<any[]>(Prisma.sql`
@@ -555,16 +563,17 @@ export async function openCountSession(
       if (s.batchId !== batch.id) {
         throw conflict("SESSION_CONFLICT", `${loc.code} est en cours de comptage dans un autre lot : le clôturer d'abord.`, { sessionId: s.id, batchId: s.batchId });
       }
-      const otherStation = s.stationId && ctx.stationId && s.stationId !== ctx.stationId;
+      const otherStation = isOtherDesk(s, ctx);
       if (otherStation && !input.takeOver) {
         throw conflict("SESSION_CONFLICT", `${loc.code} est déjà en cours de comptage sur un autre poste. Reprendre la session uniquement si ce poste a arrêté.`, {
           sessionId: s.id,
           stationId: s.stationId,
+          takeOver: true,
         });
       }
       if (otherStation || (ctx.operatorId && ctx.operatorId !== s.operatorId)) {
         await tx.$executeRaw(Prisma.sql`
-          UPDATE "WarehouseCountSession" SET "stationId" = ${ctx.stationId ?? s.stationId}, "operatorId" = ${ctx.operatorId ?? s.operatorId} WHERE "id" = ${s.id}`);
+          UPDATE "WarehouseCountSession" SET "stationId" = ${otherStation ? (ctx.stationId ?? null) : s.stationId}, "operatorId" = ${ctx.operatorId ?? s.operatorId} WHERE "id" = ${s.id}`);
       }
       // Scanning the level again is the proof of context a stale session asks for (A32).
       await tx.$executeRaw(Prisma.sql`UPDATE "WarehouseCountSession" SET "lastActivityAt" = now() WHERE "id" = ${s.id}`);
@@ -592,6 +601,17 @@ export async function openCountSession(
 type OpenSession = { id: string; batchId: string; locationId: string; round: number; status: string; siteId: string; locationCode: string; locationKind: LocationKind };
 
 /**
+ * Is this gesture coming from another desk than the one holding the count (A04)? Another desk is a
+ * different paired station, a browser without station against a station's session (or the reverse),
+ * or — when neither side is paired — a different identified person. Two unpaired browsers with no
+ * operator cannot be told apart: pairing the stations is what makes the rule exact.
+ */
+function isOtherDesk(session: { stationId: string | null; operatorId: string | null }, ctx: ActorContext): boolean {
+  if ((session.stationId ?? null) !== (ctx.stationId ?? null)) return true;
+  return !session.stationId && Boolean(session.operatorId) && Boolean(ctx.operatorId) && session.operatorId !== ctx.operatorId;
+}
+
+/**
  * Lock the open count session for this gesture (one station counts a level: gestures of a
  * session are serialised) and refresh its activity mark.
  *
@@ -599,15 +619,24 @@ type OpenSession = { id: string; batchId: string; locationId: string; round: num
  * the gesture is refused with SESSION_STALE and writes nothing; the operator scans the level
  * code again (openCountSession resumes the same session), which proves where they stand.
  */
-async function requireOpenSessionTx(tx: WarehouseTx, sessionId: string): Promise<OpenSession> {
-  const rows = await tx.$queryRaw<(OpenSession & { idleSeconds: number })[]>(Prisma.sql`
-    SELECT cs."id", cs."batchId", cs."locationId", cs."round", cs."status", l."siteId", l."code" AS "locationCode", l."kind" AS "locationKind",
+async function requireOpenSessionTx(tx: WarehouseTx, sessionId: string, ctx: ActorContext): Promise<OpenSession> {
+  const rows = await tx.$queryRaw<(OpenSession & { idleSeconds: number; stationId: string | null; operatorId: string | null })[]>(Prisma.sql`
+    SELECT cs."id", cs."batchId", cs."locationId", cs."round", cs."status", cs."stationId", cs."operatorId", l."siteId", l."code" AS "locationCode", l."kind" AS "locationKind",
            GREATEST(0, EXTRACT(EPOCH FROM (now() - cs."lastActivityAt")))::int AS "idleSeconds"
     FROM "WarehouseCountSession" cs JOIN "WarehouseLocation" l ON l."id" = cs."locationId"
     WHERE cs."id" = ${sessionId} FOR UPDATE OF cs`);
   if (!rows[0]) throw notFound("Session de comptage");
   if (rows[0].status !== "OPEN") {
     throw conflict("SESSION_CONFLICT", "Cette session de comptage est close : rescanner le niveau pour en ouvrir une nouvelle.");
+  }
+  // The count was taken over elsewhere: the desk it was taken from stops writing into it.
+  if (isOtherDesk(rows[0], ctx)) {
+    throw conflict("SESSION_CONFLICT", `Le comptage de ${rows[0].locationCode} a été repris sur un autre poste : rescanner le code du niveau pour le reprendre ici. Rien n'a été enregistré.`, {
+      sessionId: rows[0].id,
+      locationId: rows[0].locationId,
+      locationCode: rows[0].locationCode,
+      takenOver: true,
+    });
   }
   const idleMinutes = Math.floor(rows[0].idleSeconds / 60);
   if (idleMinutes >= countSessionIdleMinutes()) {
@@ -681,7 +710,7 @@ export type StockTakeCreateResult = {
  */
 export async function stockTakeCreateUnit(db: WarehouseDb, input: StockTakeCreateInput, ctx: ActorContext): Promise<OperationResult<StockTakeCreateResult>> {
   return runOperation(db, { opKey: input.opKey, kind: "STOCK_TAKE_CREATE", request: input, ctx }, async (tx) => {
-    const session = await requireOpenSessionTx(tx, input.sessionId);
+    const session = await requireOpenSessionTx(tx, input.sessionId, ctx);
     const batch = await requireOpenBatchTx(tx, session.batchId, "STOCK_TAKE");
     const item = await tx.$queryRaw<{ id: string; status: string }[]>(Prisma.sql`SELECT "id", "status" FROM "WarehouseItem" WHERE "id" = ${input.itemId}`);
     if (!item[0] || item[0].status === "MERGED") throw notFound("Article");
@@ -789,7 +818,7 @@ export async function stockTakeScanUnit(
   ctx: ActorContext
 ): Promise<OperationResult<StockTakeScanResult>> {
   return runOperation(db, { opKey: input.opKey, kind: "STOCK_TAKE_SCAN", request: input, ctx }, async (tx) => {
-    const session = await requireOpenSessionTx(tx, input.sessionId);
+    const session = await requireOpenSessionTx(tx, input.sessionId, ctx);
     const batch = await requireOpenBatchTx(tx, session.batchId, "STOCK_TAKE");
     const unit = await lockUnitTx(tx, input.unitId);
     const counted = async () =>

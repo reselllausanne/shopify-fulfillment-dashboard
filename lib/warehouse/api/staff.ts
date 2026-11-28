@@ -40,7 +40,10 @@ import {
  *  station  : called by the print agent with the station credential
  */
 
-const stationIdOf = (c: StaffCall): string | null => c.station?.id ?? str(c.body.stationId) ?? null;
+// The station of a gesture is the one this browser is paired with. Only an administrator may name
+// another station in the request (printing level labels for a desk from the office): a logistics
+// session cannot queue labels on a station it does not hold.
+const stationIdOf = (c: StaffCall): string | null => c.station?.id ?? (c.ctx.role === "admin" ? str(c.body.stationId) : null) ?? null;
 
 const labelFile = (payloads: { payload: LabelPayload; widthMm: number; heightMm: number }[], format: string | undefined, name: string) => {
   if (payloads.length === 0) throw invalid("Aucune étiquette à produire.");
@@ -244,7 +247,14 @@ const routes: StaffRoute[] = [
     method: "POST",
     path: "locations/:id/status",
     operator: true,
-    handler: (c) => locations.setLocationStatus(c.db, c.params.id, { status: reqStr(c.body.status, "Statut") as any, reason: str(c.body.reason) }, c.ctx),
+    handler: (c) => {
+      const status = reqStr(c.body.status, "Statut");
+      // Blocking and unblocking are floor gestures; retiring a level cannot be undone.
+      if (status === "RETIRED" && c.ctx.role !== "admin") {
+        throw new WarehouseError("FORBIDDEN", "Retirer un niveau est définitif : réservé à l'administration. Pour l'instant, bloquez-le.", 403);
+      }
+      return locations.setLocationStatus(c.db, c.params.id, { status: status as any, reason: str(c.body.reason) }, c.ctx);
+    },
   },
 
   // ---- catalog / items ----
@@ -345,6 +355,11 @@ const routes: StaffRoute[] = [
         ownerKind: str(c.query.get("ownerKind")) as any,
         ownerPartnerId: str(c.query.get("ownerPartnerId")),
         presence: (list(c.query.get("presence")) as any) ?? undefined,
+        qcState: str(c.query.get("qcState")) as any,
+        saleState: str(c.query.get("saleState")) as any,
+        itemId: str(c.query.get("itemId")),
+        locationId: str(c.query.get("locationId")),
+        batchId: str(c.query.get("batchId")),
         search: str(c.query.get("search")),
       });
       return fileResponse(csv, "text/csv; charset=utf-8", "stock-entrepot.csv");
@@ -992,7 +1007,18 @@ const routes: StaffRoute[] = [
     },
   },
   { method: "GET", path: "imports/:id", handler: (c) => imports.getImport(c.db, c.params.id) },
-  { method: "POST", path: "imports/:id/apply", handler: (c) => imports.applyImport(c.db, { importId: c.params.id, maxRows: int(c.body.maxRows) }) },
+  {
+    method: "POST",
+    path: "imports/:id/apply",
+    handler: async (c) => {
+      // Applying a file of addresses creates racks: same right as creating them by hand.
+      const imp = await imports.getImport(c.db, c.params.id);
+      if (imp.kind === "LOCATIONS" && c.ctx.role !== "admin") {
+        throw new WarehouseError("FORBIDDEN", "L'import d'emplacements est réservé à l'administration.", 403);
+      }
+      return imports.applyImport(c.db, { importId: c.params.id, maxRows: int(c.body.maxRows) });
+    },
+  },
 
   // ---- label issuance journal ----
   { method: "GET", path: "journal", handler: (c) => journal.getJournalStatus(c.db) },

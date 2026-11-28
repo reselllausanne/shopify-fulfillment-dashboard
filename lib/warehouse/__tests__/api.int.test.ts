@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as journal from "../journal";
 import * as operators from "../operators";
 import * as printing from "../printing";
-import { HAS_DB, TEST_URL, admin, closeTestDb, expectCode, makeItem, makePartner, makeReceivingBatch, makeWorld, op, receiveOne, type World } from "./harness";
+import { HAS_DB, TEST_URL, admin, closeTestDb, count, expectCode, makeItem, makePartner, makeReceivingBatch, makeWorld, op, receiveOne, type World } from "./harness";
 
 /**
  * HTTP-level checks of the two entry points: module flag, staff / partner sessions, roles,
@@ -213,6 +213,27 @@ d("staff API — access rules", () => {
     expect(detail.json.data.movements[0].operatorName).toBe("Camille");
     expect(detail.json.data.movements.length).toBe(1);
 
+    // A short PIN cannot be guessed by trying: five wrong codes lock the operator, even for the right code.
+    operators.resetPinThrottle();
+    const t0 = Date.now();
+    for (let i = 0; i < operators.PIN_MAX_FAILURES; i += 1) {
+      expect(await operators.verifyOperator(w.db, { operatorId: operator.id, pin: `99${i}0` }, t0)).toBeNull();
+    }
+    const locked = await staff("operators/login", { method: "POST", cookie: logisticsCookie, body: { operatorId: operator.id, pin: "4821" } });
+    expect(locked.status).toBe(429);
+    expect(locked.json.error.details).toMatchObject({ pinLocked: true });
+    expect(locked.json.error.details.retryAfterSeconds).toBeGreaterThan(0);
+    // The token already issued keeps working: the lock is on guessing, not on the person scanning.
+    const whileLocked = await staff(`units/${done.json.data.unit.id}`, { cookie: logisticsCookie, headers: { "x-warehouse-operator": token } });
+    expect(whileLocked.status).toBe(200);
+    // After the delay the right code works again and clears the count.
+    expect((await operators.verifyOperator(w.db, { operatorId: operator.id, pin: "4821" }, t0 + operators.PIN_LOCK_MS + 1))?.id).toBe(operator.id);
+    // An administrator who sets a new PIN lifts the lock at once.
+    for (let i = 0; i < operators.PIN_MAX_FAILURES; i += 1) await operators.verifyOperator(w.db, { operatorId: operator.id, pin: "0000" });
+    expect((await staff("operators/login", { method: "POST", cookie: logisticsCookie, body: { operatorId: operator.id, pin: "4821" } })).status).toBe(429);
+    await operators.updateOperator(w.db, operator.id, { pin: "4821" });
+    expect((await staff("operators/login", { method: "POST", cookie: logisticsCookie, body: { operatorId: operator.id, pin: "4821" } })).status).toBe(200);
+
     // C16: the last active operator cannot be switched off — anonymous gestures never come back by accident.
     await expectCode(operators.updateOperator(w.db, operator.id, { active: false }), "CONFLICT");
     expect((await operators.listOperators(w.db, { activeOnly: true })).map((o) => o.id)).toEqual([operator.id]);
@@ -229,6 +250,75 @@ d("staff API — access rules", () => {
     } finally {
       await noActiveOperator();
     }
+  });
+
+  it("irreversible or structural gestures need the admin role on the server, not only a hidden button", async () => {
+    const world = await makeWorld();
+    const level = world.levels[0];
+
+    // Blocking is a floor gesture; retiring a level cannot be undone.
+    const block = await staff(`locations/${level.id}/status`, { method: "POST", cookie: logisticsCookie, body: { status: "BLOCKED", reason: "Étagère abîmée" } });
+    expect(block.status).toBe(200);
+    const retire = await staff(`locations/${level.id}/status`, { method: "POST", cookie: logisticsCookie, body: { status: "RETIRED", reason: "Étagère démontée" } });
+    expect(retire.status).toBe(403);
+    expect((await staff(`locations/${level.id}`, { cookie: logisticsCookie })).json.data.location.status).toBe("BLOCKED");
+    const retired = await staff(`locations/${level.id}/status`, { method: "POST", cookie: adminCookie, body: { status: "RETIRED", reason: "Étagère démontée" } });
+    expect(retired.status).toBe(200);
+
+    // A file of addresses previewed by an admin cannot be applied by a logistics session.
+    const preview = await staff("imports/preview", {
+      method: "POST",
+      cookie: adminCookie,
+      body: { kind: "LOCATIONS", targetId: world.site.id, filename: "racks.csv", csv: "secteur,rangée,rack,niveau,capacité\nK,1,1,1,8\n" },
+    });
+    expect(preview.status).toBe(200);
+    const importId = preview.json.data.id as string;
+    const before = await count(world.db, `"WarehouseLocation" WHERE "siteId" = $1`, world.site.id);
+    const refused = await staff(`imports/${importId}/apply`, { method: "POST", cookie: logisticsCookie, body: {} });
+    expect(refused.status).toBe(403);
+    expect(await count(world.db, `"WarehouseLocation" WHERE "siteId" = $1`, world.site.id)).toBe(before);
+    const applied = await staff(`imports/${importId}/apply`, { method: "POST", cookie: adminCookie, body: {} });
+    expect(applied.status).toBe(200);
+    expect(applied.json.data.appliedRows).toBe(1);
+
+    // C14: a logistics session cannot name a station this browser is not paired with. (The test
+    // world routes no printer for level labels: "NO_ROUTE" means the station was recognised.)
+    const target = world.levels[1].id;
+    const labels = (cookie: string, body: Record<string, unknown>, headers?: Record<string, string>) =>
+      staff("locations/print-labels", { method: "POST", cookie, body: { opKey: op("lbl"), locationIds: [target], ...body }, headers });
+    const named = await labels(logisticsCookie, { stationId: world.station.id });
+    expect(named.status).toBe(200);
+    expect(named.json.data.jobs[0]).toMatchObject({ status: "NOT_QUEUED", reason: "NO_STATION" });
+    const { credential } = await printing.pairStation(world.db, world.station.id);
+    const paired = await labels(logisticsCookie, {}, { "x-warehouse-station": credential });
+    expect(paired.json.data.jobs[0]).toMatchObject({ status: "NOT_QUEUED", reason: "NO_ROUTE" });
+    // The office (admin) may still send a batch of level labels to a desk it names.
+    const office = await labels(adminCookie, { stationId: world.station.id });
+    expect(office.json.data.jobs[0]).toMatchObject({ status: "NOT_QUEUED", reason: "NO_ROUTE" });
+  });
+
+  it("the stock export follows every filter of the list it is launched from", async () => {
+    const world = await makeWorld();
+    const [a, b] = [await makeItem(world.db), await makeItem(world.db)];
+    const batch = await makeReceivingBatch(world);
+    const ua = await receiveOne(world, batch.id, a.id);
+    const ub = await receiveOne(world, batch.id, b.id);
+    const lines = async (query: string) => {
+      const res = await handleStaff(request(`/api/warehouse/units/export?${query}`, { cookie: logisticsCookie }), ["units", "export"]);
+      expect(res.status).toBe(200);
+      return (await res.text()).replace(/^\uFEFF/, "").trim().split(/\r?\n/).slice(1);
+    };
+    expect(await lines(`siteId=${world.site.id}`)).toHaveLength(2);
+    const onlyA = await lines(`siteId=${world.site.id}&itemId=${a.id}`);
+    expect(onlyA).toHaveLength(1);
+    expect(onlyA[0]).toContain(ua.unit.labelCode);
+    expect(onlyA[0]).not.toContain(ub.unit.labelCode);
+    expect(await lines(`siteId=${world.site.id}&batchId=${batch.id}`)).toHaveLength(2);
+    expect(await lines(`siteId=${world.site.id}&locationId=${world.levels[0].id}`)).toHaveLength(0);
+    expect(await lines(`siteId=${world.site.id}&qcState=QUARANTINE`)).toHaveLength(0);
+    // The screen list with the same filter agrees.
+    const list = await staff(`units?siteId=${world.site.id}&itemId=${a.id}`, { cookie: logisticsCookie });
+    expect(list.json.data.items.map((u: any) => u.id)).toEqual([ua.unit.id]);
   });
 
   it("the print agent must prove its station; it only gets and reports its own jobs", async () => {

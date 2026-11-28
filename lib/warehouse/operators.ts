@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { WarehouseConn, WarehouseDb } from "./db";
-import { conflict, invalid, isUniqueViolation, notFound } from "./errors";
+import { WarehouseError, conflict, invalid, isUniqueViolation, notFound } from "./errors";
 import { assertWritesEnabled } from "./operations";
 
 /**
@@ -79,16 +79,46 @@ export async function updateOperator(
   await db.$executeRaw(Prisma.sql`
     UPDATE "WarehouseOperator" SET "name" = ${patch.name?.trim() || rows[0].name}, "active" = ${patch.active ?? rows[0].active},
       "pinHash" = ${pinHash}, "updatedAt" = now() WHERE "id" = ${operatorId}`);
+  if (patch.pin !== undefined) pinFailures.delete(operatorId);
   return (await listOperators(db)).find((o) => o.id === operatorId) as OperatorRow;
 }
 
-/** Identify the person at the desk. Returns the operator when active and the PIN (if any) matches. */
-export async function verifyOperator(conn: WarehouseConn, input: { operatorId: string; pin?: string | null }): Promise<OperatorRow | null> {
+/** Wrong PINs in a row before an operator is locked, and for how long. Kept in the process: a restart clears it. */
+export const PIN_MAX_FAILURES = 5;
+export const PIN_LOCK_MS = 5 * 60_000;
+const pinFailures = new Map<string, { count: number; lockedUntil: number }>();
+
+/** Test seam. */
+export function resetPinThrottle(): void {
+  pinFailures.clear();
+}
+
+/**
+ * Identify the person at the desk. Returns the operator when active and the PIN (if any) matches.
+ * A 4-digit PIN is short: after `PIN_MAX_FAILURES` wrong codes in a row the operator is locked for
+ * `PIN_LOCK_MS`, and even the right code is refused until then.
+ */
+export async function verifyOperator(conn: WarehouseConn, input: { operatorId: string; pin?: string | null }, now: number = Date.now()): Promise<OperatorRow | null> {
   const rows = await conn.$queryRaw<any[]>(Prisma.sql`
     SELECT "id", "code", "name", "active", "pinHash", "createdAt" FROM "WarehouseOperator" WHERE "id" = ${input.operatorId}`);
   const op = rows[0];
   if (!op || !op.active) return null;
-  if (op.pinHash && !checkPin(String(input.pin ?? ""), op.pinHash)) return null;
+  if (op.pinHash) {
+    const state = pinFailures.get(op.id);
+    if (state && state.lockedUntil > now) {
+      const retryAfterSeconds = Math.ceil((state.lockedUntil - now) / 1000);
+      throw new WarehouseError("UNAUTHORIZED", `Trop de codes PIN erronés pour ${op.name}. Réessayer dans ${Math.ceil(retryAfterSeconds / 60)} min, ou demander à l'administration de changer le code.`, 429, {
+        pinLocked: true,
+        retryAfterSeconds,
+      });
+    }
+    if (!checkPin(String(input.pin ?? ""), op.pinHash)) {
+      const count = (state?.count ?? 0) + 1;
+      pinFailures.set(op.id, count >= PIN_MAX_FAILURES ? { count: 0, lockedUntil: now + PIN_LOCK_MS } : { count, lockedUntil: 0 });
+      return null;
+    }
+    pinFailures.delete(op.id);
+  }
   return toRow(op);
 }
 

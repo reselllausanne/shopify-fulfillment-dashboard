@@ -1135,6 +1135,10 @@ export async function markUnitOut(
     const unit = await lockUnitTx(tx, input.unitId);
     assertExpectedVersion(unit, input.expectedVersion);
     if (unit.presence === "OUT") return done(tx, unit.id);
+    if (unit.presence === "IN_TRANSIT") {
+      // Its transfer line would stay "in transit" for ever and the transfer would never close.
+      throw conflict("UNIT_STATE_CONFLICT", "Paire en transit entre sites : la réceptionner ou la déclarer manquante sur le transfert avant la sortie.", { presence: unit.presence });
+    }
     const active = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
       SELECT "id" FROM "WarehouseSaleAllocation" WHERE "unitId" = ${unit.id} AND "status" = 'ACTIVE'`);
     if (active[0] && input.outReason !== "SOLD") {

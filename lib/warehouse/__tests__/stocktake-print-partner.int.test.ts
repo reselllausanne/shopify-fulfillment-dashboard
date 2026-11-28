@@ -4,6 +4,7 @@ import { archiveOutUnitHistory, getArchivedMovements } from "../archive";
 import * as batches from "../batches";
 import * as exceptions from "../exceptions";
 import * as imports from "../imports";
+import { getOverview } from "../overview";
 import * as locations from "../locations";
 import * as partnerView from "../partnerView";
 import * as pricing from "../pricing";
@@ -69,6 +70,22 @@ d("stock-take of pairs already on the shelves (pilot flow)", () => {
     await expectCode(batches.openCountSession(w.db, { batchId: batch.id, locationId: level.id }, w.ctx2), "SESSION_CONFLICT");
     const taken = await batches.openCountSession(w.db, { batchId: batch.id, locationId: level.id, takeOver: true }, w.ctx2);
     expect(taken.session.id).toBe(first.session.id);
+    // A04: a browser with no paired station does not slip into a station's count either.
+    const unpaired = { ...w.ctx, stationId: null };
+    const refused = await expectCode(batches.openCountSession(w.db, { batchId: batch.id, locationId: level.id }, unpaired), "SESSION_CONFLICT");
+    expect(refused.details).toMatchObject({ sessionId: first.session.id, takeOver: true });
+    expect((await batches.openCountSession(w.db, { batchId: batch.id, locationId: level.id, takeOver: true }, unpaired)).resumed).toBe(true);
+    // The desk the count was taken from stops writing into it: nothing recorded, told to rescan the level.
+    const item = await makeItem(w.db);
+    const late = await expectCode(batches.stockTakeCreateUnit(w.db, { opKey: op("st"), sessionId: first.session.id, itemId: item.id }, w.ctx2), "SESSION_CONFLICT");
+    expect(late.details).toMatchObject({ takenOver: true });
+    expect(await count(w.db, `"WarehouseUnit" WHERE "originBatchId" = $1`, batch.id)).toBe(0);
+    const here = await batches.stockTakeCreateUnit(w.db, { opKey: op("st"), sessionId: first.session.id, itemId: item.id }, unpaired);
+    expect(here.unit.currentLocationId).toBe(level.id);
+    // …and the station it was taken from must ask in turn.
+    await expectCode(batches.openCountSession(w.db, { batchId: batch.id, locationId: level.id }, w.ctx2), "SESSION_CONFLICT");
+    // Same unpaired browser again: a plain resume.
+    expect((await batches.openCountSession(w.db, { batchId: batch.id, locationId: level.id }, unpaired)).resumed).toBe(true);
     // A rack or a row is not a countable position: only places that hold pairs are.
     const rack = (await locations.listLocations(w.db, { siteId: w.site.id, kinds: ["RACK"] })).items[0];
     await expectCode(batches.openCountSession(w.db, { batchId: batch.id, locationId: rack.id }, w.ctx), "LOCATION_NOT_USABLE");
@@ -281,6 +298,11 @@ d("label printing — station queue, failure and uncertainty", () => {
     expect(r.print.status).toBe("QUEUED");
     expect(await printing.claimNextPrintJob(w.db, { stationId: w.station.id })).toBeNull();
     const job = (await printing.listPrintJobs(w.db, { objectId: r.unit.id }))[0];
+    // Waiting for a hand print is not "the print station is closed": no stuck-queue alert, however old.
+    await w.db.$executeRaw`UPDATE "WarehousePrintJob" SET "createdAt" = now() - interval '1 hour' WHERE "id" = ${job.id}`;
+    const waiting = await getOverview(w.db, w.site.id);
+    expect(waiting.printing.queued).toBe(1);
+    expect(waiting.alerts.map((a) => a.code)).not.toContain("PRINT_QUEUE_STUCK");
     const sent = await printing.actOnPrintJob(w.db, { jobId: job.id, action: "MANUAL_SENT" }, w.ctx);
     expect(sent.status).toBe("SENT");
     expect((await units.getUnitSummary(w.db, r.unit.id)).labelPrintCount).toBe(1);

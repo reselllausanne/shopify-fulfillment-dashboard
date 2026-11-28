@@ -77,11 +77,14 @@ export async function getOverview(conn: WarehouseConn, siteIdOrCode: string): Pr
       SELECT "type", count(*)::int AS n FROM "WarehouseException"
       WHERE "status" = 'OPEN' AND ("siteId" = ${site.id} OR "siteId" IS NULL) GROUP BY "type"`),
     conn.$queryRaw<any[]>(Prisma.sql`
-      SELECT count(*) FILTER (WHERE "status" = 'QUEUED')::int AS "queued",
-             count(*) FILTER (WHERE "status" = 'FAILED')::int AS "failed",
-             count(*) FILTER (WHERE "status" = 'UNCERTAIN')::int AS "uncertain",
-             min("createdAt") FILTER (WHERE "status" = 'QUEUED') AS "oldestQueuedAt"
-      FROM "WarehousePrintJob" WHERE "siteId" = ${site.id} AND "status" IN ('QUEUED', 'FAILED', 'UNCERTAIN')`),
+      SELECT count(*) FILTER (WHERE j."status" = 'QUEUED')::int AS "queued",
+             count(*) FILTER (WHERE j."status" = 'FAILED')::int AS "failed",
+             count(*) FILTER (WHERE j."status" = 'UNCERTAIN')::int AS "uncertain",
+             -- A label waiting on a "PDF by hand" printer waits for a person, not for a station that is closed.
+             count(*) FILTER (WHERE j."status" = 'QUEUED' AND p."adapter" IS DISTINCT FROM 'PDF_MANUAL')::int AS "queuedAuto",
+             min(j."createdAt") FILTER (WHERE j."status" = 'QUEUED' AND p."adapter" IS DISTINCT FROM 'PDF_MANUAL') AS "oldestQueuedAt"
+      FROM "WarehousePrintJob" j LEFT JOIN "WarehousePrinter" p ON p."id" = j."printerId"
+      WHERE j."siteId" = ${site.id} AND j."status" IN ('QUEUED', 'FAILED', 'UNCERTAIN')`),
     conn.$queryRaw<any[]>(Prisma.sql`
       SELECT count(*)::int AS "pendingExport", min("issuedAt") AS "oldestPendingAt" FROM "WarehouseLabelJournal" WHERE "exportedAt" IS NULL`),
     conn.$queryRaw<{ n: number }[]>(Prisma.sql`SELECT count(*)::int AS n FROM "WarehousePartnerRequest" WHERE "status" = 'OPEN'`),
@@ -136,7 +139,7 @@ export async function getOverview(conn: WarehouseConn, siteIdOrCode: string): Pr
     alerts.push({ level: "warning", code: "PRINT_FAILED", message: "Impressions en échec à relancer ou rediriger.", count: pr.failed, href: "/warehouse/stations" });
   }
   if (pr.oldestQueuedAt && Date.now() - new Date(pr.oldestQueuedAt).getTime() > 10 * 60_000) {
-    alerts.push({ level: "warning", code: "PRINT_QUEUE_STUCK", message: "Étiquettes en attente depuis plus de 10 min : le poste d'impression est-il ouvert ?", count: pr.queued, href: "/warehouse/stations" });
+    alerts.push({ level: "warning", code: "PRINT_QUEUE_STUCK", message: "Étiquettes en attente depuis plus de 10 min : le poste d'impression est-il ouvert ?", count: pr.queuedAuto, href: "/warehouse/stations" });
   }
   if (p.blocked > 0) {
     alerts.push({ level: "warning", code: "PUTAWAY_BLOCKED", message: "Rangements sans place proposée (niveau plein, bloqué ou plus de capacité).", count: p.blocked, href: "/warehouse/putaway" });

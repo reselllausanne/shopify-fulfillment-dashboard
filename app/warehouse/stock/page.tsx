@@ -131,7 +131,8 @@ function StockInner() {
     void loadRef.current(false);
   }, [filters, view]);
 
-  const exportHref = whUrl("units/export", { siteId, presence: TAB_PRESENCE[tab], ownerKind: filters.ownerKind, ownerPartnerId: filters.ownerPartnerId, search: filters.search });
+  // The file holds exactly what the list shows: same filters, no page limit.
+  const exportHref = whUrl("units/export", filters);
   const filtered = Boolean(ownerKind || qcState || saleState || search || itemId || batchId || locationId);
 
   return (

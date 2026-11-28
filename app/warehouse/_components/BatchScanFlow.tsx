@@ -164,7 +164,7 @@ export default function BatchScanFlow({ detail, onChanged }: { detail: BatchDeta
       );
       onChanged();
     } catch (err) {
-      if (isWhError(err) && err.code === "SESSION_CONFLICT" && err.details?.stationId) {
+      if (isWhError(err) && err.code === "SESSION_CONFLICT" && (err.details?.takeOver || err.details?.stationId)) {
         setTakeover({ location, message: err.message });
         flow.notify("warn", err.message);
         return;
@@ -238,7 +238,18 @@ export default function BatchScanFlow({ detail, onChanged }: { detail: BatchDeta
     if (stockTake && session && res.kind === "LOCATION" && res.location.id === session.locationId) {
       // Scanning the level again proves where the operator stands: it resumes a count left idle
       // (SESSION_STALE) without losing the box being confirmed.
-      const r = await whPost<{ session: CountSessionView; resumed: boolean }>(`batches/${batch.id}/sessions`, { locationId: session.locationId, takeOver: false });
+      let r: { session: CountSessionView; resumed: boolean };
+      try {
+        r = await whPost<{ session: CountSessionView; resumed: boolean }>(`batches/${batch.id}/sessions`, { locationId: session.locationId, takeOver: false });
+      } catch (err) {
+        // The count was taken over on another desk meanwhile: taking it back is an explicit choice.
+        if (isWhError(err) && err.code === "SESSION_CONFLICT" && (err.details?.takeOver || err.details?.stationId)) {
+          setTakeover({ location: res.location, message: err.message });
+          flow.notify("warn", err.message);
+          return;
+        }
+        throw err;
+      }
       setSession(r.session);
       setLevel(res.location);
       flow.notify(

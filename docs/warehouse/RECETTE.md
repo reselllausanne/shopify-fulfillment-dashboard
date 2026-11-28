@@ -28,9 +28,9 @@ Résultats du 28 novembre 2026, sur la branche `feat/warehouse-partners-lot1` :
 
 | Vérification | Résultat |
 |---|---|
-| Tests du module (`npx vitest run lib/warehouse`, base locale) | 7 fichiers, 123 tests, tous verts ; 8 passages consécutifs sans échec |
-| Suite complète du dépôt (`npm test` avec la base de test du module) | 2 289 tests verts, 9 en échec dans 6 fichiers étrangers au module |
-| Suite complète sans base de test (`npm test` seul, comme sur un poste sans PostgreSQL local) | 2 198 verts, 91 ignorés (les tests d'intégration du module), les 9 mêmes échecs |
+| Tests du module (`npx vitest run lib/warehouse`, base locale) | 7 fichiers, 127 tests, tous verts ; 8 passages consécutifs sans échec |
+| Suite complète du dépôt (`npm test` avec la base de test du module) | 2 293 tests verts, 9 en échec dans 6 fichiers étrangers au module |
+| Suite complète sans base de test (`npm test` seul, comme sur un poste sans PostgreSQL local) | 2 198 verts, 95 ignorés (les tests d'intégration du module), les 9 mêmes échecs |
 | Les 9 échecs | Identiques sur `origin/main` avant ce lot (2 166 verts, 9 en échec) : `app/lib/exlibrisPricing.test.ts`, `app/lib/uncommonClient.test.ts`, `app/utils/matching.localStock.test.ts`, `galaxus/exports/masterSpecsDiffApply.test.ts`, `healthdata/nutrition/mfpCsv.test.ts`, `shopify/inventory/__tests__/expressRepriceSync.test.ts`. Non corrigés ici : hors périmètre |
 | Types sur les chemins du lot | Aucune erreur |
 | `npx prisma validate` | Schéma valide |
@@ -182,4 +182,10 @@ Côté responsable : `WAREHOUSE_WRITES_ENABLED=false` arrête toutes les écritu
 - Le portail partenaire garde l'authentification existante : un accès par partenaire, pas par personne (Q-15), et la connexion rapide accepte une clé seule tant que `PARTNER_ACCESS_<KEY>` n'est pas défini (constat R2 de `AUDIT.md`).
 - L'espace disque du serveur de base ne se lit pas depuis l'application : l'alerte correspondante est à poser chez l'hébergeur.
 - La preuve d'identification d'un article est un texte ; pas de photo en lot 1.
+- Créer un lot, ajouter des lignes attendues, enregistrer une convention et déposer une demande partenaire n'ont pas de clé d'action : un double envoi crée un doublon visible (lot vide, ligne en double), jamais une paire ni un mouvement en double. Les gestes de stock, eux, sont tous rejouables par clé.
+- Le verrou après cinq PIN erronés (W-32) vit dans le processus : un redémarrage le remet à zéro, et il ne se partage pas entre plusieurs instances.
+- Deux navigateurs sans poste appairé et sans opérateur identifié ne se distinguent pas pendant un comptage (W-34) : appairer les postes ou nommer les opérateurs avant la reprise de stock.
+- Les transferts entre sites existent dans le service et l'API, sans écran en lot 1.
+- Sur l'écran Stock, les compteurs des onglets portent sur le site entier, pas sur les filtres en cours ; l'export, lui, suit les filtres.
+- La table des clés d'action (`WarehouseOperation`) n'est pas purgée : à prévoir quand son volume le justifie.
 - Constats hors périmètre relevés pendant l'audit (R1 à R6 de `AUDIT.md`) : aucune table de production n'a de RLS, pas de tests en intégration continue sur les PR, historique de migrations non rejouable depuis zéro. Ils ne sont pas traités ici.

@@ -145,15 +145,24 @@ export async function receiveTransferUnit(
 ): Promise<OperationResult<{ unit: UnitSummary; transferReference: string; taskId: string | null }>> {
   return runOperation(db, { opKey: input.opKey, kind: "TRANSFER_RECEIVE", request: input, ctx }, async (tx) => {
     const unit = await lockUnitTx(tx, input.unitId);
-    if (unit.presence !== "IN_TRANSIT") {
+    // A pair declared missing on its transfer and found later at destination is a late arrival:
+    // it is received on that same transfer, otherwise it could never get an address on the new site.
+    const lateArrival = unit.presence === "MISSING";
+    if (unit.presence !== "IN_TRANSIT" && !lateArrival) {
       throw conflict("UNIT_STATE_CONFLICT", "Cette paire n'est pas en transit. Si elle est déjà sur site, sa fiche indique son adresse.", { presence: unit.presence });
     }
     const rows = await tx.$queryRaw<{ id: string; transferId: string; reference: string; toSiteId: string }[]>(Prisma.sql`
       SELECT x."id", x."transferId", t."reference", t."toSiteId"
       FROM "WarehouseTransferUnit" x JOIN "WarehouseTransfer" t ON t."id" = x."transferId"
-      WHERE x."unitId" = ${unit.id} AND x."status" = 'IN_TRANSIT' FOR UPDATE OF x`);
+      WHERE x."unitId" = ${unit.id} AND x."status" = ${lateArrival ? "MISSING" : "IN_TRANSIT"}
+      ORDER BY x."updatedAt" DESC LIMIT 1 FOR UPDATE OF x`);
     const line = rows[0];
-    if (!line) throw conflict("UNIT_STATE_CONFLICT", "Aucun transfert en cours pour cette paire : ouvrir un écart.");
+    if (!line) {
+      throw conflict(
+        "UNIT_STATE_CONFLICT",
+        lateArrival ? "Cette paire est introuvable hors transfert : utiliser « Paire retrouvée » sur son site." : "Aucun transfert en cours pour cette paire : ouvrir un écart."
+      );
+    }
     const locs = await tx.$queryRaw<{ id: string; siteId: string; kind: LocationKind; code: string; holdsUnits: boolean }[]>(Prisma.sql`
       SELECT "id", "siteId", "kind", "code", "holdsUnits" FROM "WarehouseLocation" WHERE "id" = ${input.toLocationId}`);
     const loc = locs[0];
@@ -170,12 +179,24 @@ export async function receiveTransferUnit(
       tx,
       unit,
       { presence: "PRESENT", currentSiteId: loc.siteId, currentLocationId: loc.id },
-      { type: "TRANSFER_IN", transferId: line.transferId, changes: otherSite ? { receivedAtOtherSite: true } : null },
+      {
+        type: "TRANSFER_IN",
+        transferId: line.transferId,
+        changes: otherSite || lateArrival ? { ...(otherSite ? { receivedAtOtherSite: true } : {}), ...(lateArrival ? { lateArrival: true } : {}) } : null,
+      },
       ctx,
       input.opKey
     );
     if (otherSite) {
       await openExceptionTx(tx, { siteId: loc.siteId, type: "WRONG_LOCATION", unitId: unit.id, locationId: loc.id, details: { transfer: line.reference, plannedSiteId: line.toSiteId }, opKey: `${input.opKey}:site` }, ctx);
+    }
+    if (lateArrival) {
+      // The discrepancy opened when the pair was declared missing on this transfer is answered by the scan.
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE "WarehouseException" SET "status" = 'RESOLVED', "resolution" = 'Paire retrouvée',
+          "resolutionReason" = ${`Retrouvée à la réception du transfert ${line.reference}, posée sur ${loc.code}.`},
+          "resolvedByOperatorId" = ${ctx.operatorId ?? null}, "resolvedAt" = now(), "updatedAt" = now()
+        WHERE "unitId" = ${unit.id} AND "type" = 'UNIT_NOT_FOUND' AND "status" = 'OPEN'`);
     }
     const taskId =
       (loc.kind === "RECEIVING" || loc.kind === "CART") && unit.qcState !== "QUARANTINE"

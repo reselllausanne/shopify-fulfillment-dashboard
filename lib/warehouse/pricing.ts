@@ -407,7 +407,10 @@ export async function listPartnerPrices(
   if (input.only === "PRICED") where.push(Prisma.sql`v."id" IS NOT NULL`);
   if (input.only === "PROPOSED") where.push(Prisma.sql`pp."id" IS NOT NULL`);
   if (input.cursor) {
-    const [name, id] = input.cursor.split("|");
+    // The id is the last segment: a model name may itself contain "|".
+    const cut = input.cursor.lastIndexOf("|");
+    const name = cut < 0 ? "" : input.cursor.slice(0, cut);
+    const id = cut < 0 ? "" : input.cursor.slice(cut + 1);
     if (id) where.push(Prisma.sql`(i."name", u."id") > (${name}, ${id})`);
   }
   const rows = await conn.$queryRaw<PartnerPriceRow[]>(Prisma.sql`
