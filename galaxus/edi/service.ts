@@ -1,3 +1,4 @@
+import { orderHasInvoiceBlock } from "@/galaxus/warehouse/supersedeWrongItemShipment";
 import { prisma } from "@/app/lib/prisma";
 import { createHash, randomUUID } from "crypto";
 import { ingestGalaxusOrders } from "@/galaxus/orders/ingest";
@@ -384,6 +385,15 @@ export async function sendOutgoingEdi(options: {
             continue;
           }
 
+          if (type === "INVO" && (await orderHasInvoiceBlock(order.id))) {
+            results.push({
+              docType: type,
+              filename: "",
+              status: "skipped",
+              message: "INVO blocked for this order (INVOICE_BLOCKED): original invoice already sent, reship must not re-invoice.",
+            });
+            continue;
+          }
           if (type === "INVO" && invoiceLines.length === 0) {
             results.push({
               docType: type,
@@ -544,6 +554,9 @@ export async function buildOutgoingEdiXml(options: {
     options.lineQuantities,
     invoicedSoFar
   );
+  if (options.type === "INVO" && (await orderHasInvoiceBlock(order.id))) {
+    throw new Error("INVO blocked for this order (INVOICE_BLOCKED): original invoice already sent.");
+  }
   if (options.type === "INVO" && invoiceLines.length === 0) {
     throw new Error("No invoice lines selected");
   }
@@ -597,6 +610,9 @@ export async function buildCustomInvoicePreview(options: {
     throw new Error("At least one invoice line is required.");
   }
   if (!options.force) {
+    if (await orderHasInvoiceBlock(order.id)) {
+      throw new Error("INVO blocked for this order (INVOICE_BLOCKED). Use force for a wrong-delivery invoice.");
+    }
     const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
     assertCustomInvoiceAllowed(order.lines, options.lines, invoicedSoFar);
   }
@@ -623,6 +639,9 @@ export async function sendCustomInvoice(options: {
   // force=true: wrong-delivery / purchasing invoices for SKUs not on the order line
   // (also allows direct_delivery POs — warehouse-only gate otherwise).
   if (!options.force) {
+    if (await orderHasInvoiceBlock(order.id)) {
+      throw new Error("INVO blocked for this order (INVOICE_BLOCKED). Use force for a wrong-delivery invoice.");
+    }
     const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
     assertCustomInvoiceAllowed(order.lines, options.lines, invoicedSoFar);
   }
@@ -691,7 +710,7 @@ export async function sendPendingOutgoingEdi(limit = 5): Promise<OutgoingResult[
       where: { direction: "OUT", docType: "DELR", orderId: order.id, status: "uploaded" },
       select: { id: true },
     });
-    if (hasUploadedDelr) {
+    if (hasUploadedDelr && !(await orderHasInvoiceBlock(order.id))) {
       types.push("INVO");
     }
     if (hasCancel) types.push("CANR");

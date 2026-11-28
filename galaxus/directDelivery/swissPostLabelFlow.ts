@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/app/lib/prisma";
+import { SUPERSEDED_WRONG_ITEM_STATUS } from "@/galaxus/warehouse/supersededShipment";
 import { normalizeSwissPostRecipientPhone, requestSwissPostLabel } from "@/lib/swissPost";
 import { buildSwissPostRecipientFromGalaxusOrder } from "@/lib/swissPostRecipient";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
@@ -443,6 +444,8 @@ export async function deleteDraftShipmentsForOrder(orderId: string): Promise<num
     where: {
       orderId,
       delrSentAt: null,
+      // keep wrong-item shipments (audit)
+      NOT: { status: SUPERSEDED_WRONG_ITEM_STATUS },
     },
     select: { id: true },
   });
