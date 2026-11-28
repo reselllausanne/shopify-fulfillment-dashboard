@@ -101,7 +101,7 @@ Colonnes : **A** = réservé à l'administration ; **O** = geste physique (opér
 | GET | `items/search?q=` · `items/catalog?q=` · `items/gtin?gtin=` · `items/:id` | | | variantes internes · candidats catalogue · `GtinResolution` |
 | POST | `items` · `items/from-candidate` | O | `CreateItemInput` · `{ candidate }` | `{ item, created }` |
 | GET | `units?siteId=&ownerKind=&ownerPartnerId=&presence=&qcState=&saleState=&itemId=&locationId=&batchId=&search=&cursor=&group=item` | | | `{ items: UnitSummary[], nextCursor }` ou agrégat par variante |
-| GET | `units/export?…` | | | CSV |
+| GET | `units/export?…` | | | CSV complet des paires filtrées. Au-delà de 250 000 lignes : 400 `INVALID_INPUT` avec `details.maxRows`, jamais un fichier tronqué |
 | GET | `units/:id` | | | `UnitDetail` (codes, mouvements, tâche, prix, écarts, impressions) |
 | GET | `units/:id/label?format=pdf\|svg` | | | étiquette 50 × 30 mm |
 | POST | `units/:id/qc` · `sale` · `condition` · `owner` · `item` · `missing` · `out` · `relocate` · `reprint` · `confirm-label` · `external-ref` | O | `{ opKey, expectedVersion?, reason?, note?, … }` | `{ unit, opKey, replayed }` |
@@ -161,7 +161,7 @@ Lecture des codes : un tiret remplacé partout par le même caractère (douchett
 |---|---|---|
 | GET | `summary` | `PartnerStockSummary` — pas de montant « à recevoir » : aucun versement n'existe au lot 1 |
 | GET | `units?search=&status=&itemId=&cursor=&group=item` | `{ items: PartnerUnitRow[], nextCursor }` ou groupé par modèle |
-| GET | `units/export` | CSV du stock du partenaire |
+| GET | `units/export` | CSV du stock du partenaire. Au-delà de 50 000 lignes : 400 `INVALID_INPUT` avec `details.maxRows`, jamais un fichier tronqué |
 | GET | `units/:id` | `PartnerUnitDetail` ; paire d'un autre partenaire ou inconnue = même `NOT_FOUND` |
 | GET | `requests` | demandes du partenaire |
 | POST | `requests` | `{ unitId?, type: PRICE_CHANGE\|DISCREPANCY\|OTHER, message, requestedPublicPrice? }` |

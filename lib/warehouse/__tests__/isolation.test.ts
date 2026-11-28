@@ -6,7 +6,9 @@ import * as pricing from "../pricing";
 import * as printing from "../printing";
 import * as putaway from "../putaway";
 import * as units from "../units";
-import { HAS_DB, admin, closeTestDb, makeItem, makeReceivingBatch, makeWorld, op, receiveOne } from "./harness";
+import { randomUUID } from "node:crypto";
+import * as items from "../items";
+import { HAS_DB, admin, closeTestDb, makeItem, makeReceivingBatch, makeWorld, op, randomGtin, receiveOne, testDb } from "./harness";
 
 /**
  * Non-regression guard of roadmap §9: "no Shopify / Galaxus / EDI / tracking / invoicing side
@@ -149,5 +151,33 @@ d("module isolation — dynamic", () => {
     // "Partner" rows are inserted by the test harness itself (other suites run in parallel on the
     // same database); the static test above proves the module never writes to it.
     expect(changed.filter((name) => !name.startsWith("Warehouse") && name !== "Partner")).toEqual([]);
+  });
+
+  // Declared after the flow above on purpose: this test writes a catalog row itself (the module
+  // never does), and that write must not land inside the flow's before/after window.
+  it("A13: the catalog is read, never rewritten — the size comes back exactly as the source gives it, without conversion", async () => {
+    const db = testDb();
+    const gtin = randomGtin();
+    const id = `whtest-${randomUUID()}`;
+    await db.$executeRaw`
+      INSERT INTO "SupplierVariant" ("id", "supplierVariantId", "supplierSku", "price", "stock", "updatedAt", "gtin", "supplierBrand", "supplierProductName", "sizeRaw", "sizeNormalized")
+      VALUES (${id}, ${id}, ${"WHTEST-SKU"}, 100, 0, now(), ${gtin}, ${"Test"}, ${"Modèle anglais"}, ${"UK 8.5"}, ${"42.5"})`;
+    const rowState = () =>
+      db.$queryRaw<{ xmin: string; sizeRaw: string | null; stock: number }[]>`SELECT xmin::text AS xmin, "sizeRaw", "stock" FROM "SupplierVariant" WHERE "id" = ${id}`;
+    try {
+      const before = await rowState();
+      const found = await items.resolveGtin(db, gtin);
+      expect(found.status).toBe("CANDIDATES");
+      if (found.status !== "CANDIDATES") return;
+      expect(found.candidates).toHaveLength(1);
+      // "UK 8.5" stays "UK 8.5": no system guessed, no EU or US size derived from it.
+      expect(found.candidates[0]).toMatchObject({ source: "SUPPLIER_VARIANT", sizeLabel: "UK 8.5", sizeSystem: null, sizeEu: null, sizeUs: null, supplierVariantId: id });
+      const { item } = await items.createItemFromCandidate(db, found.candidates[0]);
+      expect(item).toMatchObject({ gtin, sizeLabel: "UK 8.5", sizeSystem: null, sizeEu: null, sizeUs: null, catalogSource: "SUPPLIER_VARIANT" });
+      // Same row version: the catalog line was read, never touched.
+      expect(await rowState()).toEqual(before);
+    } finally {
+      await db.$executeRaw`DELETE FROM "SupplierVariant" WHERE "id" = ${id}`;
+    }
   });
 });

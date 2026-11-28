@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { classifyScan, toCsv, unitShortRef } from "./codes";
 import type { WarehouseConn } from "./db";
-import { notFound } from "./errors";
+import { invalid, notFound } from "./errors";
 
 /**
  * Partner-facing read model ("Accueil", "Mon stock").
@@ -322,12 +322,11 @@ const BOX_FR: Record<string, string> = { GOOD: "Bonne", DAMAGED: "Abîmée", MIS
 export async function exportPartnerStockCsv(
   conn: WarehouseConn,
   partnerId: string,
-  filters: PartnerUnitFilters = {}
-): Promise<{ csv: string; rows: number; truncated: boolean }> {
-  const MAX = 50_000;
+  filters: PartnerUnitFilters = {},
+  maxRows = 50_000
+): Promise<{ csv: string; rows: number }> {
   const out: unknown[][] = [];
   let cursor: string | null = null;
-  let truncated = false;
   for (;;) {
     const page: { items: PartnerUnitRow[]; nextCursor: string | null } = await listPartnerUnits(conn, partnerId, { ...filters, limit: 200, cursor });
     for (const u of page.items) {
@@ -348,16 +347,16 @@ export async function exportPartnerStockCsv(
         u.currency ?? "",
       ]);
     }
+    // A statement is complete or absent: never a file that silently leaves pairs out (C38).
+    if (out.length > maxRows) {
+      throw invalid(`Export limité à ${maxRows.toLocaleString("fr-CH")} lignes. Filtrer par statut ou par recherche, puis exporter chaque partie.`, { maxRows });
+    }
     cursor = page.nextCursor;
     if (!cursor) break;
-    if (out.length >= MAX) {
-      truncated = true;
-      break;
-    }
   }
   const csv = toCsv(
     ["Référence", "Marque", "Modèle", "Référence fabricant", "Pointure", "GTIN", "État", "Boîte", "Statut", "Site", "Reçue le", "Prix public", "Net vendeur", "Devise"],
     out
   );
-  return { csv, rows: out.length, truncated };
+  return { csv, rows: out.length };
 }

@@ -139,14 +139,11 @@ const norm = (v: string | null | undefined) => String(v ?? "").trim().toLowerCas
 export function candidatesAgree(candidates: CatalogCandidate[]): boolean {
   if (candidates.length <= 1) return true;
   const styles = new Set(candidates.map((c) => norm(c.styleCode)).filter(Boolean));
-  const sizes = new Set(
-    candidates
-      .map((c) => norm(c.sizeUs ? `us${c.sizeUs}` : c.sizeEu ? `eu${c.sizeEu}` : c.sizeLabel))
-      .filter(Boolean)
-  );
-  // KickDB (US/EU) and supplier rows (raw label) describe sizes differently: compare within a source only.
-  const kickSizes = new Set(candidates.filter((c) => c.source === "KICKDB").map((c) => norm(c.sizeUs ?? c.sizeEu)));
-  return styles.size <= 1 && (sizes.size <= 1 || kickSizes.size <= 1) && kickSizes.size <= 1;
+  const sizeKey = (c: CatalogCandidate) => norm(c.sizeUs ? `us${c.sizeUs}` : c.sizeEu ? `eu${c.sizeEu}` : c.sizeLabel);
+  // KickDB (US / EU) and supplier rows (raw label) write sizes differently: compare within a source
+  // only. A row without any size next to a sized one is a disagreement too.
+  const sizesOf = (source: CatalogCandidate["source"]) => new Set(candidates.filter((c) => c.source === source).map(sizeKey));
+  return styles.size <= 1 && sizesOf("KICKDB").size <= 1 && sizesOf("SUPPLIER_VARIANT").size <= 1;
 }
 
 export type GtinResolution =

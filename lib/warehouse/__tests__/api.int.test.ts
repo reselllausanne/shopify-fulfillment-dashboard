@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as journal from "../journal";
 import * as operators from "../operators";
 import * as printing from "../printing";
-import { HAS_DB, TEST_URL, admin, closeTestDb, makeItem, makePartner, makeReceivingBatch, makeWorld, op, receiveOne, type World } from "./harness";
+import { HAS_DB, TEST_URL, admin, closeTestDb, expectCode, makeItem, makePartner, makeReceivingBatch, makeWorld, op, receiveOne, type World } from "./harness";
 
 /**
  * HTTP-level checks of the two entry points: module flag, staff / partner sessions, roles,
@@ -179,8 +179,16 @@ d("staff API — access rules", () => {
   it("a physical gesture needs a named operator once operators exist; a deactivated operator is refused at once", async () => {
     const item = await makeItem(w.db);
     const batch = await makeReceivingBatch(w);
-    const operator = await operators.createOperator(w.db, { name: "Camille", code: `C${Math.random().toString(36).slice(2, 9)}`, pin: "4821" });
     const http = await import("../api/http");
+    // Operators are global to the database: start from none active, and leave none active behind
+    // (plain SQL: the service itself refuses to switch the last one off).
+    const noActiveOperator = async () => {
+      await w.db.$executeRaw`UPDATE "WarehouseOperator" SET "active" = false WHERE "active" = true`;
+      http.resetOperatorCache();
+    };
+    await noActiveOperator();
+    try {
+    const operator = await operators.createOperator(w.db, { name: "Camille", code: `C${Math.random().toString(36).slice(2, 9)}`, pin: "4821" });
     http.resetOperatorCache();
     const body = { opKey: op("rcv"), itemId: item.id };
     const anonymous = await staff(`batches/${batch.id}/receive`, { method: "POST", cookie: logisticsCookie, body });
@@ -205,14 +213,22 @@ d("staff API — access rules", () => {
     expect(detail.json.data.movements[0].operatorName).toBe("Camille");
     expect(detail.json.data.movements.length).toBe(1);
 
+    // C16: the last active operator cannot be switched off — anonymous gestures never come back by accident.
+    await expectCode(operators.updateOperator(w.db, operator.id, { active: false }), "CONFLICT");
+    expect((await operators.listOperators(w.db, { activeOnly: true })).map((o) => o.id)).toEqual([operator.id]);
+
+    // With a colleague active, Camille can leave: her token names nobody any more and she cannot log in again.
+    await operators.createOperator(w.db, { name: "Noé", code: `N${Math.random().toString(36).slice(2, 9)}` });
     await operators.updateOperator(w.db, operator.id, { active: false });
     http.resetOperatorCache();
     const after = await staff(`batches/${batch.id}/receive`, { method: "POST", cookie: logisticsCookie, body: { opKey: op("rcv"), itemId: item.id }, headers: { "x-warehouse-operator": token } });
-    // No active operator remains → the gesture is anonymous-allowed again only if none exist at all.
-    const others = await operators.listOperators(w.db, { activeOnly: true });
-    expect(after.status).toBe(others.length > 0 ? 401 : 200);
+    expect(after.status).toBe(401);
+    expect(after.json.error.details.operatorRequired).toBe(true);
     const relogin = await staff("operators/login", { method: "POST", cookie: logisticsCookie, body: { operatorId: operator.id, pin: "4821" } });
     expect(relogin.status).toBe(401);
+    } finally {
+      await noActiveOperator();
+    }
   });
 
   it("the print agent must prove its station; it only gets and reports its own jobs", async () => {

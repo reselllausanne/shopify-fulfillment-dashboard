@@ -66,6 +66,15 @@ export async function updateOperator(
   assertWritesEnabled();
   const rows = await db.$queryRaw<any[]>(Prisma.sql`SELECT "id", "name", "active", "pinHash" FROM "WarehouseOperator" WHERE "id" = ${operatorId}`);
   if (!rows[0]) throw notFound("Opérateur");
+  if (patch.active === false && rows[0].active) {
+    // Named gestures are required as soon as one operator is active: switching the last one off
+    // would silently bring anonymous gestures back (C16).
+    const others = await db.$queryRaw<{ n: number }[]>(Prisma.sql`
+      SELECT count(*)::int AS n FROM "WarehouseOperator" WHERE "active" = true AND "id" <> ${operatorId}`);
+    if (others[0].n === 0) {
+      throw conflict("CONFLICT", "Dernier opérateur actif : créez ou réactivez un autre opérateur avant de désactiver celui-ci. Sans opérateur actif, les gestes ne seraient plus nominatifs.");
+    }
+  }
   const pinHash = patch.pin === undefined ? rows[0].pinHash : patch.pin === null || patch.pin === "" ? null : hashPin(validatePin(patch.pin) as string);
   await db.$executeRaw(Prisma.sql`
     UPDATE "WarehouseOperator" SET "name" = ${patch.name?.trim() || rows[0].name}, "active" = ${patch.active ?? rows[0].active},

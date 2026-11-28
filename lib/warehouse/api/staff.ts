@@ -1,6 +1,5 @@
 import { Prisma } from "@prisma/client";
 import * as batches from "../batches";
-import { toCsv } from "../codes";
 import { isWarehouseWritesEnabled, warehouseFlagsSnapshot } from "../config";
 import { WarehouseError, invalid } from "../errors";
 import * as exceptions from "../exceptions";
@@ -341,25 +340,13 @@ const routes: StaffRoute[] = [
     method: "GET",
     path: "units/export",
     handler: async (c) => {
-      const rows: unknown[][] = [];
-      let cursor: string | null = null;
-      for (let page = 0; page < 100; page += 1) {
-        const res: Awaited<ReturnType<typeof units.listUnits>> = await units.listUnits(c.db, {
-          siteId: str(c.query.get("siteId")),
-          ownerKind: str(c.query.get("ownerKind")) as any,
-          ownerPartnerId: str(c.query.get("ownerPartnerId")),
-          presence: (list(c.query.get("presence")) as any) ?? undefined,
-          search: str(c.query.get("search")),
-          limit: 200,
-          cursor,
-        });
-        for (const u of res.items) {
-          rows.push([u.labelCode, u.shortRef, u.itemGtin ?? "", u.itemBrand ?? "", u.itemName ?? "", u.itemStyleCode ?? "", u.itemSizeLabel ?? "", u.ownerKind, u.ownerName ?? "", u.currentSiteCode ?? "", u.currentLocationCode ?? "", u.presence, u.qcState, u.saleState, u.condition, u.receivedAt]);
-        }
-        cursor = res.nextCursor;
-        if (!cursor) break;
-      }
-      const csv = toCsv(["code_etiquette", "ref_courte", "gtin", "marque", "modele", "ref_modele", "pointure", "proprietaire", "partenaire", "site", "emplacement", "presence", "controle", "vente", "etat", "recu_le"], rows);
+      const { csv } = await units.exportStockCsv(c.db, {
+        siteId: str(c.query.get("siteId")),
+        ownerKind: str(c.query.get("ownerKind")) as any,
+        ownerPartnerId: str(c.query.get("ownerPartnerId")),
+        presence: (list(c.query.get("presence")) as any) ?? undefined,
+        search: str(c.query.get("search")),
+      });
       return fileResponse(csv, "text/csv; charset=utf-8", "stock-entrepot.csv");
     },
   },

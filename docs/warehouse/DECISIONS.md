@@ -33,6 +33,8 @@
 | W-27 | Liste d'accès partenaires | `WAREHOUSE_PARTNER_ALLOWLIST` vide = aucun partenaire ; `*` = tous. | Un oubli de configuration ne doit pas ouvrir le stock à tous les partenaires. | `config.ts` |
 | W-28 | Journée métier | La journée d'un site court de minuit à minuit dans son fuseau ; références de lot, chiffres du jour et dates à l'écran suivent ce fuseau. Les instants restent stockés en UTC. | Cas C34. | `batches.ts › createBatch`, `overview.ts`, `app/warehouse/_lib/format.ts` |
 | W-29 | Panne de stockage | Base en lecture seule, disque plein, base saturée ou injoignable : réponse 503 `STORAGE_UNAVAILABLE` « rien n'a été enregistré, ne collez plus d'étiquette » et alerte en vue d'ensemble. | Cas C29 : l'opérateur doit savoir qu'il faut arrêter, pas réessayer. | `api/http.ts › classifyStorageError`, `overview.ts` |
+| W-30 | Dernier opérateur actif | Il ne peut pas être désactivé : il faut d'abord en créer ou en réactiver un autre. | Cas C16 : sans opérateur actif, les gestes redeviendraient anonymes sans que personne l'ait décidé. | `operators.ts › updateOperator` |
+| W-31 | Exports | Un export contient toutes les lignes filtrées ou est refusé avec sa limite (250 000 lignes en interne, 50 000 côté partenaire). | Cas C38 : un relevé tronqué sans le dire est pire qu'un refus. | `units.ts › exportStockCsv`, `partnerView.ts › exportPartnerStockCsv` |
 
 ## B. Décisions à prendre par l'équipe
 

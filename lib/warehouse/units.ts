@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import { UNIT_LABEL_FORMAT_V1, buildUnitLabelCode, classifyScan, isUuidV4, stripScannerTransport, swapYZ, unitShortRef } from "./codes";
+import { UNIT_LABEL_FORMAT_V1, buildUnitLabelCode, classifyScan, isUuidV4, stripScannerTransport, swapYZ, toCsv, unitShortRef } from "./codes";
 import type { WarehouseConn, WarehouseDb, WarehouseTx } from "./db";
 import { WarehouseError, conflict, invalid, notFound } from "./errors";
 import { openExceptionTx } from "./exceptions";
@@ -124,6 +124,35 @@ function unitFilters(input: ListUnitsInput): Prisma.Sql[] {
     }
   }
   return where;
+}
+
+/** Largest internal export in one file. Above it the export is refused, never cut short (C38). */
+export const STOCK_EXPORT_MAX_ROWS = 250_000;
+
+/**
+ * CSV of the stock matching the list filters, read page by page with the list's own keyset.
+ * A file that would leave rows out is refused with the limit: a statement is complete or absent.
+ */
+export async function exportStockCsv(
+  conn: WarehouseConn,
+  filters: Omit<ListUnitsInput, "limit" | "cursor">,
+  maxRows = STOCK_EXPORT_MAX_ROWS
+): Promise<{ csv: string; rows: number }> {
+  const rows: unknown[][] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const page: { items: UnitSummary[]; nextCursor: string | null } = await listUnits(conn, { ...filters, limit: 200, cursor });
+    for (const u of page.items) {
+      rows.push([u.labelCode, u.shortRef, u.itemGtin ?? "", u.itemBrand ?? "", u.itemName ?? "", u.itemStyleCode ?? "", u.itemSizeLabel ?? "", u.ownerKind, u.ownerName ?? "", u.currentSiteCode ?? "", u.currentLocationCode ?? "", u.presence, u.qcState, u.saleState, u.condition, u.receivedAt]);
+    }
+    if (rows.length > maxRows) {
+      throw invalid(`Export limité à ${maxRows.toLocaleString("fr-CH")} lignes. Filtrer par site, propriétaire ou présence, puis exporter chaque partie.`, { maxRows });
+    }
+    cursor = page.nextCursor;
+    if (!cursor) break;
+  }
+  const csv = toCsv(["code_etiquette", "ref_courte", "gtin", "marque", "modele", "ref_modele", "pointure", "proprietaire", "partenaire", "site", "emplacement", "presence", "controle", "vente", "etat", "recu_le"], rows);
+  return { csv, rows: rows.length };
 }
 
 /** Server-side paginated list — never returns a whole stock. */

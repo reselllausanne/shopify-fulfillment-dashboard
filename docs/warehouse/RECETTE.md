@@ -28,8 +28,9 @@ Résultats du 28 novembre 2026, sur la branche `feat/warehouse-partners-lot1` :
 
 | Vérification | Résultat |
 |---|---|
-| Tests du module (`npx vitest run lib/warehouse`, base locale) | 7 fichiers, 114 tests, tous verts ; 8 passages consécutifs sans échec |
-| Suite complète du dépôt (`npm test` avec la base de test du module) | 2 280 tests verts, 9 en échec dans 6 fichiers étrangers au module |
+| Tests du module (`npx vitest run lib/warehouse`, base locale) | 7 fichiers, 123 tests, tous verts ; 8 passages consécutifs sans échec |
+| Suite complète du dépôt (`npm test` avec la base de test du module) | 2 289 tests verts, 9 en échec dans 6 fichiers étrangers au module |
+| Suite complète sans base de test (`npm test` seul, comme sur un poste sans PostgreSQL local) | 2 198 verts, 91 ignorés (les tests d'intégration du module), les 9 mêmes échecs |
 | Les 9 échecs | Identiques sur `origin/main` avant ce lot (2 166 verts, 9 en échec) : `app/lib/exlibrisPricing.test.ts`, `app/lib/uncommonClient.test.ts`, `app/utils/matching.localStock.test.ts`, `galaxus/exports/masterSpecsDiffApply.test.ts`, `healthdata/nutrition/mfpCsv.test.ts`, `shopify/inventory/__tests__/expressRepriceSync.test.ts`. Non corrigés ici : hors périmètre |
 | Types sur les chemins du lot | Aucune erreur |
 | `npx prisma validate` | Schéma valide |

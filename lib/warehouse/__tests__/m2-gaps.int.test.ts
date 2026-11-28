@@ -1,13 +1,18 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import path from "node:path";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import * as batches from "../batches";
 import { classifyStorageError, fail } from "../api/http";
 import { classifyScan, containedUnitGtin, isPackagingGtin, swapYZ } from "../codes";
+import { conflict } from "../errors";
 import * as exceptions from "../exceptions";
 import * as items from "../items";
 import * as locations from "../locations";
 import { getOverview } from "../overview";
+import * as partnerView from "../partnerView";
 import * as printing from "../printing";
 import * as putaway from "../putaway";
+import type { CatalogCandidate } from "../types";
 import * as units from "../units";
 import { HAS_DB, admin, closeTestDb, count, expectCode, makeItem, makeReceivingBatch, makeWorld, op, randomGtin, receiveOne, testDb, type World } from "./harness";
 
@@ -39,6 +44,25 @@ describe("scanner text — no database", () => {
     expect(containedUnitGtin(carton)).toBe(unitGtin);
     expect(classifyScan(carton)).toMatchObject({ kind: "GTIN", packaging: true });
     expect(classifyScan(unitGtin)).toMatchObject({ kind: "GTIN", packaging: false });
+  });
+
+  it("A12: catalog rows that disagree on the style or on the size behind one GTIN are never merged silently", () => {
+    const row = (patch: Partial<CatalogCandidate>): CatalogCandidate => ({
+      source: "KICKDB", gtin: "4059433110165", brand: "adidas", name: "Samba OG", styleCode: "B75806", colorway: null,
+      sizeSystem: "US", sizeLabel: "US 9", sizeEu: "42 2/3", sizeUs: "9", imageUrl: null, kickdbVariantId: "k1", supplierVariantId: null, ...patch,
+    });
+    const supplier = (patch: Partial<CatalogCandidate>) =>
+      row({ source: "SUPPLIER_VARIANT", styleCode: null, sizeSystem: null, sizeLabel: "42 2/3", sizeEu: null, sizeUs: null, kickdbVariantId: null, supplierVariantId: "s1", ...patch });
+    expect(items.candidatesAgree([])).toBe(true);
+    expect(items.candidatesAgree([row({})])).toBe(true);
+    // Same variant written two ways (US 9 in one source, 42 2/3 in the other): not a dispute.
+    expect(items.candidatesAgree([row({}), supplier({})])).toBe(true);
+    expect(items.candidatesAgree([row({}), row({ styleCode: "b75806 ", kickdbVariantId: "k2" })])).toBe(true);
+    // Two sizes in the same source, two styles, or a sized row next to an unsized one: the operator decides.
+    expect(items.candidatesAgree([row({}), row({ sizeUs: "9.5", sizeLabel: "US 9.5", kickdbVariantId: "k2" })])).toBe(false);
+    expect(items.candidatesAgree([supplier({}), supplier({ sizeLabel: "43 1/3", supplierVariantId: "s2" })])).toBe(false);
+    expect(items.candidatesAgree([supplier({}), supplier({ sizeLabel: null, supplierVariantId: "s2" })])).toBe(false);
+    expect(items.candidatesAgree([row({}), row({ styleCode: "IE3437", kickdbVariantId: "k2" })])).toBe(false);
   });
 
   it("A31: a keyboard-wedge scanner on another layout still designates the same pair and the same level", () => {
@@ -73,6 +97,42 @@ describe("scanner text — no database", () => {
     const plain = fail(new Error("boom"), "GET /x");
     expect(plain.status).toBe(500);
     expect((await plain.json()).error.code).toBe("INTERNAL");
+  });
+});
+
+describe("error log — no database", () => {
+  it("C22: the error log carries the route and the action key — never a body, a token or free text", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      fail(new Error("boom"), "POST /batches/x/receive", "rcv-1234567890");
+      // Whatever a client puts in place of an action key (a name, an address, an e-mail) is not copied to the log.
+      fail(new Error("boom"), "POST /batches/x/receive", "Jean Dupont, rue du Lac 1, jean@example.com");
+      fail(new Error("boom"), "GET /units");
+      // A business refusal is an answer to the operator, not an incident: nothing is logged.
+      fail(conflict("LEVEL_FULL", "Niveau plein."), "POST /putaway/confirm", "put-1234567890");
+      const lines = spy.mock.calls.map((args) => args.join(" "));
+      expect(lines).toEqual([
+        "[warehouse] POST /batches/x/receive opKey=rcv-1234567890: boom",
+        "[warehouse] POST /batches/x/receive: boom",
+        "[warehouse] GET /units: boom",
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("C22: the module writes to the log from one place only", () => {
+    const root = path.resolve(__dirname, "..");
+    const walk = (dir: string): string[] =>
+      readdirSync(dir).flatMap((name) => {
+        if (name === "__tests__") return [];
+        const full = path.join(dir, name);
+        return statSync(full).isDirectory() ? walk(full) : /\.tsx?$/.test(name) ? [full] : [];
+      });
+    const callers = walk(root)
+      .filter((file) => /\bconsole\.(log|info|warn|error|debug)\(/.test(readFileSync(file, "utf8")))
+      .map((file) => path.relative(root, file));
+    expect(callers).toEqual([path.join("api", "http.ts")]);
   });
 });
 
@@ -409,6 +469,32 @@ d("M2 — printing and supervision (C13, C34, C44)", () => {
     expect(await count(w.db, `"WarehousePrintJob" WHERE "objectId" = $1`, r.unit.id)).toBe(1);
   });
 
+  it("C15: each label type goes to its own printer in its own format — a level label never comes out on the pair roll", async () => {
+    const w = await makeWorld();
+    const wide = await printing.createPrinter(w.db, { siteId: w.site.id, name: "Zebra niveaux", adapter: "QZ_TRAY", systemName: "ZD-loc", mediaWidthMm: 100, mediaHeightMm: 50, supportedKinds: ["LOCATION"] });
+    await printing.setStationRoute(w.db, { stationId: w.station.id, labelKind: "LOCATION", printerId: wide.id });
+    const item = await makeItem(w.db);
+    const batch = await makeReceivingBatch(w);
+    const r = await receiveOne(w, batch.id, item.id);
+    const sent = await printing.enqueueLocationLabels(w.db, { opKey: op("loc"), stationId: w.station.id, locationIds: [w.levels[0].id] }, w.ctx);
+    expect(sent).toMatchObject({ queued: 1, notQueued: 0 });
+
+    const jobs = await printing.listPrintJobs(w.db, { stationId: w.station.id });
+    const pairJob = jobs.find((j) => j.objectId === r.unit.id)!;
+    const levelJob = jobs.find((j) => j.objectId === w.levels[0].id)!;
+    // Each job says what it prints, for which object, on which printer and at which size.
+    expect(pairJob).toMatchObject({ labelKind: "PAIR", objectType: "UNIT", printerId: w.printer.id, labelCode: r.unit.labelCode, widthMm: 50, heightMm: 30 });
+    expect(levelJob).toMatchObject({ labelKind: "LOCATION", objectType: "LOCATION", printerId: wide.id, widthMm: 100, heightMm: 50 });
+    expect(levelJob.labelCode).toBeTruthy();
+    expect(levelJob.labelCode).not.toBe(pairJob.labelCode);
+
+    // A station with no route for that type queues nothing: it never borrows the pair printer.
+    const none = await printing.enqueueLocationLabels(w.db, { opKey: op("loc"), stationId: w.station2.id, locationIds: [w.levels[0].id] }, w.ctx2);
+    expect(none).toMatchObject({ queued: 0, notQueued: 1 });
+    expect(none.jobs[0]).toMatchObject({ status: "NOT_QUEUED", reason: "NO_ROUTE" });
+    expect(await count(w.db, `"WarehousePrintJob" WHERE "stationId" = $1 AND "labelKind" = 'LOCATION'`, w.station2.id)).toBe(0);
+  });
+
   it("C34: the batch reference and the day's figures follow the site's own calendar day, not the server's", async () => {
     const db = testDb();
     const w = await makeWorld();
@@ -456,5 +542,139 @@ d("M2 — printing and supervision (C13, C34, C44)", () => {
     const fixed = await locations.reconcileLocationCounters(w.db, { siteId: w.site.id, fix: true });
     expect(fixed.fixed).toBeGreaterThanOrEqual(1);
     expect((await getOverview(w.db, w.site.id)).alerts.map((a) => a.code)).not.toContain("COUNTERS_INCONSISTENT");
+  });
+});
+
+d("M2 — physical condition and lost label (A18, A29)", () => {
+  it("A18: the state of the pair and the state of its box are separate, each change is traced, an unknown value is refused", async () => {
+    const w = await makeWorld();
+    const item = await makeItem(w.db);
+    const batch = await makeReceivingBatch(w);
+    const r = await receiveOne(w, batch.id, item.id);
+    expect(r.unit.condition).toBe("NEW");
+    const boxBefore = r.unit.boxCondition;
+
+    // Mismatched shoes: the pair is damaged, the box is not.
+    const a = await units.setUnitCondition(w.db, { opKey: op("cond"), unitId: r.unit.id, condition: "DAMAGED", conditionNote: "Dépareillée : 42 à gauche, 43 à droite" }, w.ctx);
+    expect(a.unit).toMatchObject({ condition: "DAMAGED", boxCondition: boxBefore });
+    // Torn lid noticed later: the box changes, the pair keeps its state and its note is replaced.
+    const b = await units.setUnitCondition(w.db, { opKey: op("cond"), unitId: r.unit.id, boxCondition: "DAMAGED", conditionNote: "Dépareillée ; couvercle déchiré" }, w.ctx);
+    expect(b.unit).toMatchObject({ condition: "DAMAGED", boxCondition: "DAMAGED" });
+
+    const detail = await units.getUnitDetail(w.db, r.unit.id);
+    expect(detail.unit.conditionNote).toBe("Dépareillée ; couvercle déchiré");
+    expect(detail.movements.filter((m) => m.type === "CONDITION")).toHaveLength(2);
+    // The physical state decides nothing else: place, control, right to sell and owner are untouched.
+    expect(detail.unit).toMatchObject({ presence: r.unit.presence, qcState: r.unit.qcState, saleState: r.unit.saleState, ownerPartnerId: w.partner.id, currentLocationId: r.unit.currentLocationId });
+
+    await expect(units.setUnitCondition(w.db, { opKey: op("cond"), unitId: r.unit.id, condition: "PARFAIT" as never }, w.ctx)).rejects.toBeTruthy();
+    await expect(w.db.$executeRaw`UPDATE "WarehouseUnit" SET "boxCondition" = 'PARFAITE' WHERE "id" = ${r.unit.id}`).rejects.toBeTruthy();
+    const after = await units.getUnitSummary(w.db, r.unit.id);
+    expect(after).toMatchObject({ condition: "DAMAGED", boxCondition: "DAMAGED" });
+    expect(await count(w.db, `"WarehouseMovement" WHERE "unitId" = $1 AND "type" = 'CONDITION'`, r.unit.id)).toBe(2);
+  });
+
+  it("A29: one of several identical pairs lost its label — the count names the candidate, the same code is reissued, an unproven pair is isolated", async () => {
+    const w = await makeWorld();
+    const item = await makeItem(w.db);
+    const batch = await stockTake(w);
+    const level = w.levels[0];
+    const s1 = await batches.openCountSession(w.db, { batchId: batch.id, locationId: level.id }, w.ctx);
+    const made: { id: string; labelCode: string }[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      made.push((await batches.stockTakeCreateUnit(w.db, { opKey: op("st"), sessionId: s1.session.id, itemId: item.id }, w.ctx)).unit);
+    }
+    await batches.closeCountSession(w.db, { sessionId: s1.session.id }, w.ctx);
+
+    // Recount: two labels read, the third box of the same model has none.
+    const s2 = await batches.openCountSession(w.db, { batchId: batch.id, locationId: level.id }, w.ctx);
+    await batches.stockTakeScanUnit(w.db, { opKey: op("sc"), sessionId: s2.session.id, unitId: made[0].id }, w.ctx);
+    await batches.stockTakeScanUnit(w.db, { opKey: op("sc"), sessionId: s2.session.id, unitId: made[1].id }, w.ctx);
+    const view = await batches.getCountSession(w.db, s2.session.id);
+    expect(view.notYetScanned.map((u) => u.id)).toEqual([made[2].id]);
+
+    // One candidate only: the discrepancy is recorded on that pair and its label reissued — same code, no new identity.
+    const ex = await exceptions.openException(w.db, { siteId: w.site.id, type: "LABEL_LOST", unitId: made[2].id, locationId: level.id, details: { candidates: 1 } }, w.ctx);
+    const re = await printing.reprintUnitLabel(w.db, { opKey: op("rp"), unitId: made[2].id, stationId: w.station.id, reason: "Étiquette décollée, seule boîte non lue du niveau" }, w.ctx);
+    expect(re.labelCode).toBe(made[2].labelCode);
+    expect(await count(w.db, `"WarehouseLabelCode" WHERE "unitId" = $1`, made[2].id)).toBe(1);
+    expect(await count(w.db, `"WarehouseUnit" WHERE "originBatchId" = $1`, batch.id)).toBe(3);
+    await exceptions.resolveException(w.db, { id: ex.id, status: "RESOLVED", resolution: "Étiquette réémise", reason: "Seule candidate du niveau", proofRef: "Comptage du niveau, 2 lues sur 3" }, w.ctx);
+    const proof = await w.db.$queryRaw<{ status: string; proofRef: string | null }[]>`SELECT "status", "proofRef" FROM "WarehouseException" WHERE "id" = ${ex.id}`;
+    expect(proof[0]).toEqual({ status: "RESOLVED", proofRef: "Comptage du niveau, 2 lues sur 3" });
+
+    // When the identity cannot be proven, the pair goes aside instead of staying on the shelf.
+    const moved = await putaway.relocateUnit(w.db, { opKey: op("rel"), unitId: made[2].id, toLocationId: w.quarantine.id, reason: "Identité non prouvée" }, w.ctx);
+    expect(moved.unit.currentLocationId).toBe(w.quarantine.id);
+    expect(moved.unit.id).toBe(made[2].id);
+  });
+});
+
+d("M2 — count against a reserved place (C39)", () => {
+  it("C39: a count finds a box on the last place, already reserved — reality is recorded and flagged, and the reserved pair is not put on top", async () => {
+    const w = await makeWorld({ levelsPerRack: 2, capacity: 1 });
+    const item = await makeItem(w.db);
+    const batch = await makeReceivingBatch(w);
+    const waiting = await receiveOne(w, batch.id, item.id);
+    expect((await putaway.proposeDestinations(w.db, { siteId: w.site.id, batchId: batch.id }, w.ctx)).reserved).toBe(1);
+    const task = (await putaway.listPutawayQueue(w.db, { siteId: w.site.id, batchId: batch.id })).tasks[0];
+    const levelId = task.proposedLocationId as string;
+    const counters = async () =>
+      (await w.db.$queryRaw<{ occupiedCount: number; reservedCount: number; capacity: number }[]>`
+        SELECT "occupiedCount", "reservedCount", "capacity" FROM "WarehouseLocation" WHERE "id" = ${levelId}`)[0];
+    expect(await counters()).toEqual({ occupiedCount: 0, reservedCount: 1, capacity: 1 });
+
+    // The count finds a box physically sitting on that place: it is recorded where it is, and the level is flagged.
+    const take = await stockTake(w);
+    const session = await batches.openCountSession(w.db, { batchId: take.id, locationId: levelId }, w.ctx);
+    const found = await batches.stockTakeCreateUnit(w.db, { opKey: op("st"), sessionId: session.session.id, itemId: item.id }, w.ctx);
+    expect(found.unit.currentLocationId).toBe(levelId);
+    expect(found.exceptions.map((e) => e.type)).toContain("CAPACITY_MISMATCH");
+    expect(await counters()).toEqual({ occupiedCount: 1, reservedCount: 1, capacity: 1 });
+
+    // The pair holding the reservation is refused there, with the figures, and stays where it was.
+    const refused = await expectCode(putaway.confirmPutaway(w.db, { opKey: op("put"), unitId: waiting.unit.id, locationId: levelId }, w.ctx), "LEVEL_FULL");
+    expect(refused.details).toMatchObject({ capacity: 1, occupiedCount: 1, reservedCount: 1 });
+    expect((await units.getUnitSummary(w.db, waiting.unit.id)).currentLocationId).toBe(w.cart.id);
+    expect(await counters()).toEqual({ occupiedCount: 1, reservedCount: 1, capacity: 1 });
+
+    // Reporting the level full gives the reservation back; the pair is proposed elsewhere and put away.
+    const reported = await putaway.reportLevelFull(w.db, { opKey: op("full"), locationId: levelId, note: "Place prise par une boîte trouvée au comptage" }, w.ctx);
+    expect(reported.releasedReservations).toBe(1);
+    expect(await counters()).toEqual({ occupiedCount: 1, reservedCount: 0, capacity: 1 });
+    await putaway.proposeDestinations(w.db, { siteId: w.site.id, batchId: batch.id }, w.ctx);
+    const next = (await putaway.listPutawayQueue(w.db, { siteId: w.site.id, batchId: batch.id })).tasks[0];
+    expect(next.proposedLocationId).toBeTruthy();
+    expect(next.proposedLocationId).not.toBe(levelId);
+    const done = await putaway.confirmPutaway(w.db, { opKey: op("put"), unitId: waiting.unit.id, locationId: next.proposedLocationId as string }, w.ctx);
+    expect(done.unit.currentLocationId).toBe(next.proposedLocationId);
+    expect(await count(w.db, `"WarehouseLocation" WHERE "siteId" = $1 AND ("occupiedCount" < 0 OR "reservedCount" < 0)`, w.site.id)).toBe(0);
+  });
+});
+
+d("M2 — exports (C38)", () => {
+  it("C38: an export holds every matching pair or is refused with its limit — never a file cut short", async () => {
+    const w = await makeWorld();
+    const item = await makeItem(w.db);
+    const batch = await makeReceivingBatch(w);
+    const made: string[] = [];
+    for (let i = 0; i < 3; i += 1) made.push((await receiveOne(w, batch.id, item.id)).unit.labelCode);
+    const dataLines = (csv: string) => csv.replace(/^\uFEFF/, "").trim().split(/\r?\n/).slice(1);
+
+    const full = await units.exportStockCsv(w.db, { siteId: w.site.id });
+    expect(full.rows).toBe(3);
+    expect(dataLines(full.csv)).toHaveLength(3);
+    for (const code of made) expect(full.csv).toContain(code);
+    const exact = await units.exportStockCsv(w.db, { siteId: w.site.id }, 3);
+    expect(exact.rows).toBe(3);
+    const refused = await expectCode(units.exportStockCsv(w.db, { siteId: w.site.id }, 2), "INVALID_INPUT");
+    expect(refused.details).toMatchObject({ maxRows: 2 });
+    expect(refused.message).toMatch(/Filtrer/);
+
+    const mine = await partnerView.exportPartnerStockCsv(w.db, w.partner.id);
+    expect(mine.rows).toBe(3);
+    expect(dataLines(mine.csv)).toHaveLength(3);
+    const tooMany = await expectCode(partnerView.exportPartnerStockCsv(w.db, w.partner.id, {}, 2), "INVALID_INPUT");
+    expect(tooMany.details).toMatchObject({ maxRows: 2 });
   });
 });
