@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import { UNIT_LABEL_FORMAT_V1, buildUnitLabelCode, classifyScan, isUuidV4, stripScannerTransport, unitShortRef } from "./codes";
+import { UNIT_LABEL_FORMAT_V1, buildUnitLabelCode, classifyScan, isUuidV4, stripScannerTransport, swapYZ, unitShortRef } from "./codes";
 import type { WarehouseConn, WarehouseDb, WarehouseTx } from "./db";
 import { WarehouseError, conflict, invalid, notFound } from "./errors";
+import { openExceptionTx } from "./exceptions";
 import { resolveGtin, type GtinResolution } from "./items";
 import { resolveLocationCode } from "./locations";
 import { assertSiteInPilot, assertWritesEnabled, runOperation, type OperationResult } from "./operations";
@@ -40,7 +41,7 @@ const UNIT_SELECT = Prisma.sql`
          u."ownerKind", u."ownerPartnerId", p."name" AS "ownerName", u."originType", u."originBatchId",
          u."presence", u."currentSiteId", s."code" AS "currentSiteCode", u."currentLocationId",
          l."code" AS "currentLocationCode", l."shortCode" AS "currentLocationShortCode", l."kind" AS "currentLocationKind",
-         u."qcState", u."saleState", u."condition", u."boxCondition", u."outReason", u."labelPrintCount",
+         u."qcState", u."saleState", u."condition", u."boxCondition", u."boxProfile", u."outReason", u."labelPrintCount",
          u."labelVerifiedAt", u."version", u."observedAt", u."receivedAt"
   FROM "WarehouseUnit" u
   JOIN "WarehouseItem" i ON i."id" = u."itemId"
@@ -336,8 +337,15 @@ export async function resolveScan(conn: WarehouseConn, raw: string): Promise<Sca
       return { kind: "EMPTY" };
     case "UNIT_LABEL":
     case "EXTERNAL_UUID_REF": {
-      const reg = await conn.$queryRaw<{ unitId: string; format: string; isOriginal: boolean }[]>(Prisma.sql`
+      let reg = await conn.$queryRaw<{ unitId: string; format: string; isOriginal: boolean }[]>(Prisma.sql`
         SELECT "unitId", "format", "isOriginal" FROM "WarehouseLabelCode" WHERE "code" = ${scan.code}`);
+      if (!reg[0] && scan.kind === "UNIT_LABEL" && /[YZ]/.test(scan.issuingSiteCode)) {
+        // QWERTZ host, QWERTY scanner: Y and Z are swapped in the site suffix. The UUID part is untouched,
+        // so the registry row found this way is the one and only pair carrying this UUID.
+        const swapped = `${scan.unitId}-${swapYZ(scan.issuingSiteCode)}`;
+        reg = await conn.$queryRaw<{ unitId: string; format: string; isOriginal: boolean }[]>(Prisma.sql`
+          SELECT "unitId", "format", "isOriginal" FROM "WarehouseLabelCode" WHERE "code" = ${swapped} AND "unitId" = ${scan.unitId}`);
+      }
       if (reg[0]) {
         return {
           kind: "UNIT",
@@ -373,7 +381,7 @@ export async function resolveScan(conn: WarehouseConn, raw: string): Promise<Sca
       };
     }
     case "LOCATION": {
-      const location = await resolveLocationCode(conn, scan.code);
+      const location = (await resolveLocationCode(conn, scan.code)) ?? (/[YZ]/.test(scan.code) ? await resolveLocationCode(conn, swapYZ(scan.code)) : null);
       if (location) return { kind: "LOCATION", location };
       // An old label may look like an address: it is still only a search alias.
       const legacy = await resolveExternalRef(conn, stripScannerTransport(raw));
@@ -435,6 +443,7 @@ export type UnitRow = {
   saleState: UnitSaleState;
   condition: UnitCondition;
   boxCondition: BoxCondition;
+  boxProfile: string;
   conditionNote: string | null;
   outReason: UnitOutReason | null;
   labelPrintCount: number;
@@ -449,7 +458,7 @@ export async function lockUnitTx(tx: WarehouseTx, unitId: string): Promise<UnitR
   const rows = await tx.$queryRaw<UnitRow[]>(Prisma.sql`
     SELECT "id", "labelCode", "issuingSiteId", "issuingSiteCode", "itemId", "ownerKind", "ownerPartnerId", "agreementId",
            "originType", "originBatchId", "presence", "currentSiteId", "currentLocationId", "qcState", "saleState",
-           "condition", "boxCondition", "conditionNote", "outReason", "labelPrintCount", "labelVerifiedAt", "version", "observedAt"
+           "condition", "boxCondition", "boxProfile", "conditionNote", "outReason", "labelPrintCount", "labelVerifiedAt", "version", "observedAt"
     FROM "WarehouseUnit" WHERE "id" = ${unitId.toLowerCase()} FOR UPDATE`);
   if (!rows[0]) throw notFound("Paire", { unitId });
   return rows[0];
@@ -553,6 +562,7 @@ export type UnitPatch = Partial<
     | "saleState"
     | "condition"
     | "boxCondition"
+    | "boxProfile"
     | "conditionNote"
     | "outReason"
     | "labelVerifiedAt"
@@ -593,7 +603,7 @@ export async function applyUnitChangeTx(
       "itemId" = ${next.itemId}, "ownerKind" = ${next.ownerKind}, "ownerPartnerId" = ${next.ownerPartnerId},
       "agreementId" = ${next.agreementId}, "presence" = ${next.presence}, "currentSiteId" = ${next.currentSiteId},
       "currentLocationId" = ${next.currentLocationId}, "qcState" = ${next.qcState}, "saleState" = ${next.saleState},
-      "condition" = ${next.condition}, "boxCondition" = ${next.boxCondition}, "conditionNote" = ${next.conditionNote},
+      "condition" = ${next.condition}, "boxCondition" = ${next.boxCondition}, "boxProfile" = ${next.boxProfile}, "conditionNote" = ${next.conditionNote},
       "outReason" = ${next.outReason},
       "outAt" = ${patch.outAt === undefined ? Prisma.sql`"outAt"` : patch.outAt},
       "labelVerifiedAt" = ${next.labelVerifiedAt}, "labelPrintCount" = ${next.labelPrintCount},
@@ -680,6 +690,8 @@ export type CreateUnitInput = {
   forceOccupancy?: boolean;
   condition?: UnitCondition;
   boxCondition?: BoxCondition;
+  /** Box format (default STANDARD): decides which levels are proposed (A37). */
+  boxProfile?: string | null;
   conditionNote?: string | null;
   qcState?: UnitQcState;
   saleState?: UnitSaleState;
@@ -725,13 +737,13 @@ export async function createUnitTx(
       INSERT INTO "WarehouseUnit"
         ("id", "labelCode", "issuingSiteId", "issuingSiteCode", "itemId", "ownerKind", "ownerPartnerId", "agreementId",
          "originType", "originBatchId", "originLineId", "presence", "currentSiteId", "currentLocationId",
-         "qcState", "saleState", "condition", "boxCondition", "conditionNote", "observedAt", "receivedAt")
+         "qcState", "saleState", "condition", "boxCondition", "boxProfile", "conditionNote", "observedAt", "receivedAt")
       VALUES
         (${candidate}, ${code}, ${input.siteId}, ${input.siteCode}, ${input.itemId}, ${input.ownerKind},
          ${input.ownerPartnerId ?? null}, ${input.agreementId ?? null}, ${input.originType}, ${input.originBatchId ?? null},
          ${input.originLineId ?? null}, 'PRESENT', ${input.siteId}, ${input.locationId},
          ${input.qcState ?? "PENDING"}, ${input.saleState ?? "STORAGE_ONLY"}, ${input.condition ?? "UNKNOWN"},
-         ${input.boxCondition ?? "UNKNOWN"}, ${input.conditionNote ?? null}, ${observedAt}, now())
+         ${input.boxCondition ?? "UNKNOWN"}, ${normalizeBoxProfile(input.boxProfile)}, ${input.conditionNote ?? null}, ${observedAt}, now())
       ON CONFLICT ("id") DO NOTHING
       RETURNING "id"`);
     if (inserted.length === 0) {
@@ -786,6 +798,14 @@ export async function createUnitTx(
 }
 
 // ───────────────────────────── Gestures on an existing unit ─────────────────────────────
+
+/** Box format token: STANDARD unless told otherwise; free vocabulary kept short and upper-case (LARGE, BOOT, …). */
+export function normalizeBoxProfile(value: string | null | undefined): string {
+  const v = String(value ?? "").trim().toUpperCase();
+  if (!v) return "STANDARD";
+  if (!/^[A-Z0-9_]{2,16}$/.test(v)) throw invalid("Format de boîte : 2 à 16 lettres ou chiffres (STANDARD, LARGE…).");
+  return v;
+}
 
 type GestureBase = { opKey: string; unitId: string; expectedVersion?: number | null; reason?: string | null; note?: string | null };
 
@@ -881,7 +901,7 @@ export async function setUnitSaleState(
 /** Physical condition of the pair and of its box, recorded separately (A18). */
 export async function setUnitCondition(
   db: WarehouseDb,
-  input: GestureBase & { condition?: UnitCondition; boxCondition?: BoxCondition; conditionNote?: string | null },
+  input: GestureBase & { condition?: UnitCondition; boxCondition?: BoxCondition; boxProfile?: string | null; conditionNote?: string | null },
   ctx: ActorContext
 ): Promise<OperationResult<{ unit: UnitSummary }>> {
   return runOperation(db, { opKey: input.opKey, kind: "UNIT_CONDITION", request: input, ctx }, async (tx) => {
@@ -889,16 +909,21 @@ export async function setUnitCondition(
     assertExpectedVersion(unit, input.expectedVersion);
     const condition = input.condition ?? unit.condition;
     const boxCondition = input.boxCondition ?? unit.boxCondition;
+    const boxProfile = input.boxProfile === undefined || input.boxProfile === null ? unit.boxProfile : normalizeBoxProfile(input.boxProfile);
     const conditionNote = input.conditionNote === undefined ? unit.conditionNote : input.conditionNote?.trim() || null;
     await applyUnitChangeTx(
       tx,
       unit,
-      { condition, boxCondition, conditionNote },
+      { condition, boxCondition, boxProfile, conditionNote },
       {
         type: "CONDITION",
         reason: input.reason,
         note: input.note,
-        changes: { condition: [unit.condition, condition], boxCondition: [unit.boxCondition, boxCondition] },
+        changes: {
+          condition: [unit.condition, condition],
+          boxCondition: [unit.boxCondition, boxCondition],
+          ...(boxProfile !== unit.boxProfile ? { boxProfile: [unit.boxProfile, boxProfile] } : {}),
+        },
       },
       ctx,
       input.opKey
@@ -1013,6 +1038,51 @@ export async function markUnitMissing(db: WarehouseDb, input: GestureBase, ctx: 
       INSERT INTO "WarehouseException" ("id", "siteId", "type", "unitId", "locationId", "details", "createdByRole", "createdByOperatorId", "opKey")
       VALUES (${exceptionId}, ${unit.currentSiteId}, 'UNIT_NOT_FOUND', ${unit.id}, ${unit.currentLocationId},
               ${JSON.stringify({ reason, lastLocationId: unit.currentLocationId })}::jsonb, ${ctx.role}, ${ctx.operatorId ?? null}, ${`${input.opKey}:exc`})`);
+    return done(tx, unit.id, { exceptionId });
+  });
+}
+
+/**
+ * Two boxes carry the same QR (a label printed twice and stuck on two boxes, or a copied label).
+ * The code keeps designating the one recorded pair; it is isolated — sale blocked, putaway task
+ * released — and a DUPLICATE_LABEL discrepancy is opened. The second box is then received as a
+ * NEW pair with its own UUID; nothing is re-attributed before somebody checked both boxes (A28).
+ */
+export async function reportDuplicateLabel(
+  db: WarehouseDb,
+  input: GestureBase & { seenAtLocationId?: string | null },
+  ctx: ActorContext
+): Promise<OperationResult<{ unit: UnitSummary; exceptionId: string }>> {
+  return runOperation(db, { opKey: input.opKey, kind: "UNIT_DUPLICATE_LABEL", request: input, ctx }, async (tx) => {
+    const unit = await lockUnitTx(tx, input.unitId);
+    assertExpectedVersion(unit, input.expectedVersion);
+    const releasedTaskId = unit.presence === "PRESENT" ? await releaseActiveTaskTx(tx, unit.id, "DUPLICATE_LABEL") : null;
+    await applyUnitChangeTx(
+      tx,
+      unit,
+      { saleState: "BLOCKED" },
+      {
+        type: "SALE_STATE",
+        reason: "Étiquette vue sur deux boîtes",
+        note: input.note,
+        changes: { saleState: [unit.saleState, "BLOCKED"], duplicateLabel: true, releasedTaskId, seenAtLocationId: input.seenAtLocationId ?? null },
+      },
+      ctx,
+      input.opKey
+    );
+    const exceptionId = await openExceptionTx(
+      tx,
+      {
+        siteId: unit.currentSiteId,
+        type: "DUPLICATE_LABEL",
+        unitId: unit.id,
+        locationId: input.seenAtLocationId ?? unit.currentLocationId,
+        rawCode: unit.labelCode,
+        details: { note: input.note ?? null, recordedLocationId: unit.currentLocationId, previousSaleState: unit.saleState },
+        opKey: `${input.opKey}:dup`,
+      },
+      ctx
+    );
     return done(tx, unit.id, { exceptionId });
   });
 }

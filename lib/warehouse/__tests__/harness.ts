@@ -27,6 +27,7 @@ export const HAS_DB = Boolean(TEST_URL) && isLocal;
 
 process.env.WAREHOUSE_MODULE_ENABLED = "true";
 process.env.WAREHOUSE_WRITES_ENABLED = "true";
+process.env.WAREHOUSE_PARTNER_ALLOWLIST = "*";
 delete process.env.WAREHOUSE_LABEL_JOURNAL_ENFORCE;
 delete process.env.WAREHOUSE_LABEL_JOURNAL_DIR;
 

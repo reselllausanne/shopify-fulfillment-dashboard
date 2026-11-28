@@ -38,15 +38,46 @@ export function ok(data: unknown, init: { status?: number } = {}): NextResponse 
   return NextResponse.json({ ok: true, data: toPlain(data) }, { status: init.status ?? 200, headers: NO_STORE });
 }
 
-export function fail(err: unknown, route: string): NextResponse {
+/**
+ * C29 — the database refuses writes (read-only after a failover, disk full) or cannot be reached.
+ * The operator must not keep sticking labels on the strength of a generic "retry": say plainly
+ * that nothing was recorded and that the outage procedure applies.
+ */
+export function classifyStorageError(err: unknown): "READ_ONLY" | "DISK_FULL" | "OVERLOADED" | "UNREACHABLE" | null {
+  const e = err as { code?: string; message?: string; meta?: { code?: string; message?: string } } | null;
+  const text = `${e?.code ?? ""} ${e?.meta?.code ?? ""} ${e?.message ?? ""} ${e?.meta?.message ?? ""}`;
+  if (/\b25006\b|read-only transaction|cannot execute .* in a read-only/i.test(text)) return "READ_ONLY";
+  if (/\b53100\b|No space left on device|could not extend file|disk full/i.test(text)) return "DISK_FULL";
+  if (/\b53300\b|\b53200\b|too many connections|remaining connection slots|out of memory|P2024|Timed out fetching a new connection/i.test(text)) return "OVERLOADED";
+  if (/P1001|P1002|P1008|P1017|Can't reach database server|Connection terminated|ECONNREFUSED|ECONNRESET|Server has closed the connection/i.test(text)) return "UNREACHABLE";
+  return null;
+}
+
+const STORAGE_MESSAGES: Record<string, string> = {
+  READ_ONLY: "La base est en lecture seule : rien n'a été enregistré. Ne collez plus d'étiquette, gardez les boîtes à part et prévenez le responsable (procédure de panne).",
+  DISK_FULL: "Le disque de la base est plein : rien n'a été enregistré. Ne collez plus d'étiquette, gardez les boîtes à part et prévenez le responsable (procédure de panne).",
+  OVERLOADED: "La base est saturée : rien n'a été enregistré. Attendez une minute puis rescannez ; si cela persiste, prévenez le responsable.",
+  UNREACHABLE: "La base est injoignable : rien n'a été enregistré. Gardez les boîtes à part ; reprenez les scans quand la connexion revient.",
+};
+
+export function fail(err: unknown, route: string, opKey?: string | null): NextResponse {
   if (isWarehouseError(err)) {
     return NextResponse.json(
       { ok: false, error: { code: err.code, message: err.message, details: toPlain(err.details ?? null) } },
       { status: err.status, headers: NO_STORE }
     );
   }
-  // Never log request bodies, headers or tokens.
-  console.error(`[warehouse] ${route}:`, (err as Error)?.message ?? err);
+  // Never log request bodies, headers or tokens. The action key is not a secret: it ties this line
+  // to the operator's gesture and to the operation ledger (C22).
+  const key = typeof opKey === "string" && /^[A-Za-z0-9:_.-]{8,120}$/.test(opKey) ? ` opKey=${opKey}` : "";
+  console.error(`[warehouse] ${route}${key}:`, (err as Error)?.message ?? err);
+  const storage = classifyStorageError(err);
+  if (storage) {
+    return NextResponse.json(
+      { ok: false, error: { code: "STORAGE_UNAVAILABLE", message: STORAGE_MESSAGES[storage], details: { reason: storage, nothingWritten: true } } },
+      { status: 503, headers: NO_STORE }
+    );
+  }
   return NextResponse.json(
     { ok: false, error: { code: "INTERNAL", message: "Erreur technique : rien n'a été enregistré. Réessayer.", details: null } },
     { status: 500, headers: NO_STORE }
@@ -166,6 +197,7 @@ export async function handleStaffRequest(
   routes: Compiled<StaffRoute>[]
 ): Promise<NextResponse> {
   const label = `${req.method} /${segments.join("/")}`;
+  let opKey: string | null = null;
   try {
     if (!isWarehouseModuleEnabled()) return moduleDisabledResponse();
     const matched = matchRoute(routes, req.method, segments);
@@ -188,6 +220,7 @@ export async function handleStaffRequest(
       throw new WarehouseError("UNAUTHORIZED", "Identifiez-vous (opérateur) avant ce geste.", 401, { operatorRequired: true });
     }
     const body = await readBody(req);
+    opKey = typeof body?.opKey === "string" ? body.opKey : null;
     const call: StaffCall = {
       req,
       db,
@@ -202,7 +235,7 @@ export async function handleStaffRequest(
     if (result instanceof NextResponse) return result;
     return ok(result);
   } catch (err) {
-    return fail(err, label);
+    return fail(err, label, opKey);
   }
 }
 

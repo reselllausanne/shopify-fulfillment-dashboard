@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import * as batches from "../batches";
 import { toCsv } from "../codes";
-import { warehouseFlagsSnapshot } from "../config";
+import { isWarehouseWritesEnabled, warehouseFlagsSnapshot } from "../config";
 import { WarehouseError, invalid } from "../errors";
 import * as exceptions from "../exceptions";
 import * as imports from "../imports";
@@ -97,7 +97,15 @@ const routes: StaffRoute[] = [
       labelProfiles: LABEL_PROFILES,
     }),
   },
-  { method: "GET", path: "overview", handler: (c) => getOverview(c.db, reqStr(c.query.get("site"), "Site")) },
+  {
+    method: "GET",
+    path: "overview",
+    handler: async (c) => {
+      // C10: a claimed job whose station went silent must surface even when no print agent is open.
+      await sweepStalePrints(c.db);
+      return getOverview(c.db, reqStr(c.query.get("site"), "Site"));
+    },
+  },
   { method: "GET", path: "reconciliation", handler: (c) => getStockReconciliation(c.db, str(c.query.get("siteId"))) },
   { method: "GET", path: "operations/:opKey", handler: (c) => getOperationResult(c.db, c.params.opKey) },
   { method: "GET", path: "scan", handler: (c) => units.resolveScan(c.db, c.query.get("code") ?? "") },
@@ -275,6 +283,30 @@ const routes: StaffRoute[] = [
     },
   },
   {
+    // A10: a provisional article (box without usable GTIN) is confirmed once identified for certain.
+    method: "POST",
+    path: "items/:id/confirm",
+    admin: true,
+    handler: (c) =>
+      items.confirmItem(
+        c.db,
+        {
+          opKey: reqStr(c.body.opKey, "opKey"),
+          itemId: c.params.id,
+          gtin: str(c.body.gtin) ?? null,
+          brand: str(c.body.brand) ?? null,
+          name: str(c.body.name) ?? null,
+          styleCode: str(c.body.styleCode) ?? null,
+          colorway: str(c.body.colorway) ?? null,
+          sizeLabel: str(c.body.sizeLabel) ?? null,
+          sizeEu: str(c.body.sizeEu) ?? null,
+          sizeUs: str(c.body.sizeUs) ?? null,
+          note: reqStr(c.body.note, "Preuve d'identification"),
+        },
+        c.ctx
+      ),
+  },
+  {
     method: "POST",
     path: "items/:id/alias",
     admin: true,
@@ -337,6 +369,8 @@ const routes: StaffRoute[] = [
     path: "units/:id/label",
     handler: async (c) => {
       const payload = await printing.buildPairLabelPayload(c.db, c.params.id, bool(c.query.get("reprint")));
+      // The fallback PDF follows the same rule as the station queue (C01).
+      await journal.assertLabelProtected(c.db, payload.code);
       return labelFile([{ payload, widthMm: LABEL_PROFILES.PAIR.widthMm, heightMm: LABEL_PROFILES.PAIR.heightMm }], str(c.query.get("format")), `etiquette-${payload.code.slice(0, 8)}`);
     },
   },
@@ -358,7 +392,11 @@ const routes: StaffRoute[] = [
         case "sale":
           return units.setUnitSaleState(c.db, { ...base, saleState: reqStr(c.body.saleState, "Droit de vente") as any }, c.ctx);
         case "condition":
-          return units.setUnitCondition(c.db, { ...base, condition: str(c.body.condition) as any, boxCondition: str(c.body.boxCondition) as any, conditionNote: str(c.body.conditionNote) ?? null }, c.ctx);
+          return units.setUnitCondition(
+            c.db,
+            { ...base, condition: str(c.body.condition) as any, boxCondition: str(c.body.boxCondition) as any, boxProfile: str(c.body.boxProfile) ?? null, conditionNote: str(c.body.conditionNote) ?? null },
+            c.ctx
+          );
         case "owner":
           return units.changeUnitOwner(c.db, { ...base, ownerKind: reqStr(c.body.ownerKind, "Propriétaire") as any, ownerPartnerId: str(c.body.ownerPartnerId) ?? null }, c.ctx);
         case "item":
@@ -368,7 +406,13 @@ const routes: StaffRoute[] = [
         case "out":
           return units.markUnitOut(c.db, { ...base, outReason: reqStr(c.body.outReason, "Motif de sortie") as any }, c.ctx);
         case "relocate":
-          return putaway.relocateUnit(c.db, { ...base, toLocationId: reqStr(c.body.toLocationId, "Destination"), force: bool(c.body.force) }, c.ctx);
+          return putaway.relocateUnit(
+            c.db,
+            { ...base, toLocationId: reqStr(c.body.toLocationId, "Destination"), force: bool(c.body.force), acceptProfileMismatch: bool(c.body.acceptProfileMismatch) },
+            c.ctx
+          );
+        case "duplicate-label":
+          return units.reportDuplicateLabel(c.db, { ...base, seenAtLocationId: str(c.body.seenAtLocationId) ?? null }, c.ctx);
         case "reprint":
           return printing.reprintUnitLabel(c.db, { opKey: base.opKey, unitId: base.unitId, stationId: stationIdOf(c), reason: reqStr(c.body.reason, "Motif de réimpression") }, c.ctx);
         case "confirm-label":
@@ -446,21 +490,25 @@ const routes: StaffRoute[] = [
     path: "batches/:id/receive",
     operator: true,
     handler: (c) =>
-      batches.receiveUnit(
-        c.db,
-        {
-          opKey: reqStr(c.body.opKey, "opKey"),
-          batchId: c.params.id,
-          itemId: reqStr(c.body.itemId, "Variante"),
-          lineId: str(c.body.lineId) ?? null,
-          locationId: str(c.body.locationId) ?? null,
-          condition: str(c.body.condition) as any,
-          boxCondition: str(c.body.boxCondition) as any,
-          conditionNote: str(c.body.conditionNote) ?? null,
-          hold: bool(c.body.hold),
-          print: c.body.print === undefined ? true : bool(c.body.print),
-        },
-        c.ctx
+      afterIssue(
+        c,
+        batches.receiveUnit(
+          c.db,
+          {
+            opKey: reqStr(c.body.opKey, "opKey"),
+            batchId: c.params.id,
+            itemId: reqStr(c.body.itemId, "Variante"),
+            lineId: str(c.body.lineId) ?? null,
+            locationId: str(c.body.locationId) ?? null,
+            condition: str(c.body.condition) as any,
+            boxCondition: str(c.body.boxCondition) as any,
+            conditionNote: str(c.body.conditionNote) ?? null,
+            boxProfile: str(c.body.boxProfile) ?? null,
+            hold: bool(c.body.hold),
+            print: c.body.print === undefined ? true : bool(c.body.print),
+          },
+          c.ctx
+        )
       ),
   },
   {
@@ -475,19 +523,23 @@ const routes: StaffRoute[] = [
     path: "sessions/:id/create-unit",
     operator: true,
     handler: (c) =>
-      batches.stockTakeCreateUnit(
-        c.db,
-        {
-          opKey: reqStr(c.body.opKey, "opKey"),
-          sessionId: c.params.id,
-          itemId: reqStr(c.body.itemId, "Variante"),
-          condition: str(c.body.condition) as any,
-          boxCondition: str(c.body.boxCondition) as any,
-          conditionNote: str(c.body.conditionNote) ?? null,
-          ownerUncertain: bool(c.body.ownerUncertain),
-          print: c.body.print === undefined ? true : bool(c.body.print),
-        },
-        c.ctx
+      afterIssue(
+        c,
+        batches.stockTakeCreateUnit(
+          c.db,
+          {
+            opKey: reqStr(c.body.opKey, "opKey"),
+            sessionId: c.params.id,
+            itemId: reqStr(c.body.itemId, "Variante"),
+            condition: str(c.body.condition) as any,
+            boxCondition: str(c.body.boxCondition) as any,
+            conditionNote: str(c.body.conditionNote) ?? null,
+            boxProfile: str(c.body.boxProfile) ?? null,
+            ownerUncertain: bool(c.body.ownerUncertain),
+            print: c.body.print === undefined ? true : bool(c.body.print),
+          },
+          c.ctx
+        )
       ),
   },
   {
@@ -547,6 +599,7 @@ const routes: StaffRoute[] = [
           unitId: reqStr(c.body.unitId, "Paire"),
           locationId: reqStr(c.body.locationId, "Niveau"),
           acceptMismatch: bool(c.body.acceptMismatch),
+          acceptProfileMismatch: bool(c.body.acceptProfileMismatch),
           expectedVersion: int(c.body.expectedVersion) ?? null,
           note: str(c.body.note) ?? null,
         },
@@ -633,6 +686,7 @@ const routes: StaffRoute[] = [
     path: "stations",
     handler: async (c) => {
       const siteId = str(c.query.get("siteId"));
+      await sweepStalePrints(c.db);
       const [stations, printers, journalStatus] = await Promise.all([printing.listStations(c.db, siteId), printing.listPrinters(c.db, siteId), journal.getJournalStatus(c.db)]);
       return { stations, printers, journal: journalStatus };
     },
@@ -713,20 +767,23 @@ const routes: StaffRoute[] = [
   {
     method: "GET",
     path: "print-jobs",
-    handler: (c) =>
-      printing.listPrintJobs(c.db, {
+    handler: async (c) => {
+      await sweepStalePrints(c.db);
+      return printing.listPrintJobs(c.db, {
         siteId: str(c.query.get("siteId")),
         stationId: str(c.query.get("stationId")),
         status: list(c.query.get("status")) as any,
         objectId: str(c.query.get("objectId")),
         limit: int(c.query.get("limit")),
-      }),
+      });
+    },
   },
   {
     method: "GET",
     path: "print-jobs/:id/label",
     handler: async (c) => {
       const job = await printing.getPrintJob(c.db, c.params.id);
+      if (job.labelKind === "PAIR") await journal.assertLabelProtected(c.db, job.labelCode);
       return labelFile([{ payload: job.payload, widthMm: job.widthMm, heightMm: job.heightMm }], str(c.query.get("format")), `etiquette-${job.id.slice(0, 8)}`);
     },
   },
@@ -750,6 +807,7 @@ const routes: StaffRoute[] = [
     path: "agent/claim",
     station: true,
     handler: async (c) => {
+      await journal.flushJournalAfterIssue(c.db);
       const job = await printing.claimNextPrintJob(c.db, { stationId: c.station!.id });
       if (!job) return { job: null };
       const pdf = renderLabelsPdf([{ payload: job.payload, widthMm: job.widthMm, heightMm: job.heightMm }]);
@@ -954,5 +1012,18 @@ const routes: StaffRoute[] = [
   { method: "POST", path: "journal/export", handler: (c) => journal.exportLabelJournal(c.db, { limit: int(c.body.limit) }) },
   { method: "POST", path: "journal/reconcile", admin: true, handler: (c) => journal.reconcileJournalFromSink(c.db, { dryRun: c.body.dryRun === undefined ? true : bool(c.body.dryRun) }) },
 ];
+
+/** Reads never fail because of this housekeeping; with writes stopped nothing is swept. */
+async function sweepStalePrints(db: any): Promise<void> {
+  if (!isWarehouseWritesEnabled()) return;
+  await printing.sweepPrintTimeouts(db).catch(() => undefined);
+}
+
+/** A gesture that issued a pair code: push the issuance journal to its independent sink before answering. */
+async function afterIssue<T>(c: { db: any }, result: Promise<T>): Promise<T> {
+  const value = await result;
+  await journal.flushJournalAfterIssue(c.db);
+  return value;
+}
 
 export const staffRoutes = compileRoutes(routes);

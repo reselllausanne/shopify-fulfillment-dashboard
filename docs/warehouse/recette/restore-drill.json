@@ -1,37 +1,37 @@
 {
-  "at": "2026-11-28T03:54:37.523Z",
+  "at": "2026-11-28T04:34:09.496Z",
   "sink": {
-    "dir": "/var/folders/j3/51kdzzcn727bxy02m2htpxdh0000gn/T/warehouse-journal-sink-C6Ffwr",
+    "dir": "/var/folders/j3/51kdzzcn727bxy02m2htpxdh0000gn/T/warehouse-journal-sink-bD1TAw",
     "note": "Stand-in for the off-primary journal target (another disk / object storage in production)."
   },
   "references": [
     {
-      "text": "28f7b220-fdfe-4d14-b8e3-6babbfd3af2b-SC01",
-      "unitId": "28f7b220-fdfe-4d14-b8e3-6babbfd3af2b",
+      "text": "34bde082-f177-4169-87f9-f4408f8f0ede-SC01",
+      "unitId": "34bde082-f177-4169-87f9-f4408f8f0ede",
       "presence": "PRESENT",
       "issuedYear": 2026,
       "archived": false,
       "transferred": true
     },
     {
-      "text": "54420831-dc94-428a-b7c7-51f4cb858ea3-SC01",
-      "unitId": "54420831-dc94-428a-b7c7-51f4cb858ea3",
-      "presence": "PRESENT",
-      "issuedYear": 2023,
-      "archived": false,
-      "transferred": false
-    },
-    {
-      "text": "6ef0f89a-62c7-4bc5-b103-73256e6c69a5-SC02",
-      "unitId": "6ef0f89a-62c7-4bc5-b103-73256e6c69a5",
+      "text": "8f7ce2ec-28d6-48da-abbd-fc612b6eb306-SC02",
+      "unitId": "8f7ce2ec-28d6-48da-abbd-fc612b6eb306",
       "presence": "OUT",
       "issuedYear": 2019,
       "archived": false,
       "transferred": false
     },
     {
-      "text": "ba83f1ce-212c-4d33-b76a-c1abad3cd2a3-SC01",
-      "unitId": "ba83f1ce-212c-4d33-b76a-c1abad3cd2a3",
+      "text": "e9a0ab6e-1077-456e-83a1-f84a6c980c2f-SC01",
+      "unitId": "e9a0ab6e-1077-456e-83a1-f84a6c980c2f",
+      "presence": "PRESENT",
+      "issuedYear": 2023,
+      "archived": false,
+      "transferred": false
+    },
+    {
+      "text": "f775e8d1-4d09-4a84-8d12-a28f1d580b46-SC01",
+      "unitId": "f775e8d1-4d09-4a84-8d12-a28f1d580b46",
       "presence": "OUT",
       "issuedYear": 2015,
       "archived": true,
@@ -40,13 +40,13 @@
   ],
   "backup": {
     "atT0": {
-      "units": 1001194,
-      "codes": 1001194,
-      "movements": 2440748
+      "units": 1018717,
+      "codes": 1018717,
+      "movements": 2476001
     },
-    "journalFlushedBeforeBackup": 6053,
-    "copyAndStartSeconds": 5.3,
-    "sizeMb": 7826
+    "journalFlushedBeforeBackup": 23686,
+    "copyAndStartSeconds": 4.7,
+    "sizeMb": 6712
   },
   "afterBackup": {
     "pairsReceivedAndLabelled": 25,
@@ -61,19 +61,19 @@
     "stateIdenticalToT0": true,
     "details": [
       {
-        "text": "28f7b220-fdfe-4d14-b8e3-6babbfd3af2b-SC01",
+        "text": "34bde082-f177-4169-87f9-f4408f8f0ede-SC01",
         "sameUuid": true
       },
       {
-        "text": "54420831-dc94-428a-b7c7-51f4cb858ea3-SC01",
+        "text": "8f7ce2ec-28d6-48da-abbd-fc612b6eb306-SC02",
         "sameUuid": true
       },
       {
-        "text": "6ef0f89a-62c7-4bc5-b103-73256e6c69a5-SC02",
+        "text": "e9a0ab6e-1077-456e-83a1-f84a6c980c2f-SC01",
         "sameUuid": true
       },
       {
-        "text": "ba83f1ce-212c-4d33-b76a-c1abad3cd2a3-SC01",
+        "text": "f775e8d1-4d09-4a84-8d12-a28f1d580b46-SC01",
         "sameUuid": true
       }
     ]
@@ -84,22 +84,22 @@
     "pairsCreatedByScanning": 0
   },
   "journalReconcile": {
-    "journalEntriesRead": 6078,
+    "journalEntriesRead": 23711,
     "dryRun": {
       "wouldRestore": 25,
-      "alreadyKnown": 6053,
+      "alreadyKnown": 23686,
       "conflicts": 0,
       "wroteNothing": true
     },
     "applied": {
       "restored": 25,
-      "alreadyKnown": 6053,
+      "alreadyKnown": 23686,
       "conflicts": 0,
-      "seconds": 0.1
+      "seconds": 0.16
     },
     "secondRun": {
       "restored": 0,
-      "alreadyKnown": 6078
+      "alreadyKnown": 23711
     },
     "gluedPairsFoundAgainWithSameUuid": 25,
     "restoredAsMissingOwnerUnknownSaleBlocked": 25,
@@ -115,9 +115,9 @@
   "restoredDatabase": {
     "identityTriggers": 7,
     "warehouseMigrationsRecorded": 1,
-    "codes": 1001220,
-    "distinctCodes": 1001220,
-    "newIssueAfterRestore": "b715cdcf-9fc7-4eb3-bd77-c951758d135b-SC01",
+    "codes": 1018743,
+    "distinctCodes": 1018743,
+    "newIssueAfterRestore": "f8b1304a-a1e0-46e4-a933-13a2c11bd3a7-SC01",
     "newIssueCollidesWithJournaledCode": false
   },
   "verdict": {
@@ -126,6 +126,6 @@
     "journalRecoversIdentities": true,
     "rpoIdentities": "0 code lost when the journal sink is current (here: flushed after every batch).",
     "rpoMovements": "Everything since the last ordinary backup (here: the T0 copy).",
-    "rtoMeasuredHere": "5.3 s to copy and start 7826 MB + 0.1 s journal reconcile — local disk, not the VPS."
+    "rtoMeasuredHere": "4.7 s to copy and start 6712 MB + 0.16 s journal reconcile — local disk, not the VPS."
   }
 }

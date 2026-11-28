@@ -15,7 +15,7 @@ Le lot 1 est **inerte pour les canaux** : aucune écriture vers Shopify, Galaxus
 | [`DECISIONS.md`](DECISIONS.md) | Décisions prises pour le pilote et décisions à prendre par l'équipe |
 | [`MIGRATION.md`](MIGRATION.md) | Contenu de la migration, verrous, liste de contrôle avant production, activation, arrêt |
 | [`RECETTE.md`](RECETTE.md) | Résultats : tests, mesures à 10 000 / 100 000 / 200 000 paires et 1 000 000 de codes, exercice de restauration, critères d'acceptation, ce qui reste à tester sur le matériel |
-| [`M2-CASES.md`](M2-CASES.md) · [`.csv`](M2-CASES.csv) | Statut et preuve des 150 cas adverses (A01–C50) |
+| [`M2-CASES.md`](M2-CASES.md) · [`.csv`](M2-CASES.csv) (s'ouvre dans Excel ; le classeur `.xlsx` n'est pas versionné, le dépôt exclut `*.xlsx`) | Statut et preuve des 150 cas adverses (A01–C50) |
 | [`knet-reference/`](knet-reference/) | Captures de référence visuelle (pages publiques d'un WMS du marché) |
 | [`recette/`](recette/) | Résultats bruts des mesures (JSON) |
 
@@ -65,7 +65,7 @@ WAREHOUSE_PG_DB=warehouse_vitest scripts/warehouse/dev-db.sh start
 node scripts/warehouse/setup-test-db.mjs --url "$(WAREHOUSE_PG_DB=warehouse_vitest scripts/warehouse/dev-db.sh url)"
 WAREHOUSE_TEST_DATABASE_URL="$(WAREHOUSE_PG_DB=warehouse_vitest scripts/warehouse/dev-db.sh url)" npx vitest run lib/warehouse
 
-# 4. Recette de charge et exercice de restauration (≈ 10 min, grappe séparée)
+# 4. Recette de charge et exercice de restauration (≈ 25 min dont 10 min de charge prolongée, grappe séparée)
 scripts/warehouse/run-recette.sh
 ```
 

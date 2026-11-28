@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import ThemeToggle from "@/app/components/ThemeToggle";
@@ -82,12 +82,29 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+// Warehouse module ("Entrepôt"): shown only when /api/warehouse/config answers 200 ok:true
+// (a disabled module answers 404 MODULE_DISABLED).
+const WAREHOUSE_GROUP: NavGroup = {
+  label: "Entrepôt",
+  links: [
+    { label: "Vue d'ensemble", href: "/warehouse" },
+    { label: "Réception et reprise", href: "/warehouse/receiving" },
+    { label: "Rangement", href: "/warehouse/putaway" },
+    { label: "Stock", href: "/warehouse/stock" },
+    { label: "Emplacements", href: "/warehouse/locations" },
+    { label: "Écarts et contrôles", href: "/warehouse/exceptions" },
+    { label: "Postes et imprimantes", href: "/warehouse/stations" },
+    { label: "Partenaires et tarifs", href: "/warehouse/partners" },
+  ],
+};
+const WAREHOUSE_GROUP_AFTER = "Ops";
+
 // Routes that render their own auth/portal chrome — no staff nav there.
 // /returns = public customer portal (Shopify embed + standalone), not ops dashboard.
 const HIDE_PREFIXES = ["/login", "/partners", "/track", "/returns", "/tv"];
 
 function isActive(pathname: string, href: string): boolean {
-  if (href === "/") return pathname === "/";
+  if (href === "/" || href === "/warehouse") return pathname === href;
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
@@ -96,10 +113,35 @@ export default function AppNav() {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const [warehouseEnabled, setWarehouseEnabled] = useState(false);
 
-  if (HIDE_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
+  const hidden = HIDE_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+
+  useEffect(() => {
+    if (hidden) return;
+    let cancelled = false;
+    fetch("/api/warehouse/config", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) return false;
+        const body = await res.json().catch(() => null);
+        return body?.ok === true;
+      })
+      .catch(() => false)
+      .then((enabled) => {
+        if (!cancelled) setWarehouseEnabled(enabled);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hidden]);
+
+  if (hidden) {
     return null;
   }
+
+  const navGroups: NavGroup[] = warehouseEnabled
+    ? NAV_GROUPS.flatMap((g) => (g.label === WAREHOUSE_GROUP_AFTER ? [g, WAREHOUSE_GROUP] : [g]))
+    : NAV_GROUPS;
 
   const logout = async () => {
     try {
@@ -125,7 +167,7 @@ export default function AppNav() {
 
         {/* Desktop groups */}
         <div className="hidden items-center gap-0.5 md:flex">
-          {NAV_GROUPS.map((group) => {
+          {navGroups.map((group) => {
             const groupActive = group.links.some((l) => isActive(pathname, l.href));
             return (
               <div key={group.label} className="group relative">
@@ -206,7 +248,7 @@ export default function AppNav() {
       {/* Mobile menu */}
       {mobileOpen ? (
         <div className="max-h-[70vh] overflow-y-auto border-t border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950 md:hidden">
-          {NAV_GROUPS.map((group) => {
+          {navGroups.map((group) => {
             const expanded = openGroup === group.label;
             return (
               <div key={group.label} className="border-b border-slate-100 last:border-0 dark:border-slate-800">

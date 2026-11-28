@@ -4,7 +4,7 @@
 
 ## Ce qu'elle fait
 
-- Crée 32 tables `Warehouse*`, leurs index, leurs contraintes `CHECK`, 9 index uniques partiels et 7 triggers de garde.
+- Crée 32 tables `Warehouse*`, leurs index, leurs contraintes `CHECK`, 9 index uniques partiels et 7 triggers de garde. Les colonnes ajoutées après la revue M2 (`WarehouseUnit.boxProfile`, `WarehouseCountSession.lastActivityAt`) sont dans la même migration : elle n'a jamais été appliquée ailleurs qu'en recette locale.
 - Ajoute 4 clés étrangères vers `Partner(id)` (déposant d'une paire, d'un lot, d'une convention, d'une demande).
 - Active RLS, sans politique, sur les 32 tables.
 
@@ -49,7 +49,7 @@ Risque de blocage : si une transaction longue tient un verrou sur `Partner` au m
 | 1 | `WAREHOUSE_MODULE_ENABLED=true`, `WAREHOUSE_WRITES_ENABLED=false` | Écrans visibles en lecture pour l'équipe ; aucun geste accepté. |
 | 2 | `WAREHOUSE_WRITES_ENABLED=true`, `WAREHOUSE_PILOT_SITES=CH01`, `WAREHOUSE_PARTNER_ALLOWLIST=` *(vide = aucun partenaire)* | L'équipe crée le site, les racks, les postes ; reprise des paires. Aucun partenaire ne voit encore de stock. |
 | 3 | `WAREHOUSE_PARTNER_ALLOWLIST=TONY` | Le portail de Tony affiche son stock. |
-| 4 | `WAREHOUSE_LABEL_JOURNAL_ENFORCE=true` | L'émission d'une étiquette est refusée si le journal hors disque n'est pas à jour. |
+| 4 | `WAREHOUSE_LABEL_JOURNAL_ENFORCE=true` | La paire est créée, mais son étiquette ne sort (file du poste, PDF de secours, impression manuelle) qu'une fois sa ligne écrite sur le journal hors disque. |
 
 ## Arrêt et retour arrière
 

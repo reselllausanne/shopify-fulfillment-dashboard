@@ -215,6 +215,7 @@ CREATE TABLE "WarehouseCountSession" (
     "stationId" TEXT,
     "countedUnits" INTEGER NOT NULL DEFAULT 0,
     "openedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "lastActivityAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "closedAt" TIMESTAMP(3),
 
     CONSTRAINT "WarehouseCountSession_pkey" PRIMARY KEY ("id")
@@ -254,6 +255,7 @@ CREATE TABLE "WarehouseUnit" (
     "saleState" TEXT NOT NULL DEFAULT 'STORAGE_ONLY',
     "condition" TEXT NOT NULL DEFAULT 'UNKNOWN',
     "boxCondition" TEXT NOT NULL DEFAULT 'UNKNOWN',
+    "boxProfile" TEXT NOT NULL DEFAULT 'STANDARD',
     "conditionNote" TEXT,
     "outReason" TEXT,
     "outAt" TIMESTAMP(3),

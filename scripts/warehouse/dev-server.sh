@@ -9,6 +9,7 @@ case "$DB_URL" in *@127.0.0.1:*|*@localhost:*) ;; *) echo "Refus: base non local
 export DATABASE_URL="$DB_URL" DIRECT_URL="$DB_URL"
 export JWT_SECRET="local-warehouse-recette-secret" ADMIN_PASSWORD="admin-local" LOGISTICS_PASSWORD="logistics-local"
 export WAREHOUSE_MODULE_ENABLED="true" WAREHOUSE_WRITES_ENABLED="${WAREHOUSE_WRITES_ENABLED:-true}"
+export WAREHOUSE_PARTNER_ALLOWLIST="${WAREHOUSE_PARTNER_ALLOWLIST:-*}"
 export WAREHOUSE_LABEL_JOURNAL_DIR="${WAREHOUSE_LABEL_JOURNAL_DIR:-$HOME/.cache/resell-warehouse-journal}"
 export NEXT_TELEMETRY_DISABLED=1
 exec npx next dev -p "$PORT"

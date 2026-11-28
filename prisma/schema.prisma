@@ -3957,6 +3957,7 @@ model WarehouseCountSession {
   stationId    String?
   countedUnits Int       @default(0)
   openedAt     DateTime  @default(now())
+  lastActivityAt DateTime @default(now())
   closedAt     DateTime?
 
   batch    WarehouseBatch       @relation(fields: [batchId], references: [id], onDelete: Restrict)
@@ -4015,6 +4016,7 @@ model WarehouseUnit {
   condition         String    @default("UNKNOWN")
   /// GOOD | DAMAGED | MISSING | UNKNOWN
   boxCondition      String    @default("UNKNOWN")
+  boxProfile        String    @default("STANDARD")
   conditionNote     String?
   /// SOLD | WITHDRAWN | RETURNED_TO_SUPPLIER | DISPOSED | OTHER (when presence = OUT)
   outReason         String?

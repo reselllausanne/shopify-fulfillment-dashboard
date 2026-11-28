@@ -60,12 +60,39 @@ export function stripScannerTransport(raw: string): string {
   return v.trim();
 }
 
+const WEDGE_SEPARATORS = "'ß?/_=+*)!§°^¨`´";
+
+/**
+ * A scanner set to a US keyboard on a Swiss / German host types another character for the dash
+ * (`'`, `ß`, …). Our codes use the dash only as a separator, at fixed places, so the substitution
+ * is unambiguous: the SAME foreign character at every separator position of a code that is
+ * otherwise exactly ours. Digits and a–f are identical on these layouts; nothing else is guessed.
+ */
+export function compensateWedgeLayout(cleaned: string): string {
+  if (cleaned.includes("-")) return cleaned;
+  const seps = new Set(cleaned.replace(/[0-9A-Za-z]/g, "").split(""));
+  if (seps.size !== 1) return cleaned;
+  const sep = [...seps][0];
+  if (!WEDGE_SEPARATORS.includes(sep)) return cleaned;
+  const candidate = cleaned.split(sep).join("-");
+  const lower = candidate.toLowerCase();
+  if (UUID_ANY_RE.test(lower.slice(0, 36)) && (candidate.length === 36 || /^-[A-Za-z0-9]{2,8}$/.test(candidate.slice(36)))) return candidate;
+  if (LOCATION_CODE_RE.test(candidate.toUpperCase())) return candidate;
+  return cleaned;
+}
+
+/** QWERTZ ⇄ QWERTY: the only letters that move are Y and Z. Used as a second registry lookup, never as a rewrite. */
+export function swapYZ(code: string): string {
+  return code.replace(/[yzYZ]/g, (c) => ({ y: "z", z: "y", Y: "Z", Z: "Y" })[c] as string);
+}
+
 export type ScanClass =
   | { kind: "UNIT_LABEL"; code: string; unitId: string; issuingSiteCode: string }
   /** UUID-shaped code that is not ours (wrong version nibble or unknown suffix): external reference. */
   | { kind: "EXTERNAL_UUID_REF"; code: string }
   | { kind: "LOCATION"; code: string; siteCode: string }
-  | { kind: "GTIN"; gtin: string; checksumValid: boolean }
+  /** `packaging`: GTIN-14 with a packaging indicator 1–8 — a carton / inner pack, not one box (A15). */
+  | { kind: "GTIN"; gtin: string; checksumValid: boolean; packaging: boolean }
   /** A spreadsheet mangled a GTIN (1.98481E+11): refuse, never guess the digits. */
   | { kind: "MANGLED_NUMBER"; raw: string }
   | { kind: "EMPTY" }
@@ -76,7 +103,7 @@ export type ScanClass =
  * keyboard wedge must not break a scan); the canonical form is lower uuid + upper site.
  */
 export function classifyScan(rawInput: string): ScanClass {
-  const cleaned = stripScannerTransport(rawInput);
+  const cleaned = compensateWedgeLayout(stripScannerTransport(rawInput));
   if (!cleaned) return { kind: "EMPTY" };
 
   // UUID-shaped prefix: ours when it is a v4 followed by `-<site code>`, otherwise an external reference.
@@ -94,7 +121,7 @@ export function classifyScan(rawInput: string): ScanClass {
   }
 
   if (GTIN_RE.test(cleaned)) {
-    return { kind: "GTIN", gtin: cleaned, checksumValid: isValidGtinChecksum(cleaned) };
+    return { kind: "GTIN", gtin: cleaned, checksumValid: isValidGtinChecksum(cleaned), packaging: isPackagingGtin(cleaned) };
   }
   if (/^[0-9]+([.,][0-9]+)?[eE][+-]?[0-9]+$/.test(cleaned)) {
     return { kind: "MANGLED_NUMBER", raw: cleaned };
@@ -117,6 +144,24 @@ export function isValidGtinChecksum(gtin: string): boolean {
     sum += digits[i] * w;
   }
   return (10 - (sum % 10)) % 10 === check;
+}
+
+/**
+ * GTIN-14 whose first digit is 1–8 identifies a grouping of trade items (carton, inner pack):
+ * the box inside has its own GTIN. Indicator 0 is the unit itself, 9 a variable-measure item.
+ */
+export function isPackagingGtin(gtin: string): boolean {
+  return /^[1-8][0-9]{13}$/.test(gtin) && isValidGtinChecksum(gtin);
+}
+
+/** The unit GTIN (EAN-13) usually contained in a packaging GTIN-14 — a hint to show, never an identification. */
+export function containedUnitGtin(packagingGtin: string): string | null {
+  if (!isPackagingGtin(packagingGtin)) return null;
+  const body = packagingGtin.slice(1, 13);
+  const digits = body.split("").map(Number);
+  let sum = 0;
+  for (let i = digits.length - 1, w = 3; i >= 0; i -= 1, w = w === 3 ? 1 : 3) sum += digits[i] * w;
+  return `${body}${(10 - (sum % 10)) % 10}`;
 }
 
 /** Normalize a GTIN for alias lookup: digits as given (no padding, no numeric cast). */

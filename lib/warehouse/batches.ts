@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
+import { countSessionIdleMinutes } from "./config";
 import { normalizeGtin } from "./codes";
 import { withTx, type WarehouseConn, type WarehouseDb, type WarehouseTx } from "./db";
 import { WarehouseError, conflict, invalid, isUniqueViolation, notFound } from "./errors";
@@ -155,8 +156,10 @@ export async function createBatch(db: WarehouseDb, input: CreateBatchInput, ctx:
   if (countedAt && Number.isNaN(countedAt.getTime())) throw invalid("Date de comptage invalide.");
 
   return withTx(db, async (tx) => {
-    const site = await tx.$queryRaw<{ id: string; code: string; status: string }[]>(Prisma.sql`
-      SELECT "id", "code", "status" FROM "WarehouseSite" WHERE "id" = ${input.siteId}`);
+    // The reference carries the SITE's business day (its own time zone), not the server's (C34).
+    const site = await tx.$queryRaw<{ id: string; code: string; status: string; localDay: string }[]>(Prisma.sql`
+      SELECT "id", "code", "status", to_char(now() AT TIME ZONE "timezone", 'YYYYMMDD') AS "localDay"
+      FROM "WarehouseSite" WHERE "id" = ${input.siteId}`);
     if (!site[0]) throw notFound("Site");
     assertSiteInPilot(site[0].code);
     if (site[0].status !== "ACTIVE") throw conflict("LOCATION_NOT_USABLE", "Site retiré : aucune nouvelle opération.");
@@ -180,7 +183,7 @@ export async function createBatch(db: WarehouseDb, input: CreateBatchInput, ctx:
       }
       receivingLocationId = loc[0].id;
     }
-    const prefix = `${input.kind === "STOCK_TAKE" ? "REP" : "REC"}-${site[0].code}-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`;
+    const prefix = `${input.kind === "STOCK_TAKE" ? "REP" : "REC"}-${site[0].code}-${site[0].localDay}`;
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const n = await tx.$queryRaw<{ n: number }[]>(Prisma.sql`
         SELECT count(*)::int AS n FROM "WarehouseBatch" WHERE "reference" LIKE ${`${prefix}-%`}`);
@@ -348,6 +351,8 @@ export type ReceiveUnitInput = {
   condition?: UnitCondition;
   boxCondition?: BoxCondition;
   conditionNote?: string | null;
+  /** Box format (STANDARD by default, LARGE…): only compatible levels are proposed (A37). */
+  boxProfile?: string | null;
   /** Doubt on the content / state: the pair is created in quarantine state and gets no putaway task. */
   hold?: boolean;
   /** Ask for the pair label on the active station (default true). */
@@ -422,6 +427,7 @@ export async function receiveUnit(db: WarehouseDb, input: ReceiveUnitInput, ctx:
         locationId: loc.id,
         condition: input.condition,
         boxCondition: input.boxCondition,
+        boxProfile: input.boxProfile,
         conditionNote: input.conditionNote?.trim() || null,
         qcState: hold ? "QUARANTINE" : "PENDING",
         saleState: hold || surplus ? "BLOCKED" : "STORAGE_ONLY",
@@ -560,6 +566,8 @@ export async function openCountSession(
         await tx.$executeRaw(Prisma.sql`
           UPDATE "WarehouseCountSession" SET "stationId" = ${ctx.stationId ?? s.stationId}, "operatorId" = ${ctx.operatorId ?? s.operatorId} WHERE "id" = ${s.id}`);
       }
+      // Scanning the level again is the proof of context a stale session asks for (A32).
+      await tx.$executeRaw(Prisma.sql`UPDATE "WarehouseCountSession" SET "lastActivityAt" = now() WHERE "id" = ${s.id}`);
       await tx.$executeRaw(Prisma.sql`UPDATE "WarehouseBatch" SET "activeLocationId" = ${loc.id}, "updatedAt" = now() WHERE "id" = ${batch.id}`);
       return { id: s.id, resumed: true };
     }
@@ -583,16 +591,55 @@ export async function openCountSession(
 
 type OpenSession = { id: string; batchId: string; locationId: string; round: number; status: string; siteId: string; locationCode: string; locationKind: LocationKind };
 
+/**
+ * Lock the open count session for this gesture (one station counts a level: gestures of a
+ * session are serialised) and refresh its activity mark.
+ *
+ * A32 — a tab left open on yesterday's level: after `countSessionIdleMinutes()` without a scan
+ * the gesture is refused with SESSION_STALE and writes nothing; the operator scans the level
+ * code again (openCountSession resumes the same session), which proves where they stand.
+ */
 async function requireOpenSessionTx(tx: WarehouseTx, sessionId: string): Promise<OpenSession> {
-  const rows = await tx.$queryRaw<OpenSession[]>(Prisma.sql`
-    SELECT cs."id", cs."batchId", cs."locationId", cs."round", cs."status", l."siteId", l."code" AS "locationCode", l."kind" AS "locationKind"
+  const rows = await tx.$queryRaw<(OpenSession & { idleSeconds: number })[]>(Prisma.sql`
+    SELECT cs."id", cs."batchId", cs."locationId", cs."round", cs."status", l."siteId", l."code" AS "locationCode", l."kind" AS "locationKind",
+           GREATEST(0, EXTRACT(EPOCH FROM (now() - cs."lastActivityAt")))::int AS "idleSeconds"
     FROM "WarehouseCountSession" cs JOIN "WarehouseLocation" l ON l."id" = cs."locationId"
-    WHERE cs."id" = ${sessionId} FOR SHARE OF cs`);
+    WHERE cs."id" = ${sessionId} FOR UPDATE OF cs`);
   if (!rows[0]) throw notFound("Session de comptage");
   if (rows[0].status !== "OPEN") {
     throw conflict("SESSION_CONFLICT", "Cette session de comptage est close : rescanner le niveau pour en ouvrir une nouvelle.");
   }
+  const idleMinutes = Math.floor(rows[0].idleSeconds / 60);
+  if (idleMinutes >= countSessionIdleMinutes()) {
+    throw conflict("SESSION_STALE", `Comptage de ${rows[0].locationCode} sans activité depuis ${idleMinutes} min : rescanner le code du niveau pour reprendre. Rien n'a été enregistré.`, {
+      sessionId: rows[0].id,
+      locationId: rows[0].locationId,
+      locationCode: rows[0].locationCode,
+      idleMinutes,
+    });
+  }
+  await tx.$executeRaw(Prisma.sql`UPDATE "WarehouseCountSession" SET "lastActivityAt" = now() WHERE "id" = ${sessionId}`);
   return rows[0];
+}
+
+type DeclaredLine = { id: string; lineNo: number; expectedQty: number | null; receivedQty: number };
+
+/**
+ * First open declared line of this variant with room left (A08): a declared quantity — partner
+ * statement, historical channel quantity — is only ever COMPARED with what is physically found.
+ */
+async function takeDeclaredLineTx(tx: WarehouseTx, batchId: string, itemId: string): Promise<DeclaredLine | null> {
+  const rows = await tx.$queryRaw<DeclaredLine[]>(Prisma.sql`
+    SELECT "id", "lineNo", "expectedQty", "receivedQty" FROM "WarehouseBatchLine"
+    WHERE "batchId" = ${batchId} AND "status" = 'OPEN'
+      AND ("itemId" = ${itemId} OR ("itemId" IS NULL AND "gtin" IS NOT NULL AND "gtin" IN (
+            SELECT "value" FROM "WarehouseItemAlias" WHERE "itemId" = ${itemId} AND "namespace" = 'GTIN')))
+      AND ("expectedQty" IS NULL OR "receivedQty" < "expectedQty")
+    ORDER BY "lineNo" LIMIT 1 FOR UPDATE`);
+  if (!rows[0]) return null;
+  await tx.$executeRaw(Prisma.sql`
+    UPDATE "WarehouseBatchLine" SET "receivedQty" = "receivedQty" + 1, "updatedAt" = now() WHERE "id" = ${rows[0].id}`);
+  return { ...rows[0], receivedQty: rows[0].receivedQty + 1 };
 }
 
 async function recordCountScanTx(tx: WarehouseTx, session: OpenSession, unitId: string, result: "CREATED" | "FOUND_HERE" | "MOVED_HERE"): Promise<boolean> {
@@ -614,6 +661,7 @@ export type StockTakeCreateInput = {
   conditionNote?: string | null;
   /** The box is on the level but its owner is not certain: recorded here, owner UNKNOWN, blocked (A02). */
   ownerUncertain?: boolean;
+  boxProfile?: string | null;
   print?: boolean;
 };
 
@@ -621,6 +669,8 @@ export type StockTakeCreateResult = {
   unit: UnitSummary;
   print: PrintOutcome;
   countedInSession: number;
+  /** Declared line this box was compared with (batch with a declared content), else null. */
+  line: { id: string; lineNo: number; expectedQty: number | null; receivedQty: number } | null;
   exceptions: { id: string; type: string }[];
 };
 
@@ -636,6 +686,10 @@ export async function stockTakeCreateUnit(db: WarehouseDb, input: StockTakeCreat
     const item = await tx.$queryRaw<{ id: string; status: string }[]>(Prisma.sql`SELECT "id", "status" FROM "WarehouseItem" WHERE "id" = ${input.itemId}`);
     if (!item[0] || item[0].status === "MERGED") throw notFound("Article");
     const uncertain = Boolean(input.ownerUncertain);
+    // A08: compare with the declared list when there is one. Reality wins: an undeclared box is
+    // still recorded where it stands, and flagged.
+    const line = await takeDeclaredLineTx(tx, batch.id, item[0].id);
+    const undeclared = batch.expectedKnown && !line;
     const { unit, overCapacity } = await createUnitTx(
       tx,
       {
@@ -647,10 +701,12 @@ export async function stockTakeCreateUnit(db: WarehouseDb, input: StockTakeCreat
         agreementId: uncertain ? null : batch.agreementId,
         originType: "STOCK_TAKE",
         originBatchId: batch.id,
+        originLineId: line?.id ?? null,
         locationId: session.locationId,
         forceOccupancy: true,
         condition: input.condition,
         boxCondition: input.boxCondition,
+        boxProfile: input.boxProfile,
         conditionNote: input.conditionNote?.trim() || null,
         saleState: uncertain ? "BLOCKED" : "STORAGE_ONLY",
         movementType: "STOCK_TAKE",
@@ -670,6 +726,16 @@ export async function stockTakeCreateUnit(db: WarehouseDb, input: StockTakeCreat
       exceptions.push({
         type: "CAPACITY_MISMATCH",
         id: await openExceptionTx(tx, { siteId: batch.siteId, type: "CAPACITY_MISMATCH", unitId: unit.id, batchId: batch.id, locationId: session.locationId, opKey: `${input.opKey}:cap` }, ctx),
+      });
+    }
+    if (undeclared) {
+      exceptions.push({
+        type: "SURPLUS",
+        id: await openExceptionTx(
+          tx,
+          { siteId: batch.siteId, type: "SURPLUS", unitId: unit.id, batchId: batch.id, locationId: session.locationId, details: { itemId: item[0].id, undeclared: true }, opKey: `${input.opKey}:surplus` },
+          ctx
+        ),
       });
     }
     // A box left on a cart / receiving zone during a stock-take still has to be put away.
@@ -694,7 +760,7 @@ export async function stockTakeCreateUnit(db: WarehouseDb, input: StockTakeCreat
             ctx
           );
     const counted = await tx.$queryRaw<{ countedUnits: number }[]>(Prisma.sql`SELECT "countedUnits" FROM "WarehouseCountSession" WHERE "id" = ${session.id}`);
-    return { unit: await getUnitSummary(tx, unit.id), print, countedInSession: counted[0].countedUnits, exceptions };
+    return { unit: await getUnitSummary(tx, unit.id), print, countedInSession: counted[0].countedUnits, line, exceptions };
   });
 }
 
@@ -733,7 +799,13 @@ export async function stockTakeScanUnit(
     const already = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
       SELECT "id" FROM "WarehouseCountScan" WHERE "sessionId" = ${session.id} AND "unitId" = ${unit.id}`);
     if (already[0]) {
-      return { result: "ALREADY_COUNTED" as const, unit: await getUnitSummary(tx, unit.id), countedInSession: await counted(), exceptions, message: "Déjà comptée dans cette session : aucun changement." };
+      return {
+        result: "ALREADY_COUNTED" as const,
+        unit: await getUnitSummary(tx, unit.id),
+        countedInSession: await counted(),
+        exceptions,
+        message: "Déjà comptée dans cette session : aucun changement. Si c'est une AUTRE boîte qui porte la même étiquette, signaler « Étiquette en double ».",
+      };
     }
 
     if (unit.presence === "OUT" || unit.presence === "IN_TRANSIT" || unit.presence === "THIRD_PARTY") {
@@ -775,16 +847,27 @@ export async function stockTakeScanUnit(
       });
     }
     const here = unit.presence === "PRESENT" && unit.currentLocationId === session.locationId;
+    // A28: the same QR already counted on ANOTHER level during this stock-take — either the box was
+    // moved meanwhile, or two boxes carry the same label.
+    const countedElsewhere = here
+      ? []
+      : await tx.$queryRaw<{ code: string }[]>(Prisma.sql`
+          SELECT l."code" FROM "WarehouseCountScan" c JOIN "WarehouseLocation" l ON l."id" = c."locationId"
+          WHERE c."batchId" = ${batch.id} AND c."unitId" = ${unit.id} AND c."locationId" <> ${session.locationId}
+          ORDER BY c."createdAt" DESC LIMIT 1`);
     if (!here && !input.confirmMove) {
       const from = unit.currentLocationId
         ? (await tx.$queryRaw<{ code: string }[]>(Prisma.sql`SELECT "code" FROM "WarehouseLocation" WHERE "id" = ${unit.currentLocationId}`))[0]?.code
         : null;
+      const base = from
+        ? `Cette paire est enregistrée en ${from}. Confirmer qu'elle est physiquement en ${session.locationCode} pour corriger son adresse.`
+        : `Cette paire était déclarée introuvable. Confirmer qu'elle est physiquement en ${session.locationCode}.`;
       throw conflict(
         "CONFIRMATION_REQUIRED",
-        from
-          ? `Cette paire est enregistrée en ${from}. Confirmer qu'elle est physiquement en ${session.locationCode} pour corriger son adresse.`
-          : `Cette paire était déclarée introuvable. Confirmer qu'elle est physiquement en ${session.locationCode}.`,
-        { confirm: "confirmMove", recordedLocationCode: from }
+        countedElsewhere[0]
+          ? `${base} Elle a déjà été comptée en ${countedElsewhere[0].code} pendant cette reprise : si deux boîtes portent cette étiquette, ne pas confirmer et signaler « Étiquette en double ».`
+          : base,
+        { confirm: "confirmMove", recordedLocationCode: from, countedElsewhereCode: countedElsewhere[0]?.code ?? null }
       );
     }
 
@@ -805,12 +888,27 @@ export async function stockTakeScanUnit(
         input.opKey
       );
       await recordCountScanTx(tx, session, unit.id, "MOVED_HERE");
+      if (countedElsewhere[0]) {
+        exceptions.push({
+          type: "DUPLICATE_SCAN",
+          id: await openExceptionTx(
+            tx,
+            { siteId: batch.siteId, type: "DUPLICATE_SCAN", unitId: unit.id, batchId: batch.id, locationId: session.locationId, rawCode: unit.labelCode, details: { alreadyCountedAt: countedElsewhere[0].code, movedTo: session.locationCode }, opKey: `${input.opKey}:dupscan` },
+            ctx
+          ),
+        });
+      }
       if (overCapacity) {
         exceptions.push({
           type: "CAPACITY_MISMATCH",
           id: await openExceptionTx(tx, { siteId: batch.siteId, type: "CAPACITY_MISMATCH", unitId: unit.id, batchId: batch.id, locationId: session.locationId, opKey: `${input.opKey}:cap` }, ctx),
         });
       }
+    }
+    if (unit.originBatchId !== batch.id && !ownerDiffers) {
+      const firstInBatch = await tx.$queryRaw<{ n: number }[]>(Prisma.sql`
+        SELECT count(*)::int AS n FROM "WarehouseCountScan" WHERE "batchId" = ${batch.id} AND "unitId" = ${unit.id}`);
+      if (firstInBatch[0].n === 1) await takeDeclaredLineTx(tx, batch.id, unit.itemId);
     }
     if (ownerDiffers) {
       exceptions.push({
@@ -923,14 +1021,65 @@ export type BatchDetail = {
     labelsVerified: number;
     openExceptions: number;
   };
+  /** How the work went (C49): measured from the pairs' own timestamps, nothing is estimated. */
+  pace: BatchPace;
   /** Stock-take: counted levels (latest round per level) and the level in progress. */
   sessions: { id: string; locationId: string; locationCode: string; locationShortCode: string; round: number; status: string; countedUnits: number; openedAt: string; closedAt: string | null }[];
   openSession: { id: string; locationCode: string; locationShortCode: string; countedUnits: number } | null;
 };
 
+export type BatchPace = {
+  pairs: number;
+  firstPairAt: string | null;
+  lastPairAt: string | null;
+  /** Wall-clock minutes between the first and the last pair. */
+  elapsedMinutes: number;
+  /** Minutes actually spent scanning: gaps longer than 5 min between two pairs (pause, lunch, night) are left out. */
+  activeMinutes: number;
+  pairsPerActiveHour: number | null;
+  reprints: number;
+  levelsCounted: number;
+  recounts: number;
+  exceptionsByType: Record<string, number>;
+};
+
+export async function getBatchPace(conn: WarehouseConn, batchId: string): Promise<BatchPace> {
+  const [t, reprints, sessions, exc] = await Promise.all([
+    conn.$queryRaw<{ n: number; first: Date | null; last: Date | null; active: number }[]>(Prisma.sql`
+      WITH g AS (
+        SELECT "receivedAt" AS at, EXTRACT(EPOCH FROM ("receivedAt" - lag("receivedAt") OVER (ORDER BY "receivedAt"))) AS gap
+        FROM "WarehouseUnit" WHERE "originBatchId" = ${batchId})
+      SELECT count(*)::int AS n, min(at) AS first, max(at) AS last, COALESCE(sum(gap) FILTER (WHERE gap <= 300), 0)::float8 AS active FROM g`),
+    conn.$queryRaw<{ n: number }[]>(Prisma.sql`
+      SELECT count(*)::int AS n FROM "WarehouseMovement" m JOIN "WarehouseUnit" u ON u."id" = m."unitId"
+      WHERE u."originBatchId" = ${batchId} AND m."type" = 'LABEL_REPRINT'`),
+    conn.$queryRaw<{ levels: number; recounts: number }[]>(Prisma.sql`
+      SELECT count(DISTINCT "locationId")::int AS levels, count(*) FILTER (WHERE "round" > 1)::int AS recounts
+      FROM "WarehouseCountSession" WHERE "batchId" = ${batchId}`),
+    conn.$queryRaw<{ type: string; n: number }[]>(Prisma.sql`
+      SELECT "type", count(*)::int AS n FROM "WarehouseException" WHERE "batchId" = ${batchId} GROUP BY "type"`),
+  ]);
+  const first = t[0].first ? new Date(t[0].first) : null;
+  const last = t[0].last ? new Date(t[0].last) : null;
+  const activeMinutes = Math.round((t[0].active / 60) * 10) / 10;
+  return {
+    pairs: t[0].n,
+    firstPairAt: first ? first.toISOString() : null,
+    lastPairAt: last ? last.toISOString() : null,
+    elapsedMinutes: first && last ? Math.round(((last.getTime() - first.getTime()) / 60000) * 10) / 10 : 0,
+    activeMinutes,
+    // Meaningful from a handful of pairs and a minute of work; below that the rate is noise.
+    pairsPerActiveHour: t[0].n >= 5 && activeMinutes >= 1 ? Math.round(((t[0].n - 1) / activeMinutes) * 60) : null,
+    reprints: reprints[0].n,
+    levelsCounted: sessions[0].levels,
+    recounts: sessions[0].recounts,
+    exceptionsByType: Object.fromEntries(exc.map((e) => [e.type, e.n])),
+  };
+}
+
 export async function getBatchDetail(conn: WarehouseConn, batchId: string): Promise<BatchDetail> {
   const batch = await getBatch(conn, batchId);
-  const [lines, totals, sessions] = await Promise.all([
+  const [lines, totals, sessions, pace] = await Promise.all([
     listBatchLines(conn, batchId),
     conn.$queryRaw<any[]>(Prisma.sql`
       SELECT count(*)::int AS "identified",
@@ -946,6 +1095,7 @@ export async function getBatchDetail(conn: WarehouseConn, batchId: string): Prom
              cs."countedUnits", cs."openedAt", cs."closedAt"
       FROM "WarehouseCountSession" cs JOIN "WarehouseLocation" l ON l."id" = cs."locationId"
       WHERE cs."batchId" = ${batchId} ORDER BY cs."openedAt" DESC LIMIT 500`),
+    getBatchPace(conn, batchId),
   ]);
   const expected = batch.expectedKnown ? lines.reduce((sum, l) => sum + (l.expectedQty ?? 0), 0) : null;
   const open = sessions.find((s) => s.status === "OPEN") ?? null;
@@ -953,6 +1103,7 @@ export async function getBatchDetail(conn: WarehouseConn, batchId: string): Prom
     batch,
     lines,
     totals: { expected, ...totals[0], openExceptions: batch.openExceptionCount },
+    pace,
     sessions: sessions.map((s) => ({ ...s, openedAt: iso(s.openedAt), closedAt: iso(s.closedAt) })),
     openSession: open ? { id: open.id, locationCode: open.locationCode, locationShortCode: open.locationShortCode, countedUnits: open.countedUnits } : null,
   };
@@ -1019,6 +1170,7 @@ export async function closeBatch(
       toVerify: openExc[0].n,
       labelsVerified: detail.totals.labelsVerified,
       levelsCounted: new Set(detail.sessions.map((s) => s.locationId)).size,
+      pace: detail.pace,
       reason: reason || null,
     };
     await tx.$executeRaw(Prisma.sql`

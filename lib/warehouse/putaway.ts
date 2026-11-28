@@ -285,7 +285,7 @@ export async function proposeDestinations(
       const task = await getActiveTaskTx(tx, p.unitId);
       if (!task || task.id !== p.id || task.status !== "PENDING") return "SKIP" as const;
       if (unit.presence !== "PRESENT" || unit.qcState === "QUARANTINE") return "SKIP" as const;
-      return reserveForTaskTx(tx, task, unit.itemId, { sizeProfile: input.sizeProfile });
+      return reserveForTaskTx(tx, task, unit.itemId, { sizeProfile: input.sizeProfile ?? unit.boxProfile });
     });
     if (slot === "SKIP") continue;
     if (slot) reserved += 1;
@@ -300,13 +300,30 @@ export async function proposeDestinations(
   return { reserved, noSlot, remainingPending: remaining[0].n };
 }
 
-type LocRow = { id: string; siteId: string; code: string; shortCode: string; kind: LocationKind; holdsUnits: boolean; status: string };
+type LocRow = { id: string; siteId: string; code: string; shortCode: string; kind: LocationKind; holdsUnits: boolean; status: string; sizeProfile: string };
 
 async function getLocTx(tx: WarehouseTx, locationId: string): Promise<LocRow> {
   const rows = await tx.$queryRaw<LocRow[]>(Prisma.sql`
-    SELECT "id", "siteId", "code", "shortCode", "kind", "holdsUnits", "status" FROM "WarehouseLocation" WHERE "id" = ${locationId}`);
+    SELECT "id", "siteId", "code", "shortCode", "kind", "holdsUnits", "status", "sizeProfile" FROM "WarehouseLocation" WHERE "id" = ${locationId}`);
   if (!rows[0]) throw notFound("Emplacement", { locationId });
   return rows[0];
+}
+
+/**
+ * A37 — a level takes the box formats of its profile (ANY takes all). Putting a big carton on a
+ * small-box level is not forbidden (the shelf is what it is) but it is never silent: explicit
+ * confirmation, recorded on the movement.
+ */
+function assertBoxFits(unit: UnitRow, loc: LocRow, accepted: boolean | undefined): boolean {
+  if (loc.kind !== "LEVEL" || loc.sizeProfile === "ANY" || loc.sizeProfile === unit.boxProfile) return false;
+  if (!accepted) {
+    throw conflict(
+      "SIZE_PROFILE_MISMATCH",
+      `${loc.shortCode} est prévu pour le format ${loc.sizeProfile}, cette boîte est au format ${unit.boxProfile}. Confirmer pour la ranger ici quand même.`,
+      { confirm: "acceptProfileMismatch", levelProfile: loc.sizeProfile, boxProfile: unit.boxProfile, locationCode: loc.code }
+    );
+  }
+  return true;
 }
 
 export type ConfirmPutawayResult = {
@@ -330,7 +347,7 @@ export type ConfirmPutawayResult = {
  */
 export async function confirmPutaway(
   db: WarehouseDb,
-  input: { opKey: string; unitId: string; locationId: string; acceptMismatch?: boolean; expectedVersion?: number | null; note?: string | null },
+  input: { opKey: string; unitId: string; locationId: string; acceptMismatch?: boolean; acceptProfileMismatch?: boolean; expectedVersion?: number | null; note?: string | null },
   ctx: ActorContext
 ): Promise<OperationResult<ConfirmPutawayResult>> {
   return runOperation(db, { opKey: input.opKey, kind: "PUTAWAY_CONFIRM", request: input, ctx }, async (tx) => {
@@ -363,6 +380,7 @@ export async function confirmPutaway(
     if (unit.qcState === "QUARANTINE") {
       throw conflict("UNIT_STATE_CONFLICT", "Paire en quarantaine : elle ne se range pas en rayon avant décision.");
     }
+    const profileMismatch = assertBoxFits(unit, loc, input.acceptProfileMismatch);
 
     let consume = false;
     let deviated = false;
@@ -393,7 +411,16 @@ export async function confirmPutaway(
       tx,
       unit,
       { currentLocationId: loc.id, currentSiteId: loc.siteId },
-      { type: "PUTAWAY", taskId: task?.id ?? null, batchId: task?.batchId ?? null, note: input.note, changes: deviated ? { deviatedFrom: task?.proposedLocationId } : null },
+      {
+        type: "PUTAWAY",
+        taskId: task?.id ?? null,
+        batchId: task?.batchId ?? null,
+        note: input.note,
+        changes:
+          deviated || profileMismatch
+            ? { ...(deviated ? { deviatedFrom: task?.proposedLocationId } : {}), ...(profileMismatch ? { profileMismatch: { level: loc.sizeProfile, box: unit.boxProfile } } : {}) }
+            : null,
+      },
       ctx,
       input.opKey
     );
@@ -427,7 +454,7 @@ export type RelocateResult = { result: "MOVED" | "ALREADY_THERE"; unit: UnitSumm
  */
 export async function relocateUnit(
   db: WarehouseDb,
-  input: { opKey: string; unitId: string; toLocationId: string; reason?: string | null; force?: boolean; expectedVersion?: number | null; note?: string | null },
+  input: { opKey: string; unitId: string; toLocationId: string; reason?: string | null; force?: boolean; acceptProfileMismatch?: boolean; expectedVersion?: number | null; note?: string | null },
   ctx: ActorContext
 ): Promise<OperationResult<RelocateResult>> {
   return runOperation(db, { opKey: input.opKey, kind: "UNIT_RELOCATE", request: input, ctx }, async (tx) => {
@@ -452,6 +479,7 @@ export async function relocateUnit(
     if (input.force && ctx.role !== "admin" && ctx.role !== "system") {
       throw new WarehouseError("FORBIDDEN", "Forcer une position pleine ou bloquée est réservé au gestionnaire.", 403);
     }
+    const profileMismatch = assertBoxFits(unit, loc, input.acceptProfileMismatch);
 
     const temporary = loc.kind === "RECEIVING" || loc.kind === "CART";
     let taskId: string | null = null;
@@ -468,7 +496,15 @@ export async function relocateUnit(
         currentSiteId: loc.siteId,
         ...(quarantine ? { qcState: "QUARANTINE" as const, saleState: "BLOCKED" as const } : {}),
       },
-      { type: found ? "FOUND" : "RELOCATE", reason: reason || null, note: input.note, changes: input.force ? { forced: true, overCapacity } : null },
+      {
+        type: found ? "FOUND" : "RELOCATE",
+        reason: reason || null,
+        note: input.note,
+        changes:
+          input.force || profileMismatch
+            ? { ...(input.force ? { forced: true, overCapacity } : {}), ...(profileMismatch ? { profileMismatch: { level: loc.sizeProfile, box: unit.boxProfile } } : {}) }
+            : null,
+      },
       ctx,
       input.opKey
     );
@@ -499,7 +535,7 @@ export async function reassignPutaway(
     if (!task) throw conflict("UNIT_STATE_CONFLICT", "Aucune tâche de rangement active pour cette paire.");
     const previous = task.proposedLocationId;
     await unreserveTaskTx(tx, task, reason.slice(0, 120));
-    const slot = await reserveForTaskTx(tx, task, unit.itemId, { sizeProfile: input.sizeProfile, excludeLocationIds: previous ? [previous] : [] });
+    const slot = await reserveForTaskTx(tx, task, unit.itemId, { sizeProfile: input.sizeProfile ?? unit.boxProfile, excludeLocationIds: previous ? [previous] : [] });
     return { unitId: unit.id, proposedLocationCode: slot?.code ?? null, proposedLocationShortCode: slot?.shortCode ?? null, noSlot: !slot };
   });
 }

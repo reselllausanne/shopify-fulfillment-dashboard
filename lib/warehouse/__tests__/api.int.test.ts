@@ -1,6 +1,10 @@
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { SignJWT } from "jose";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import * as journal from "../journal";
 import * as operators from "../operators";
 import * as printing from "../printing";
 import { HAS_DB, TEST_URL, admin, closeTestDb, makeItem, makePartner, makeReceivingBatch, makeWorld, op, receiveOne, type World } from "./harness";
@@ -240,6 +244,177 @@ d("staff API — access rules", () => {
     expect(sent.json.data.status).toBe("SENT");
   });
 
+  it("issuance journal: exported off-database, replay-safe, and every code is already known on reconcile", async () => {
+    const world = await makeWorld();
+    const item = await makeItem(world.db);
+    const batch = await makeReceivingBatch(world);
+    const made = [await receiveOne(world, batch.id, item.id), await receiveOne(world, batch.id, item.id)];
+    const dir = mkdtempSync(path.join(tmpdir(), "wh-journal-"));
+    let exported = 0;
+    for (let i = 0; i < 50; i += 1) {
+      const res = await journal.exportLabelJournal(world.db, { dir, limit: 5000 });
+      exported += res.exported;
+      if (res.pending === 0) break;
+    }
+    expect(exported).toBeGreaterThanOrEqual(2);
+    // A second export never writes a line again (other test files may add their own pending lines meanwhile).
+    await journal.exportLabelJournal(world.db, { dir });
+    const files = readdirSync(dir);
+    expect(files.every((f) => /^label-journal-\d{4}-\d{2}\.jsonl$/.test(f))).toBe(true);
+    const text = files.map((f) => readFileSync(path.join(dir, f), "utf8")).join("");
+    for (const m of made) expect(text.split(m.unit.labelCode).length - 1).toBe(1);
+    // No customer data, token or location code leaks into the journal file.
+    expect(text).not.toMatch(/token|password|email/i);
+
+    const entries = await journal.readJournalDir(dir);
+    const mine = entries.filter((e) => made.some((m) => m.unit.labelCode === e.code));
+    expect(mine.length).toBe(2);
+    const report = await journal.reconcileJournal(world.db, mine);
+    expect(report).toMatchObject({ entries: 2, alreadyKnown: 2, restored: 0, conflicts: [] });
+    // A tampered entry (code not matching its unit) is reported, nothing is written.
+    const bad = await journal.reconcileJournal(world.db, [{ ...mine[0], unitId: mine[1].unitId }]);
+    expect(bad.conflicts.length).toBe(1);
+  });
+
+  it("issuance journal: the code reaches the independent sink with the gesture; with enforcement a label waits for it", async () => {
+    const world = await makeWorld();
+    const item = await makeItem(world.db);
+    const batch = await makeReceivingBatch(world);
+    const { credential } = await printing.pairStation(world.db, world.station.id);
+    const station = { "x-warehouse-station": credential };
+    const receive = () => staff(`batches/${batch.id}/receive`, { method: "POST", cookie: logisticsCookie, body: { opKey: op("rcv"), itemId: item.id }, headers: station });
+    const claim = async () => (await staff("agent/claim", { method: "POST", cookie: logisticsCookie, body: {}, headers: station })).json.data.job;
+    const dir = mkdtempSync(path.join(tmpdir(), "wh-journal-api-"));
+    const journalText = () => readdirSync(dir).map((f) => readFileSync(path.join(dir, f), "utf8")).join("");
+    process.env.WAREHOUSE_LABEL_JOURNAL_ENFORCE = "true";
+    try {
+      // Sink not configured: the pair exists, its label is held back rather than printed unprotected.
+      delete process.env.WAREHOUSE_LABEL_JOURNAL_DIR;
+      const unprotected = await receive();
+      expect(unprotected.status).toBe(200);
+      expect(await claim()).toBeNull();
+
+      // Sink configured: the next claim pushes the backlog, then the held label prints.
+      process.env.WAREHOUSE_LABEL_JOURNAL_DIR = dir;
+      const first = await claim();
+      expect(first.objectId).toBe(unprotected.json.data.unit.id);
+      expect(journalText()).toContain(unprotected.json.data.unit.labelCode);
+
+      // Normal case: the line is on the sink before the gesture answers — no manual export.
+      const made = await receive();
+      expect(made.status).toBe(200);
+      const line = journalText().split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((e) => e.code === made.json.data.unit.labelCode);
+      expect(line).toMatchObject({ unitId: made.json.data.unit.id, issuingSiteCode: world.site.code, format: "UUID_SITE_V1" });
+      expect((await claim()).objectId).toBe(made.json.data.unit.id);
+
+      // Sink unreachable: the gesture still succeeds (the pair is real), the label waits.
+      const blocker = path.join(mkdtempSync(path.join(tmpdir(), "wh-journal-off-")), "not-a-directory");
+      writeFileSync(blocker, "");
+      process.env.WAREHOUSE_LABEL_JOURNAL_DIR = path.join(blocker, "sink");
+      const offline = await receive();
+      expect(offline.status).toBe(200);
+      expect(await claim()).toBeNull();
+      process.env.WAREHOUSE_LABEL_JOURNAL_DIR = dir;
+      expect((await claim()).objectId).toBe(offline.json.data.unit.id);
+    } finally {
+      delete process.env.WAREHOUSE_LABEL_JOURNAL_ENFORCE;
+      delete process.env.WAREHOUSE_LABEL_JOURNAL_DIR;
+    }
+  });
+
+  it("C01: with enforcement, the fallback PDF and the manual print cannot bypass the issuance journal", async () => {
+    const world = await makeWorld({ routePrinter: false });
+    const pdfPrinter = await printing.createPrinter(world.db, { siteId: world.site.id, name: "PDF secours", adapter: "PDF_MANUAL", mediaWidthMm: 50, mediaHeightMm: 30, supportedKinds: ["PAIR"] });
+    await printing.setStationRoute(world.db, { stationId: world.station.id, labelKind: "PAIR", printerId: pdfPrinter.id });
+    const item = await makeItem(world.db);
+    const batch = await makeReceivingBatch(world);
+    const dir = mkdtempSync(path.join(tmpdir(), "wh-journal-c01-"));
+    process.env.WAREHOUSE_LABEL_JOURNAL_ENFORCE = "true";
+    delete process.env.WAREHOUSE_LABEL_JOURNAL_DIR;
+    try {
+      const r = await receiveOne(world, batch.id, item.id);
+      const job = (await printing.listPrintJobs(world.db, { objectId: r.unit.id }))[0];
+      const label = () => staff(`units/${r.unit.id}/label`, { cookie: adminCookie });
+      const jobLabel = () => staff(`print-jobs/${job.id}/label`, { cookie: adminCookie });
+      const manual = () => staff(`print-jobs/${job.id}/action`, { method: "POST", cookie: adminCookie, body: { action: "MANUAL_SENT" } });
+
+      for (const refused of [await label(), await jobLabel(), await manual()]) {
+        expect(refused.status).toBe(409);
+        expect(refused.json.error.code).toBe("JOURNAL_NOT_EXPORTED");
+      }
+      expect((await printing.getPrintJob(world.db, job.id)).status).toBe("QUEUED");
+
+      // Sink back: the PDF route pushes the backlog itself, then serves the label.
+      process.env.WAREHOUSE_LABEL_JOURNAL_DIR = dir;
+      const served = await label();
+      expect(served.status).toBe(200);
+      expect(served.res.headers.get("content-type")).toBe("application/pdf");
+      expect(readdirSync(dir).map((f) => readFileSync(path.join(dir, f), "utf8")).join("")).toContain(r.unit.labelCode);
+      expect((await jobLabel()).status).toBe(200);
+      const sent = await manual();
+      expect(sent.status).toBe(200);
+      expect(sent.json.data.status).toBe("SENT");
+    } finally {
+      delete process.env.WAREHOUSE_LABEL_JOURNAL_ENFORCE;
+      delete process.env.WAREHOUSE_LABEL_JOURNAL_DIR;
+    }
+  });
+
+  it("C10: a claimed job gone silent turns UNCERTAIN from the supervision screens, without any print agent open", async () => {
+    const world = await makeWorld();
+    const item = await makeItem(world.db);
+    const batch = await makeReceivingBatch(world);
+    const r = await receiveOne(world, batch.id, item.id);
+    const job = (await printing.claimNextPrintJob(world.db, { stationId: world.station.id }))!;
+    await world.db.$executeRawUnsafe(`UPDATE "WarehousePrintJob" SET "timeoutAt" = now() - interval '1 second' WHERE "id" = $1`, job.id);
+    const listed = await staff(`print-jobs?objectId=${r.unit.id}`, { cookie: logisticsCookie });
+    expect(listed.status).toBe(200);
+    expect(listed.json.data[0]).toMatchObject({ id: job.id, status: "UNCERTAIN" });
+    const overview = await staff(`overview?site=${world.site.id}`, { cookie: logisticsCookie });
+    expect(overview.json.data.alerts.map((a: any) => a.code)).toContain("PRINT_UNCERTAIN");
+    // Still never resent on its own.
+    expect(await printing.claimNextPrintJob(world.db, { stationId: world.station.id })).toBeNull();
+  });
+
+  it("M2 gestures over HTTP: confirm an article (admin), duplicate label, box format on receive and on putaway", async () => {
+    const world = await makeWorld();
+    const items = await import("../items");
+    const locations = await import("../locations");
+    const { item: provisional } = await items.createItem(world.db, { name: "À identifier", provisional: true, catalogSource: "MANUAL" });
+    const batch = await makeReceivingBatch(world);
+
+    const received = await staff(`batches/${batch.id}/receive`, { method: "POST", cookie: logisticsCookie, body: { opKey: op("rcv"), itemId: provisional.id, boxProfile: "LARGE", print: false } });
+    expect(received.status).toBe(200);
+    const unit = received.json.data.unit;
+    expect(unit.boxProfile).toBe("LARGE");
+
+    const confirmBody = { opKey: op("cf"), name: "Modèle confirmé", sizeLabel: "44", note: "Lu sur la languette" };
+    const denied = await staff(`items/${provisional.id}/confirm`, { method: "POST", cookie: logisticsCookie, body: confirmBody });
+    expect(denied.status).toBe(403);
+    const noProof = await staff(`items/${provisional.id}/confirm`, { method: "POST", cookie: adminCookie, body: { opKey: op("cf"), name: "x" } });
+    expect(noProof.status).toBe(400);
+    const confirmed = await staff(`items/${provisional.id}/confirm`, { method: "POST", cookie: adminCookie, body: confirmBody });
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.json.data.item.status).toBe("ACTIVE");
+
+    await locations.updateLocation(world.db, world.levels[0].id, { sizeProfile: "STANDARD" });
+    const put = (extra: Record<string, unknown>) =>
+      staff("putaway/confirm", { method: "POST", cookie: logisticsCookie, body: { opKey: op("put"), unitId: unit.id, locationId: world.levels[0].id, acceptMismatch: true, ...extra } });
+    const mismatch = await put({});
+    expect(mismatch.status).toBe(409);
+    expect(mismatch.json.error).toMatchObject({ code: "SIZE_PROFILE_MISMATCH", details: { confirm: "acceptProfileMismatch" } });
+    expect((await put({ acceptProfileMismatch: true })).status).toBe(200);
+
+    const dup = await staff(`units/${unit.id}/duplicate-label`, { method: "POST", cookie: logisticsCookie, body: { opKey: op("dup"), note: "Vu sur deux boîtes" } });
+    expect(dup.status).toBe(200);
+    expect(dup.json.data.unit.saleState).toBe("BLOCKED");
+    expect(dup.json.data.exceptionId).toBeTruthy();
+
+    const overview = await staff(`overview?site=${world.site.id}`, { cookie: logisticsCookie });
+    expect(overview.json.data.today).toMatchObject({ timezone: world.site.timezone, pairsEntered: 1, pairsShelved: 1 });
+    expect(overview.json.data.health.databaseReadOnly).toBe(false);
+  });
+
   it("serves the pair label as a one-page PDF and as SVG", async () => {
     const item = await makeItem(w.db);
     const batch = await makeReceivingBatch(w);
@@ -263,17 +438,28 @@ d("partner API — isolation through the HTTP surface", () => {
     expect((await partner("summary", { cookie: `partner_auth=${await sign({ partnerId: inactive.id, partnerKey: inactive.key })}` })).status).toBe(401);
   });
 
-  it("the allow-list hides the module from partners outside the pilot", async () => {
+  it("the allow-list is fail-closed: empty = no partner, a listed key or * opens the stock view", async () => {
     const cookie = `partner_auth=${await sign({ partnerId: w.partner.id, partnerKey: w.partner.key })}`;
-    process.env.WAREHOUSE_PARTNER_ALLOWLIST = "SOMEONE_ELSE";
+    const status = async (value: string | undefined) => {
+      if (value === undefined) delete process.env.WAREHOUSE_PARTNER_ALLOWLIST;
+      else process.env.WAREHOUSE_PARTNER_ALLOWLIST = value;
+      const r = await partner("summary", { cookie });
+      if (r.status !== 200) expect(r.json.error.code).toBe("MODULE_DISABLED");
+      return r.status;
+    };
     try {
-      const hidden = await partner("summary", { cookie });
-      expect(hidden.status).toBe(404);
-      expect(hidden.json.error.code).toBe("MODULE_DISABLED");
+      expect(await status(undefined)).toBe(404);
+      expect(await status("")).toBe(404);
+      expect(await status("SOMEONE_ELSE")).toBe(404);
+      expect(await status(`someone_else, ${w.partner.key.toLowerCase()} `)).toBe(200);
+      expect(await status("*")).toBe(200);
+      // The export and a direct link follow the same switch.
+      process.env.WAREHOUSE_PARTNER_ALLOWLIST = "SOMEONE_ELSE";
+      expect((await partner("units/export", { cookie })).status).toBe(404);
+      expect((await partner("units/00000000-0000-4000-8000-000000000000", { cookie })).status).toBe(404);
     } finally {
-      delete process.env.WAREHOUSE_PARTNER_ALLOWLIST;
+      process.env.WAREHOUSE_PARTNER_ALLOWLIST = "*";
     }
-    expect((await partner("summary", { cookie })).status).toBe(200);
   });
 
   it("lists, detail, export and requests are scoped by the session — query parameters cannot widen the scope", async () => {

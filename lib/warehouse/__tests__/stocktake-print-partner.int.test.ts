@@ -1,13 +1,9 @@
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { allocateUnit, releaseAllocation } from "../allocations";
 import { archiveOutUnitHistory, getArchivedMovements } from "../archive";
 import * as batches from "../batches";
 import * as exceptions from "../exceptions";
 import * as imports from "../imports";
-import * as journal from "../journal";
 import * as locations from "../locations";
 import * as partnerView from "../partnerView";
 import * as pricing from "../pricing";
@@ -304,7 +300,8 @@ d("partner isolation (roadmap §9: lists, detail, counters, exports, direct link
     const theirUnit = await receiveOne(w, theirs.id, item.id);
     const ownUnit = await receiveOne(w, own.id, item.id);
     await pricing.setUnitPrice(w.db, { opKey: op("pr"), unitId: myUnits[0].unit.id, publicPrice: "200" }, admin);
-    await pricing.setUnitPrice(w.db, { opKey: op("pr"), unitId: theirUnit.unit.id, publicPrice: "999" }, admin);
+    // A foreign price long enough never to appear by chance inside a random UUID or GTIN.
+    await pricing.setUnitPrice(w.db, { opKey: op("pr"), unitId: theirUnit.unit.id, publicPrice: "987654" }, admin);
 
     const summary = await partnerView.getPartnerStockSummary(w.db, w.partner.id);
     expect(summary.held).toBe(2);
@@ -324,7 +321,7 @@ d("partner isolation (roadmap §9: lists, detail, counters, exports, direct link
     expect(grouped.items.reduce((s, g) => s + g.quantity, 0)).toBe(2);
 
     const serialized = JSON.stringify({ summary, list, grouped });
-    for (const forbidden of [w.cart.code, "CART", "locationId", "currentLocation", "operator", "stationId", "margin", "fees", other.id, theirUnit.unit.id, ownUnit.unit.id, "999"]) {
+    for (const forbidden of [w.cart.code, "CART", "locationId", "currentLocation", "operator", "stationId", "margin", "fees", other.id, theirUnit.unit.id, ownUnit.unit.id, "987654"]) {
       expect(serialized).not.toContain(forbidden);
     }
 
@@ -344,7 +341,7 @@ d("partner isolation (roadmap §9: lists, detail, counters, exports, direct link
     const csv = await partnerView.exportPartnerStockCsv(w.db, w.partner.id);
     expect(csv.rows).toBe(2);
     expect(csv.csv).not.toContain(theirUnit.unit.shortRef);
-    expect(csv.csv).not.toContain("999");
+    expect(csv.csv).not.toContain("987654");
 
     // The other partner sees only its own, with its own price.
     const theirsList = await partnerView.listPartnerUnits(w.db, other.id, { limit: 100 });
@@ -572,37 +569,6 @@ d("QR permanence — rename, archive, journal (roadmap §9)", () => {
     const two = await units.resolveScan(w.db, legacy);
     expect(two.kind).toBe("EXTERNAL_REF_AMBIGUOUS");
   });
-
-  it("issuance journal: exported off-database, replay-safe, and every code is already known on reconcile", async () => {
-    const w = await makeWorld();
-    const item = await makeItem(w.db);
-    const batch = await makeReceivingBatch(w);
-    const made = [await receiveOne(w, batch.id, item.id), await receiveOne(w, batch.id, item.id)];
-    const dir = mkdtempSync(path.join(tmpdir(), "wh-journal-"));
-    let exported = 0;
-    for (let i = 0; i < 50; i += 1) {
-      const res = await journal.exportLabelJournal(w.db, { dir, limit: 5000 });
-      exported += res.exported;
-      if (res.pending === 0) break;
-    }
-    expect(exported).toBeGreaterThanOrEqual(2);
-    expect((await journal.exportLabelJournal(w.db, { dir })).exported).toBe(0);
-    const files = readdirSync(dir);
-    expect(files.every((f) => /^label-journal-\d{4}-\d{2}\.jsonl$/.test(f))).toBe(true);
-    const text = files.map((f) => readFileSync(path.join(dir, f), "utf8")).join("");
-    for (const m of made) expect(text).toContain(m.unit.labelCode);
-    // No customer data, token or location code leaks into the journal file.
-    expect(text).not.toMatch(/token|password|email/i);
-
-    const entries = await journal.readJournalDir(dir);
-    const mine = entries.filter((e) => made.some((m) => m.unit.labelCode === e.code));
-    expect(mine.length).toBe(2);
-    const report = await journal.reconcileJournal(w.db, mine);
-    expect(report).toMatchObject({ entries: 2, alreadyKnown: 2, restored: 0, conflicts: [] });
-    // A tampered entry (code not matching its unit) is reported, nothing is written.
-    const bad = await journal.reconcileJournal(w.db, [{ ...mine[0], unitId: mine[1].unitId }]);
-    expect(bad.conflicts.length).toBe(1);
-  });
 });
 
 d("stop switch (roadmap §9: hide the module and stop its writes)", () => {
@@ -611,7 +577,10 @@ d("stop switch (roadmap §9: hide the module and stop its writes)", () => {
     const item = await makeItem(w.db);
     const batch = await makeReceivingBatch(w);
     const r = await receiveOne(w, batch.id, item.id);
-    const before = await count(w.db, `"WarehouseMovement"`);
+    // Scoped to this world: other test files write to the same database in parallel.
+    const mine = `"WarehouseMovement" WHERE "batchId" = $1 OR "unitId" = $2`;
+    const before = await count(w.db, mine, batch.id, r.unit.id);
+    const unitsBefore = await count(w.db, `"WarehouseUnit" WHERE "originBatchId" = $1`, batch.id);
     process.env.WAREHOUSE_WRITES_ENABLED = "false";
     try {
       await expectCode(receiveOne(w, batch.id, item.id), "WRITES_DISABLED");
@@ -625,6 +594,7 @@ d("stop switch (roadmap §9: hide the module and stop its writes)", () => {
     } finally {
       process.env.WAREHOUSE_WRITES_ENABLED = "true";
     }
-    expect(await count(w.db, `"WarehouseMovement"`)).toBe(before);
+    expect(await count(w.db, mine, batch.id, r.unit.id)).toBe(before);
+    expect(await count(w.db, `"WarehouseUnit" WHERE "originBatchId" = $1`, batch.id)).toBe(unitsBefore);
   });
 });

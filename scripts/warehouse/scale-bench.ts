@@ -38,7 +38,7 @@ process.env.JWT_SECRET = "warehouse-bench-secret";
 delete process.env.PARTNER_JWT_SECRET;
 process.env.WAREHOUSE_MODULE_ENABLED = "true";
 process.env.WAREHOUSE_WRITES_ENABLED = "true";
-delete process.env.WAREHOUSE_PARTNER_ALLOWLIST;
+process.env.WAREHOUSE_PARTNER_ALLOWLIST = "*";
 
 const argv = process.argv.slice(2);
 const flag = (name: string, fallback: string): string => {

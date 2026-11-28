@@ -1,26 +1,26 @@
 {
-  "at": "2026-11-28T03:53:45.958Z",
+  "at": "2026-11-28T04:22:59.097Z",
   "request": {
     "active": 200000,
     "codes": 1000000,
     "movements": 0
   },
-  "seconds": 116.2,
+  "seconds": 97.2,
   "timingsSeconds": {
     "partners+items": 0,
-    "sites+racks (services)": 2.3,
-    "historical codes (bulk)": 108.9,
-    "analyze": 3.9
+    "sites+racks (services)": 2.1,
+    "historical codes (bulk)": 92.3,
+    "analyze": 1.7
   },
   "summary": {
-    "activeUnits": 202239,
-    "outUnits": 797761,
-    "archivedUnits": 319863,
+    "activeUnits": 202260,
+    "outUnits": 797740,
+    "archivedUnits": 319818,
     "labelCodes": 1000000,
     "distinctCodes": 1000000,
     "journal": 1000000,
-    "movements": 2438265,
-    "archivedMovements": 959589,
+    "movements": 2438379,
+    "archivedMovements": 959454,
     "sites": 3,
     "levels": 21900,
     "partners": 60,
@@ -28,8 +28,8 @@
     "overCapacityLevels": 0,
     "counterDrift": 0,
     "topItemShare": 0.0552,
-    "topPartnerUnits": 27269,
-    "smallestPartnerUnits": 1299
+    "topPartnerUnits": 27148,
+    "smallestPartnerUnits": 1322
   },
-  "checksum": "816950d4d1ce"
+  "checksum": "47dbc7e01eaf"
 }

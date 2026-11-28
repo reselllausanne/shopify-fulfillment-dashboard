@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { Prisma } from "@prisma/client";
 import { UNIT_LABEL_FORMAT_V1, classifyScan } from "./codes";
-import { labelJournalDir } from "./config";
+import { isLabelJournalEnforced, labelJournalDir } from "./config";
 import { withTx, type WarehouseConn, type WarehouseDb } from "./db";
 import { WarehouseError } from "./errors";
 import { openExceptionTx } from "./exceptions";
@@ -95,6 +95,56 @@ export async function exportLabelJournal(db: WarehouseDb, opts: { dir?: string |
     exported += seqs.length;
   }
   return { exported, pending: await pendingCount(), sink: dir };
+}
+
+/**
+ * With WAREHOUSE_LABEL_JOURNAL_ENFORCE, a pair label may only leave the system — station queue,
+ * fallback PDF, manual print — once its issuance line is on the independent sink. Tries a flush
+ * first, so the normal case never blocks.
+ */
+export async function assertLabelProtected(db: WarehouseDb, labelCode: string | null | undefined): Promise<void> {
+  if (!isLabelJournalEnforced() || !labelCode) return;
+  const exported = async () =>
+    (await db.$queryRaw<{ n: number }[]>(Prisma.sql`
+      SELECT count(*)::int AS n FROM "WarehouseLabelJournal" WHERE "code" = ${labelCode} AND "exportedAt" IS NOT NULL`))[0].n > 0;
+  if (await exported()) return;
+  await flushJournalAfterIssue(db);
+  if (await exported()) return;
+  throw new WarehouseError(
+    "JOURNAL_NOT_EXPORTED",
+    "Cette étiquette n'est pas encore protégée par le journal d'émission (support indépendant injoignable ou non configuré). La paire existe ; l'étiquette s'imprimera dès que le journal sera à jour.",
+    409,
+    { labelCode }
+  );
+}
+
+let flushChain: Promise<unknown> = Promise.resolve();
+
+/**
+ * Called right after a gesture that issued a pair code, and before a station claims a print job:
+ * pushes the pending journal lines to the independent sink so that a glued QR never depends on a
+ * manual export. Serialised per process (two exports at once would only append duplicate lines,
+ * which readers ignore). Best effort: a failing sink never fails the gesture — the pair exists,
+ * the overview raises the alert, and with WAREHOUSE_LABEL_JOURNAL_ENFORCE its label waits.
+ */
+export function flushJournalAfterIssue(db: WarehouseDb): Promise<{ attempted: boolean; exported: number; failed: boolean }> {
+  if (!labelJournalDir()) return Promise.resolve({ attempted: false, exported: 0, failed: false });
+  const run = flushChain.then(async () => {
+    let exported = 0;
+    try {
+      // Normally one short batch; after a sink outage the backlog is drained in a few calls.
+      for (let i = 0; i < 5; i += 1) {
+        const r = await exportLabelJournal(db, { limit: 1000 });
+        exported += r.exported;
+        if (r.pending === 0) break;
+      }
+      return { attempted: true, exported, failed: false };
+    } catch {
+      return { attempted: true, exported, failed: true };
+    }
+  });
+  flushChain = run;
+  return run;
 }
 
 /** Read every journal file of a sink directory, de-duplicated by code (first occurrence wins). */

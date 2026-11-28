@@ -1,15 +1,15 @@
 {
-  "at": "2026-11-28T03:49:29.510Z",
+  "at": "2026-11-28T04:19:00.755Z",
   "request": {
     "active": 100000,
     "codes": 0,
     "movements": 0
   },
-  "seconds": 12.4,
+  "seconds": 10.7,
   "timingsSeconds": {
     "partners+items": 0,
-    "sites+racks (services)": 3.9,
-    "active units (bulk)": 8,
+    "sites+racks (services)": 3.4,
+    "active units (bulk)": 6.8,
     "analyze": 0.4
   },
   "summary": {
@@ -24,12 +24,12 @@
     "sites": 3,
     "levels": 11000,
     "partners": 60,
-    "items": 5996,
+    "items": 5994,
     "overCapacityLevels": 0,
     "counterDrift": 0,
-    "topItemShare": 0.0548,
-    "topPartnerUnits": 13571,
-    "smallestPartnerUnits": 647
+    "topItemShare": 0.0551,
+    "topPartnerUnits": 13562,
+    "smallestPartnerUnits": 634
   },
-  "checksum": "70ad243cf0ad"
+  "checksum": "786c45d0a83f"
 }

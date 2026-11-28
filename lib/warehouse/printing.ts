@@ -775,9 +775,9 @@ export async function actOnPrintJob(
   assertWritesEnabled();
   await withTx(db, async (tx) => {
     const rows = await tx.$queryRaw<
-      { id: string; status: PrintJobStatus; siteId: string; stationId: string; labelKind: string; objectType: string; objectId: string; isReprint: boolean; printerId: string | null }[]
+      { id: string; status: PrintJobStatus; siteId: string; stationId: string; labelKind: string; labelCode: string | null; objectType: string; objectId: string; isReprint: boolean; printerId: string | null }[]
     >(Prisma.sql`
-      SELECT "id", "status", "siteId", "stationId", "labelKind", "objectType", "objectId", "isReprint", "printerId"
+      SELECT "id", "status", "siteId", "stationId", "labelKind", "labelCode", "objectType", "objectId", "isReprint", "printerId"
       FROM "WarehousePrintJob" WHERE "id" = ${input.jobId} FOR UPDATE`);
     const job = rows[0];
     if (!job) throw notFound("Job d'impression");
@@ -806,11 +806,18 @@ export async function actOnPrintJob(
           );
         }
         if (!input.printerId) throw invalid("Imprimante de destination requise.");
-        const printer = await tx.$queryRaw<{ id: string; siteId: string; status: string; mediaWidthMm: number; mediaHeightMm: number }[]>(Prisma.sql`
-          SELECT "id", "siteId", "status", "mediaWidthMm", "mediaHeightMm" FROM "WarehousePrinter" WHERE "id" = ${input.printerId}`);
+        const printer = await tx.$queryRaw<{ id: string; name: string; siteId: string; status: string; mediaWidthMm: number; mediaHeightMm: number; supportedKinds: string[] }[]>(Prisma.sql`
+          SELECT "id", "name", "siteId", "status", "mediaWidthMm", "mediaHeightMm", "supportedKinds" FROM "WarehousePrinter" WHERE "id" = ${input.printerId}`);
         if (!printer[0]) throw notFound("Imprimante");
         if (printer[0].siteId !== job.siteId) throw conflict("SITE_MISMATCH", "Imprimante d'un autre site.");
         if (printer[0].status !== "ACTIVE") throw conflict("CONFLICT", "Imprimante désactivée.");
+        // C13: a pair label must not land on a printer loaded with another medium (shipping roll, A4…).
+        if (job.labelKind !== "TEST" && !printer[0].supportedKinds.includes(job.labelKind)) {
+          throw conflict("PRINT_ROUTE_MISSING", `${printer[0].name} n'est pas déclarée pour ce type d'étiquette (${job.labelKind}) : choisir une imprimante chargée du bon rouleau.`, {
+            labelKind: job.labelKind,
+            supportedKinds: printer[0].supportedKinds,
+          });
+        }
         let stationId = job.stationId;
         if (input.stationId && input.stationId !== job.stationId) {
           const st = await tx.$queryRaw<{ siteId: string; status: string }[]>(Prisma.sql`SELECT "siteId", "status" FROM "WarehouseStation" WHERE "id" = ${input.stationId}`);
@@ -832,6 +839,13 @@ export async function actOnPrintJob(
         const printer = await tx.$queryRaw<{ adapter: string }[]>(Prisma.sql`SELECT "adapter" FROM "WarehousePrinter" WHERE "id" = ${job.printerId}`);
         if (printer[0]?.adapter !== "PDF_MANUAL") {
           throw conflict("PRINT_STATE_CONFLICT", "Cette imprimante est pilotée par le poste : l'envoi est déclaré par l'agent d'impression.");
+        }
+        if (isLabelJournalEnforced() && job.labelKind === "PAIR" && job.labelCode) {
+          const protectedRow = await tx.$queryRaw<{ n: number }[]>(Prisma.sql`
+            SELECT count(*)::int AS n FROM "WarehouseLabelJournal" WHERE "code" = ${job.labelCode} AND "exportedAt" IS NOT NULL`);
+          if (protectedRow[0].n === 0) {
+            throw conflict("JOURNAL_NOT_EXPORTED", "Étiquette pas encore protégée par le journal d'émission : elle ne doit pas être collée avant.", { labelCode: job.labelCode });
+          }
         }
         await tx.$executeRaw(Prisma.sql`
           UPDATE "WarehousePrintJob" SET "status" = 'SENT', "sentAt" = now(), "attempts" = "attempts" + 1, "timeoutAt" = NULL, "lastError" = NULL, "updatedAt" = now()

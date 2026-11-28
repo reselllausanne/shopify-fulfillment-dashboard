@@ -154,6 +154,8 @@ export type UnitSummary = {
   saleState: UnitSaleState;
   condition: UnitCondition;
   boxCondition: BoxCondition;
+  /** Box format used to pick a compatible level (STANDARD, LARGE, …). */
+  boxProfile: string;
   outReason: UnitOutReason | null;
   labelPrintCount: number;
   labelVerifiedAt: string | null;

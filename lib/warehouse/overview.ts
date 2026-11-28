@@ -1,3 +1,4 @@
+import { promises as fs } from "node:fs";
 import { Prisma } from "@prisma/client";
 import { staleTaskHours, warehouseFlagsSnapshot } from "./config";
 import type { WarehouseConn } from "./db";
@@ -16,20 +17,37 @@ export type Overview = {
   site: SiteRow;
   flags: ReturnType<typeof warehouseFlagsSnapshot>;
   stock: { present: number; shelved: number; atTemporary: number; quarantine: number; missing: number; inTransit: number; ownerUnknown: number };
-  capacity: { levels: number; capacity: number; occupied: number; reserved: number; blockedLevels: number };
+  capacity: { levels: number; capacity: number; occupied: number; reserved: number; blockedLevels: number; negativeCounters: number; reservedTasks: number };
   putaway: { active: number; reserved: number; pending: number; blocked: number; stale: number; oldestCreatedAt: string | null };
   exceptions: { open: number; byType: Record<string, number> };
   printing: { queued: number; failed: number; uncertain: number; oldestQueuedAt: string | null };
   labelJournal: { pendingExport: number; oldestPendingAt: string | null };
+  /** The site's own business day (its time zone), and what was done since its midnight (C34, C49). */
+  today: { day: string; timezone: string; pairsEntered: number; pairsShelved: number };
+  /** C29: can the database and the journal sink still take writes? */
+  health: { databaseReadOnly: boolean; journalSinkFreeMb: number | null; journalSinkWritable: boolean | null };
   partnerRequestsOpen: number;
   openBatches: BatchRow[];
   alerts: OverviewAlert[];
 };
 
+/** Free space and writability of the journal sink (a full or read-only sink silently stops protecting new QR codes). */
+async function journalSinkHealth(dir: string | null): Promise<{ freeMb: number | null; writable: boolean | null }> {
+  if (!dir) return { freeMb: null, writable: null };
+  try {
+    await fs.mkdir(dir, { recursive: true });
+    await fs.access(dir, 2 /* W_OK */);
+    const st = await fs.statfs(dir);
+    return { freeMb: Math.floor((Number(st.bavail) * Number(st.bsize)) / (1024 * 1024)), writable: true };
+  } catch {
+    return { freeMb: null, writable: false };
+  }
+}
+
 export async function getOverview(conn: WarehouseConn, siteIdOrCode: string): Promise<Overview> {
   const site = await getSite(conn, siteIdOrCode);
   const staleHours = staleTaskHours();
-  const [stock, capacity, putaway, exceptions, printing, journal, requests, openBatches] = await Promise.all([
+  const [stock, capacity, putaway, exceptions, printing, journal, requests, openBatches, today, dbState, sink] = await Promise.all([
     conn.$queryRaw<any[]>(Prisma.sql`
       SELECT count(*) FILTER (WHERE u."presence" = 'PRESENT')::int AS "present",
              count(*) FILTER (WHERE u."presence" = 'PRESENT' AND l."kind" = 'LEVEL')::int AS "shelved",
@@ -42,7 +60,10 @@ export async function getOverview(conn: WarehouseConn, siteIdOrCode: string): Pr
       WHERE u."currentSiteId" = ${site.id} AND u."presence" IN ('PRESENT', 'MISSING', 'IN_TRANSIT')`),
     conn.$queryRaw<any[]>(Prisma.sql`
       SELECT count(*)::int AS "levels", coalesce(sum("capacity"), 0)::int AS "capacity", coalesce(sum("occupiedCount"), 0)::int AS "occupied",
-             coalesce(sum("reservedCount"), 0)::int AS "reserved", count(*) FILTER (WHERE "status" = 'BLOCKED')::int AS "blockedLevels"
+             coalesce(sum("reservedCount"), 0)::int AS "reserved", count(*) FILTER (WHERE "status" = 'BLOCKED')::int AS "blockedLevels",
+             count(*) FILTER (WHERE "occupiedCount" < 0 OR "reservedCount" < 0)::int AS "negativeCounters",
+             -- same statement = same snapshot as the counters above: no false alert while stations are reserving
+             (SELECT count(*) FROM "WarehousePutawayTask" t WHERE t."siteId" = ${site.id} AND t."status" = 'RESERVED')::int AS "reservedTasks"
       FROM "WarehouseLocation" WHERE "siteId" = ${site.id} AND "kind" = 'LEVEL' AND "status" <> 'RETIRED'`),
     conn.$queryRaw<any[]>(Prisma.sql`
       SELECT count(*)::int AS "active",
@@ -65,6 +86,16 @@ export async function getOverview(conn: WarehouseConn, siteIdOrCode: string): Pr
       SELECT count(*)::int AS "pendingExport", min("issuedAt") AS "oldestPendingAt" FROM "WarehouseLabelJournal" WHERE "exportedAt" IS NULL`),
     conn.$queryRaw<{ n: number }[]>(Prisma.sql`SELECT count(*)::int AS n FROM "WarehousePartnerRequest" WHERE "status" = 'OPEN'`),
     listBatches(conn, { siteId: site.id, status: ["OPEN", "PAUSED"], limit: 20 }),
+    // Since the site's local midnight — the range uses the movement date index.
+    conn.$queryRaw<{ day: string; entered: number; shelved: number }[]>(Prisma.sql`
+      WITH d AS (SELECT date_trunc('day', now() AT TIME ZONE ${site.timezone}) AS local_midnight)
+      SELECT to_char((SELECT local_midnight FROM d), 'YYYY-MM-DD') AS "day",
+             count(*) FILTER (WHERE m."type" IN ('RECEIVE', 'STOCK_TAKE') AND m."fromLocationId" IS NULL)::int AS "entered",
+             count(*) FILTER (WHERE m."type" = 'PUTAWAY')::int AS "shelved"
+      FROM "WarehouseMovement" m
+      WHERE m."createdAt" >= ((SELECT local_midnight FROM d) AT TIME ZONE ${site.timezone}) AT TIME ZONE 'UTC' AND m."toSiteId" = ${site.id}`),
+    conn.$queryRaw<{ readOnly: boolean }[]>(Prisma.sql`SELECT (pg_is_in_recovery() OR current_setting('default_transaction_read_only') = 'on') AS "readOnly"`),
+    journalSinkHealth(warehouseFlagsSnapshot().labelJournalDir),
   ]);
 
   const iso = (d: Date | null) => (d ? new Date(d).toISOString() : null);
@@ -78,6 +109,25 @@ export async function getOverview(conn: WarehouseConn, siteIdOrCode: string): Pr
   const alerts: OverviewAlert[] = [];
   if (!flags.writesEnabled) {
     alerts.push({ level: "critical", code: "WRITES_DISABLED", message: "Écritures du module arrêtées : consultation seule.", count: 1, href: "/warehouse" });
+  }
+  if (dbState[0]?.readOnly) {
+    alerts.push({ level: "critical", code: "DATABASE_READ_ONLY", message: "La base est en lecture seule : aucun geste ne peut être enregistré. Ne plus coller d'étiquette (procédure de panne).", count: 1, href: "/warehouse" });
+  }
+  if (sink.writable === false) {
+    alerts.push({ level: "critical", code: "JOURNAL_SINK_UNWRITABLE", message: "Le support du journal d'émission des QR n'est pas accessible en écriture : les nouvelles étiquettes ne sont plus protégées.", count: 1, href: "/warehouse/stations" });
+  } else if (sink.freeMb !== null && sink.freeMb < 1024) {
+    alerts.push({ level: sink.freeMb < 200 ? "critical" : "warning", code: "JOURNAL_SINK_LOW_SPACE", message: `Support du journal d'émission des QR presque plein (${sink.freeMb} Mo libres).`, count: 1, href: "/warehouse/stations" });
+  }
+  // C44: the counters the reservations rely on must agree with the tasks. A drift is repaired by
+  // « Emplacements → Contrôler les compteurs » (recount from the pairs), never by hand.
+  if (capacity[0].negativeCounters > 0 || capacity[0].reserved !== capacity[0].reservedTasks) {
+    alerts.push({
+      level: "warning",
+      code: "COUNTERS_INCONSISTENT",
+      message: "Compteurs de places incohérents avec les rangements en cours : lancer le contrôle des compteurs.",
+      count: Math.max(capacity[0].negativeCounters, Math.abs(capacity[0].reserved - capacity[0].reservedTasks)),
+      href: "/warehouse/locations",
+    });
   }
   if (pr.uncertain > 0) {
     alerts.push({ level: "critical", code: "PRINT_UNCERTAIN", message: "Impressions à l'issue incertaine : vérifier le papier avant toute réimpression.", count: pr.uncertain, href: "/warehouse/stations" });
@@ -119,6 +169,8 @@ export async function getOverview(conn: WarehouseConn, siteIdOrCode: string): Pr
     exceptions: { open: openExceptions, byType },
     printing: { queued: pr.queued, failed: pr.failed, uncertain: pr.uncertain, oldestQueuedAt: iso(pr.oldestQueuedAt) },
     labelJournal: { pendingExport: j.pendingExport, oldestPendingAt: iso(j.oldestPendingAt) },
+    today: { day: today[0].day, timezone: site.timezone, pairsEntered: today[0].entered, pairsShelved: today[0].shelved },
+    health: { databaseReadOnly: Boolean(dbState[0]?.readOnly), journalSinkFreeMb: sink.freeMb, journalSinkWritable: sink.writable },
     partnerRequestsOpen: requests[0].n,
     openBatches,
     alerts,

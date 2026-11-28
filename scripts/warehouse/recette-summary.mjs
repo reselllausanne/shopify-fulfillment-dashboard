@@ -105,6 +105,31 @@ out.push(row("Écart compteur d'occupation / réalité", (b) => b.integrity.occu
 out.push(row("Écart compteur de réservation / réalité", (b) => b.integrity.reservationCounterDrift));
 out.push(row("Paires avec deux tâches de rangement actives", (b) => b.integrity.pairsWithTwoActiveTasks));
 out.push("");
+if (existsSync(path.join(dir, "bench-sustained.json"))) {
+  const s = load("bench-sustained.json");
+  const l = s.load;
+  out.push("## Charge prolongée au plus gros palier");
+  out.push("");
+  out.push(`Même mélange de requêtes, maintenu ${n(l.seconds)} s après redémarrage de la base, sur ${n(s.dataset.activeUnits)} paires actives, ${n(s.dataset.labelCodes)} codes et ${n(s.dataset.movements)} mouvements en ligne.`);
+  out.push("");
+  out.push("| Mesure | Valeur |\n|---|---:|");
+  out.push(`| Sessions partenaires / postes | ${l.partnerSessions} / ${l.stations} |`);
+  out.push(`| Requêtes | ${n(l.requests)} (${n(l.requestsPerSecond)} par seconde) |`);
+  out.push(`| Erreurs | ${l.errors} |`);
+  out.push(`| Toutes routes — p50 / **p95** / p99 / max | ${ms(l.overall.p50)} / **${ms(l.overall.p95)}** / ${ms(l.overall.p99)} / ${ms(l.overall.max)} |`);
+  out.push(`| 5 premières secondes (à froid) — p95 | ${ms(l.first5s.p95)} |`);
+  out.push(`| Écritures seules — p95 | ${ms(l.writesOnly.p95)} |`);
+  out.push(`| Route la plus lente (p95) | ${l.worstRouteP95[0]} : ${ms(l.worstRouteP95[1])} |`);
+  out.push(`| p95 < 1 s sur chaque route | ${l.p95Under1s ? "oui" : "**non**"} |`);
+  out.push(`| Interblocages | ${l.db.deadlocks} |`);
+  out.push(`| Paires créées pendant la mesure | ${n(s.integrity.createdDuringBench)} |`);
+  out.push(`| Niveaux en dépassement de capacité | ${s.integrity.overCapacityLevels} |`);
+  out.push(`| Écart compteurs occupation / réservation | ${s.integrity.occupancyCounterDrift} / ${s.integrity.reservationCounterDrift} |`);
+  out.push(`| Total avant + créées = total après | ${s.integrity.reconciles ? "oui" : "**non**"} |`);
+  out.push("");
+  out.push("Mesure faite sur le poste de développement, dans le processus : elle valide le code et les index sous charge durable, pas le VPS ni le réseau de l'entrepôt.");
+  out.push("");
+}
 const last = bench[tiers[tiers.length - 1]];
 out.push(`## Taille des tables au palier ${tiers[tiers.length - 1]}`);
 out.push("");

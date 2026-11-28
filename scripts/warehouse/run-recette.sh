@@ -5,7 +5,8 @@
 # The same database grows from tier to tier: no pair is re-issued or re-imported.
 # Results: docs/warehouse/recette/*.json
 #
-#   scripts/warehouse/run-recette.sh            # everything (≈ 10 min on a laptop)
+#   scripts/warehouse/run-recette.sh            # everything (≈ 25 min on a laptop, incl. 10 min of sustained load)
+#   WAREHOUSE_RECETTE_SUSTAINED_SECONDS=0 scripts/warehouse/run-recette.sh   # skip the sustained step
 #   scripts/warehouse/run-recette.sh 10k        # first tier only
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -32,6 +33,10 @@ echo "== 10 000 pairs, 2 sites";            seed 10k --active 10000;            
 echo "== 100 000 pairs, 3 sites";           seed 100k --active 100000;                    bench 100k 30
 echo "== 200 000 pairs + 1 M movements";    seed 200k --active 200000 --movements 1000000; bench 200k 60
 echo "== 1 000 000 cumulated label codes";  seed 1M-codes --active 200000 --codes 1000000; bench 1M-codes 30
+if [[ "${WAREHOUSE_RECETTE_SUSTAINED_SECONDS:-600}" != "0" ]]; then
+  echo "== sustained load at the largest tier (${WAREHOUSE_RECETTE_SUSTAINED_SECONDS:-600} s)"
+  bench sustained "${WAREHOUSE_RECETTE_SUSTAINED_SECONDS:-600}"
+fi
 echo "== restore drill"
 npx tsx scripts/warehouse/restore-drill.ts --out "$OUT/restore-drill.json" > /dev/null
 node scripts/warehouse/recette-summary.mjs "$OUT" >/dev/null

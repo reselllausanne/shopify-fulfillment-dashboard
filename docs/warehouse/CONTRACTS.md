@@ -28,8 +28,9 @@ Le module n'écrit dans aucune table existante (lecture seule de `Partner`, `Kic
 | `WAREHOUSE_RESERVATION_TTL_MINUTES` | `480` | Durée de réservation d'une place proposée. |
 | `WAREHOUSE_PRINT_CLAIM_TIMEOUT_SECONDS` | `90` | Délai avant qu'une impression prise sans réponse devienne « incertaine ». |
 | `WAREHOUSE_LABEL_JOURNAL_DIR` | vide | Dossier du journal d'émission des QR, hors disque de la base. |
-| `WAREHOUSE_LABEL_JOURNAL_ENFORCE` | `false` | `true` : une étiquette de paire n'est imprimée qu'après export de son entrée de journal. |
+| `WAREHOUSE_LABEL_JOURNAL_ENFORCE` | `false` | `true` : une étiquette de paire ne sort (file du poste, PDF de secours, impression manuelle) qu'après export de son entrée de journal ; sinon 409 `JOURNAL_NOT_EXPORTED`. |
 | `WAREHOUSE_STALE_TASK_HOURS` | `24` | Seuil d'alerte des rangements en attente. |
+| `WAREHOUSE_COUNT_SESSION_IDLE_MINUTES` | `30` | Durée sans scan après laquelle un comptage de niveau doit être repris en rescannant le niveau (409 `SESSION_STALE`). |
 
 ## 3. Identité et codes
 
@@ -135,7 +136,24 @@ Colonnes : **A** = réservé à l'administration ; **O** = geste physique (opér
 | GET/POST | `requests?partnerId=&status=` · `requests/:id/answer` | A (POST) | `{ response, status? }` | |
 | GET/POST | `transfers` · `transfers/:id` · `transfers/:id/ship` · `transfers/receive` · `transfers/missing` | A / O | `{ fromSiteId, toSiteId }` · `{ opKey, unitId }` · `{ opKey, unitId, toLocationId }` | la paire garde son UUID et son QR |
 | POST/GET | `imports/preview` · `imports/:id` · `imports/:id/apply` | | `{ kind: LOCATIONS\|BATCH_LINES, targetId, filename, csv }` | `ImportView` ; reprise sans doublon |
-| GET/POST | `journal` · `journal/export` · `journal/reconcile` | A (reconcile) | `{ dryRun? }` | état du journal d'émission |
+| GET/POST | `journal` · `journal/export` · `journal/reconcile` | A (reconcile) | `{ dryRun? }` | état du journal d'émission. L'export part tout seul après chaque émission et avant chaque prise de job ; `journal/export` reste disponible à la main. |
+
+### Ajouts issus de la revue M2
+
+| Méthode | Route | | Corps / paramètres | Réponse (`data`) |
+|---|---|---|---|---|
+| POST | `items/:id/confirm` | A | `{ opKey, note, gtin?, brand?, name?, styleCode?, colorway?, sizeLabel?, sizeEu?, sizeUs? }` | `{ item, confirmed, pairs, note }` — article provisoire → confirmé (A10) |
+| POST | `units/:id/duplicate-label` | O | `{ opKey, note?, seenAtLocationId?, expectedVersion? }` | `{ unit, exceptionId }` — vente bloquée, écart `DUPLICATE_LABEL` (A28) |
+| POST | `batches/:id/receive` · `sessions/:id/create-unit` · `units/:id/condition` | O | champ ajouté `boxProfile?` (`STANDARD` par défaut, `LARGE`, `^[A-Z0-9_]{2,16}$`) | `unit.boxProfile` (A37) |
+| POST | `putaway/confirm` · `units/:id/relocate` | O | champ ajouté `acceptProfileMismatch?` | sans lui : 409 `SIZE_PROFILE_MISMATCH`, `details.confirm = "acceptProfileMismatch"` (A37) |
+| GET | `items/gtin?gtin=` · `scan?code=` | | | `GtinResolution.status` peut valoir `PACKAGING` (`containedGtin`, `message`) : code de carton, jamais une boîte (A15) |
+| GET | `batches/:id` | | | `pace` : `{ pairs, firstPairAt, lastPairAt, elapsedMinutes, activeMinutes, pairsPerActiveHour, reprints, levelsCounted, recounts, exceptionsByType }` ; repris dans le résumé de clôture (C49) |
+| GET | `overview?site=` | | | champs ajoutés `today { day, timezone, pairsEntered, pairsShelved }`, `health { databaseReadOnly, journalSinkFreeMb, journalSinkWritable }` ; alertes `DATABASE_READ_ONLY`, `JOURNAL_SINK_UNWRITABLE`, `JOURNAL_SINK_LOW_SPACE`, `COUNTERS_INCONSISTENT` (C29, C34, C44) |
+| GET | `units/:id/label` · `print-jobs/:id/label` | | | 409 `JOURNAL_NOT_EXPORTED` si le journal est imposé et l'entrée pas encore exportée (C01) |
+
+Codes d'erreur ajoutés : `SESSION_STALE` (409, `details { sessionId, locationId, locationCode, idleMinutes }` — rescanner le niveau), `SIZE_PROFILE_MISMATCH` (409), `STORAGE_UNAVAILABLE` (503, `details { reason: READ_ONLY | DISK_FULL | OVERLOADED | UNREACHABLE, nothingWritten: true }`). `CONFIRMATION_REQUIRED` en reprise peut porter `details.countedElsewhereCode` (paire déjà comptée sur un autre niveau du même lot). `REROUTE` répond 409 `PRINT_ROUTE_MISSING` si l'imprimante n'est pas déclarée pour ce type d'étiquette.
+
+Lecture des codes : un tiret remplacé partout par le même caractère (douchette en mode clavier sur une autre disposition) est rétabli ; un code d'étiquette ou d'emplacement inconnu est réessayé avec Y et Z échangés (QWERTZ / QWERTY).
 
 ## 7. API partenaire — `/api/partners/warehouse/…`
 

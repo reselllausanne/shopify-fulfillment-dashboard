@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import { gtinLookupVariants, isValidGtinChecksum, normalizeGtin } from "./codes";
+import { containedUnitGtin, gtinLookupVariants, isPackagingGtin, isValidGtinChecksum, normalizeGtin } from "./codes";
 import { withTx, type WarehouseConn, type WarehouseDb, type WarehouseTx } from "./db";
 import { conflict, invalid, notFound } from "./errors";
-import { assertWritesEnabled } from "./operations";
-import type { CatalogCandidate, ItemSummary } from "./types";
+import { assertWritesEnabled, runOperation, type OperationResult } from "./operations";
+import type { ActorContext, CatalogCandidate, ItemSummary } from "./types";
 
 /**
  * Warehouse items = stable snapshot of a catalog variant (model + size).
@@ -153,7 +153,11 @@ export type GtinResolution =
   | { status: "ITEM"; gtin: string; checksumValid: boolean; item: ItemSummary }
   | { status: "AMBIGUOUS_ITEMS"; gtin: string; checksumValid: boolean; items: ItemSummary[] }
   | { status: "CANDIDATES"; gtin: string; checksumValid: boolean; candidates: CatalogCandidate[]; agree: boolean }
+  /** Carton / inner-pack code: ask for the box barcode. `containedGtin` is shown as a hint only (A15). */
+  | { status: "PACKAGING"; gtin: string; checksumValid: boolean; containedGtin: string | null; message: string }
   | { status: "UNKNOWN"; gtin: string; checksumValid: boolean };
+
+export const PACKAGING_GTIN_MESSAGE = "Code de carton (emballage collectif) : scanner le code-barres de la boîte, ou chercher le modèle.";
 
 /** Read-only: what does this GTIN designate? Never creates anything. */
 export async function resolveGtin(conn: WarehouseConn, rawGtin: string): Promise<GtinResolution> {
@@ -163,6 +167,8 @@ export async function resolveGtin(conn: WarehouseConn, rawGtin: string): Promise
   const items = await findItemsByGtin(conn, gtin);
   if (items.length === 1) return { status: "ITEM", gtin, checksumValid, item: items[0] };
   if (items.length > 1) return { status: "AMBIGUOUS_ITEMS", gtin, checksumValid, items };
+  // A carton code never identifies one box — unless someone registered it deliberately as an alias (handled above).
+  if (isPackagingGtin(gtin)) return { status: "PACKAGING", gtin, checksumValid, containedGtin: containedUnitGtin(gtin), message: PACKAGING_GTIN_MESSAGE };
   const candidates = await findCatalogCandidatesByGtin(conn, gtin);
   if (candidates.length === 0) return { status: "UNKNOWN", gtin, checksumValid };
   return { status: "CANDIDATES", gtin, checksumValid, candidates, agree: candidatesAgree(candidates) };
@@ -198,6 +204,7 @@ export async function createItemTx(tx: WarehouseTx, input: CreateItemInput): Pro
   if (!name) throw invalid("Nom de l'article requis.");
   const gtin = input.gtin ? normalizeGtin(input.gtin) : null;
   if (input.gtin && !gtin) throw invalid("GTIN invalide : 8 à 14 chiffres.");
+  if (gtin && isPackagingGtin(gtin)) throw invalid(PACKAGING_GTIN_MESSAGE, { gtin, containedGtin: containedUnitGtin(gtin) });
 
   if (gtin) {
     const existing = await findItemsByGtin(tx, gtin);
@@ -241,6 +248,79 @@ export async function createItemTx(tx: WarehouseTx, input: CreateItemInput): Pro
 export async function createItem(db: WarehouseDb, input: CreateItemInput): Promise<{ item: ItemSummary; created: boolean }> {
   assertWritesEnabled();
   return withTx(db, (tx) => createItemTx(tx, input));
+}
+
+/**
+ * A10 — a box without a usable GTIN is received under a PROVISIONAL article, which blocks its
+ * sale. Once somebody identified the model for certain, this confirms the article: optional
+ * corrections, optional GTIN (attached as an alias — refused when it already designates another
+ * article), then ACTIVE. The pairs keep their UUID and QR; the sale right is NOT granted here.
+ */
+export async function confirmItem(
+  db: WarehouseDb,
+  input: {
+    opKey: string;
+    itemId: string;
+    gtin?: string | null;
+    brand?: string | null;
+    name?: string | null;
+    styleCode?: string | null;
+    colorway?: string | null;
+    sizeLabel?: string | null;
+    sizeEu?: string | null;
+    sizeUs?: string | null;
+    note: string;
+  },
+  ctx: ActorContext
+): Promise<OperationResult<{ item: ItemSummary; confirmed: boolean; pairs: number; note: string }>> {
+  const note = String(input.note ?? "").trim();
+  if (note.length < 3) throw invalid("Indiquer comment l'article a été identifié (étiquette intérieure, facture, fiche modèle…).");
+  // The operation ledger keeps who confirmed, when and on which proof (request + actor).
+  return runOperation(db, { opKey: input.opKey, kind: "ITEM_CONFIRM", request: input, ctx }, async (tx) => {
+    const rows = await tx.$queryRaw<any[]>(Prisma.sql`
+      SELECT "id", "gtin", "brand", "name", "styleCode", "colorway", "sizeSystem", "sizeLabel", "sizeEu", "sizeUs", "status"
+      FROM "WarehouseItem" WHERE "id" = ${input.itemId} FOR UPDATE`);
+    const cur = rows[0];
+    if (!cur || cur.status === "MERGED") throw notFound("Article");
+    const pairs = async () =>
+      (await tx.$queryRaw<{ n: number }[]>(Prisma.sql`SELECT count(*)::int AS n FROM "WarehouseUnit" WHERE "itemId" = ${cur.id} AND "presence" <> 'OUT'`))[0].n;
+    if (cur.status === "ACTIVE") return { item: await getItem(tx, cur.id), confirmed: false, pairs: await pairs(), note };
+
+    const gtin = input.gtin ? normalizeGtin(input.gtin) : cur.gtin;
+    if (input.gtin && !gtin) throw invalid("GTIN invalide : 8 à 14 chiffres.");
+    if (gtin && isPackagingGtin(gtin)) throw invalid(PACKAGING_GTIN_MESSAGE, { gtin });
+    if (gtin) {
+      const owners = (await findItemsByGtin(tx, gtin)).filter((i) => i.id !== cur.id);
+      if (owners.length) {
+        throw conflict("AMBIGUOUS_GTIN", "Ce GTIN désigne déjà un autre article : corriger la variante des paires vers cet article au lieu de confirmer celui-ci.", {
+          itemIds: owners.map((o) => o.id),
+        });
+      }
+    }
+    const pick = (next: string | null | undefined, prev: string | null) => (next === undefined || next === null ? prev : next.trim() || null);
+    const merged = {
+      gtin,
+      brand: pick(input.brand, cur.brand),
+      name: pick(input.name, cur.name) ?? cur.name,
+      styleCode: pick(input.styleCode, cur.styleCode),
+      colorway: pick(input.colorway, cur.colorway),
+      sizeLabel: pick(input.sizeLabel, cur.sizeLabel),
+      sizeEu: pick(input.sizeEu, cur.sizeEu),
+      sizeUs: pick(input.sizeUs, cur.sizeUs),
+    };
+    await tx.$executeRaw(Prisma.sql`
+      UPDATE "WarehouseItem"
+      SET "gtin" = ${merged.gtin}, "brand" = ${merged.brand}, "name" = ${merged.name}, "styleCode" = ${merged.styleCode},
+          "colorway" = ${merged.colorway}, "sizeLabel" = ${merged.sizeLabel}, "sizeEu" = ${merged.sizeEu}, "sizeUs" = ${merged.sizeUs},
+          "status" = 'ACTIVE', "searchText" = ${buildSearchText(merged)}, "updatedAt" = now()
+      WHERE "id" = ${cur.id}`);
+    if (merged.gtin) {
+      await tx.$executeRaw(Prisma.sql`
+        INSERT INTO "WarehouseItemAlias" ("id", "itemId", "namespace", "value")
+        VALUES (${randomUUID()}, ${cur.id}, 'GTIN', ${merged.gtin}) ON CONFLICT ("namespace", "value") DO NOTHING`);
+    }
+    return { item: await getItem(tx, cur.id), confirmed: true, pairs: await pairs(), note };
+  });
 }
 
 /** Create (or reuse) the warehouse item for a confirmed catalog candidate. */

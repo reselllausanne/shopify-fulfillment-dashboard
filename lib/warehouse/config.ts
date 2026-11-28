@@ -4,8 +4,9 @@
  * WAREHOUSE_MODULE_ENABLED   off → nav hidden, every /api/warehouse and partner stock API answers 404.
  * WAREHOUSE_WRITES_ENABLED   off → read-only: lookups, lists and already-issued QR codes still resolve;
  *                            every mutation is refused (stop switch that keeps verified data readable).
- * WAREHOUSE_PARTNER_ALLOWLIST  comma-separated partner keys that see "Mon stock" (empty = all partners).
- * WAREHOUSE_PILOT_SITES      comma-separated site codes where operations are allowed (empty = all).
+ * WAREHOUSE_PARTNER_ALLOWLIST  comma-separated partner keys that see "Mon stock". Fail-closed: empty = no
+ *                            partner; `*` = every partner (explicit choice once the pilot is over).
+ * WAREHOUSE_PILOT_SITES      comma-separated site codes where stock may enter (empty = all).
  *
  * Lot 1 has NO outbound connector: nothing in lib/warehouse imports Shopify / Galaxus / EDI /
  * Swiss Post / feed code (enforced by lib/warehouse/__tests__/isolation.test.ts).
@@ -41,8 +42,9 @@ export function isWarehouseWritesEnabled(): boolean {
 export function isPartnerAllowedForWarehouse(partnerKey: string): boolean {
   if (!isWarehouseModuleEnabled()) return false;
   const allow = list("WAREHOUSE_PARTNER_ALLOWLIST");
-  if (allow.length === 0) return true;
-  return allow.includes(String(partnerKey ?? "").trim().toUpperCase());
+  if (allow.includes("*")) return true;
+  const key = String(partnerKey ?? "").trim().toUpperCase();
+  return key.length > 0 && allow.includes(key);
 }
 
 export function isSiteInPilot(siteCode: string): boolean {
@@ -74,6 +76,14 @@ export function labelJournalDir(): string | null {
   return dir || null;
 }
 
+/**
+ * A level count left without any scan for this long must be resumed by scanning the level again
+ * (an operator who comes back to a forgotten tab re-reads where they are) — minutes.
+ */
+export function countSessionIdleMinutes(): number {
+  return int("WAREHOUSE_COUNT_SESSION_IDLE_MINUTES", 30, 1, 24 * 60);
+}
+
 /** Putaway tasks older than this are reported as stale on the overview (hours). */
 export function staleTaskHours(): number {
   return int("WAREHOUSE_STALE_TASK_HOURS", 24, 1, 24 * 30);
@@ -87,6 +97,7 @@ export function warehouseFlagsSnapshot() {
     pilotSites: list("WAREHOUSE_PILOT_SITES"),
     reservationTtlMinutes: reservationTtlMinutes(),
     printClaimTimeoutSeconds: printClaimTimeoutSeconds(),
+    countSessionIdleMinutes: countSessionIdleMinutes(),
     labelJournalEnforced: isLabelJournalEnforced(),
     labelJournalDir: labelJournalDir(),
     /** Lot 1: there is no channel connector in this module. */
