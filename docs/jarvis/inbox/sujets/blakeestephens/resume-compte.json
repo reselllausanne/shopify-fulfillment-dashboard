@@ -1,0 +1,122 @@
+{
+  "handle": "blakeestephens",
+  "updated": "2026-11-28T02:39:50+00:00",
+  "stats": {
+    "posts": 6,
+    "span_days": 767.7,
+    "median_gap_days": 216.0,
+    "posts_with_cta": 0,
+    "avg_likes": 294.7,
+    "avg_comments": 26.2,
+    "visual_ok": 6,
+    "transcripts_ok": 0
+  },
+  "profile": {
+    "username": "blakeestephens",
+    "full_name": "Blake stephens",
+    "followers": 47486,
+    "posts_count": 10,
+    "seen": "2026-11-28"
+  },
+  "confirmed": [
+    {
+      "text": "Fréquence : 6 posts datés entre 2024-10-21 et 2026-11-27 (écart médian 216.0 j, ~0.1 posts/semaine). Échantillon = posts récents exposés, pas tout le compte.",
+      "posts": [
+        "DgQ6DimIP_s",
+        "Dfmw8ezEsgi",
+        "DdYdIT7kXvM",
+        "DTuUyrKADXT",
+        "DLCJcM5RYje",
+        "DBYQswbhBKT"
+      ]
+    },
+    {
+      "text": "Aucun CTA détecté par les règles dans les 6 légendes analysées.",
+      "posts": [
+        "DgQ6DimIP_s",
+        "Dfmw8ezEsgi",
+        "DdYdIT7kXvM",
+        "DTuUyrKADXT",
+        "DLCJcM5RYje",
+        "DBYQswbhBKT"
+      ]
+    },
+    {
+      "text": "Légende vide ou emoji seuls dans 2/6 posts.",
+      "posts": [
+        "DgQ6DimIP_s",
+        "DLCJcM5RYje"
+      ]
+    },
+    {
+      "text": "Longueur de légende dominante : court (<=8 mots) (4/6).",
+      "posts": [
+        "Dfmw8ezEsgi",
+        "DdYdIT7kXvM",
+        "DTuUyrKADXT",
+        "DBYQswbhBKT"
+      ]
+    },
+    {
+      "text": "Compte associé @tane.b (collab/tag/mention) dans 2/6 posts.",
+      "posts": [
+        "DgQ6DimIP_s",
+        "DdYdIT7kXvM"
+      ]
+    },
+    {
+      "text": "Aucun vocabulaire d'offre IA/agent/business détecté dans les 6 légendes analysées.",
+      "posts": [
+        "DgQ6DimIP_s",
+        "Dfmw8ezEsgi",
+        "DdYdIT7kXvM",
+        "DTuUyrKADXT",
+        "DLCJcM5RYje",
+        "DBYQswbhBKT"
+      ]
+    },
+    {
+      "text": "Moyenne 294.7 likes et 26.2 commentaires par post, taux d'engagement moyen ~0.68% des 47486 abonnés.",
+      "posts": [
+        "DgQ6DimIP_s",
+        "Dfmw8ezEsgi",
+        "DdYdIT7kXvM",
+        "DTuUyrKADXT",
+        "DLCJcM5RYje",
+        "DBYQswbhBKT"
+      ]
+    }
+  ],
+  "uncertain": [
+    {
+      "text": "Chiffres/prix/% dans la légende de 1/6 posts.",
+      "posts": [
+        "DTuUyrKADXT"
+      ]
+    },
+    {
+      "text": "Compte associé @beau.batchelor (collab/tag/mention) dans 1/6 posts.",
+      "posts": [
+        "DdYdIT7kXvM"
+      ]
+    },
+    {
+      "text": "Compte associé @dylnremm (collab/tag/mention) dans 1/6 posts.",
+      "posts": [
+        "DdYdIT7kXvM"
+      ]
+    },
+    {
+      "text": "Compte associé @harryeykyn (collab/tag/mention) dans 1/6 posts.",
+      "posts": [
+        "DgQ6DimIP_s"
+      ]
+    },
+    {
+      "text": "Compte associé @jacobsmithhh._ (collab/tag/mention) dans 1/6 posts.",
+      "posts": [
+        "DdYdIT7kXvM"
+      ]
+    }
+  ]
+}

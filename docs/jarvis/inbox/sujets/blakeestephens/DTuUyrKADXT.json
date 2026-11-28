@@ -1,0 +1,114 @@
+{
+  "alt_text_auto": "Photo by Blake stephens on January 19, 2026.",
+  "caption": "Q4",
+  "coauthors": [],
+  "comments_count": 19,
+  "ctas": [],
+  "engagement_history": [
+    {
+      "comments": 19,
+      "date": "2026-11-28",
+      "likes": 3
+    }
+  ],
+  "first_seen": "2026-11-28",
+  "handle": "blakeestephens",
+  "hashtags": [],
+  "id": "DTuUyrKADXT",
+  "last_seen": "2026-11-28",
+  "likes": 3,
+  "links": {
+    "link_hub": [],
+    "other": [],
+    "product": []
+  },
+  "location": "Uluwatu, Bali, Indonesia",
+  "media_kind": "carousel",
+  "mentions": [],
+  "music": null,
+  "offer_signal_in_caption": [],
+  "page_status": "ok",
+  "posted_at": "2026-01-20T07:17:56+00:00",
+  "runs": 2,
+  "sources": [
+    "embedded_json",
+    "og_meta",
+    "profile_embed"
+  ],
+  "structure": {
+    "emoji_or_symbol_only": false,
+    "empty": false,
+    "has_numbers": true,
+    "hook": "Q4",
+    "length_bucket": "court (<=8 mots)",
+    "lines": 1,
+    "question_hook": false,
+    "words": 1
+  },
+  "tagged_accounts": [],
+  "top_comments": [
+    {
+      "text": "❤️❤️❤️"
+    },
+    {
+      "text": "PLEASEE tell your admins to accept me please"
+    },
+    {
+      "text": "Does any of your posts have Armaan in them? @blakeestephens"
+    },
+    {
+      "text": "C'est incroyable de voir comment tu as capturé l'essence de ce moment à Q4 ! Les émotions sont si palpables, et l'énergie de l'événement est vraiment contagieuse. J'aimerais en savoir plus sur ce qui "
+    },
+    {
+      "text": "Who’s on DJ right now?"
+    }
+  ],
+  "transcript": {
+    "confidence": "incertain",
+    "reason": "no local speech-to-text model; Instagram exposes no captions",
+    "status": "unavailable"
+  },
+  "url": "https://www.instagram.com/p/DTuUyrKADXT/",
+  "visual": {
+    "confidence": "incertain",
+    "media": [
+      {
+        "bytes": 157468,
+        "frames": 0,
+        "ocr_lines": [],
+        "reason": null,
+        "status": "ok",
+        "type": "image"
+      },
+      {
+        "bytes": 368130,
+        "frames": 0,
+        "ocr_lines": [],
+        "reason": null,
+        "status": "ok",
+        "type": "image"
+      },
+      {
+        "bytes": 256768,
+        "frames": 0,
+        "ocr_lines": [],
+        "reason": null,
+        "status": "ok",
+        "type": "image"
+      }
+    ],
+    "ocr_lines": [],
+    "reason": null,
+    "status": "ok",
+    "vision_model": {
+      "env_checked": [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY"
+      ],
+      "note": "no vision model/key provided: no image description; frames + OCR + auto alt-text only (uncertain)",
+      "status": "not_configured"
+    }
+  }
+}

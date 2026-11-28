@@ -1,0 +1,111 @@
+{
+  "alt_text_auto": "Photo by Blake stephens on June 18, 2025.",
+  "caption": "🔁",
+  "coauthors": [],
+  "comments_count": 7,
+  "ctas": [],
+  "engagement_history": [
+    {
+      "comments": 7,
+      "date": "2026-11-28",
+      "likes": 3
+    }
+  ],
+  "first_seen": "2026-11-28",
+  "handle": "blakeestephens",
+  "hashtags": [],
+  "id": "DLCJcM5RYje",
+  "last_seen": "2026-11-28",
+  "likes": 3,
+  "links": {
+    "link_hub": [],
+    "other": [],
+    "product": []
+  },
+  "location": null,
+  "media_kind": "carousel",
+  "mentions": [],
+  "music": null,
+  "offer_signal_in_caption": [],
+  "page_status": "ok",
+  "posted_at": "2025-06-18T07:21:00+00:00",
+  "runs": 2,
+  "sources": [
+    "embedded_json",
+    "og_meta",
+    "profile_embed"
+  ],
+  "structure": {
+    "emoji_or_symbol_only": true,
+    "empty": false,
+    "has_numbers": false,
+    "hook": "🔁",
+    "length_bucket": "vide",
+    "lines": 1,
+    "question_hook": false,
+    "words": 0
+  },
+  "tagged_accounts": [],
+  "top_comments": [
+    {
+      "text": "Love the repeat vibe."
+    },
+    {
+      "text": "Thanks for sharing this again! Great content."
+    },
+    {
+      "text": "bro got revived"
+    },
+    {
+      "text": "Hey Blake… Bali. 😏"
+    }
+  ],
+  "transcript": {
+    "confidence": "incertain",
+    "reason": "no local speech-to-text model; Instagram exposes no captions",
+    "status": "unavailable"
+  },
+  "url": "https://www.instagram.com/p/DLCJcM5RYje/",
+  "visual": {
+    "confidence": "incertain",
+    "media": [
+      {
+        "bytes": 316977,
+        "frames": 0,
+        "ocr_lines": [],
+        "reason": null,
+        "status": "ok",
+        "type": "image"
+      },
+      {
+        "bytes": 244527,
+        "frames": 0,
+        "ocr_lines": [],
+        "reason": null,
+        "status": "ok",
+        "type": "image"
+      },
+      {
+        "bytes": 105742,
+        "frames": 0,
+        "ocr_lines": [],
+        "reason": null,
+        "status": "ok",
+        "type": "image"
+      }
+    ],
+    "ocr_lines": [],
+    "reason": null,
+    "status": "ok",
+    "vision_model": {
+      "env_checked": [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY"
+      ],
+      "note": "no vision model/key provided: no image description; frames + OCR + auto alt-text only (uncertain)",
+      "status": "not_configured"
+    }
+  }
+}

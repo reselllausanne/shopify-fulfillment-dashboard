@@ -1,0 +1,107 @@
+{
+  "alt_text_auto": "Video by Blake stephens on November 27, 2026. May be an image of motorcycle, scooter, helmet and text.",
+  "caption": "🏝️🎥",
+  "coauthors": [
+    "tane.b",
+    "harryeykyn"
+  ],
+  "comments_count": 29,
+  "ctas": [],
+  "engagement_history": [
+    {
+      "comments": 29,
+      "date": "2026-11-28",
+      "likes": 159
+    }
+  ],
+  "first_seen": "2026-11-28",
+  "handle": "blakeestephens",
+  "hashtags": [],
+  "id": "DgQ6DimIP_s",
+  "last_seen": "2026-11-28",
+  "likes": 159,
+  "links": {
+    "link_hub": [],
+    "other": [],
+    "product": []
+  },
+  "location": null,
+  "media_kind": "video",
+  "mentions": [],
+  "music": "Original audio",
+  "offer_signal_in_caption": [],
+  "page_status": "ok",
+  "posted_at": "2026-11-27T23:57:52+00:00",
+  "runs": 2,
+  "sources": [
+    "embedded_json",
+    "og_meta",
+    "profile_embed"
+  ],
+  "structure": {
+    "emoji_or_symbol_only": true,
+    "empty": false,
+    "has_numbers": false,
+    "hook": "🏝️🎥",
+    "length_bucket": "vide",
+    "lines": 1,
+    "question_hook": false,
+    "words": 0
+  },
+  "tagged_accounts": [
+    "harryeykyn",
+    "ryan__marshall_",
+    "tane.b",
+    "rem.ads",
+    "mitchellbrayyy"
+  ],
+  "top_comments": [
+    {
+      "text": "Wild"
+    },
+    {
+      "text": "This is🔥"
+    },
+    {
+      "text": "🔥🔥🔥"
+    },
+    {
+      "text": "Top G"
+    },
+    {
+      "text": "Now how’s he done that"
+    }
+  ],
+  "transcript": {
+    "confidence": "incertain",
+    "reason": "no local speech-to-text model; Instagram exposes no captions",
+    "status": "unavailable"
+  },
+  "url": "https://www.instagram.com/p/DgQ6DimIP_s/",
+  "visual": {
+    "confidence": "incertain",
+    "media": [
+      {
+        "bytes": 3783221,
+        "frames": 4,
+        "ocr_lines": [],
+        "reason": null,
+        "status": "ok",
+        "type": "video"
+      }
+    ],
+    "ocr_lines": [],
+    "reason": null,
+    "status": "ok",
+    "vision_model": {
+      "env_checked": [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY"
+      ],
+      "note": "no vision model/key provided: no image description; frames + OCR + auto alt-text only (uncertain)",
+      "status": "not_configured"
+    }
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "alt_text_auto": "Photo by Blake stephens on November 11, 2026. May be an image of text.",
+  "caption": "‘Insert Caption here’",
+  "coauthors": [],
+  "comments_count": 41,
+  "ctas": [],
+  "engagement_history": [
+    {
+      "comments": 41,
+      "date": "2026-11-28",
+      "likes": 1393
+    }
+  ],
+  "first_seen": "2026-11-28",
+  "handle": "blakeestephens",
+  "hashtags": [],
+  "id": "Dfmw8ezEsgi",
+  "last_seen": "2026-11-28",
+  "likes": 1393,
+  "links": {
+    "link_hub": [],
+    "other": [],
+    "product": []
+  },
+  "location": null,
+  "media_kind": "carousel",
+  "mentions": [],
+  "music": null,
+  "offer_signal_in_caption": [],
+  "page_status": "ok",
+  "posted_at": "2026-11-11T15:06:44+00:00",
+  "runs": 2,
+  "sources": [
+    "embedded_json",
+    "og_meta",
+    "profile_embed"
+  ],
+  "structure": {
+    "emoji_or_symbol_only": false,
+    "empty": false,
+    "has_numbers": false,
+    "hook": "‘Insert Caption here’",
+    "length_bucket": "court (<=8 mots)",
+    "lines": 1,
+    "question_hook": false,
+    "words": 3
+  },
+  "tagged_accounts": [],
+  "top_comments": [
+    {
+      "text": "❤️❤️❤️"
+    },
+    {
+      "text": "HARD"
+    },
+    {
+      "text": "Men in blue 😏"
+    },
+    {
+      "text": "jarvis saved my life 🥀"
+    },
+    {
+      "text": "I didn’t get access to the Skool yet"
+    }
+  ],
+  "transcript": {
+    "confidence": "incertain",
+    "reason": "no local speech-to-text model; Instagram exposes no captions",
+    "status": "unavailable"
+  },
+  "url": "https://www.instagram.com/p/Dfmw8ezEsgi/",
+  "visual": {
+    "confidence": "incertain",
+    "media": [
+      {
+        "bytes": 740325,
+        "frames": 0,
+        "ocr_lines": [],
+        "reason": null,
+        "status": "ok",
+        "type": "image"
+      },
+      {
+        "bytes": 238744,
+        "frames": 0,
+        "ocr_lines": [],
+        "reason": null,
+        "status": "ok",
+        "type": "image"
+      },
+      {
+        "bytes": 1133946,
+        "frames": 4,
+        "ocr_lines": [],
+        "reason": null,
+        "status": "ok",
+        "type": "video"
+      }
+    ],
+    "ocr_lines": [],
+    "reason": null,
+    "status": "ok",
+    "vision_model": {
+      "env_checked": [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY"
+      ],
+      "note": "no vision model/key provided: no image description; frames + OCR + auto alt-text only (uncertain)",
+      "status": "not_configured"
+    }
+  }
+}
