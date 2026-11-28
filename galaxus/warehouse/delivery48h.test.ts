@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  GALAXUS_DELIVERY_ROUTE_48H,
+  GALAXUS_48H_ROUTE_ENABLED,
   GALAXUS_WAREHOUSE_COUNTRY_CH,
   GALAXUS_DEFAULT_DELIVERY_ROUTE_ID,
   galaxusDeliveryRouteIdForBussignyQty,
@@ -9,11 +9,12 @@ import {
 } from "@/galaxus/warehouse/delivery48h";
 
 describe("galaxus 48h Bussigny warehouse", () => {
-  it("sends the 48h route in DeliveryRouteId and leaves WarehouseId blank", () => {
+  it("keeps Bussigny qty but does not promise the 48h route while it is off", () => {
+    expect(GALAXUS_48H_ROUTE_ENABLED).toBe(false);
     expect(galaxusStockWarehouseFields(2)).toEqual({
       warehouseCountry: GALAXUS_WAREHOUSE_COUNTRY_CH,
       warehouseId: "",
-      deliveryRouteId: GALAXUS_DELIVERY_ROUTE_48H,
+      deliveryRouteId: "",
       ship48h: true,
       quantity: 2,
     });
@@ -30,7 +31,7 @@ describe("galaxus 48h Bussigny warehouse", () => {
   });
 
   it("price file route: 48h only for Bussigny qty > 0, default for everything else", () => {
-    expect(galaxusDeliveryRouteIdForBussignyQty(1)).toBe(GALAXUS_DELIVERY_ROUTE_48H);
+    expect(galaxusDeliveryRouteIdForBussignyQty(1)).toBe(GALAXUS_DEFAULT_DELIVERY_ROUTE_ID);
     expect(galaxusDeliveryRouteIdForBussignyQty(0)).toBe(GALAXUS_DEFAULT_DELIVERY_ROUTE_ID);
     expect(galaxusDeliveryRouteIdForBussignyQty(-3)).toBe(GALAXUS_DEFAULT_DELIVERY_ROUTE_ID);
     expect(galaxusDeliveryRouteIdForBussignyQty(Number.NaN)).toBe(GALAXUS_DEFAULT_DELIVERY_ROUTE_ID);

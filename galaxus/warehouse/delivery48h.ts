@@ -14,6 +14,13 @@ export const GALAXUS_WAREHOUSE_COUNTRY_CH = "CH";
 export const GALAXUS_DELIVERY_ROUTE_48H = "7609999696817";
 
 /**
+ * Off until every Bussigny pair has been rescanned. While false, no offer is
+ * placed on the 2-day route. Bussigny qty is still published; the promise is
+ * the slow default route. Flip to true to publish 7609999696817 again.
+ */
+export const GALAXUS_48H_ROUTE_ENABLED = false;
+
+/**
  * Route id for every offer that is not Bussigny on-hand stock. Empty = the
  * default route in the Partner Portal (it has no id; it already holds all
  * offers we have ever sent without a route id). If the portal route gets an id,
@@ -29,6 +36,7 @@ export const GALAXUS_OFFER_ROUTE_HEADER = "DeliveryRouteId";
  * price and stock files always agree on the route of a ProviderKey.
  */
 export function galaxusDeliveryRouteIdForBussignyQty(bussignyQty: number): string {
+  if (!GALAXUS_48H_ROUTE_ENABLED) return GALAXUS_DEFAULT_DELIVERY_ROUTE_ID;
   const qty = Math.floor(Number(bussignyQty));
   return Number.isFinite(qty) && qty > 0
     ? GALAXUS_DELIVERY_ROUTE_48H

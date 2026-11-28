@@ -12,6 +12,7 @@ import { runPurgeGalaxusOrderFromDbUi } from "@/galaxus/_lib/purgeGalaxusOrderCl
 import { galaxusLineNetRevenueChf, galaxusProfitFromRevenueAndStockxCost } from "@/galaxus/orders/margin";
 import { isGalaxusStxSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
 import { dedupeById } from "@/galaxus/_lib/dedupeById";
+import { ExpressOrderBadge } from "@/app/galaxus/_components/ExpressOrderBadge";
 
 type OrderListItem = {
   id: string;
@@ -21,6 +22,7 @@ type OrderListItem = {
   shippedCount: number;
   fulfilledCount: number;
   _count?: { shipments: number; lines: number };
+  expressDelivery?: boolean;
 };
 
 type OrderDetail = {
@@ -655,7 +657,10 @@ export default function WarehouseBulkPage() {
                     }`}
                     onClick={() => setSelectedOrderId(order.id)}
                   >
-                    <div className="font-semibold">{order.galaxusOrderId}</div>
+                    <div className="font-semibold flex items-center gap-1.5 flex-wrap">
+                      {order.galaxusOrderId}
+                      <ExpressOrderBadge express={order.expressDelivery} />
+                    </div>
                     <div className="text-gray-600">
                       {order.deliveryType ?? "—"} · {order._count?.lines ?? 0} lines
                     </div>
@@ -673,6 +678,7 @@ export default function WarehouseBulkPage() {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="text-sm min-w-0">
                     <span className="font-semibold">{selected.galaxusOrderId}</span>
+                    <ExpressOrderBadge express={selected.expressDelivery} />
                     <span className="text-gray-600"> · {selected.deliveryType ?? "—"}</span>
                     {detail?.cancelledAt ? (
                       <span className="block text-xs text-red-600 mt-0.5">
