@@ -26,6 +26,13 @@ Several Cursor chats (Cloud + local) may edit this repo at once. **Coordinate on
 - Sync/deploy docs: [`docs/GITHUB-VPS-SYNC.md`](docs/GITHUB-VPS-SYNC.md).
 - VPS deploy on push to `main`: [`.github/workflows/deploy-vps.yml`](.github/workflows/deploy-vps.yml).
 
+## Warehouse module (Entrepôt)
+
+- Code: `lib/warehouse/**` (domain + API), `app/warehouse/**`, `app/partners/**`. Contract and invariants: [`docs/warehouse/CONTRACTS.md`](docs/warehouse/CONTRACTS.md); entry point: [`docs/warehouse/README.md`](docs/warehouse/README.md).
+- `lib/warehouse/**` imports **no** connector (Shopify, Galaxus, Decathlon, StockX, carrier, EDI, mail) and writes only `Warehouse*` tables. `lib/warehouse/__tests__/isolation.test.ts` enforces it.
+- A printed pair QR (`<uuid>-<issuing site>`) is permanent: never change the format, the registry (`WarehouseLabelCode`) or the identity triggers; add a new format beside the old one and a fixture in `lib/warehouse/__tests__/fixtures/reference-qr.json`.
+- Tests and recette run on the local isolated Postgres only (`scripts/warehouse/dev-db.sh`), never on production.
+
 ## StockX login (mandatory)
 
 - Never ask the user to log in to StockX (Shopify or Galaxus). Find an autonomous way and prove it: [`.cursor/rules/stockx-self-login.mdc`](.cursor/rules/stockx-self-login.mdc).

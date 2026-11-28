@@ -108,3 +108,10 @@ Les volumes, stocks et commandes ne sont PAS ici : les lire dans leur source (vo
 - source: AGENTS.md
 - status: active
 - value: Fuseau métier = Europe/Zurich.
+
+### D-016
+- topic: warehouse.lot1_scope
+- date: 2026-11-28
+- source: feuille de route « Module Entrepôt et Partenaires » remise par Théo (chat 35282c75-477c-4692-bb73-80e6febcc00c), docs/warehouse/README.md
+- status: active
+- value: Lot 1 Entrepôt = module additif, sans aucun effet Shopify / Galaxus / EDI / suivi / facturation. Migration de production, écritures canal et déploiement décidés par Théo, pas par l'agent. Recette uniquement sur base locale isolée. Les choix de conception du pilote (identité UUID + QR, états, prix) sont dans docs/warehouse/DECISIONS.md et restent à confirmer par Théo.

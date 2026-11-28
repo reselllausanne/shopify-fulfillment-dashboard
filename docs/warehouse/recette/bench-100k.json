@@ -1,0 +1,693 @@
+{
+  "label": "100k",
+  "at": "2026-11-28T04:19:01.511Z",
+  "pool": 20,
+  "dataset": {
+    "activeUnits": 100000,
+    "allUnits": 100000,
+    "labelCodes": 100000,
+    "movements": 200093,
+    "archivedMovements": 0,
+    "sites": [
+      {
+        "code": "SC01",
+        "units": 55000
+      },
+      {
+        "code": "SC02",
+        "units": 25000
+      },
+      {
+        "code": "SD01",
+        "units": 20000
+      }
+    ],
+    "levels": 11000,
+    "partners": 60,
+    "items": 6000,
+    "biggestPartnerUnits": 13562,
+    "medianPartnerUnits": 954
+  },
+  "reads": {
+    "scan: pair QR → unit (registry)": {
+      "n": 200,
+      "p50": 0.22,
+      "p95": 0.35,
+      "p99": 0.71,
+      "max": 1.39,
+      "mean": 0.25,
+      "first": 1.39
+    },
+    "scan: well-formed code never issued": {
+      "n": 200,
+      "p50": 0.15,
+      "p95": 0.16,
+      "p99": 0.19,
+      "max": 0.54,
+      "mean": 0.15,
+      "first": 0.54
+    },
+    "scan: level code → location": {
+      "n": 200,
+      "p50": 0.09,
+      "p95": 0.13,
+      "p99": 0.45,
+      "max": 0.62,
+      "mean": 0.1,
+      "first": 0.62
+    },
+    "scan: GTIN → variant": {
+      "n": 200,
+      "p50": 0.23,
+      "p95": 0.26,
+      "p99": 0.53,
+      "max": 1.67,
+      "mean": 0.24,
+      "first": 1.67
+    },
+    "unit detail (state + history)": {
+      "n": 200,
+      "p50": 0.45,
+      "p95": 1.56,
+      "p99": 2.86,
+      "max": 16.73,
+      "mean": 0.71,
+      "first": 16.73
+    },
+    "stock list: site, page 1 (50)": {
+      "n": 60,
+      "p50": 0.74,
+      "p95": 0.9,
+      "p99": 1.54,
+      "max": 1.54,
+      "mean": 0.78,
+      "first": 1.54
+    },
+    "stock list: keyset pages 1→40": {
+      "n": 40,
+      "p50": 0.81,
+      "p95": 1.15,
+      "p99": 1.18,
+      "max": 1.18,
+      "mean": 0.86
+    },
+    "stock list: one owner on one site": {
+      "n": 60,
+      "p50": 0.72,
+      "p95": 0.85,
+      "p99": 1.02,
+      "max": 1.02,
+      "mean": 0.74,
+      "first": 0.9
+    },
+    "stock list: sellable + quality passed": {
+      "n": 60,
+      "p50": 0.95,
+      "p95": 1.24,
+      "p99": 1.32,
+      "max": 1.32,
+      "mean": 0.99,
+      "first": 1.24
+    },
+    "stock list: missing pairs": {
+      "n": 60,
+      "p50": 2.63,
+      "p95": 2.9,
+      "p99": 3.74,
+      "max": 3.74,
+      "mean": 2.67,
+      "first": 3.74
+    },
+    "stock list: one level": {
+      "n": 200,
+      "p50": 0.22,
+      "p95": 0.26,
+      "p99": 0.73,
+      "max": 1.08,
+      "mean": 0.23,
+      "first": 0.73
+    },
+    "stock search: style code (text)": {
+      "n": 60,
+      "p50": 1.46,
+      "p95": 27.42,
+      "p99": 29.54,
+      "max": 29.54,
+      "mean": 5.07,
+      "first": 1.75
+    },
+    "stock search: GTIN": {
+      "n": 60,
+      "p50": 0.13,
+      "p95": 1.22,
+      "p99": 1.67,
+      "max": 1.67,
+      "mean": 0.25,
+      "first": 1.67
+    },
+    "stock search: short ref (ABCD-1234)": {
+      "n": 200,
+      "p50": 0.39,
+      "p95": 0.45,
+      "p99": 0.77,
+      "max": 0.78,
+      "mean": 0.39,
+      "first": 0.78
+    },
+    "stock by variant: site, page 1": {
+      "n": 30,
+      "p50": 25.27,
+      "p95": 30.67,
+      "p99": 30.72,
+      "max": 30.72,
+      "mean": 26.04,
+      "first": 25.28
+    },
+    "overview: site dashboard": {
+      "n": 30,
+      "p50": 13.24,
+      "p95": 15.28,
+      "p99": 25.87,
+      "max": 25.87,
+      "mean": 13.84,
+      "first": 25.87
+    },
+    "reconciliation: site × owner × state": {
+      "n": 10,
+      "p50": 47.27,
+      "p95": 47.99,
+      "p99": 47.99,
+      "max": 47.99,
+      "mean": 47.1,
+      "first": 47.29
+    },
+    "putaway queue: site": {
+      "n": 30,
+      "p50": 4.11,
+      "p95": 10.13,
+      "p99": 11.4,
+      "max": 11.4,
+      "mean": 5.18,
+      "first": 11.4
+    },
+    "locations: site structure": {
+      "n": 20,
+      "p50": 4.7,
+      "p95": 5.52,
+      "p99": 5.52,
+      "max": 5.52,
+      "mean": 4.72,
+      "first": 5.52
+    },
+    "partner biggest: summary": {
+      "n": 60,
+      "p50": 21.9,
+      "p95": 24.83,
+      "p99": 25.14,
+      "max": 25.14,
+      "mean": 22.05,
+      "first": 24.83
+    },
+    "partner biggest: list page 1": {
+      "n": 60,
+      "p50": 0.6,
+      "p95": 0.92,
+      "p99": 1.43,
+      "max": 1.43,
+      "mean": 0.63,
+      "first": 1.43
+    },
+    "partner biggest: by variant": {
+      "n": 60,
+      "p50": 15.7,
+      "p95": 16.39,
+      "p99": 16.6,
+      "max": 16.6,
+      "mean": 15.33,
+      "first": 11.22
+    },
+    "partner biggest: search style": {
+      "n": 60,
+      "p50": 9.83,
+      "p95": 10.66,
+      "p99": 11.84,
+      "max": 11.84,
+      "mean": 9.04,
+      "first": 2.03
+    },
+    "partner median: summary": {
+      "n": 60,
+      "p50": 4.18,
+      "p95": 4.46,
+      "p99": 4.66,
+      "max": 4.66,
+      "mean": 4.18,
+      "first": 4.56
+    },
+    "partner median: list page 1": {
+      "n": 60,
+      "p50": 0.55,
+      "p95": 0.87,
+      "p99": 1.05,
+      "max": 1.05,
+      "mean": 0.58,
+      "first": 0.87
+    },
+    "partner median: by variant": {
+      "n": 60,
+      "p50": 3.97,
+      "p95": 4.3,
+      "p99": 4.34,
+      "max": 4.34,
+      "mean": 3.97,
+      "first": 4.34
+    },
+    "partner median: search style": {
+      "n": 60,
+      "p50": 1.09,
+      "p95": 1.3,
+      "p99": 1.36,
+      "max": 1.36,
+      "mean": 1.12,
+      "first": 1.36
+    }
+  },
+  "plans": {
+    "codeLookup": [
+      "Index Scan using \"WarehouseLabelCode_pkey\" on \"WarehouseLabelCode\"  (cost=0.42..8.44 rows=1 width=51) (actual time=0.007..0.007 rows=1 loops=1)",
+      "  Index Cond: (code = '57767f66-801d-47de-8183-8e29ecc02888-SC01'::text)",
+      "  Buffers: shared hit=4",
+      "Planning:",
+      "  Buffers: shared hit=48",
+      "Planning Time: 0.167 ms",
+      "Execution Time: 0.009 ms"
+    ],
+    "codeLookupUsesIndex": true,
+    "unitById": "Index Scan using \"WarehouseUnit_id_prefix_idx\" on \"WarehouseUnit\"  (cost=0.42..8.44 rows=1 width=600) (actual time=0.004..0.004 rows=1 loops=1)",
+    "unitHistory": [
+      "Limit  (cost=0.42..12.45 rows=2 width=633) (actual time=0.006..0.007 rows=2 loops=1)",
+      "  Buffers: shared hit=6",
+      "  ->  Index Scan Backward using \"WarehouseMovement_unitId_seq_idx\" on \"WarehouseMovement\"  (cost=0.42..12.45 rows=2 width=633) (actual time=0.006..0.007 rows=2 loops=1)"
+    ],
+    "historyUsesIndex": true,
+    "partnerList": [
+      "Limit  (cost=0.42..90.06 rows=51 width=45) (actual time=0.005..0.015 rows=51 loops=1)",
+      "  Buffers: shared hit=16",
+      "  ->  Index Only Scan using \"WarehouseUnit_owner_held_idx\" on \"WarehouseUnit\" u  (cost=0.42..23853.38 rows=13570 width=45) (actual time=0.005..0.013 rows=51 loops=1)",
+      "        Index Cond: (\"ownerPartnerId\" = '13277e61-db5f-4932-86b8-2a172b36be29'::text)"
+    ],
+    "partnerListSeqScan": false
+  },
+  "parallelScans": {
+    "workers": 64,
+    "scans": 6400,
+    "perSecond": 22309,
+    "latencyMs": {
+      "n": 6400,
+      "p50": 2.77,
+      "p95": 3.51,
+      "p99": 4.22,
+      "max": 14.4,
+      "mean": 2.85
+    },
+    "allResolvedToOwnUuid": true
+  },
+  "benchBatchId": "29b85849-c17f-485b-945b-a65d368abb02",
+  "writes": {
+    "receive one pair (new UUID + label job + task)": {
+      "n": 100,
+      "p50": 2.25,
+      "p95": 3.31,
+      "p99": 6.2,
+      "max": 6.2,
+      "mean": 2.4,
+      "first": 6.2
+    },
+    "replay of the same gesture key": {
+      "n": 50,
+      "p50": 0.31,
+      "p95": 0.36,
+      "p99": 0.7,
+      "max": 0.7,
+      "mean": 0.32,
+      "first": 0.52
+    },
+    "propose destinations for 100 pairs": {
+      "n": 1,
+      "p50": 113.98,
+      "p95": 113.98,
+      "p99": 113.98,
+      "max": 113.98,
+      "mean": 113.98,
+      "first": 113.98
+    },
+    "confirm putaway (scan pair + level)": {
+      "n": 100,
+      "p50": 1.62,
+      "p95": 1.98,
+      "p99": 3.48,
+      "max": 3.48,
+      "mean": 1.65,
+      "first": 3.48
+    },
+    "relocate a pair to another level": {
+      "n": 60,
+      "p50": 1.48,
+      "p95": 1.94,
+      "p99": 2.1,
+      "max": 2.1,
+      "mean": 1.49,
+      "first": 2.05
+    },
+    "quality check passed": {
+      "n": 60,
+      "p50": 0.92,
+      "p95": 1.33,
+      "p99": 1.87,
+      "max": 1.87,
+      "mean": 0.96,
+      "first": 1.14
+    }
+  },
+  "lastPlaceContention": {
+    "rounds": 25,
+    "exactlyOneWinner": 25,
+    "overbookedLevels": 0
+  },
+  "load": {
+    "seconds": 30.4,
+    "partnerSessions": 50,
+    "stations": 2,
+    "requests": 43864,
+    "requestsPerSecond": 1445,
+    "errors": 0,
+    "errorSamples": [],
+    "overall": {
+      "n": 43864,
+      "p50": 1.39,
+      "p95": 6.7,
+      "p99": 11.5,
+      "max": 38.45,
+      "mean": 2.5
+    },
+    "first5s": {
+      "n": 7188,
+      "p50": 1.47,
+      "p95": 7.04,
+      "p99": 12.65,
+      "max": 38.45,
+      "mean": 2.7
+    },
+    "writesOnly": {
+      "n": 3240,
+      "p50": 3.25,
+      "p95": 6.29,
+      "p99": 8.09,
+      "max": 21.88,
+      "mean": 3.53
+    },
+    "byRoute": {
+      "station: scan GTIN": {
+        "n": 1080,
+        "p50": 0.58,
+        "p95": 1.33,
+        "p99": 2.08,
+        "max": 38.45,
+        "mean": 0.74
+      },
+      "partner: home summary": {
+        "n": 5140,
+        "p50": 6,
+        "p95": 11.3,
+        "p99": 22.82,
+        "max": 37.75,
+        "mean": 6.78
+      },
+      "partner: my stock page": {
+        "n": 5140,
+        "p50": 1.15,
+        "p95": 1.85,
+        "p99": 2.47,
+        "max": 6.05,
+        "mean": 1.26
+      },
+      "partner: stock by variant": {
+        "n": 5140,
+        "p50": 4.97,
+        "p95": 6.86,
+        "p99": 11.82,
+        "max": 18.5,
+        "mean": 5.19
+      },
+      "station: receive pair": {
+        "n": 1080,
+        "p50": 3.86,
+        "p95": 6.54,
+        "p99": 8.65,
+        "max": 21.88,
+        "mean": 4.22
+      },
+      "station: scan new QR": {
+        "n": 1080,
+        "p50": 0.44,
+        "p95": 1.1,
+        "p99": 1.55,
+        "max": 3.49,
+        "mean": 0.54
+      },
+      "partner: pair detail": {
+        "n": 5140,
+        "p50": 0.77,
+        "p95": 1.63,
+        "p99": 2.31,
+        "max": 12.13,
+        "mean": 0.9
+      },
+      "partner: my stock next page": {
+        "n": 5140,
+        "p50": 1.12,
+        "p95": 1.81,
+        "p99": 2.37,
+        "max": 5.29,
+        "mean": 1.21
+      },
+      "partner: search": {
+        "n": 5140,
+        "p50": 1.9,
+        "p95": 4.2,
+        "p99": 10.84,
+        "max": 14.36,
+        "mean": 2.25
+      },
+      "partner: requests": {
+        "n": 5140,
+        "p50": 0.38,
+        "p95": 1.02,
+        "p99": 1.63,
+        "max": 4.78,
+        "mean": 0.48
+      },
+      "station: propose destination": {
+        "n": 1080,
+        "p50": 2.54,
+        "p95": 7.15,
+        "p99": 8.54,
+        "max": 21.76,
+        "mean": 3.08
+      },
+      "station: putaway queue of the batch": {
+        "n": 1080,
+        "p50": 1.22,
+        "p95": 1.97,
+        "p99": 2.54,
+        "max": 4.04,
+        "mean": 1.33
+      },
+      "station: confirm putaway": {
+        "n": 1080,
+        "p50": 3.06,
+        "p95": 4.95,
+        "p99": 6.11,
+        "max": 11.26,
+        "mean": 3.29
+      },
+      "station: scan old QR": {
+        "n": 1080,
+        "p50": 0.43,
+        "p95": 0.97,
+        "p99": 1.37,
+        "max": 2.65,
+        "mean": 0.52
+      },
+      "station: stock list": {
+        "n": 216,
+        "p50": 1.64,
+        "p95": 2.26,
+        "p99": 2.56,
+        "max": 3.03,
+        "mean": 1.72
+      },
+      "station: overview": {
+        "n": 108,
+        "p50": 15.66,
+        "p95": 21.41,
+        "p99": 27.76,
+        "max": 29.24,
+        "mean": 16.48
+      }
+    },
+    "worstRouteP95": [
+      "station: overview",
+      21.41
+    ],
+    "nodeCpuSeconds": 25.4,
+    "db": {
+      "commits": 130563,
+      "rollbacks": 23,
+      "deadlocks": 0,
+      "blocksReadFromDisk": 7994,
+      "blocksHitInCache": 55518408,
+      "rowsInserted": 9559,
+      "rowsUpdated": 10384
+    },
+    "p95Under1s": true
+  },
+  "integrity": {
+    "unitsBefore": 100000,
+    "unitsAfter": 101327,
+    "createdDuringBench": 1327,
+    "reconciles": true,
+    "distinctIdsEqualUnits": true,
+    "labelCodes": 101327,
+    "distinctLabelCodes": 101327,
+    "unitsWithoutRegistryRow": 0,
+    "unitsWithoutJournalRow": 0,
+    "overCapacityLevels": 0,
+    "overCapacityOtherPositions": 0,
+    "occupancyCounterDrift": 0,
+    "reservationCounterDrift": 0,
+    "unitsInTwoPlaces": 0,
+    "pairsWithTwoActiveTasks": 0
+  },
+  "registry": {
+    "codesBeforeNewIssue": 101327,
+    "duplicateCodeRefusedByDatabase": true,
+    "codeReassignmentRefusedByDatabase": true,
+    "newCodeIssuedAfterTier": "5cbb47ed-060f-475d-8a00-2e93730a79bc-SC01",
+    "newCodeScansToItsUuid": true
+  },
+  "sizes": [
+    {
+      "table": "WarehouseUnit",
+      "rows": 100000,
+      "tableMb": 45.1,
+      "indexMb": 89.4,
+      "totalMb": 134.5
+    },
+    {
+      "table": "WarehouseMovement",
+      "rows": 200093,
+      "tableMb": 47.6,
+      "indexMb": 44.9,
+      "totalMb": 92.5
+    },
+    {
+      "table": "WarehouseLabelJournal",
+      "rows": 100000,
+      "tableMb": 66.3,
+      "indexMb": 13.3,
+      "totalMb": 79.6
+    },
+    {
+      "table": "WarehouseLabelCode",
+      "rows": 100000,
+      "tableMb": 13.8,
+      "indexMb": 16.1,
+      "totalMb": 29.9
+    },
+    {
+      "table": "WarehouseUnitPrice",
+      "rows": 37913,
+      "tableMb": 9.6,
+      "indexMb": 8.6,
+      "totalMb": 18.1
+    },
+    {
+      "table": "WarehouseOperation",
+      "rows": 2855,
+      "tableMb": 10.8,
+      "indexMb": 0.8,
+      "totalMb": 11.6
+    },
+    {
+      "table": "WarehouseLocation",
+      "rows": 13341,
+      "tableMb": 5.9,
+      "indexMb": 4.2,
+      "totalMb": 10.1
+    },
+    {
+      "table": "WarehousePutawayTask",
+      "rows": 2829,
+      "tableMb": 1.4,
+      "indexMb": 2.1,
+      "totalMb": 3.5
+    },
+    {
+      "table": "WarehouseLocationCode",
+      "rows": 13341,
+      "tableMb": 1.3,
+      "indexMb": 1.9,
+      "totalMb": 3.2
+    },
+    {
+      "table": "WarehouseItem",
+      "rows": 6000,
+      "tableMb": 1.3,
+      "indexMb": 0.8,
+      "totalMb": 2.1
+    },
+    {
+      "table": "WarehouseDepositAgreement",
+      "rows": 60,
+      "tableMb": 0,
+      "indexMb": 0,
+      "totalMb": 0.1
+    },
+    {
+      "table": "WarehouseBatch",
+      "rows": 4,
+      "tableMb": 0,
+      "indexMb": 0.1,
+      "totalMb": 0.1
+    }
+  ],
+  "totalWarehouseMb": 386,
+  "slowestRead": [
+    {
+      "name": "reconciliation: site × owner × state",
+      "p95": 47.99
+    },
+    {
+      "name": "stock by variant: site, page 1",
+      "p95": 30.67
+    },
+    {
+      "name": "stock search: style code (text)",
+      "p95": 27.42
+    },
+    {
+      "name": "partner biggest: summary",
+      "p95": 24.83
+    },
+    {
+      "name": "partner biggest: by variant",
+      "p95": 16.39
+    }
+  ],
+  "environment": {
+    "node": "v22.18.0",
+    "platform": "darwin/arm64",
+    "note": "Local workstation, isolated PostgreSQL cluster, synthetic data. Not the VPS."
+  }
+}

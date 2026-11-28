@@ -1,590 +1,250 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { CreateProductModal } from "./CreateProductModal";
+import Link from "next/link";
+import { useState } from "react";
+import { Button, ButtonLink } from "../_components/Button";
+import { Card, CardHeader } from "../_components/Card";
+import { BoxIcon, ChartIcon, ChevronRightIcon, ClockIcon, DownloadIcon, MessageIcon, ReceiptIcon, StoreIcon, TagIcon } from "../_components/icons";
+import { KpiTile } from "../_components/KpiTile";
+import { Money } from "../_components/Money";
+import { Notice } from "../_components/Notice";
+import { PageHeader } from "../_components/PageHeader";
+import { PageSkeleton } from "../_components/Skeleton";
+import { FOCUS, HAIRLINE, LINK, TEXT, TEXT_FAINT, TEXT_MUTED, cx } from "../_components/ui";
+import { errorMessage, partnerApi, type PartnerStockSummary } from "../_lib/api";
+import { formatCount, formatDate, pairs } from "../_lib/format";
+import { usePartnerPortal } from "../_lib/portal";
+import DropshippingDashboard from "./DropshippingDashboard";
 
-type PartnerInfo = {
-  id: string;
-  key: string;
-  name: string;
-  active?: boolean;
-  defaultLeadTimeDays?: number | null;
-};
+function Shortcut({ href, icon, title, text }: { href: string; icon: React.ReactNode; title: string; text: string }) {
+  return (
+    <Link
+      href={href}
+      className={cx("flex items-center gap-3 px-4 py-3 transition-colors hover:bg-[#FAFBFA] dark:hover:bg-slate-800/40 sm:px-5", FOCUS, "focus-visible:-outline-offset-2")}
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E6F9EB] text-[#017723] dark:bg-[#02C73A]/10 dark:text-[#5BE584]">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className={cx("block text-sm font-medium", TEXT)}>{title}</span>
+        <span className={cx("block text-xs", TEXT_FAINT)}>{text}</span>
+      </span>
+      <ChevronRightIcon size={18} className={TEXT_FAINT} />
+    </Link>
+  );
+}
 
-type UploadResult = {
-  uploadId?: string;
-  importedRows?: number;
-  errorRows?: number;
-  newRows?: number;
-  errors?: Array<{ row: number; field: string; message: string }>;
-  rows?: Array<{
-    row: number;
-    status: "RESOLVED" | "PENDING_GTIN" | "AMBIGUOUS_GTIN" | "PENDING_ENRICH" | "ERROR";
-    gtin?: string | null;
-    error?: string;
-  }>;
-};
+function StockHome({ summary }: { summary: PartnerStockSummary }) {
+  const { partner, summaryError } = usePartnerPortal();
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
-type UploadLog = {
-  id: string;
-  filename: string;
-  status: string;
-  totalRows: number;
-  importedRows: number;
-  errorRows: number;
-  errorsJson: unknown;
-  createdAt: string | null;
-};
-
-const TEMPLATE_HEADERS = ["providerKey", "sku", "size", "rawStock", "price"];
-
-export default function PartnerDashboardPage() {
-  const [partner, setPartner] = useState<PartnerInfo | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
-  const [enrichLog, setEnrichLog] = useState<string | null>(null);
-  const [importQueueLog, setImportQueueLog] = useState<string | null>(null);
-  const [importPollUploadId, setImportPollUploadId] = useState<string | null>(null);
-  const [catalogCount, setCatalogCount] = useState<number>(0);
-  const [uploadHistory, setUploadHistory] = useState<UploadLog[]>([]);
-  const [pendingEnrichCount, setPendingEnrichCount] = useState<number>(0);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
-  const [downloadBusy, setDownloadBusy] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createMode, setCreateMode] = useState<"custom" | "from-db">("custom");
-  const [ordersToProcessCount, setOrdersToProcessCount] = useState<number | null>(null);
-  const [totalSaleFeedChf, setTotalSaleFeedChf] = useState<number | null>(null);
-  const [totalGalaxusSaleChf, setTotalGalaxusSaleChf] = useState<number | null>(null);
-  const [postLabelCount, setPostLabelCount] = useState<number | null>(null);
-  const router = useRouter();
-  const lastEnrichEnsureMs = useRef(0);
-
-  const loadHistory = async (offset = 0) => {
+  const exportCsv = async () => {
+    setExporting(true);
+    setExportError(null);
     try {
-      const res = await fetch(`/api/partners/uploads/history?limit=100&offset=${offset}`, {
-        cache: "no-store",
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (!data.ok) return;
-      setCatalogCount(data.catalogCount ?? 0);
-      setUploadHistory(data.uploads ?? []);
-      setPendingEnrichCount(data.pendingEnrichCount ?? 0);
-      setHistoryLoaded(true);
-      const pending = Number(data.pendingEnrichCount ?? 0);
-      if (pending > 0 && offset === 0) {
-        const now = Date.now();
-        if (now - lastEnrichEnsureMs.current > 45_000) {
-          lastEnrichEnsureMs.current = now;
-          void fetch("/api/partners/enrich/ensure-queue", { method: "POST" }).catch(() => {});
-        }
-      }
-    } catch {
-      // silent
-    }
-  };
-
-  const normalizeState = (state?: string | null) => String(state ?? "").trim().toUpperCase();
-  const canceledStates = new Set(["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"]);
-
-  const loadShippedSales = async () => {
-    try {
-      const [decRes, galRes, labelRes] = await Promise.all([
-        fetch("/api/partners/decathlon-shipped-stats", { cache: "no-store" }),
-        fetch("/api/partners/galaxus-shipped-stats", { cache: "no-store" }),
-        fetch("/api/partners/label-stats", { cache: "no-store" }),
-      ]);
-      const decData = await decRes.json().catch(() => ({}));
-      const galData = await galRes.json().catch(() => ({}));
-      const labelData = await labelRes.json().catch(() => ({}));
-      const decRaw = decRes.ok && decData.ok ? Number(decData.totalSaleFeedChf ?? 0) : 0;
-      const galRaw = galRes.ok && galData.ok ? Number(galData.totalSaleFeedChf ?? 0) : 0;
-      const decValue = Number.isFinite(decRaw) ? decRaw : 0;
-      const galValue = Number.isFinite(galRaw) ? galRaw : 0;
-      setTotalSaleFeedChf(decValue + galValue);
-      setTotalGalaxusSaleChf(galValue);
-      const labels = labelRes.ok && labelData.ok ? Number(labelData.postLabelCount ?? 0) : null;
-      setPostLabelCount(labels != null && Number.isFinite(labels) ? labels : null);
-    } catch {
-      // silent
-    }
-  };
-
-  const loadOrdersSummary = async () => {
-    try {
-      const [decRes, galRes] = await Promise.all([
-        fetch("/api/decathlon/orders?limit=200&scope=partner&includeLinked=0", { cache: "no-store" }),
-        fetch("/api/partners/galaxus/orders?limit=200", { cache: "no-store" }),
-      ]);
-      if (!decRes.ok) return;
-      const data = await decRes.json();
-      if (!data.ok) return;
-      const items: Array<{
-        orderState?: string | null;
-        shippedCount?: number;
-        totalUnits?: number;
-        shippedUnits?: number;
-        remainingUnits?: number;
-        _count?: { shipments?: number };
-      }> = Array.isArray(data.items) ? data.items : [];
-      const toProcess = items.filter((order) => {
-        const state = normalizeState(order.orderState);
-        const totalUnits = order.totalUnits ?? 0;
-        const shippedUnits = order.shippedUnits ?? 0;
-        const remainingUnits = order.remainingUnits ?? Math.max(totalUnits - shippedUnits, 0);
-        const shippedCount = order.shippedCount ?? order._count?.shipments ?? 0;
-        const isFulfilled = totalUnits > 0 ? remainingUnits <= 0 : shippedCount > 0;
-        return !isFulfilled && !canceledStates.has(state);
-      }).length;
-      let galaxusToProcess = 0;
-      if (galRes.ok) {
-        const galData = await galRes.json().catch(() => ({}));
-        const galItems: Array<{ fulfillmentState?: string | null; cancelledAt?: string | null }> = Array.isArray(
-          galData.items
-        )
-          ? galData.items
-          : [];
-        galaxusToProcess = galItems.filter((order) => {
-          const state = String(order.fulfillmentState ?? "").toLowerCase();
-          return state !== "fulfilled" && !order.cancelledAt;
-        }).length;
-      }
-      setOrdersToProcessCount(toProcess + galaxusToProcess);
-    } catch {
-      // silent
-    }
-  };
-
-  useEffect(() => {
-    if (!importPollUploadId) return;
-    const id = window.setInterval(() => {
-      void loadHistory();
-    }, 2500);
-    return () => window.clearInterval(id);
-  }, [importPollUploadId]);
-
-  useEffect(() => {
-    if (!importPollUploadId) return;
-    const u = uploadHistory.find((x) => x.id === importPollUploadId);
-    if (u && !["QUEUED", "PROCESSING"].includes(u.status)) {
-      setImportPollUploadId(null);
-      setImportQueueLog(
-        u.status === "FAILED"
-          ? "Import failed — open Upload History for details."
-          : `Import finished: ${u.importedRows} rows imported, ${u.errorRows} row errors.`
-      );
-    }
-  }, [uploadHistory, importPollUploadId]);
-
-  useEffect(() => {
-    const load = async () => {
-      const res = await fetch("/api/partners/me", { cache: "no-store" });
-      if (res.status === 401) {
-        router.push("/partners/login");
-        return;
-      }
-      const data = await res.json();
-      if (data.ok) {
-        setPartner(data.partner);
-        loadHistory();
-        loadOrdersSummary();
-        loadShippedSales();
-      }
-    };
-    load();
-  }, [router]);
-
-  const downloadTemplate = () => {
-    const content = `${TEMPLATE_HEADERS.join(",")}\n`;
-    const blob = new Blob([content], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "partner-catalog-template.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const uploadCsv = async () => {
-    if (!file) {
-      setError("Select a CSV file first.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    setUploadResult(null);
-    setImportQueueLog(null);
-    setImportPollUploadId(null);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/partners/uploads", {
-        method: "POST",
-        body: formData,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Upload failed");
-      if (data.queued && data.uploadId) {
-        setImportPollUploadId(data.uploadId);
-        setImportQueueLog(
-          `Import queued (job ${data.jobId}). Large files are processed in the background; upload history refreshes automatically.`
-        );
-        await loadHistory();
-        return;
-      }
-      setUploadResult(data.result ?? data);
-      await loadHistory();
-    } catch (err: any) {
-      setError(err.message);
+      await partnerApi.exportCsv();
+    } catch (err) {
+      setExportError(errorMessage(err));
     } finally {
-      setBusy(false);
+      setExporting(false);
     }
   };
 
-  const enrichPending = async (force = false) => {
-    setBusy(true);
-    setError(null);
-    setEnrichLog(null);
-    try {
-      const res = await fetch(
-        `/api/partners/enrich?mode=new&queue=1&limit=2000&force=${force ? 1 : 0}`,
-        {
-          method: "POST",
-        }
-      );
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error ?? "Enrich failed");
-      if (data.queued) {
-        setEnrichLog(`Queued enrichment job ${data.jobId} (limit ${data.limit}).`);
-      } else {
-        setEnrichLog(JSON.stringify(data.results ?? [], null, 2));
-      }
-      await loadHistory();
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const downloadCatalogCsv = async () => {
-    setDownloadBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/partners/catalog/export", { cache: "no-store" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? "Download failed");
-      }
-      const blob = await res.blob();
-      const disposition = res.headers.get("content-disposition") ?? "";
-      const match =
-        disposition.match(/filename\*=UTF-8''([^;]+)$/i) ||
-        disposition.match(/filename="([^"]+)"/i) ||
-        disposition.match(/filename=([^;]+)/i);
-      const filename = match?.[1] ? decodeURIComponent(match[1]) : "partner-stock-enriched.csv";
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setDownloadBusy(false);
-    }
-  };
+  const lastReceived = formatDate(summary.lastReceivedAt);
+  const onHold = summary.blocked + summary.checking;
 
   return (
-    <div className="space-y-8">
-      <div className="space-y-2">
-        <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Partner Dashboard</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          {partner ? `${partner.name} (${partner.key})` : "Loading partner…"}
-        </p>
-      </div>
-
-      {error && <div className="rounded border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-sm text-red-700 dark:text-red-300">{error}</div>}
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <button
-          type="button"
-          className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 text-left transition hover:border-[#55b3f3]"
-          onClick={() => router.push("/partners/catalog")}
-        >
-          <div className="text-sm font-medium text-slate-500 dark:text-slate-400">Catalog</div>
-          <div className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{catalogCount}</div>
-        </button>
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-          <div className="text-sm font-medium text-slate-500 dark:text-slate-400">Enrichment queue</div>
-          <div className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{pendingEnrichCount}</div>
-        </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <button
-          className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-6 text-left transition hover:border-[#55b3f3]"
-          onClick={() => router.push("/partners/orders")}
-        >
-          <div className="text-sm font-medium text-slate-500 dark:text-slate-400">Orders to process</div>
-          <div className="mt-2 text-3xl font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
-            {ordersToProcessCount == null ? "—" : ordersToProcessCount}
-          </div>
-        </button>
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-6 flex flex-col justify-center gap-3">
-          <div>
-            <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Sales (Decathlon + Galaxus)</div>
-            <div className="mt-1 flex flex-wrap items-center gap-3">
-              <div className="text-3xl font-semibold text-slate-900 dark:text-slate-100 tabular-nums tracking-tight">
-                {totalSaleFeedChf == null ? "—" : `CHF ${totalSaleFeedChf.toFixed(2)}`}
-              </div>
-              <button
-                type="button"
-                className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-950 hover:brightness-105"
-                onClick={() => router.push("/partners/invoices")}
-              >
-                Invoice
-              </button>
-            </div>
-            {totalGalaxusSaleChf != null ? (
-              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Galaxus: CHF {totalGalaxusSaleChf.toFixed(2)}</div>
-            ) : null}
-            <p className="mt-2 text-[11px] leading-snug text-slate-500 dark:text-slate-400">
-              Galaxus sell prices already account for the <strong>2% fast-payment</strong> fee Digitech /
-              Galaxus deducts.
-            </p>
-          </div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-6 flex flex-col justify-center">
-          <div className="text-sm font-medium text-slate-500 dark:text-slate-400">Swiss Post labels</div>
-          <div className="mt-2 text-3xl font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
-            {postLabelCount == null ? "—" : postLabelCount}
-          </div>
-          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Generated from partner ship (Decathlon)</div>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Add a single product</div>
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              Faster than a CSV when you only need to publish one offer. Use an existing DB
-              product as a base, or build a fully custom product (works for new releases
-              without a StockX page).
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="rounded-full border border-slate-200 dark:border-slate-700 px-4 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:border-[#55b3f3]"
-              onClick={() => {
-                setCreateMode("from-db");
-                setCreateOpen(true);
-              }}
-            >
-              Add offer from DB
-            </button>
-            <button
-              type="button"
-              className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold text-slate-950"
-              onClick={() => {
-                setCreateMode("custom");
-                setCreateOpen(true);
-              }}
-            >
-              Create custom product
-            </button>
-          </div>
-        </div>
-        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-          With a valid GTIN the variant is created as <code>SUPPLIER_GTIN</code> (ready for
-          Galaxus / Decathlon after marking ready in Catalog → Product data). Without GTIN it
-          is saved as <code>PENDING_GTIN</code> draft and stays in your catalog only.
-        </p>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Catalog Upload</div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                Upload your stock CSV. Newly added products will be queued for enrichment.
-              </div>
-            </div>
-            <button
-              className="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1 text-xs text-slate-600 dark:text-slate-400 hover:border-[#55b3f3]"
-              onClick={downloadTemplate}
-              disabled={busy}
-            >
-              Download template
-            </button>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
-            <button
-              className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold text-slate-950 disabled:opacity-50"
-              onClick={uploadCsv}
-              disabled={busy}
-            >
-              {busy ? "Uploading…" : importPollUploadId ? "Processing…" : "Upload CSV"}
-            </button>
-          </div>
-          {importQueueLog && (
-            <div className="rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-3 text-xs text-slate-700 dark:text-slate-300">
-              {importQueueLog}
-            </div>
-          )}
-          {uploadResult && (
-            <div className="space-y-2 text-xs text-slate-600 dark:text-slate-400">
-              <div>
-                Imported: {uploadResult.importedRows ?? 0}, New: {uploadResult.newRows ?? 0}, Errors:{" "}
-                {uploadResult.errorRows ?? 0}
-              </div>
-              {uploadResult.rows && uploadResult.rows.length > 0 && (
-                <div className="overflow-auto rounded border border-slate-200 dark:border-slate-700">
-                  <table className="min-w-full text-xs">
-                    <thead className="bg-slate-50 dark:bg-slate-800/60">
-                      <tr>
-                        <th className="px-2 py-1 text-left">Row</th>
-                        <th className="px-2 py-1 text-left">Status</th>
-                        <th className="px-2 py-1 text-left">GTIN</th>
-                        <th className="px-2 py-1 text-left">Error</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {uploadResult.rows.map((row) => (
-                        <tr key={`${row.row}-${row.status}`} className="border-t">
-                          <td className="px-2 py-1">{row.row}</td>
-                          <td className="px-2 py-1">{row.status}</td>
-                          <td className="px-2 py-1">{row.gtin ?? ""}</td>
-                          <td className="px-2 py-1">{row.error ?? ""}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-4">
-          <div>
-            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Enrichment</div>
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              After upload, enrichment runs once in the background (up to 2000 rows per queued job). Use force re-enrich
-              only after you change SKU/size values in the catalog and want to refresh KickDB matches.
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              className="rounded-full border border-slate-200 dark:border-slate-700 px-4 py-2 text-xs text-slate-700 dark:text-slate-300 disabled:opacity-50"
-              onClick={() => enrichPending(true)}
-              disabled={busy}
-            >
-              Force re-enrich
-            </button>
-            <button
-              className="rounded-full border border-slate-200 dark:border-slate-700 px-4 py-2 text-xs text-slate-700 dark:text-slate-300 disabled:opacity-50"
-              onClick={downloadCatalogCsv}
-              disabled={busy || downloadBusy}
-            >
-              {downloadBusy ? "Preparing…" : "Download enriched CSV"}
-            </button>
-          </div>
-          {enrichLog && (
-            <div className="rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-3 text-xs overflow-auto whitespace-pre-wrap">
-              {enrichLog}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Upload History</div>
-            <div className="text-xs text-slate-500 dark:text-slate-400">Past CSV uploads and their status.</div>
-          </div>
-          <button
-            className="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1 text-xs text-slate-600 dark:text-slate-400"
-            onClick={() => loadHistory()}
-            disabled={busy}
-          >
-            Refresh
-          </button>
-        </div>
-
-        {uploadHistory.length === 0 && historyLoaded && (
-          <div className="text-xs text-slate-400 dark:text-slate-500">No uploads yet.</div>
-        )}
-
-        {uploadHistory.length > 0 && (
-          <div className="overflow-auto rounded border border-slate-200 dark:border-slate-700">
-            <table className="min-w-full text-xs">
-              <thead className="bg-slate-50 dark:bg-slate-800/60">
-                <tr>
-                  <th className="px-2 py-1 text-left">Date</th>
-                  <th className="px-2 py-1 text-left">File</th>
-                  <th className="px-2 py-1 text-left">Status</th>
-                  <th className="px-2 py-1 text-right">Total</th>
-                  <th className="px-2 py-1 text-right">Imported</th>
-                  <th className="px-2 py-1 text-right">Errors</th>
-                </tr>
-              </thead>
-              <tbody>
-                {uploadHistory.map((u) => (
-                  <tr key={u.id} className="border-t">
-                    <td className="px-2 py-1">
-                      {u.createdAt ? new Date(u.createdAt).toLocaleString() : ""}
-                    </td>
-                    <td className="px-2 py-1 font-mono">{u.filename}</td>
-                    <td className="px-2 py-1">
-                      <span
-                        className={
-                          u.status === "COMPLETED"
-                            ? "text-emerald-700"
-                            : u.status === "FAILED"
-                            ? "text-red-600"
-                            : u.status === "COMPLETED_WITH_ERRORS"
-                            ? "text-amber-700"
-                            : "text-slate-600 dark:text-slate-400"
-                        }
-                      >
-                        {u.status}
-                      </span>
-                    </td>
-                    <td className="px-2 py-1 text-right">{u.totalRows}</td>
-                    <td className="px-2 py-1 text-right">{u.importedRows}</td>
-                    <td className="px-2 py-1 text-right">
-                      {u.errorRows > 0 ? <span className="text-red-600">{u.errorRows}</span> : u.errorRows}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <CreateProductModal
-        open={createOpen}
-        initialMode={createMode}
-        onClose={() => setCreateOpen(false)}
-        onCreated={() => {
-          void loadHistory();
-        }}
+    <div className="space-y-6">
+      <PageHeader
+        title={partner ? `Bonjour, ${partner.name}` : "Bonjour"}
+        description="Votre stock en dépôt chez Resell Lausanne, en un coup d'œil."
+        actions={
+          <>
+            <ButtonLink href="/partners/stock" variant="primary" icon={<BoxIcon size={17} />}>
+              Voir mon stock
+            </ButtonLink>
+            <Button onClick={exportCsv} busy={exporting} icon={<DownloadIcon size={17} />}>
+              {exporting ? "Export…" : "Exporter (CSV)"}
+            </Button>
+            <ButtonLink href="/partners/requests?nouvelle=1" icon={<MessageIcon size={17} />}>
+              Faire une demande
+            </ButtonLink>
+          </>
+        }
       />
+
+      {summaryError ? (
+        <Notice tone="warning" title="Les chiffres affichés ne sont peut-être pas à jour">
+          {summaryError.message}
+        </Notice>
+      ) : null}
+      {exportError ? <Notice tone="error">{exportError}</Notice> : null}
+
+      <section aria-labelledby="home-stock" className="space-y-3">
+        <h2 id="home-stock" className="sr-only">
+          Mon stock en chiffres
+        </h2>
+        <div className="grid gap-3 md:grid-cols-3">
+          <KpiTile label="Paires en dépôt" value={formatCount(summary.held)} hint="Présentes dans notre entrepôt" href="/partners/stock" />
+          <KpiTile
+            label="Valeur au prix public"
+            unavailable={summary.publicValue.length === 0}
+            value={
+              summary.publicValue.length > 0 ? (
+                <span className="flex flex-col">
+                  {summary.publicValue.map((v) => (
+                    <Money key={v.currency} amount={v.amount} currency={v.currency} />
+                  ))}
+                </span>
+              ) : (
+                "—"
+              )
+            }
+            hint={
+              summary.pricedUnits > 0
+                ? `Sur ${pairs(summary.pricedUnits)} avec prix, parmi ${pairs(summary.held)} en dépôt`
+                : "Aucune de vos paires n'a encore de prix défini."
+            }
+            href="/partners/prices"
+          />
+          <KpiTile label="Publiées sur les canaux" value="—" unavailable hint={summary.publishedReason} />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <KpiTile label="Stockées" value={formatCount(summary.stored)} hint="Contrôlées, en stock" href="/partners/stock?statut=STORED" />
+          <KpiTile label="En contrôle" value={formatCount(summary.inControl)} hint="Vérification à l'arrivée" href="/partners/stock?statut=IN_CONTROL" />
+          <KpiTile
+            label="Vente autorisée"
+            value={formatCount(summary.saleAuthorized)}
+            hint="Contrôlées, vente permise"
+            href="/partners/stock?statut=SALE_AUTHORIZED"
+            accent={summary.saleAuthorized > 0}
+          />
+          <KpiTile
+            label="Bloquées / en vérification"
+            value={formatCount(onHold)}
+            hint={`${formatCount(summary.blocked)} ${summary.blocked > 1 ? "bloquées" : "bloquée"} · ${formatCount(summary.checking)} en vérification`}
+            href={summary.blocked === 0 && summary.checking > 0 ? "/partners/stock?statut=CHECKING" : "/partners/stock?statut=BLOCKED"}
+          />
+        </div>
+      </section>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card as="section" aria-labelledby="home-reception">
+          <div className="flex items-center gap-2">
+            <ClockIcon size={18} className={TEXT_FAINT} />
+            <h2 id="home-reception" className={cx("text-[15px] font-semibold", TEXT)}>
+              Dernière réception
+            </h2>
+          </div>
+          <p className={cx("mt-2 text-lg font-semibold", lastReceived ? TEXT : "text-[#8A948D] dark:text-slate-500")}>{lastReceived ?? "—"}</p>
+          <p className={cx("mt-1 text-xs leading-5", TEXT_FAINT)}>
+            {lastReceived ? "Date d'enregistrement de votre dernière paire arrivée à l'entrepôt." : "Aucune paire reçue pour l'instant."}
+          </p>
+          {summary.inTransit > 0 ? (
+            <p className={cx("mt-2 text-sm", TEXT_MUTED)}>
+              {pairs(summary.inTransit)} en route entre deux de nos sites.{" "}
+              <Link href="/partners/stock?tab=route" className={LINK}>
+                Voir
+              </Link>
+            </p>
+          ) : null}
+        </Card>
+
+        <Card as="section" aria-labelledby="home-sites">
+          <div className="flex items-center gap-2">
+            <StoreIcon size={18} className={TEXT_FAINT} />
+            <h2 id="home-sites" className={cx("text-[15px] font-semibold", TEXT)}>
+              Sites
+            </h2>
+          </div>
+          {summary.sites.length > 0 ? (
+            <ul className="mt-2 divide-y divide-[#EEF0EE] dark:divide-slate-800">
+              {summary.sites.map((site) => (
+                <li key={site.siteCode} className="flex items-baseline justify-between gap-3 py-1.5 text-sm">
+                  <span className={cx("min-w-0 truncate font-medium", TEXT)}>
+                    {site.siteName} <span className={cx("font-mono text-xs font-normal", TEXT_FAINT)}>{site.siteCode}</span>
+                  </span>
+                  <span className={cx("shrink-0 tabular-nums", TEXT_MUTED)}>{pairs(site.held)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className={cx("mt-2 text-sm", TEXT_MUTED)}>Aucune paire présente sur un site pour l'instant.</p>
+          )}
+        </Card>
+
+        <Card as="section" aria-labelledby="home-requests">
+          <div className="flex items-center gap-2">
+            <MessageIcon size={18} className={TEXT_FAINT} />
+            <h2 id="home-requests" className={cx("text-[15px] font-semibold", TEXT)}>
+              Demandes ouvertes
+            </h2>
+          </div>
+          <p className={cx("mt-2 text-lg font-semibold tabular-nums", TEXT)}>{formatCount(summary.openRequests)}</p>
+          <p className={cx("mt-1 text-xs leading-5", TEXT_FAINT)}>
+            {summary.openRequests > 0 ? "En attente d'une réponse de notre équipe." : "Aucune demande en attente de réponse."}
+          </p>
+          <p className="mt-2 text-sm">
+            <Link href="/partners/requests" className={LINK}>
+              Voir mes demandes
+            </Link>
+          </p>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card as="section" flush aria-labelledby="home-shortcuts">
+          <div className="px-4 pb-2 pt-4 sm:px-5">
+            <CardHeader id="home-shortcuts" title="Raccourcis" />
+          </div>
+          <div className={cx("divide-y border-t", HAIRLINE, "divide-[#EEF0EE] dark:divide-slate-800")}>
+            <Shortcut href="/partners/stock" icon={<BoxIcon size={18} />} title="Voir mon stock" text="Chaque paire, son statut et ses prix" />
+            <Shortcut href="/partners/prices" icon={<TagIcon size={18} />} title="Prix et canaux" text="Prix public et net pour vous, par modèle" />
+            <Shortcut href="/partners/requests?nouvelle=1" icon={<MessageIcon size={18} />} title="Faire une demande" text="Modification de prix, écart constaté ou autre" />
+          </div>
+        </Card>
+
+        <Card as="section" flush aria-labelledby="home-dropshipping">
+          <div className="px-4 pb-2 pt-4 sm:px-5">
+            <CardHeader id="home-dropshipping" title="Dropshipping" description="Votre catalogue, vos commandes et vos factures restent au même endroit." />
+          </div>
+          <div className={cx("divide-y border-t", HAIRLINE, "divide-[#EEF0EE] dark:divide-slate-800")}>
+            <Shortcut href="/partners/dropshipping" icon={<ChartIcon size={18} />} title="Tableau dropshipping" text="Import du catalogue, enrichissement, ventes" />
+            <Shortcut href="/partners/orders" icon={<BoxIcon size={18} />} title="Commandes" text="Commandes à traiter et expéditions" />
+            <Shortcut href="/partners/invoices" icon={<ReceiptIcon size={18} />} title="Factures" text="Factures de votre activité dropshipping" />
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Accueil. With the stock module: the home of the stock in deposit. Without it
+ * (MODULE_DISABLED): the dropshipping dashboard, exactly as before.
+ */
+export default function PartnerHomePage() {
+  const { moduleState, summary, summaryError, refreshSummary } = usePartnerPortal();
+
+  if (moduleState === "loading") return <PageSkeleton />;
+  if (moduleState === "disabled") return <DropshippingDashboard />;
+  if (moduleState === "enabled" && summary) return <StockHome summary={summary} />;
+
+  // The stock service did not answer: say so, and keep the existing dashboard usable.
+  return (
+    <div className="space-y-8">
+      <Notice
+        tone="error"
+        title="Impossible d'afficher votre stock en dépôt pour le moment"
+        action={
+          <Button size="sm" onClick={refreshSummary}>
+            Réessayer
+          </Button>
+        }
+      >
+        {summaryError?.message ?? "Le service ne répond pas. Réessayez dans un instant."}
+      </Notice>
+      <DropshippingDashboard />
     </div>
   );
 }
