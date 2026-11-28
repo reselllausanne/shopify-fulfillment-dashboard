@@ -314,12 +314,14 @@ async function getLocTx(tx: WarehouseTx, locationId: string): Promise<LocRow> {
  * small-box level is not forbidden (the shelf is what it is) but it is never silent: explicit
  * confirmation, recorded on the movement.
  */
+const BOX_PROFILE_FR: Record<string, string> = { STANDARD: "standard", LARGE: "grande boîte" };
+
 function assertBoxFits(unit: UnitRow, loc: LocRow, accepted: boolean | undefined): boolean {
   if (loc.kind !== "LEVEL" || loc.sizeProfile === "ANY" || loc.sizeProfile === unit.boxProfile) return false;
   if (!accepted) {
     throw conflict(
       "SIZE_PROFILE_MISMATCH",
-      `${loc.shortCode} est prévu pour le format ${loc.sizeProfile}, cette boîte est au format ${unit.boxProfile}. Confirmer pour la ranger ici quand même.`,
+      `${loc.shortCode} est prévu pour le format « ${BOX_PROFILE_FR[loc.sizeProfile] ?? loc.sizeProfile} », cette boîte est au format « ${BOX_PROFILE_FR[unit.boxProfile] ?? unit.boxProfile} ». Confirmer pour la ranger ici quand même.`,
       { confirm: "acceptProfileMismatch", levelProfile: loc.sizeProfile, boxProfile: unit.boxProfile, locationCode: loc.code }
     );
   }

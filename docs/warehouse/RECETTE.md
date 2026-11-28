@@ -36,7 +36,7 @@ Résultats du 28 novembre 2026, sur la branche `feat/warehouse-partners-lot1` :
 | `npx prisma validate` | Schéma valide |
 | `next build` (base locale) | Réussi ; les 11 pages Entrepôt, les pages partenaire du lot et les 2 routes API du module sont compilées |
 | Parcours des écrans dans un navigateur sans affichage (`node scripts/warehouse/ui-smoke.mjs`, puis `--mobile`) | 19 pages sur 19 sans erreur en grand écran et en format téléphone : pas d'erreur de script, pas d'appel API en échec |
-| Geste complet dans le navigateur (lot de réception ouvert, base de démonstration) | Code de carton refusé avec le code probable de la boîte ; paire déjà connue signalée sans rien modifier ; scan d'un GTIN, format « Grande », touche Entrée, identification de l'opérateur demandée puis paire créée au format `LARGE` sous la même clé d'action |
+| Geste complet dans le navigateur (lot de réception ouvert, base de démonstration) | Code de carton refusé avec le code probable de la boîte ; paire déjà connue signalée sans rien modifier ; scan d'un GTIN, format « Grande », touche Entrée, identification de l'opérateur demandée puis paire créée au format `LARGE` sous la même clé d'action. Rangement de cette paire : aucune place proposée (aucun niveau n'accepte ce format), niveau scanné, confirmation demandée, paire rangée, écart de format tracé dans le mouvement ; les compteurs du lot, de la zone et du menu suivent sans recharger la page |
 
 Captures des écrans (données de démonstration uniquement) : [`screens/`](screens/).
 
@@ -178,7 +178,7 @@ Côté responsable : `WAREHOUSE_WRITES_ENABLED=false` arrête toutes les écritu
 
 - Les mesures viennent d'un poste de développement (§3). Elles valident le code et les index, pas le VPS.
 - L'impression n'a été exercée que jusqu'à la file et au rendu PDF / SVG ; QZ Tray et l'imprimante réelle restent à brancher.
-- Les écrans n'ont pas de tests dans la suite automatique. `scripts/warehouse/ui-smoke.mjs` les charge tous dans un navigateur sans affichage (erreurs de script, appels API en échec, captures) ; les gestes n'ont été joués dans le navigateur que sur le lot de réception (§1).
+- Les écrans n'ont pas de tests dans la suite automatique. `scripts/warehouse/ui-smoke.mjs` les charge tous dans un navigateur sans affichage (erreurs de script, appels API en échec, captures) ; les gestes n'ont été joués dans le navigateur que sur la réception et le rangement (§1).
 - Le portail partenaire garde l'authentification existante : un accès par partenaire, pas par personne (Q-15), et la connexion rapide accepte une clé seule tant que `PARTNER_ACCESS_<KEY>` n'est pas défini (constat R2 de `AUDIT.md`).
 - L'espace disque du serveur de base ne se lit pas depuis l'application : l'alerte correspondante est à poser chez l'hébergeur.
 - La preuve d'identification d'un article est un texte ; pas de photo en lot 1.

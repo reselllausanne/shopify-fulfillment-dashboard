@@ -231,6 +231,9 @@ export function lookupOperation<T>(opKey: string): Promise<OperationLookup<T>> {
  * Send a gesture carrying an opKey. On a network error / timeout the SAME body is retried
  * (the server replays the stored result). Business errors are thrown immediately.
  */
+/** Fired on the window after a gesture was recorded: counters shown elsewhere on the screen refresh at once. */
+export const STOCK_CHANGED_EVENT = "warehouse:stock-changed";
+
 export async function whGesture<T>(path: string, body: { opKey: string } & Record<string, unknown>, opts: { retries?: number; timeoutMs?: number } = {}): Promise<T> {
   // Short timeout + one automatic retry: on the floor, a frozen screen is worse than "Vérifier".
   const retries = opts.retries ?? 1;
@@ -238,7 +241,9 @@ export async function whGesture<T>(path: string, body: { opKey: string } & Recor
   let lastErr: unknown = null;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
-      return await whPost<T>(path, body, { timeoutMs });
+      const result = await whPost<T>(path, body, { timeoutMs });
+      if (typeof window !== "undefined") window.dispatchEvent(new Event(STOCK_CHANGED_EVENT));
+      return result;
     } catch (err) {
       lastErr = err;
       if (!isWhError(err) || !err.fateUnknown) throw err;

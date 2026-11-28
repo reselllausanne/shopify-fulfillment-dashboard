@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Overview } from "@/lib/warehouse/overview";
 import type { ScanResolution } from "@/lib/warehouse/units";
 import { errorMessage, isWhError, whGet } from "../_lib/api";
 import { useWarehouse } from "../_lib/context";
-import { useLoad, useOnline } from "../_lib/hooks";
+import { useLoad, useOnline, useStockChanged } from "../_lib/hooks";
 import PrintAgent from "./PrintAgent";
 import { cleanScan } from "./scan";
 import { Btn, Loading, cx } from "./ui";
@@ -116,6 +116,25 @@ export default function Shell({ children }: { children: ReactNode }) {
     enabled: wh.status === "ready" && Boolean(siteCode),
     intervalMs: 60_000,
   });
+  // A recorded gesture refreshes the side counters (to put away, discrepancies, alerts) without
+  // waiting for the minute poll — at most once every ten seconds, so fast scanning stays cheap.
+  const refreshTimer = useRef<number | null>(null);
+  const lastRefresh = useRef(0);
+  useStockChanged(() => {
+    if (refreshTimer.current !== null) return;
+    const wait = Math.max(1_500, 10_000 - (Date.now() - lastRefresh.current));
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      lastRefresh.current = Date.now();
+      void overview.reload();
+    }, wait);
+  });
+  useEffect(
+    () => () => {
+      if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+    },
+    []
+  );
   const alertCount = overview.data?.alerts.length ?? 0;
   const critical = overview.data?.alerts.some((a) => a.level === "critical") ?? false;
 

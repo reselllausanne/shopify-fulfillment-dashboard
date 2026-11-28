@@ -10,7 +10,7 @@ import { isWhError, newOpKey, whGet, whPost } from "../_lib/api";
 import { useWarehouse } from "../_lib/context";
 import { LOCATION_KIND_LABELS, itemTitle, plural } from "../_lib/format";
 import { PendingGestureCard, useGesture } from "../_lib/gesture";
-import { useLoad } from "../_lib/hooks";
+import { useLoad, useStockChanged } from "../_lib/hooks";
 import { FeedbackBanner, ScanInput, useScanFlow } from "../_components/scan";
 import { UnitChips, UnitLine } from "../_components/units";
 import { Btn, Card, Chip, EmptyState, ErrorNote, Field, Loading, Modal, Notice, PageHeader, Segmented, Thumb, cx, inputCls } from "../_components/ui";
@@ -46,6 +46,12 @@ function PutawayInner() {
 
   const zones = useLoad<{ items: LocationSummary[] }>(() => whGet("locations", { siteId, kinds: "RECEIVING,CART", limit: 200 }), [siteId], { enabled: Boolean(siteId) });
   const batches = useLoad<BatchRow[]>(() => whGet<BatchRow[]>("batches", { siteId, status: "OPEN,PAUSED,CLOSED", limit: 50 }), [siteId], { enabled: Boolean(siteId) });
+
+  // The counts on the cart / zone / batch buttons follow each recorded gesture.
+  useStockChanged(() => {
+    void zones.reload();
+    void batches.reload();
+  });
 
   const scopeQuery = useMemo(
     () => ({ siteId, batchId: scope?.kind === "batch" ? scope.id : undefined, cartLocationId: scope?.kind === "cart" ? scope.id : undefined }),
@@ -125,7 +131,16 @@ function PutawayInner() {
     }
     setHeld({ unit, task });
     if (task.proposedLocationShortCode) flow.notify("ok", `Rangez en ${task.proposedLocationShortCode}, puis scannez le niveau.`, `${itemTitle(unit.itemBrand, unit.itemName)} · ${unit.itemSizeLabel ?? "—"}`);
-    else flow.notify("warn", "Aucune place proposée pour cette paire : scannez le niveau où vous la posez.", task.holdReason ? HOLD_LABELS[task.holdReason] ?? task.holdReason : undefined);
+    else {
+      // A box format no free level accepts is the usual cause: say so instead of "no free place".
+      const formatBlocked = task.holdReason === "NO_SLOT" && unit.boxProfile && unit.boxProfile !== "STANDARD";
+      const why = formatBlocked
+        ? `Aucun niveau libre n'accepte ce format de boîte (${unit.boxProfile === "LARGE" ? "Grande" : unit.boxProfile}). Le format accepté par un niveau se règle dans Emplacements.`
+        : task.holdReason
+          ? HOLD_LABELS[task.holdReason] ?? task.holdReason
+          : undefined;
+      flow.notify("warn", "Aucune place proposée pour cette paire : scannez le niveau où vous la posez.", why);
+    }
   };
 
   const afterMoved = async (r: ConfirmPutawayResult | RelocateResult, location: LocationSummary) => {
@@ -288,6 +303,8 @@ function PutawayInner() {
   }, [tasks]);
 
   const remaining = queue.data?.counts.total ?? null;
+  // Pairs still without a proposed place, live: the note below follows the queue, not the last proposal.
+  const pendingLeft = queue.data?.counts.pending ?? null;
   const prompt = gesture.pending
     ? "Vérifiez l'action en attente"
     : held
@@ -495,7 +512,11 @@ function PutawayInner() {
               <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">Aucune paire en attente de rangement {scope.kind === "site" ? "sur ce site" : `pour ${scope.label}`}.</p>
             </div>
           ) : null}
-          {proposeNote && mode === "putaway" ? <Notice tone="amber">{proposeNote}</Notice> : null}
+          {proposeNote && mode === "putaway" && pendingLeft !== 0 ? (
+            <Notice tone="amber">
+              {pendingLeft === null ? proposeNote : `${plural(pendingLeft, "paire", "paires")} sans place proposée : plus de niveau libre compatible. Scannez le niveau de votre choix pour les ranger.`}
+            </Notice>
+          ) : null}
         </div>
 
         {mode === "putaway" ? (

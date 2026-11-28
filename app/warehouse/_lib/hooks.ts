@@ -1,11 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { STOCK_CHANGED_EVENT } from "./api";
 
 /**
  * Load data, keep the previous value while refreshing, optionally poll. Stale answers of an
  * older call are dropped. `enabled:false` clears nothing and loads nothing.
  */
+/** Run `onChange` each time a gesture was recorded from this window (see `STOCK_CHANGED_EVENT`). */
+export function useStockChanged(onChange: () => void): void {
+  const ref = useRef(onChange);
+  ref.current = onChange;
+  useEffect(() => {
+    const handler = () => ref.current();
+    window.addEventListener(STOCK_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(STOCK_CHANGED_EVENT, handler);
+  }, []);
+}
+
 export function useLoad<T>(
   loader: () => Promise<T>,
   deps: unknown[],
