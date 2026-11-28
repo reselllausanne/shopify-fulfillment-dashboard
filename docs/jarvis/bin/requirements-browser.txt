@@ -6,3 +6,6 @@
 # Tests and --dry-run / --from-html need none of this (stdlib only).
 camoufox[geoip]>=0.5,<1
 patchright>=1.5
+# insta_account.py visual layer (optional, system packages, not pip): ffmpeg + tesseract-ocr (+ tesseract-ocr-fra).
+#   sudo apt install ffmpeg tesseract-ocr tesseract-ocr-eng tesseract-ocr-fra
+# Without them the tool still runs: visual status becomes "skipped"/"partial" (marked uncertain), never faked.

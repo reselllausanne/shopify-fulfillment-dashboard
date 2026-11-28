@@ -96,6 +96,19 @@ def _iso(ts):
         return None
 
 
+def _media_urls(m, max_items=3):
+    """Public CDN media URLs exposed by the page JSON (transient: signed, never written to the repo)."""
+    def one(node):
+        vids = [{"url": v["url"], "width": v.get("width"), "height": v.get("height")} for v in (node.get("video_versions") or []) if v.get("url")]
+        imgs = [{"url": c["url"], "width": c.get("width"), "height": c.get("height")}
+                for c in ((node.get("image_versions2") or {}).get("candidates") or []) if c.get("url")]
+        if vids:
+            return {"type": "video", "versions": vids}
+        return {"type": "image", "versions": imgs} if imgs else None
+    nodes = m.get("carousel_media") or [m]
+    return [x for x in (one(n) for n in nodes[:max_items]) if x]
+
+
 def parse_embedded(html, shortcode):
     obj = _media_from_embedded(html, shortcode)
     if not obj:
@@ -137,6 +150,7 @@ def parse_embedded(html, shortcode):
             comments.append({"account": (n.get("user") or {}).get("username"), "text": txt,
                              "likes": n.get("comment_like_count")})
     out["top_comments"] = comments
+    out["_media"] = _media_urls(m)
     return out
 
 
@@ -230,7 +244,8 @@ def build_result(url, html, text, status=None, nbytes=None, capped=False, engine
         "visible_text": (text or "")[:4000],
         "login_wall": login_wall, "extracted_via": layers, "http_status": status, "bytes": nbytes, "capped": capped,
         "engine": engine, "fetched_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-        "limits": "text only: no audio transcript, no video frame analysis",
+        "_media": emb.get("_media", []),
+        "limits": "text only here: no audio transcript, no video frame analysis (see insta_account.py for best-effort frames + OCR)",
     }
 
 
@@ -288,6 +303,7 @@ def main(argv=None):
             return EXIT_ERR
         html, text, status, nbytes, capped = r["html"], r["text"], r["status"], r["bytes"], r["capped"]
     res = build_result(canon, html, text, status, nbytes, capped, None if a.from_html else a.engine)
+    res = {k: v for k, v in res.items() if not k.startswith("_")}
     print(render_text(res) if a.text else json.dumps(res, ensure_ascii=False, indent=2))
     if res["login_wall"] and not res["caption"]:
         return EXIT_BLOCKED
