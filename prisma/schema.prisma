@@ -1853,6 +1853,10 @@ model GalaxusOrder {
   afterSalesHandling           Boolean   @default(false)
   customerType                 String?
   deliveryType                 String?
+  /// Stamped once. True if the offer was on route 7609999696817, or this
+  /// week's already-promised short arrival (through 2026-12-06). A later
+  /// shorter normal delay does not flip this on.
+  expressDelivery              Boolean   @default(false)
   isCollectiveOrder            Boolean?
   physicalDeliveryNoteRequired Boolean?  @default(false)
   saturdayDeliveryAllowed      Boolean?

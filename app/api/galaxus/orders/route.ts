@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { isGalaxusShipmentDispatchConfirmed } from "@/galaxus/orders/shipmentDispatch";
-import { isGalaxusExpressArrival } from "@/galaxus/orders/expressDelivery";
 import { getInvoiceLineProgressByOrderIds } from "@/galaxus/edi/invoiceCoverage";
 import { buildLinkedCountByOrderId } from "@/galaxus/orders/lineProcurement";
 import { getOpenWarehouseLineCountByOrderId } from "@/galaxus/warehouse/shipmentLineCoverage";
@@ -153,6 +152,7 @@ export async function GET(request: Request) {
         orderNumber: true,
         orderDate: true,
         deliveryType: true,
+        expressDelivery: true,
         customerName: true,
         recipientName: true,
         createdAt: true,
@@ -331,20 +331,6 @@ export async function GET(request: Request) {
       }
     }
 
-    const expressOrderIds = new Set<string>();
-    if (orderIds.length > 0) {
-      const arrivalRows = await prisma.galaxusOrderLine.findMany({
-        where: { orderId: { in: orderIds }, arrivalDateEnd: { not: null } },
-        select: { orderId: true, arrivalDateEnd: true },
-      });
-      const orderDateById = new Map(orders.map((order) => [order.id, order.orderDate]));
-      for (const row of arrivalRows) {
-        if (isGalaxusExpressArrival(orderDateById.get(row.orderId), row.arrivalDateEnd)) {
-          expressOrderIds.add(row.orderId);
-        }
-      }
-    }
-
     const items = orders.map((order) => {
       const isDirect = String(order.deliveryType ?? "").toLowerCase() === "direct_delivery";
       const shippedCount = isDirect
@@ -400,7 +386,6 @@ export async function GET(request: Request) {
         invoiceLinesFullyInvoiced:
           invoiceProgressByOrderId != null ? (inv?.linesFullyInvoiced ?? 0) : null,
         invoiceLinesTotal: invoiceProgressByOrderId != null ? (inv?.lineCount ?? rest._count?.lines ?? 0) : null,
-        expressDelivery: expressOrderIds.has(order.id),
       };
     });
 
